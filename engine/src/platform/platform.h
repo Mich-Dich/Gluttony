@@ -8,7 +8,7 @@ typedef struct platformState {
     
 } platformState;
 
-GLUTTONY_API bool8 platform_Startup(
+bool8 platform_Startup(
     platformState* platState,
     const char* applicationName,
     int32 x,
@@ -16,11 +16,11 @@ GLUTTONY_API bool8 platform_Startup(
     int32 width,
     int32 heigh);
 
-GLUTTONY_API void platform_Shutdown(platformState* state);
-GLUTTONY_API bool8 platform_Push_messages(platformState* state);
+void platform_Shutdown(platformState* state);
+bool8 platform_Push_messages(platformState* state);
 
-void* platform_allocate_memory(u64 size, bool8 aligned);
-void  platform_free_memory(void* block, bool8 aligned);
+GLUTTONY_API void* platform_allocate_memory(u64 size, bool8 aligned);
+GLUTTONY_API void  platform_free_memory(void* block, bool8 aligned);
 void* platform_zero_memory(void* block, u64 size);
 void* platform_copy_memory(void* dest, const void* source, u64 size);
 void* platform_set_memory(void* dest, int32 value, u64 size);
