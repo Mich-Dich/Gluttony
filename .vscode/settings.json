@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "core.h": "c",
+        "system_error": "cpp",
+        "windows.h": "c"
+    }
+}
