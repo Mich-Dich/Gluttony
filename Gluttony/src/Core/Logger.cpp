@@ -2,12 +2,8 @@
 #include <cstdarg>
 #include <fstream>
 #include <iostream>
-#include <windows.h>
 #include <iomanip>
-
-#include <iostream>
 #include <sstream>
-#include <iomanip>
 #include <windows.h>
 
 #include "Logger.h"
@@ -16,16 +12,16 @@ namespace Gluttony {
 
 	const char* SeverityNames[LogSeverityLevel::NUM_SEVERITYS]{ "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL" };
     const static WORD Color[NUM_SEVERITYS] = {
-    FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
-    FOREGROUND_INTENSITY | FOREGROUND_BLUE,
-    FOREGROUND_GREEN,
-    FOREGROUND_RED | FOREGROUND_GREEN,
-    FOREGROUND_RED,
-    BACKGROUND_RED | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
+        FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
+        FOREGROUND_INTENSITY | FOREGROUND_BLUE,
+        FOREGROUND_INTENSITY | FOREGROUND_GREEN,
+        FOREGROUND_RED | FOREGROUND_GREEN,
+        FOREGROUND_RED,
+        BACKGROUND_RED | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
     };
 	static const char* LogFileName;
 	static const char* LogCoreFileName;
-	static const char* LogMessageFormat = "[$B$T$E] [$B$L$X - $A - $F:$G$E] $C";
+	static const char* LogMessageFormat = "[$B$T:$J$E] [$B$L$X - $A - $F:$G$E] $C";
 	static const char* LogMessageFormat_BACKUP = "$B[$T] $L$E - $C";
 	static const char* displayed_Path_Start = "Gluttony";
 	static int Buffer_Level;
@@ -91,26 +87,6 @@ namespace Gluttony {
         SYSTEMTIME TimeLoc;
         GetLocalTime(&TimeLoc);
 
-        std::ostringstream Format_Filled;
-        Format_Filled.flush();
-
-        std::ostringstream Format_Filled_Console;
-        Format_Filled_Console.flush();
-
-        // Message for Console Coutput
-        std::string result = "";
-        std::string result_Intermediate = "";
-
-
-        /*
-        SYSTEMTIME TimeLoc;
-        GetLocalTime(&TimeLoc);
-         TimeLoc.wSecond
-        std::ostringstream Format_Filled;
-
-        Format_Filled << TimeLoc.wMinute;*/
-
-
         // Format Vars into message
         va_list args;
         va_start(args, message);
@@ -119,21 +95,14 @@ namespace Gluttony {
             vsnprintf(message_Formated, bufferSize + 1, message, args);
         va_end(args);
 
-
-		// Copy File String to 
-		size_t length = strlen(fileName);
-		char* locFileName = new char[length + 1];
-		strncpy(locFileName, fileName, length);
-		locFileName[length] = '\0';
-
-		
-        // Create Buffer Srings
-        char message_out[MAX_MEASSGE_SIZE];
-        memset(message_out, 0, sizeof(message_out));
-        char message_log[MAX_MEASSGE_SIZE];
-        memset(message_log, 0, sizeof(message_log));
+        // Create Buffer vars
+        std::ostringstream Format_Filled;
+        Format_Filled.flush();
+        char locFileName[MAX_MEASSGE_SIZE];
+        size_t length = 0;
         char Format_Command;
-        char Format_Buffer[MAX_MEASSGE_SIZE];
+        std::string result = "";                // Message for LogFile output
+        std::string result_Intermediate = "";   // Message for Console output
 
 
         // Loop over Format string and build Final Message
@@ -190,6 +159,10 @@ namespace Gluttony {
 
                 // File Name
                 case 'A':
+                    // Copy File String to 
+                    length = strlen(fileName);
+                    strncpy(locFileName, fileName, length);
+                    locFileName[length] = '\0';
                     Format_Filled << shorten_File_Path(locFileName, displayed_Path_Start);
                     break;
 
@@ -219,6 +192,12 @@ namespace Gluttony {
                 // Clock ss
                 case 'S':
                     Format_Filled << std::setw(2) << std::setfill('0') << TimeLoc.wSecond;
+
+                    break;
+
+                // Clock ss
+                case 'J':
+                    Format_Filled << std::setw(2) << std::setfill('0') << TimeLoc.wMilliseconds;
 
                     break;
 
@@ -252,7 +231,7 @@ namespace Gluttony {
 
                 x++;
             }
-
+            
             else {
 
                 Format_Filled << LogMessageFormat[x];
@@ -279,7 +258,6 @@ namespace Gluttony {
         }
 
 		// Don't forget to free the allocated memory
-		delete[] locFileName;
 	}
 
 	// Function to extract the displayed path
