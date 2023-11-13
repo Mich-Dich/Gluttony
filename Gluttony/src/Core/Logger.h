@@ -56,8 +56,9 @@ namespace Gluttony {
 	//  4    =>   buffer: TRACE + DEBUG + INFO + WARN
 	void set_buffer_Level(int newLevel);
 	char* shorten_File_Path(char* fullPath, const char* displayedPathStart);
+	char* shorten_Func_Name(char* funcName, const char* displayedFuncNameStart);
 
-	void GLUTTONY_API LogMsg(LogSeverityLevel level, const char* fileName, const char* funcName, int line, char* message, ...);
+	void GLUTTONY_API LogMsg(LogSeverityLevel level, const char* fileName, const char* funcName, int line, const char* message, ...);
 }
 
 // This enables the verious levels of the logging function (FATAL & ERROR are always on)

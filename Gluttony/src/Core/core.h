@@ -9,3 +9,5 @@
 #else
 	#error Gluttony only supports Windows
 #endif // GL_PLATFORM_WINDOWS
+
+#define BIT(x) (1 << x)

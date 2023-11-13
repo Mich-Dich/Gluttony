@@ -19,7 +19,7 @@ extern Gluttony::Application* Gluttony::CreateApplication();
 int main(int argc, char** argv) {
 
 	auto app = Gluttony::CreateApplication();
-	Gluttony::Log_Init("logFileCORE.txt", "logFile.txt", "[$B$T:$J$E] [$B$L$X - $A - $F:$G$E] $C");
+	Gluttony::Log_Init("logFileCORE.txt", "logFile.txt", "[$B$T:$J$E] [$B$L$X $A - $F:$G$E] $C");
 
 	int testInt = 5;
 	float TestFloat = 3.1415;

@@ -23,7 +23,8 @@ namespace Gluttony {
     static const char* LogCoreFileName = "logFileCORE.txt";
     static const char* LogMessageFormat = "[$B$T:$J$E] [$B$L$X - $A - $F:$G$E] $C";
     static const char* LogMessageFormat_BACKUP = "$B[$T] $L$E - $C";
-    static const char* displayed_Path_Start = "Gluttony";
+    static const char* displayed_Path_Start = "src\\";
+    static const char* displayed_FuncName_Start = "Gluttony::";
     static int Buffer_Level;
 
     int Log_Init(const char* LogCoreFile, const char* LogFile, const char* Format) {
@@ -88,7 +89,7 @@ namespace Gluttony {
     }
 
     //
-    void LogMsg(LogSeverityLevel level, const char* fileName, const char* funcName, int line, char* message, ...) {
+    void LogMsg(LogSeverityLevel level, const char* fileName, const char* funcName, int line, const char* message, ...) {
 
         if (strlen(message) == 0)
             return;
@@ -110,7 +111,7 @@ namespace Gluttony {
         // Create Buffer vars
         std::ostringstream Format_Filled;
         Format_Filled.flush();
-        char locFileName[MAX_MEASSGE_SIZE];
+        char char_Buffer[MAX_MEASSGE_SIZE];
         size_t length = 0;
         char Format_Command;
         std::string result = "";                // Message for LogFile output
@@ -167,16 +168,20 @@ namespace Gluttony {
                     // ------------------------------------  Source  -------------------------------------------------------------------------------
                     // Function Name
                 case 'F':
-                    Format_Filled << funcName;
+                    // Copy File String to 
+                    length = strlen(funcName);
+                    strncpy(char_Buffer, funcName, length);
+                    char_Buffer[length] = '\0';
+                    Format_Filled << shorten_Func_Name(char_Buffer, displayed_FuncName_Start);
                     break;
 
                     // File Name
                 case 'A':
                     // Copy File String to 
                     length = strlen(fileName);
-                    strncpy(locFileName, fileName, length);
-                    locFileName[length] = '\0';
-                    Format_Filled << shorten_File_Path(locFileName, displayed_Path_Start);
+                    strncpy(char_Buffer, fileName, length);
+                    char_Buffer[length] = '\0';
+                    Format_Filled << shorten_File_Path(char_Buffer, displayed_Path_Start);
                     break;
 
                     // Line
@@ -251,6 +256,7 @@ namespace Gluttony {
             }
         }
 
+        Format_Filled << "\0";
 
         result_Intermediate = Format_Filled.str();
         std::cout << result_Intermediate << std::endl;
@@ -267,14 +273,32 @@ namespace Gluttony {
     }
 
 
-    // Function to extract the displayed path
+    // Function to extract important path
     char* shorten_File_Path(char* fullPath, const char* displayedPathStart) {
-
         const char* position = strstr(fullPath, displayedPathStart);
 
-        if (position != nullptr)
-            strcpy(fullPath, position);
+        if (position != nullptr) {
+
+            size_t remainingLength = strlen(position + strlen(displayedPathStart));
+            strncpy(fullPath, position + strlen(displayedPathStart), remainingLength);
+            fullPath[remainingLength] = '\0';
+        }
 
         return fullPath;
+    }
+
+    // Function to extract important funName
+    char* shorten_Func_Name(char* funcName, const char* displayedFuncNameStart) {
+
+        const char* position = strstr(funcName, displayedFuncNameStart);
+
+        if (position != nullptr) {
+
+            size_t remainingLength = strlen(position + strlen(displayedFuncNameStart));
+            strncpy(funcName, position + strlen(displayedFuncNameStart), remainingLength);
+            funcName[remainingLength] = '\0';
+        }
+
+        return funcName;
     }
 }
