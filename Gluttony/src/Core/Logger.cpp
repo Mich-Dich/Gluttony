@@ -10,7 +10,7 @@
 
 namespace Gluttony {
 
-	const char* SeverityNames[LogSeverityLevel::NUM_SEVERITYS]{ "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL" };
+    const char* SeverityNames[LogSeverityLevel::NUM_SEVERITYS]{ "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL" };
     const static WORD Color[NUM_SEVERITYS] = {
         FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
         FOREGROUND_INTENSITY | FOREGROUND_BLUE,
@@ -19,67 +19,79 @@ namespace Gluttony {
         FOREGROUND_RED,
         BACKGROUND_RED | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE,
     };
-	static const char* LogFileName;
-	static const char* LogCoreFileName;
-	static const char* LogMessageFormat = "[$B$T:$J$E] [$B$L$X - $A - $F:$G$E] $C";
-	static const char* LogMessageFormat_BACKUP = "$B[$T] $L$E - $C";
-	static const char* displayed_Path_Start = "Gluttony";
-	static int Buffer_Level;
+    static const char* LogFileName = "logFile.txt";
+    static const char* LogCoreFileName = "logFileCORE.txt";
+    static const char* LogMessageFormat = "[$B$T:$J$E] [$B$L$X - $A - $F:$G$E] $C";
+    static const char* LogMessageFormat_BACKUP = "$B[$T] $L$E - $C";
+    static const char* displayed_Path_Start = "Gluttony";
+    static int Buffer_Level;
 
-	/*
-	LogMessage::LogMessage(LogSeverityLevel level, const char* fileName, const char* funcName, int line) :
-		LSLevel_(level), fileName_(fileName), funcName_(funcName), line_(line) {}
+    int Log_Init(const char* LogCoreFile, const char* LogFile, const char* Format) {
 
-	LogMessage::~LogMessage() {
+        LogCoreFileName = LogCoreFile;
+        LogFileName = LogFile;
+        Set_Format(Format);
 
-		printLogMessage();
-	}
+        std::ostringstream Init_Message;
+        Init_Message.flush();
 
-	LogMessageFatal::LogMessageFatal(const char* fileName, const char* funcName, int line) :
-		LogMessage(FATAL, fileName, funcName, line) {}
+        SYSTEMTIME TimeLoc;
+        GetLocalTime(&TimeLoc);
 
-	LogMessageFatal::~LogMessageFatal() {
+        Init_Message << "[" << std::setw(4) << std::setfill('0') << TimeLoc.wYear
+            << "/" << std::setw(2) << std::setfill('0') << TimeLoc.wMonth
+            << "/" << std::setw(2) << std::setfill('0') << TimeLoc.wDay
+            << " - " << std::setw(2) << std::setfill('0') << TimeLoc.wHour
+            << ":" << std::setw(2) << std::setfill('0') << TimeLoc.wMinute
+            << ":" << std::setw(2) << std::setfill('0') << TimeLoc.wSecond << "]"
+            << "  Log initialized" << std::endl
 
-		printLogMessage();
-		// abort();
-	}
+            << "   Inital Log Format: '" << Format << "'" << std::endl << "   Enabled Log Levels: ";
+
+        static const char* loc_level_str[6] = { "Fatal", " + Error", " + Warn", " + Info", " + Debug", " + Trace" };
+        for (int x = 0; x < LOG_LEVEL_ENABLED + 2; x++)
+            Init_Message << loc_level_str[x];
+
+        // Write the content to a file
+        std::ofstream outputFile(LogFileName);
+        if (outputFile.is_open()) {
+            outputFile << Init_Message.str() << std::endl;
+            outputFile.close();
+        } else {
+            std::cerr << "Error: Unable to open the file for writing." << std::endl;
+            return -1;
+        }
+
+        GL_SEPERATOR_BIG;
+        return 0;
+    }
+
+    // change Format for all following messages
+    void Set_Format(const char* newFormat) {
+
+        LogMessageFormat_BACKUP = LogMessageFormat;
+        LogMessageFormat = newFormat;
+    }
+
+    // Use previous Format
+    void Use_Format_Backup() {
+
+        const char* buffer = LogMessageFormat;
+        LogMessageFormat = LogMessageFormat_BACKUP;
+        LogMessageFormat_BACKUP = buffer;
+    }
+
+    // deside with messages should be bufferd and witch are written to file instantly
+    void set_buffer_Level(int newLevel) {
 
 
+    }
 
-	void LogMessage::printLogMessage() {
+    //
+    void LogMsg(LogSeverityLevel level, const char* fileName, const char* funcName, int line, char* message, ...) {
 
-		//if (!str().empty())
-		printf("[%s] [%s:%s:%d] %s\n", SeverityNames[LSLevel_], fileName_, funcName_, line_, str().c_str());
-	}*/
-
-	int Log_Init(const char* CoreFileName, const char* Format) {
-
-		LogCoreFileName = CoreFileName;
-		Set_Format(Format);
-		return 0;
-	}
-
-	// change Format for all following messages
-	void Set_Format(const char* newFormat) {
-
-		LogMessageFormat_BACKUP = LogMessageFormat;
-		LogMessageFormat = newFormat;
-	}
-
-	// Use previous Format
-	void Use_Format_Backup() {
-
-		const char* buffer = LogMessageFormat;
-		LogMessageFormat = LogMessageFormat_BACKUP;
-		LogMessageFormat_BACKUP = buffer;
-	}
-
-	// deside with messages should be bufferd and witch are written to file instantly
-	void set_buffer_Level(int newLevel) {
-
-
-	}
-	void LogMsg(LogSeverityLevel level, const char* fileName, const char* funcName, int line, char* message, ...) {
+        if (strlen(message) == 0)
+            return;
 
         HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 
@@ -90,9 +102,9 @@ namespace Gluttony {
         // Format Vars into message
         va_list args;
         va_start(args, message);
-            int bufferSize = vsnprintf(nullptr, 0, message, args);
-            char* message_Formated = new char[bufferSize + 1];
-            vsnprintf(message_Formated, bufferSize + 1, message, args);
+        int bufferSize = vsnprintf(nullptr, 0, message, args);
+        char* message_Formated = new char[bufferSize + 1];
+        vsnprintf(message_Formated, bufferSize + 1, message, args);
         va_end(args);
 
         // Create Buffer vars
@@ -114,8 +126,8 @@ namespace Gluttony {
                 Format_Command = LogMessageFormat[x + 1];
                 switch (Format_Command) {
 
-                // ------------------------------------  Basic Info  -------------------------------------------------------------------------------
-                // Color Start
+                    // ------------------------------------  Basic Info  -------------------------------------------------------------------------------
+                    // Color Start
                 case 'B':
                     // Send Message Formated until now && set Console Coloring for following messages
                     result_Intermediate = Format_Filled.str();
@@ -126,7 +138,7 @@ namespace Gluttony {
                     SetConsoleTextAttribute(hConsole, Color[level]);
                     break;
 
-                // Color End
+                    // Color End
                 case 'E':
                     // Send Message Formated until now && set Console Coloring for following messages
                     result_Intermediate = Format_Filled.str();
@@ -137,27 +149,28 @@ namespace Gluttony {
                     SetConsoleTextAttribute(hConsole, FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
                     break;
 
-                // input text (message)
+                    // input text (message)
                 case 'C':
                     Format_Filled << message_Formated;
                     break;
 
-                // Log Level
+                    // Log Level
                 case 'L':
                     Format_Filled << SeverityNames[level];
                     break;
 
-                // Alignment
+                    // Alignment
                 case 'X':
                     if (level == Gluttony::LogSeverityLevel::Info || level == Gluttony::LogSeverityLevel::Warn) { Format_Filled << " "; }
                     break;
-                
-                // Function Name
+
+                    // ------------------------------------  Source  -------------------------------------------------------------------------------
+                    // Function Name
                 case 'F':
                     Format_Filled << funcName;
                     break;
 
-                // File Name
+                    // File Name
                 case 'A':
                     // Copy File String to 
                     length = strlen(fileName);
@@ -166,72 +179,72 @@ namespace Gluttony {
                     Format_Filled << shorten_File_Path(locFileName, displayed_Path_Start);
                     break;
 
-                // Line
+                    // Line
                 case 'G':
                     Format_Filled << line;
                     break;
 
-                // ------------------------------------  Time  -------------------------------------------------------------------------------
-                // Clock hh:mm:ss
+                    // ------------------------------------  Time  -------------------------------------------------------------------------------
+                    // Clock hh:mm:ss
                 case 'T':
                     Format_Filled << std::setw(2) << std::setfill('0') << TimeLoc.wHour
                         << ":" << std::setw(2) << std::setfill('0') << TimeLoc.wMinute
                         << ":" << std::setw(2) << std::setfill('0') << TimeLoc.wSecond;
                     break;
 
-                // Clock ss
+                    // Clock secunde
                 case 'H':
                     Format_Filled << std::setw(2) << std::setfill('0') << TimeLoc.wHour;
                     break;
 
-                // Clock mm
+                    // Clock minute
                 case 'M':
                     Format_Filled << std::setw(2) << std::setfill('0') << TimeLoc.wMinute;
                     break;
 
-                // Clock ss
+                    // Clock second
                 case 'S':
                     Format_Filled << std::setw(2) << std::setfill('0') << TimeLoc.wSecond;
 
                     break;
 
-                // Clock ss
+                    // Clock millisec.
                 case 'J':
-                    Format_Filled << std::setw(2) << std::setfill('0') << TimeLoc.wMilliseconds;
+                    Format_Filled << std::setw(3) << std::setfill('0') << TimeLoc.wMilliseconds;
 
                     break;
 
-                // ------------------------------------  Date  -------------------------------------------------------------------------------
-                // Data yyyy/mm/dd
+                    // ------------------------------------  Date  -------------------------------------------------------------------------------
+                    // Data yyyy/mm/dd
                 case 'N':
                     Format_Filled << std::setw(4) << std::setfill('0') << TimeLoc.wYear
-                        << "-" << std::setw(2) << std::setfill('0') << TimeLoc.wMonth 
-                        << "-" << std::setw(2) << std::setfill('0') << TimeLoc.wDay;
+                        << "/" << std::setw(2) << std::setfill('0') << TimeLoc.wMonth
+                        << "/" << std::setw(2) << std::setfill('0') << TimeLoc.wDay;
                     break;
 
-                // Year
+                    // Year
                 case 'Y':
                     Format_Filled << std::setw(4) << std::setfill('0') << TimeLoc.wYear;
                     break;
 
-                // Month
+                    // Month
                 case 'O':
                     Format_Filled << std::setw(2) << std::setfill('0') << TimeLoc.wMonth;
                     break;
 
-                // Day
+                    // Day
                 case 'D':
                     Format_Filled << std::setw(2) << std::setfill('0') << TimeLoc.wDay;
                     break;
 
-                // ------------------------------------  Default  -------------------------------------------------------------------------------
+                    // ------------------------------------  Default  -------------------------------------------------------------------------------
                 default:
                     break;
                 }
 
                 x++;
             }
-            
+
             else {
 
                 Format_Filled << LogMessageFormat[x];
@@ -244,32 +257,24 @@ namespace Gluttony {
 
         // Final Message for File
         result += Format_Filled.str();
-        //std::cout << std::endl << result << std::endl;
 
-        
         // Write the content to a file
-        std::ofstream outputFile("LogFile.txt");
+        std::ofstream outputFile(LogFileName, std::ios::app);
         if (outputFile.is_open()) {
-            outputFile << result;
+            outputFile << result << std::endl;
             outputFile.close();
-            //std::cout << "Content successfully written to %s" << LogFileName << std::endl;
-        } else {
-            std::cerr << "Error: Unable to open the file for writing." << std::endl;
         }
+    }
 
-		// Don't forget to free the allocated memory
-	}
 
-	// Function to extract the displayed path
-	char* shorten_File_Path(char* fullPath, const char* displayedPathStart) {
+    // Function to extract the displayed path
+    char* shorten_File_Path(char* fullPath, const char* displayedPathStart) {
 
-		const char* position = strstr(fullPath, displayedPathStart);
+        const char* position = strstr(fullPath, displayedPathStart);
 
-		if (position != nullptr) {
-			strcpy(fullPath, position);
-			return fullPath;
-		}
+        if (position != nullptr)
+            strcpy(fullPath, position);
 
-		return strdup(fullPath);
-	}
+        return fullPath;
+    }
 }

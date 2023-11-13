@@ -1,1 +1,12 @@
-[19:49:08:448] [FATAL - Gluttony\Gluttony\src\Core\EntryPoint.h - main:37] TEST Logger int: 3.141500
+[2023/11/13 - 21:09:57]  Log initialized
+   Inital Log Format: '[$B$T:$J$E] [$B$L$X - $A - $F:$G$E] $C'
+   Enabled Log Levels: Fatal + Error + Warn + Info + Debug + Trace
+========================================================================================================================
+[21:09:57:066] [TRACE - Gluttony\Gluttony\src\Core\EntryPoint.h - main:30] Testing Logger int: 5
+[21:09:57:066] [TRACE - Gluttony\Gluttony\src\Core\EntryPoint.h - main:31] SECOND check
+[21:09:57:067] [TRACE - Gluttony\Gluttony\src\Core\EntryPoint.h - main:33] TEST Logger int: 5
+[21:09:57:067] [DEBUG - Gluttony\Gluttony\src\Core\EntryPoint.h - main:34] TEST Logger int: 3.141500
+[21:09:57:068] [INFO  - Gluttony\Gluttony\src\Core\EntryPoint.h - main:35] TEST Logger int: 5
+[21:09:57:068] [WARN  - Gluttony\Gluttony\src\Core\EntryPoint.h - main:36] TEST Logger int: 3.141500
+[21:09:57:069] [ERROR - Gluttony\Gluttony\src\Core\EntryPoint.h - main:37] TEST Logger int: 1471412776
+[21:09:57:070] [FATAL - Gluttony\Gluttony\src\Core\EntryPoint.h - main:38] TEST Logger int: 3.141500
