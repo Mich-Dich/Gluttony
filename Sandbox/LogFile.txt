@@ -1,0 +1,1 @@
+[19:12:48] [FATAL - Gluttony\Gluttony\src\Core\EntryPoint.h - main:47] TEST Logger int: 5

@@ -7,3 +7,5 @@ Gluttony/ApplicationLogs/
 
 # Files
 *.user
+*.vcxproj
+**.vcxproj
