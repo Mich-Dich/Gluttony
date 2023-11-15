@@ -1,7 +1,6 @@
 #pragma once
 
-#include <sstream>
-
+#include "glpch.h"
 #include "Event.h"
 
 namespace Gluttony {

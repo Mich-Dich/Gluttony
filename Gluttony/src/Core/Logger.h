@@ -1,7 +1,6 @@
 #pragma once
 
-#include <string>
-#include <sstream>
+#include "glpch.h"
 
 #include "core.h"
 
@@ -55,8 +54,7 @@ namespace Gluttony {
 	//  3    =>   buffer: TRACE + DEBUG + INFO
 	//  4    =>   buffer: TRACE + DEBUG + INFO + WARN
 	void set_buffer_Level(int newLevel);
-	char* shorten_File_Path(char* fullPath, const char* displayedPathStart);
-	char* shorten_Func_Name(char* funcName, const char* displayedFuncNameStart);
+	inline char* shorten_String(char* funcName, const char* displayedFuncNameStart);
 
 	void GLUTTONY_API LogMsg(LogSeverityLevel level, const char* fileName, const char* funcName, int line, const char* message, ...);
 }
@@ -169,14 +167,16 @@ namespace Gluttony {
 /*  ===================================================================================  Assertion & Validation  ===================================================================================*/
 
 #define GL_ASSERT(expr, successMsg, failureMsg, ...)						\
-	if (expr) {	GL_LOG_CORE_Trace(successMsg, __VA_ARGS__);					\
+	if (expr) {																\
+		GL_LOG_CORE_Trace(successMsg, __VA_ARGS__);							\
 	} else {																\
 		GL_LOG_CORE_Fatal(failureMsg, __VA_ARGS__);							\
 		abort();															\
 	}
 
 #define GL_VALIDATE(expr, successMsg, failureMsg, RetVal, ...)				\
-	if (expr) {	GL_LOG_CORE_Trace(failureMsg, __VA_ARGS__);					\
+	if (expr) {																\
+		GL_LOG_CORE_Trace(failureMsg, __VA_ARGS__);							\
 	} else {																\
 		GL_LOG_CORE_Fatal(failureMsg, __VA_ARGS__);							\
 		return RetVal;														\

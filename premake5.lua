@@ -1,10 +1,3 @@
--- Function to create a directory if it doesn't exist
-function createDirectoryIfNeeded(directory)
-    if not os.isdir(directory) then
-        os.mkdir(directory)
-    end
-end
-
 workspace "Gluttony"
 	platforms "x64"
 
@@ -15,18 +8,24 @@ workspace "Gluttony"
 		"Dist"
 	}
 
-outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
+	outputs  = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
+
+	-- Include directories relative to root folder (solution directory)
+	IncludeDir = {}
+	IncludeDir["GLFW"] = "Gluttony/vendor/GLFW/include"
+
+	include "Gluttony/vendor/GLFW"
 
 project "Gluttony"
 	location "Gluttony"
 	kind "SharedLib"
 	language "C++"
-	
-	-- Call the function to create the output directory
-	createDirectoryIfNeeded("../bin/" .. outputdir .. "/Sandbox")
 
-	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
+	targetdir ("bin/" .. outputs  .. "/%{prj.name}")
+	objdir ("bin-int/" .. outputs  .. "/%{prj.name}")
+
+	pchheader "glpch.h"
+	pchsource "Gluttony/src/glpch.cpp"
 
 	files
     {
@@ -36,7 +35,14 @@ project "Gluttony"
 
 	includedirs
 	{
-		"%{prj.name}/src"
+		"%{prj.name}/src",
+		"%{IncludeDir.GLFW}"
+	}
+	
+	links 
+	{ 
+		"GLFW",
+		"opengl32.lib"
 	}
 
 	filter "system:windows"
@@ -52,21 +58,22 @@ project "Gluttony"
 
 		postbuildcommands
 		{
-			-- Call the function to create the output directory
-			createDirectoryIfNeeded("../bin/" .. outputdir .. "/Sandbox")
-			("{COPY} %{cfg.buildtarget.relpath} ../bin/" .. outputdir .. "/Sandbox")
+			("{COPY} %{cfg.buildtarget.relpath} ../bin/" .. outputs  .. "/Sandbox")
 		}
 
 	filter "configurations:Debug"
 		defines "GL_DEBUG"
+		buildoptions "/MDd"
 		symbols "On"
 
 	filter "configurations:Release"
 		defines "GL_RELEASE"
+		buildoptions "/MD"
 		optimize "On"
 
 	filter "configurations:Dist"
 		defines "GL_DIST"
+		buildoptions "/MD"
 		optimize "On"
 
 project "Sandbox"
@@ -74,8 +81,8 @@ project "Sandbox"
 	kind "ConsoleApp"
 	language "C++"
 
-	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
-	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
+	targetdir ("bin/" .. outputs  .. "/%{prj.name}")
+	objdir ("bin-int/" .. outputs  .. "/%{prj.name}")
 
 	files
 	{
@@ -105,12 +112,15 @@ project "Sandbox"
 
 	filter "configurations:Debug"
 		defines "GL_DEBUG"
+		buildoptions "/MDd"
 		symbols "On"
 
 	filter "configurations:Release"
 		defines "GL_RELEASE"
+		buildoptions "/MD"
 		optimize "On"
 
 	filter "configurations:Dist"
 		defines "GL_DIST"
+		buildoptions "/MD"
 		optimize "On"

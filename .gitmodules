@@ -1,0 +1,3 @@
+[submodule "Gluttony/vendor/GLFW"]
+	path = Gluttony/vendor/GLFW
+	url = https://github.com/Mich-Dich/glfw

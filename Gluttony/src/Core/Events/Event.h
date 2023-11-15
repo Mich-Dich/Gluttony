@@ -1,8 +1,6 @@
 #pragma once
 
-#include <string>
-#include <functional>
-
+#include "glpch.h"
 #include "Core/core.h"
 
 namespace Gluttony {
@@ -34,9 +32,9 @@ namespace Gluttony {
 
 	class GLUTTONY_API Event {
 
-		friend class EventDispacher;
-
 	public:
+		bool Handeled = false;
+
 		virtual EventType GetEventType() const = 0;
 		virtual const char* GetName() const = 0;
 		virtual int GetCategoryFlag() const = 0;
@@ -44,8 +42,6 @@ namespace Gluttony {
 
 		inline bool IsInCategory(EventCategory category) { return (GetCategoryFlag() & category); }
 
-	protected:
-		bool Handel_m = false;
 	};
 
 	class EventDispacher {
@@ -54,14 +50,14 @@ namespace Gluttony {
 		using EventFn = std::function<bool(T&)>;
 
 	public:
-		EventDispacher(Event& event) : Event_m(event) {}
+		EventDispacher(Event& event) : m_Evemt(event) {}
 
 		template<typename T>
 		bool Dispacher(EventFn<T> func) {
 
-			if (Evemt_m.GetEventType() == T::GetStaticType()) {
+			if (m_Evemt.GetEventType() == T::GetStaticType()) {
 
-				Event_m.Handel_m = func(*(T*)&Event_m);
+				m_Evemt.Handeled = func(*(T*)&m_Evemt);
 				return true;
 			}
 			return false;
@@ -69,7 +65,7 @@ namespace Gluttony {
 
 	private:
 
-		Event& Event_m;
+		Event& m_Evemt;
 	};
 
 	// inline std::ostream& operator<<(std::ostream & os, const Event & e) { return os << e.ToString(); }

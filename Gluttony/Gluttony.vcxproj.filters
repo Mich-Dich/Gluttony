@@ -4,6 +4,9 @@
     <Filter Include="Core">
       <UniqueIdentifier>{2EB4837C-1AEB-840D-C3D7-6A10AFED000F}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Core\Events">
+      <UniqueIdentifier>{52201B74-BED5-9369-47CA-8D40B37E8A6D}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Core\Application.h">
@@ -12,6 +15,18 @@
     <ClInclude Include="src\Core\EntryPoint.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\Core\Events\ApplicationEvent.h">
+      <Filter>Core\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Core\Events\Event.h">
+      <Filter>Core\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Core\Events\KeyEvent.h">
+      <Filter>Core\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Core\Events\MouseEvent.h">
+      <Filter>Core\Events</Filter>
+    </ClInclude>
     <ClInclude Include="src\Core\Logger.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -19,10 +34,11 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="src\Gluttony.h" />
-    <ClInclude Include="src\Core\Events\Event.h" />
-    <ClInclude Include="src\Core\Events\ApplicationEvent.h" />
-    <ClInclude Include="src\Core\Events\KeyEvent.h" />
-    <ClInclude Include="src\Core\Events\MouseEvent.h" />
+    <ClInclude Include="src\glpch.h" />
+    <ClInclude Include="src\Core\Window.h" />
+    <ClInclude Include="src\Platform\Windows\WindowsWin.h" />
+    <ClInclude Include="src\Core\Layer.h" />
+    <ClInclude Include="src\Core\LayerStack.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Core\Application.cpp">
@@ -31,5 +47,9 @@
     <ClCompile Include="src\Core\Logger.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="src\glpch.cpp" />
+    <ClCompile Include="src\Platform\Windows\WindowsWin.cpp" />
+    <ClCompile Include="src\Core\Layer.cpp" />
+    <ClCompile Include="src\Core\LayerStack.cpp" />
   </ItemGroup>
 </Project>

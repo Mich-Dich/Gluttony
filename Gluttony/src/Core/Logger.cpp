@@ -1,10 +1,5 @@
-#include <stdio.h>
-#include <cstdarg>
-#include <fstream>
-#include <iostream>
-#include <iomanip>
-#include <sstream>
-#include <windows.h>
+
+#include "glpch.h"
 
 #include "Logger.h"
 
@@ -119,7 +114,7 @@ namespace Gluttony {
 
 
         // Loop over Format string and build Final Message
-        int FormatLen = strlen(LogMessageFormat);
+        int FormatLen = static_cast<int>(strlen(LogMessageFormat));
         for (int x = 0; x < FormatLen; x++) {
 
             if (LogMessageFormat[x] == '$' && x + 1 < FormatLen) {
@@ -170,18 +165,18 @@ namespace Gluttony {
                 case 'F':
                     // Copy File String to 
                     length = strlen(funcName);
-                    strncpy(char_Buffer, funcName, length);
+                    strncpy_s(char_Buffer, funcName, length);
                     char_Buffer[length] = '\0';
-                    Format_Filled << shorten_Func_Name(char_Buffer, displayed_FuncName_Start);
+                    Format_Filled << shorten_String(char_Buffer, displayed_FuncName_Start);
                     break;
 
                     // File Name
                 case 'A':
                     // Copy File String to 
                     length = strlen(fileName);
-                    strncpy(char_Buffer, fileName, length);
+                    strncpy_s(char_Buffer, fileName, length);
                     char_Buffer[length] = '\0';
-                    Format_Filled << shorten_File_Path(char_Buffer, displayed_Path_Start);
+                    Format_Filled << shorten_String(char_Buffer, displayed_Path_Start);
                     break;
 
                     // Line
@@ -272,23 +267,8 @@ namespace Gluttony {
         }
     }
 
-
-    // Function to extract important path
-    char* shorten_File_Path(char* fullPath, const char* displayedPathStart) {
-        const char* position = strstr(fullPath, displayedPathStart);
-
-        if (position != nullptr) {
-
-            size_t remainingLength = strlen(position + strlen(displayedPathStart));
-            strncpy(fullPath, position + strlen(displayedPathStart), remainingLength);
-            fullPath[remainingLength] = '\0';
-        }
-
-        return fullPath;
-    }
-
     // Function to extract important funName
-    char* shorten_Func_Name(char* funcName, const char* displayedFuncNameStart) {
+    inline char* shorten_String(char* funcName, const char* displayedFuncNameStart) {
 
         const char* position = strstr(funcName, displayedFuncNameStart);
 

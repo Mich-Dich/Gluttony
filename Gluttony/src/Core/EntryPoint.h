@@ -1,17 +1,8 @@
 #pragma once
 
+#include "glpch.h"
+
 #ifdef GL_PLATFORM_WINDOWS
-
-#include <stdio.h>
-
-#include <algorithm>
-#include <iostream>
-#include <list>
-#include <map>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <windows.h>
 
 
 extern Gluttony::Application* Gluttony::CreateApplication();
@@ -22,7 +13,7 @@ int main(int argc, char** argv) {
 	Gluttony::Log_Init("logFileCORE.txt", "logFile.txt", "[$B$T:$J$E] [$B$L$X $A - $F:$G$E] $C");
 
 	int testInt = 5;
-	float TestFloat = 3.1415;
+	float TestFloat = static_cast<float>(3.1415);
 
 	GL_ASSERT(10 < 42, "", "FAILURE");
 	//GL_VALIDATE(10 > 42, "SUCCESS", "FAILURE", 0);
