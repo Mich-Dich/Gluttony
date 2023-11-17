@@ -48,6 +48,8 @@ namespace Gluttony {
         for (int x = 0; x < LOG_LEVEL_ENABLED + 2; x++)
             Init_Message << loc_level_str[x];
 
+        Init_Message << std::endl << SeperatorStringBig;
+
         // Write the content to a file
         std::ofstream outputFile(LogFileName);
         if (outputFile.is_open()) {
@@ -58,7 +60,8 @@ namespace Gluttony {
             return -1;
         }
 
-        GL_SEPERATOR_BIG;
+        GL_LOG_CORE(Trace, "Subsystem [Logger] initialized");
+        //GL_LOG_CORE_SEPERATOR_BIG;
         return 0;
     }
 
@@ -252,7 +255,6 @@ namespace Gluttony {
         }
 
         Format_Filled << "\0";
-
         result_Intermediate = Format_Filled.str();
         std::cout << result_Intermediate << std::endl;
 
@@ -262,6 +264,7 @@ namespace Gluttony {
         // Write the content to a file
         std::ofstream outputFile(LogFileName, std::ios::app);
         if (outputFile.is_open()) {
+
             outputFile << result << std::endl;
             outputFile.close();
         }

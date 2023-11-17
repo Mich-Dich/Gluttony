@@ -1,43 +1,20 @@
-[2023/11/15 - 19:53:43]  Log initialized
+[2023/11/17 - 09:27:01]  Log initialized
    Inital Log Format: '[$B$T:$J$E] [$B$L$X $A - $F:$G$E] $C'
    Enabled Log Levels: Fatal + Error + Warn + Info + Debug + Trace
-========================================================================================================================
-[19:53:43:231] [TRACE Core\EntryPoint.h - main:21] Testing Logger int: 5
-[19:53:43:231] [TRACE Core\EntryPoint.h - main:22] SECOND check
-[19:53:43:232] [TRACE Core\EntryPoint.h - main:24] TEST Logger int: 5
-[19:53:43:233] [DEBUG Core\EntryPoint.h - main:25] TEST Logger int: 3.141500
-[19:53:43:233] [INFO  Core\EntryPoint.h - main:26] TEST Logger int: 5
-[19:53:43:233] [WARN  Core\EntryPoint.h - main:27] TEST Logger int: 3.141500
-[19:53:43:234] [ERROR Core\EntryPoint.h - main:28] TEST Logger int: 5
-[19:53:43:234] [FATAL Core\EntryPoint.h - main:29] TEST Logger int: 3.141500
-[19:53:43:236] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 792 Y: 265]
-[19:53:44:026] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 845 Y: 225]
-[19:53:44:043] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 882 Y: 190]
-[19:53:44:059] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 919 Y: 156]
-[19:53:44:076] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 957 Y: 127]
-[19:53:44:093] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 990 Y: 106]
-[19:53:44:094] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 997 Y: 102]
-[19:53:44:110] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1016 Y: 93]
-[19:53:44:111] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1020 Y: 91]
-[19:53:44:127] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1036 Y: 85]
-[19:53:44:143] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1047 Y: 82]
-[19:53:44:160] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1056 Y: 79]
-[19:53:44:161] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1058 Y: 77]
-[19:53:44:177] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1070 Y: 68]
-[19:53:44:193] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1084 Y: 57]
-[19:53:44:210] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1101 Y: 46]
-[19:53:44:226] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1120 Y: 36]
-[19:53:44:243] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1137 Y: 28]
-[19:53:44:244] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1141 Y: 26]
-[19:53:44:260] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1154 Y: 20]
-[19:53:44:261] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1157 Y: 18]
-[19:53:44:276] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1168 Y: 14]
-[19:53:44:293] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1180 Y: 10]
-[19:53:44:310] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1191 Y: 10]
-[19:53:44:326] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1199 Y: 9]
-[19:53:44:327] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1201 Y: 8]
-[19:53:44:343] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1205 Y: 7]
-[19:53:44:360] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1210 Y: 5]
-[19:53:44:377] [TRACE Core\Application.cpp - Application::OnEvent:23] Event - MouseMoved [X: 1214 Y: 1]
-[19:53:44:885] [TRACE Core\Application.cpp - Application::OnEvent:23] WindowClose
-[19:53:44:886] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Shutdown:128] Destroying Window
+====================================================================================================================
+[09:27:01:188] [TRACE Core\Logger.cpp - Log_Init:63] Subsystem [Logger] initialized
+[09:27:01:189] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Init:23] Creating Window [Gluttony width:1280, height: 720]
+[09:27:01:225] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Init:27] GLFW initialized
+[09:27:02:348] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1038 Y: 3]
+[09:27:02:381] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1055 Y: 6]
+[09:27:02:383] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1057 Y: 6]
+[09:27:02:415] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1070 Y: 6]
+[09:27:02:448] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1079 Y: 6]
+[09:27:02:482] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1092 Y: 15]
+[09:27:02:483] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1094 Y: 16]
+[09:27:02:515] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1110 Y: 21]
+[09:27:02:517] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1112 Y: 21]
+[09:27:02:548] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1133 Y: 20]
+[09:27:02:549] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1136 Y: 19]
+[09:27:02:581] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1159 Y: 6]
+[09:27:03:143] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Shutdown:128] Destroying Window

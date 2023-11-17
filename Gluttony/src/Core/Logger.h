@@ -57,6 +57,9 @@ namespace Gluttony {
 	inline char* shorten_String(char* funcName, const char* displayedFuncNameStart);
 
 	void GLUTTONY_API LogMsg(LogSeverityLevel level, const char* fileName, const char* funcName, int line, const char* message, ...);
+
+	static std::string SeperatorStringBig = "====================================================================================================================";
+	static std::string SeperatorStringSmall = "--------------------------------------------------------------------------------------------------------------------";
 }
 
 // This enables the verious levels of the logging function (FATAL & ERROR are always on)
@@ -67,6 +70,7 @@ namespace Gluttony {
 //  4    =>   FATAL + ERROR + WARN + INFO + DEBUG + TRACE
 #define LOG_LEVEL_ENABLED 4
 #define LOG_CLIENT_LEVEL_ENABLED 4
+#define ASSERTS_ENABLED 1
 
 
 #define MAX_MEASSGE_SIZE 1024
@@ -101,18 +105,20 @@ namespace Gluttony {
 #if LOG_LEVEL_ENABLED >= 4
 	#define GL_LOG_CORE_Trace(message, ...)		Gluttony::LogMsg(Gluttony::LogSeverityLevel::Trace, __FILE__, __FUNCTION__, __LINE__, message, __VA_ARGS__)
 	// Insert a seperatioon line in Logoutput (-------)
-	#define GL_SEPERATOR_CORE	Set_Format("$C");																												\
-				GL_LOG_CORE_Trace("------------------------------------------------------------------------------------------------------------------------");	\
-				Use_Format_Backup();
+	#define GL_LOG_CORE_SEPERATOR																\
+					Gluttony::Set_Format("$C");													\
+					GL_LOG_CORE_Trace(Gluttony::SeperatorStringSmall.c_str());					\
+					Gluttony::Use_Format_Backup();
 
 	// Insert a seperatioon line in Logoutput (=======)
-	#define GL_SEPERATOR_BIG_CORE	Set_Format("$C");																											\
-				GL_LOG_CORE_Trace("========================================================================================================================");	\
-				Use_Format_Backup();
+	#define GL_LOG_CORE_SEPERATOR_BIG															\
+					Gluttony::Set_Format("$C");													\
+					GL_LOG_CORE_Trace(Gluttony::SeperatorStringBig.c_str());					\
+					Gluttony::Use_Format_Backup();
 #else
 	#define GL_LOG_CORE_Trace(message, ...)
-	#define GL_SEPERATOR_CORE
-	#define GL_SEPERATOR_BIG_CORE
+	#define GL_LOG_CORE_SEPERATOR
+	#define GL_LOG_CORE_SEPERATOR_BIG
 #endif
 
 /*  ===================================================================================  Client Logging Macros  ===================================================================================*/
@@ -146,15 +152,15 @@ namespace Gluttony {
 	#define GL_LOG_Trace(message, ...)		Gluttony::LogMsg(Gluttony::LogSeverityLevel::Trace, __FILE__, __FUNCTION__, __LINE__, message, __VA_ARGS__)
 	// Insert a seperatioon line in Logoutput (-------)
 	#define GL_SEPERATOR																																	\
-			Set_Format("$C");																																\
-			GL_LOG_Trace("------------------------------------------------------------------------------------------------------------------------");	\
-			Use_Format_Backup();
+				Gluttony::Set_Format("$C");																																\
+				GL_LOG_Trace(Gluttony::SeperatorStringSmall.c_str());	\
+				Gluttony::Use_Format_Backup();
 
 	// Insert a seperatioon line in Logoutput (=======)
 	#define GL_SEPERATOR_BIG																																\
-			Set_Format("$C");																																\
-			GL_LOG_Trace("========================================================================================================================");	\
-			Use_Format_Backup();
+				Gluttony::Set_Format("$C");																																\
+				GL_LOG_Trace(Gluttony::SeperatorStringBig.c_str());	\
+				Gluttony::Use_Format_Backup();
 #else
 	#define GL_LOG_Trace(message, ...)
 	#define GL_SEPERATOR
@@ -166,18 +172,22 @@ namespace Gluttony {
 
 /*  ===================================================================================  Assertion & Validation  ===================================================================================*/
 
-#define GL_ASSERT(expr, successMsg, failureMsg, ...)						\
-	if (expr) {																\
-		GL_LOG_CORE_Trace(successMsg, __VA_ARGS__);							\
-	} else {																\
-		GL_LOG_CORE_Fatal(failureMsg, __VA_ARGS__);							\
-		abort();															\
-	}
+#ifdef ASSERTS_ENABLED
+	#define GL_ASSERT(expr, successMsg, failureMsg, ...)						\
+		if (expr) {																\
+			GL_LOG_CORE_Trace(successMsg, __VA_ARGS__);							\
+		} else {																\
+			GL_LOG_CORE_Fatal(failureMsg, __VA_ARGS__);							\
+			abort();															\
+		}
+#else
+	#define GL_CORE_ASSERT(expr, successMsg, failureMsg, ...)		expr;
+#endif // ASSERTS_ENABLED
 
-#define GL_VALIDATE(expr, successMsg, failureMsg, RetVal, ...)				\
-	if (expr) {																\
-		GL_LOG_CORE_Trace(failureMsg, __VA_ARGS__);							\
-	} else {																\
-		GL_LOG_CORE_Fatal(failureMsg, __VA_ARGS__);							\
-		return RetVal;														\
+#define GL_VALIDATE(expr, successMsg, failureMsg, RetVal, ...)					\
+	if (expr) {																	\
+		GL_LOG_CORE_Trace(failureMsg, __VA_ARGS__);								\
+	} else {																	\
+		GL_LOG_CORE_Fatal(failureMsg, __VA_ARGS__);								\
+		return RetVal;															\
 	}

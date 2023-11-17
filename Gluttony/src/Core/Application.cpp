@@ -24,7 +24,7 @@ namespace Gluttony {
 
 	void Application::OnEvent(Event& event) {
 
-		GL_LOG_CORE(Trace, event.ToString().c_str());
+		GL_LOG_CORE(Trace, event.ToChar());
 		EventDispacher dispacher(event);
 		dispacher.Dispacher<WindowCloseEvent>(BIND_EVENT_FN(Application::OnWindowClose));
 
