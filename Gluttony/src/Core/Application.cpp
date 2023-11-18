@@ -4,13 +4,18 @@
 #include "Core/Events/ApplicationEvent.h"
 #include "Core/Logger.h"
 
-#include <GLFW/glfw3.h>
+#include <glad/glad.h>
 
 namespace Gluttony {
 
 #define BIND_EVENT_FN(x)	std::bind(&x, this, std::placeholders::_1)
 
+	Application* Application::s_Instance = nullptr;
+
 	Application::Application() {
+		
+		GL_ASSERT(!s_Instance, "", "Application already exists")
+		s_Instance = this;
 
 		m_Window = std::unique_ptr<Window>(Window::Create());
 		m_Window->SetEventCallback(BIND_EVENT_FN(Application::OnEvent));
@@ -18,13 +23,21 @@ namespace Gluttony {
 
 	Application::~Application() {}
 
-	void Application::PushLeayer(Layer* layer) { m_LayerStack.PushLayer(layer); }
+	void Application::PushLayer(Layer* layer) { 
+		
+		m_LayerStack.PushLayer(layer);
+		layer->OnAttach();
+	}
 
-	void Application::PushOverlay(Layer* layer) { m_LayerStack.PushOverlay(layer); }
+	void Application::PushOverlay(Layer* layer) { 
+		
+		m_LayerStack.PushOverlay(layer);
+		layer->OnAttach();
+	}
 
 	void Application::OnEvent(Event& event) {
 
-		GL_LOG_CORE(Trace, event.ToChar());
+		//GL_LOG_CORE(Trace, event.ToString().c_str());
 		EventDispacher dispacher(event);
 		dispacher.Dispacher<WindowCloseEvent>(BIND_EVENT_FN(Application::OnWindowClose));
 

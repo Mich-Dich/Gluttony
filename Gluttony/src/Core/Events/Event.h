@@ -39,7 +39,6 @@ namespace Gluttony {
 		virtual const char* GetName() const = 0;
 		virtual int GetCategoryFlag() const = 0;
 		virtual std::string ToString() const { return GetName(); }
-		virtual const char* ToChar() const { return ToString().c_str(); }
 
 		inline bool IsInCategory(EventCategory category) { return (GetCategoryFlag() & category); }
 
@@ -54,7 +53,7 @@ namespace Gluttony {
 		EventDispacher(Event& event) : m_Evemt(event) {}
 
 		template<typename T>
-		bool Dispacher(EventFn<T> func) {
+		bool Dispach(EventFn<T> func) {
 
 			if (m_Evemt.GetEventType() == T::GetStaticType()) {
 

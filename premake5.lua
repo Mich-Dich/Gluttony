@@ -13,8 +13,12 @@ workspace "Gluttony"
 	-- Include directories relative to root folder (solution directory)
 	IncludeDir = {}
 	IncludeDir["GLFW"] = "Gluttony/vendor/GLFW/include"
+	IncludeDir["glad"] = "Gluttony/vendor/glad/include"
+	IncludeDir["ImGui"] = "Gluttony/vendor/ImGui"
 
 	include "Gluttony/vendor/GLFW"
+	include "Gluttony/vendor/glad"
+	include "Gluttony/vendor/ImGui"
 
 project "Gluttony"
 	location "Gluttony"
@@ -36,12 +40,16 @@ project "Gluttony"
 	includedirs
 	{
 		"%{prj.name}/src",
-		"%{IncludeDir.GLFW}"
+		"%{IncludeDir.GLFW}",
+		"%{IncludeDir.glad}",
+		"%{IncludeDir.ImGui}"
 	}
 	
 	links 
 	{ 
 		"GLFW",
+		"glad",
+		"ImGui",
 		"opengl32.lib"
 	}
 
@@ -53,7 +61,8 @@ project "Gluttony"
 		defines
 		{
 			"GL_PLATFORM_WINDOWS",
-			"GL_BUILD_DLL"
+			"GL_BUILD_DLL",
+			"GLFW_INCLUDE_NONE"
 		}
 
 		postbuildcommands

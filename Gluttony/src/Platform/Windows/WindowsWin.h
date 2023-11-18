@@ -4,7 +4,6 @@
 
 #include <GLFW/glfw3.h>
 
-
 namespace Gluttony {
 
 	class WindowsWin : public Window {

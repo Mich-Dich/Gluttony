@@ -11,3 +11,5 @@
 #endif // GL_PLATFORM_WINDOWS
 
 #define BIT(x) (1 << x)
+
+#define GL_BIND_EVENT_FN(func) std::bind(&func, this, std::placeholders::_1)

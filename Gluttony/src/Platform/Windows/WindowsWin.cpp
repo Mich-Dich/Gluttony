@@ -5,6 +5,8 @@
 #include "Core/Events/MouseEvent.h"
 #include "Core/Events/KeyEvent.h"
 
+#include "glad/glad.h"
+
 namespace Gluttony {
 
 	static bool s_GLFWinitialized = false;
@@ -32,6 +34,7 @@ namespace Gluttony {
 
 		m_Window = glfwCreateWindow((int)attributes.Width, (int)attributes.Height, m_Data.Title.c_str(), nullptr, nullptr);
 		glfwMakeContextCurrent(m_Window);
+		GL_ASSERT(gladLoadGLLoader((GLADloadproc)glfwGetProcAddress), "", "Failed to Initialize [glad]")
 		glfwSetWindowUserPointer(m_Window, &m_Data);
 		SetVSync(true);
 		

@@ -1,20 +1,9 @@
-[2023/11/17 - 09:27:01]  Log initialized
+[2023/11/18 - 10:52:55]  Log initialized
    Inital Log Format: '[$B$T:$J$E] [$B$L$X $A - $F:$G$E] $C'
    Enabled Log Levels: Fatal + Error + Warn + Info + Debug + Trace
 ====================================================================================================================
-[09:27:01:188] [TRACE Core\Logger.cpp - Log_Init:63] Subsystem [Logger] initialized
-[09:27:01:189] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Init:23] Creating Window [Gluttony width:1280, height: 720]
-[09:27:01:225] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Init:27] GLFW initialized
-[09:27:02:348] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1038 Y: 3]
-[09:27:02:381] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1055 Y: 6]
-[09:27:02:383] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1057 Y: 6]
-[09:27:02:415] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1070 Y: 6]
-[09:27:02:448] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1079 Y: 6]
-[09:27:02:482] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1092 Y: 15]
-[09:27:02:483] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1094 Y: 16]
-[09:27:02:515] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1110 Y: 21]
-[09:27:02:517] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1112 Y: 21]
-[09:27:02:548] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1133 Y: 20]
-[09:27:02:549] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1136 Y: 19]
-[09:27:02:581] [TRACE Core\Application.cpp - Application::OnEvent:27] Event - MouseMoved [X: 1159 Y: 6]
-[09:27:03:143] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Shutdown:128] Destroying Window
+[10:52:55:051] [TRACE Core\Logger.cpp - Log_Init:63] Subsystem [Logger] initialized
+[10:52:55:052] [TRACE Sandbox.cpp - CreateApplication:34] CreateApplication()
+[10:52:55:052] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Init:25] Creating Window [°{ width:1280, height: 720]
+[10:52:55:087] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Init:29] GLFW initialized
+[10:53:08:919] [TRACE Platform\Windows\WindowsWin.cpp - WindowsWin::Shutdown:131] Destroying Window
