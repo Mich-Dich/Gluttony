@@ -1,14 +1,12 @@
 
 #pragma once
 
-#include "util/timing/interval_controller.h"
+#include <vulkan/vulkan.hpp>
+#include <glslang/Public/ShaderLang.h>
+// #include <dxc/dxcapi.h>
+
 
 // FORWARD DECLARATIONS ================================================================================================
-
-namespace GLT::platform {
-    class i_window_plugin;
-}
-
 
 namespace GLT {
 
@@ -26,28 +24,18 @@ namespace GLT {
 
     // CLASS DECLARATION ===============================================================================================
 
-    class application {
+    class shader_compiler {
     public:
-        
-        application(int argc, char* argv[]);
-        ~application();
 
-        GETTER(ref<GLT::platform::i_window_plugin>,     window, mp_window)
+        shader_compiler();
+        ~shader_compiler();
 
-        FORCE_INLINE_R static application& get()	    { return *s_instance; }
-
-        void run();
-        
-        void set_target_fps(const f32 fps);
+        std::vector<u32> compile_glsl_to_spirv(const std::filesystem::path& source_path);
 
     private:
-        
-        static application*			                    s_instance;
-        version                                         m_version{};
-        ref<GLT::platform::i_window_plugin>             mp_window{};
-        bool                                            m_running = true;
-        util::interval_controller                       m_fps_controller{};
 
+        static bool         initialized;
     };
+
 
 }

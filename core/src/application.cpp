@@ -20,11 +20,17 @@ namespace GLT {
 
     // STATIC VARIABLES ================================================================================================
 
+    application*                application::s_instance = nullptr;
+
     // FUNCTION IMPLEMENTATION =========================================================================================
 
     // CLASS IMPLEMENTATION ============================================================================================
 
     application::application(int argc, char* argv[]) {
+
+        // PROFILE_APPLICATION_FUNCTION();
+        ASSERT(!s_instance, "", "Application already exists");
+        s_instance = this;
 
         plugin_manager::load_plugins(plugin_manager::load_phase::pre_application);
         mp_window = plugin_manager::get_plugin_ref<platform::i_window_plugin>(plugin_manager::targeted_interface::window);
@@ -53,8 +59,9 @@ namespace GLT {
 
         mp_window->destroy();
         mp_window.reset();
-
+        
         plugin_manager::load_plugins(plugin_manager::load_phase::post_application_shutdown);
+        s_instance = nullptr;
         LOG_SHUTDOWN
     }
 

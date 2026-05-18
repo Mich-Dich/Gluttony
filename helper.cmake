@@ -16,6 +16,45 @@
 
 include_guard(GLOBAL)
 
+
+# helper.cmake
+# Provides a generic function to clone a git repository if not already present.
+
+
+# Provides a reusable function to clone/fetch a Git repository into a vendor directory.
+function(git_clone_or_update REPO_URL TARGET_DIR)
+    # Optional: clone depth (default = 1 for shallow clone)
+    set(options)
+    set(oneValueArgs DEPTH)
+    set(multiValueArgs)
+    cmake_parse_arguments(GCOU "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    if(NOT DEFINED GCOU_DEPTH)
+        set(GCOU_DEPTH 1)
+    endif()
+
+    if(NOT EXISTS "${TARGET_DIR}")
+        message(STATUS "Repository not found in ${TARGET_DIR}. Cloning from ${REPO_URL} ...")
+        find_package(Git REQUIRED)
+
+        set(clone_cmd ${GIT_EXECUTABLE} clone --depth ${GCOU_DEPTH} "${REPO_URL}" "${TARGET_DIR}")
+        execute_process(
+            COMMAND ${clone_cmd}
+            RESULT_VARIABLE clone_result
+            ERROR_VARIABLE  clone_error
+        )
+        if(NOT clone_result EQUAL 0)
+            message(FATAL_ERROR "Failed to clone ${REPO_URL}: ${clone_error}")
+        endif()
+        message(STATUS "Repository cloned successfully into ${TARGET_DIR}")
+    else()
+        message(STATUS "Repository already present in ${TARGET_DIR}")
+        # Optional: 'git pull' to update? Usually you want a fixed commit.
+        # If you need updates, add a second function or an UPDATE option.
+    endif()
+endfunction()
+
+
 # ----------------------------------------------------------------------
 # Helper: 
 # ----------------------------------------------------------------------
@@ -59,6 +98,7 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
     endif()
 endfunction()
 
+
 # ----------------------------------------------------------------------
 # Helper: format a byte count into a human-readable string (binary units)
 # ----------------------------------------------------------------------
@@ -92,6 +132,7 @@ function(format_file_size SIZE_IN_BYTES OUT_VAR)
     endif()
 endfunction()
 
+
 # ----------------------------------------------------------------------
 # Helper: simple separator line
 # ----------------------------------------------------------------------
@@ -102,6 +143,7 @@ function(print_separator CHAR)
     string(RANDOM LENGTH 70 ALPHABET "${CHAR}${CHAR}${CHAR}${CHAR}${CHAR}" sep)
     message(STATUS "${sep}")
 endfunction()
+
 
 # ----------------------------------------------------------------------
 # Main function: print statistics & optionally add build-time messages

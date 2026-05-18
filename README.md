@@ -63,6 +63,9 @@ It’ll start up, discover any plugins in the `plugin/` directory, load the ones
 * **GLFW Window**
   A fully functional window plugin built on GLFW. It handles creation, input, and all the usual window callbacks (resize, move, focus, mouse, keyboard, drag‑and‑drop, etc.) and translates them into engine events via the event bus so any other system can react. Supports windowed / fullscreen / borderless fullscreen, vsync, cursor modes, and exposes a native window handle for rendering backends. It’s what makes the demo window open and respond to your mouse and keys.
 
+* **Virtual File System**
+  A unified filesystem abstraction using `vfspp`. It mounts the native OS filesystem at virtual `/` (configurable base path) and implements all core VFS operations: existence checks, directory listing, create/remove/rename/copy, and handle-based I/O (open/read/write/seek/tell/close). Thread-safe handle management with support for memory and ZIP backends planned.
+
 ---
 
 ## Current TODOs
@@ -73,7 +76,6 @@ It’ll start up, discover any plugins in the `plugin/` directory, load the ones
 - **Memory Manager** – Central allocator, tracking, and leak detection
 - **Configuration / Settings** – Typed settings API fed by config files and command line
 - **Input System** – Decoupled input processing: action maps, chords, device abstraction
-- **Virtual File System** – Mount directories and archives, provide unified async I/O
 - **Graphics API Abstraction (RHI)** – Thin wrapper over Vulkan/D3D12/OpenGL
 - **Render Hardware Interface (Device)** – GPU device, swapchain, primary render targets
 - **Renderer Frontend** – Drawing pipeline, mesh submission, materials, post‑processing

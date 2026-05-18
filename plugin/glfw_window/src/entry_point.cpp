@@ -17,7 +17,6 @@ namespace GLT::glfw_platform {
 
     // STATIC VARIABLES ================================================================================================
 
-
     static const char* dependencies_names[] = {
 
         nullptr

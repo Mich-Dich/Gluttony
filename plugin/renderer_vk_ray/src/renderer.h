@@ -1,18 +1,23 @@
 
 #pragma once
 
-#include "util/timing/interval_controller.h"
+#include <vk_ray/vk_ray.h>
+#include <vk_ray/builders/builders.h>
+// #include <imgui.h>
+// #include <backends/imgui_impl_glfw.h>
+// #include <backends/imgui_impl_vulkan.h>
+
+#include "util/data_structures.h"
+#include "util/shader_compiler.h"
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::platform {
-    class i_window_plugin;
-}
 
-
-namespace GLT {
+namespace GLT::renderer_vk_ray {
 
     // CONSTANTS =======================================================================================================
+
+    constexpr u32               MAX_CONCURRENT_FRAMES = 3;
 
     // MACROS ==========================================================================================================
 
@@ -26,27 +31,19 @@ namespace GLT {
 
     // CLASS DECLARATION ===============================================================================================
 
-    class application {
+    class renderer {
     public:
-        
-        application(int argc, char* argv[]);
-        ~application();
 
-        GETTER(ref<GLT::platform::i_window_plugin>,     window, mp_window)
+        renderer();
+        ~renderer();
 
-        FORCE_INLINE_R static application& get()	    { return *s_instance; }
-
-        void run();
-        
-        void set_target_fps(const f32 fps);
+        // DEFAULT_GETTER(weak_ref<GLT::camera>,           camera)
+        // DEFAULT_SETTER(ref<GLT::camera>,                camera)
 
     private:
-        
-        static application*			                    s_instance;
-        version                                         m_version{};
-        ref<GLT::platform::i_window_plugin>             mp_window{};
-        bool                                            m_running = true;
-        util::interval_controller                       m_fps_controller{};
+
+        // deletion_queue                                  m_deletion_queue{};
+        // ref<GLT::camera>                                m_camera{};
 
     };
 

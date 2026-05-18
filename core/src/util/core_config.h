@@ -11,10 +11,10 @@ namespace GLT {
 
     namespace config {
 
-        inline const std::string                    ASSET_EXTENTION(".gltasset");       // Extension for asset files
-        inline const std::string                    PROJECT_EXTENTION(".gltproj");      // Extension for project files
-        inline const std::string                    FILE_EXTENSION_CONFIG(".yml");      // Extension for YAML config files
-        inline const std::string                    FILE_EXTENSION_INI(".ini");         // Extension for INI config files
+        inline constexpr std::string                ASSET_EXTENTION(".gltasset");       // Extension for asset files
+        inline constexpr std::string                PROJECT_EXTENTION(".gltproj");      // Extension for project files
+        inline constexpr std::string                FILE_EXTENSION_CONFIG(".yml");      // Extension for YAML config files
+        inline constexpr std::string                FILE_EXTENSION_INI(".ini");         // Extension for INI config files
 
         inline const std::filesystem::path          METADATA_DIR("metadata");           // relative to executable dir
         inline const std::filesystem::path          CONFIG_DIR("config");               // relative to executable dir
@@ -23,24 +23,28 @@ namespace GLT {
         inline const std::filesystem::path          PLUGIN_DIR("plugin");               // relative to executable dir
 
         #if defined(PLATFORM_LINUX)
-            inline const std::string                GLT_HELPER("gluttony_helper");
+
+            inline constexpr std::string            GLT_HELPER("gluttony_helper");
+
         #elif defined(PLATFORM_WINDOWS)
-            inline const std::string                GLT_HELPER("gluttony_helper.exe");
+
+            inline constexpr std::string            GLT_HELPER("gluttony_helper.exe");
+
         #endif
 
     }
 
     // MACROS ==========================================================================================================
 
-    #if 0
-        #define RENDER_API_OPENGL
-    #else
+    #if 1
         #define RENDER_API_VULKAN
+    #else
+        #define RENDER_API_OPENGL
     #endif
 
     // collect timing-data from every major function?
-    #define PROFILE								    1	// general
-    #define PROFILE_APPLICATION                     1
+    #define PROFILE								    0	// general
+    #define PROFILE_APPLICATION                     0
     #define PROFILE_RENDERER                        0
 
     // log assert and validation behaviour?
