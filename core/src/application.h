@@ -8,6 +8,9 @@
 namespace GLT::platform {
     class i_window_plugin;
 }
+namespace GLT::render {
+    class i_renderer_plugin;
+}
 
 
 namespace GLT {
@@ -45,6 +48,7 @@ namespace GLT {
         static application*			                    s_instance;
         version                                         m_version{};
         ref<GLT::platform::i_window_plugin>             mp_window{};
+        ref<GLT::render::i_renderer_plugin>             mp_renderer{};
         bool                                            m_running = true;
         util::interval_controller                       m_fps_controller{};
 

@@ -17,10 +17,6 @@
 include_guard(GLOBAL)
 
 
-# helper.cmake
-# Provides a generic function to clone a git repository if not already present.
-
-
 # Provides a reusable function to clone/fetch a Git repository into a vendor directory.
 function(git_clone_or_update REPO_URL TARGET_DIR)
     # Optional: clone depth (default = 1 for shallow clone)

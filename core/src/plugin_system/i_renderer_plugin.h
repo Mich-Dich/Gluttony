@@ -26,6 +26,14 @@ namespace GLT::render {
         bindless_resources  = BIT(3),
     };
 
+
+    enum class backend_api : u8 {
+        vulkan = 0,
+        open_gl,
+        direct_x,
+        metal,
+    };
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -118,6 +126,9 @@ namespace GLT::render {
 
         // Returns a bitmask of supported renderer features.
         virtual renderer_feature get_supported_features() const = 0;
+
+
+        virtual backend_api get_backend_api() const = 0;
 
         // --- native access ---------------------------------------------------------
 

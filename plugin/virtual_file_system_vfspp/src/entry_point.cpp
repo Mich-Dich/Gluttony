@@ -95,8 +95,6 @@ namespace GLT::vfs_plugin {
             LOG_UNLOADED
         }
 
-        PLUGIN_GET_NAME
-
     };
 
 }

@@ -1,6 +1,5 @@
 
 #include "util/pch.h"
-#include "config/config.h"
 #include "plugin_system/plugin_manager.h"
 #include "application.h"
 

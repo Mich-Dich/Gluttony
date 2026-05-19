@@ -16,6 +16,12 @@ namespace GLT::platform {
 
     // TYPES ===========================================================================================================
 
+    enum class backend_api : u8 {
+        glfw = 0,
+        sdl,
+    };
+
+
     enum class window_size_state : u8 {
         windowed,
         minimized,
@@ -76,8 +82,13 @@ namespace GLT::platform {
         virtual void set_cursor_mode(cursor_mode mode) = 0;   // normal, hidden, captured
 
         virtual void poll_events() = 0;
+
+        virtual backend_api get_backend_api() = 0;
+        virtual const char** get_required_render_extensions(u32* count) = 0;
         
         // Returns a void* that render backends can cast (GLFWwindow*, HWND, etc.).
         virtual void* get_native_window_handle() = 0;
+        virtual window_attributes get_window_attributes() = 0;
+
     };
 }

@@ -11,8 +11,6 @@ namespace GLT::plugin_manager {
 
     // MACROS ==========================================================================================================
 
-    #define PLUGIN_GET_NAME         const char* get_name() const override { return GLT_MODULE_NAME; };
-
     #define EXPORT_PLUGIN_CLASS(plugin_class, descriptor_var)                                                           \
         extern "C" {                                                                                                    \
             const GLT::plugin_manager::plugin_descriptor* gluttony_plugin_descriptor() { return &descriptor_var; }      \
@@ -134,9 +132,7 @@ namespace GLT::plugin_manager {
         configuration,
         input_system,
         virtual_file_system,
-        graphics_api,
-        render_device,
-        renderer_frontend,
+        renderer,
         asset_registry,
         resource_cache,
         ecs,
@@ -189,9 +185,6 @@ namespace GLT::plugin_manager {
         // Called when the engine shuts down or the plugin is unloaded.
         // Clean up everything you registered in onLoad().
         virtual void on_unload() = 0;
-
-        // human‑readable name (can also come from the descriptor)
-        virtual const char* get_name() const = 0;
 
     };
 

@@ -102,6 +102,7 @@
 #include "timing/interval_controller.h"
 #include "timing/stopwatch.h"
 #include "util.h"
+#include "config/config.h"
 
 // #include "platform/window.h"
 // #include "layer/layer.h"

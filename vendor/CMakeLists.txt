@@ -6,31 +6,24 @@
 # Important:    Builds before core to satisfy dependencies
 # =============================================================================
 
-# GLM - Header-only library
-add_library(glm                     INTERFACE)
-target_include_directories(glm      INTERFACE
+
+include(${CMAKE_SOURCE_DIR}/helper.cmake)
+
+
+set(VENDOR_DIR                                              "${CMAKE_SOURCE_DIR}/vendor")
+set(GLM_DIR                                                 "${VENDOR_DIR}/glm")
+
+# clone libs for core (or ones that are shared accross multiple plugins)
+git_clone_or_update("git@github.com:icaven/glm.git"         "${GLM_DIR}" DEPTH 1)
+
+
+
+
+add_library(glm                                             INTERFACE)
+target_include_directories(glm                              INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/glm
-    # ${CMAKE_CURRENT_SOURCE_DIR}/vma/include
-    # ${CMAKE_CURRENT_SOURCE_DIR}/stb_image
-    # ${CMAKE_CURRENT_SOURCE_DIR}/imgui
-    # ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
 )
 
-# # GLFW - Library that needs to be built
-# set(GLFW_BUILD_OPENGL       OFF CACHE BOOL "Disable OpenGL support"             FORCE)
-# set(GLFW_BUILD_WAYLAND      OFF CACHE BOOL "Disable Wayland support"            FORCE)
-# # set(GLFW_BUILD_X11          OFF CACHE BOOL "Disable X11 support"                FORCE)
-# set(GLFW_BUILD_EXAMPLES     OFF CACHE BOOL "Build the GLFW example programs"    FORCE)
-# set(GLFW_BUILD_TESTS        OFF CACHE BOOL "Build the GLFW test programs"       FORCE)
-# set(GLFW_BUILD_DOCS         OFF CACHE BOOL "Build the GLFW documentation"       FORCE)
-# set(GLFW_INSTALL            OFF CACHE BOOL "Generate installation target"       FORCE)
-
-# add_subdirectory(glfw)
-# add_subdirectory(vma)
-# add_subdirectory(vk-bootstrap)
-# add_subdirectory(vk_ray)
-
-# add_library(glfw_lib ALIAS glfw)        # Create an alias for consistency
 
 # # ------------- ImGui -------------
 # add_library(imgui STATIC)
@@ -45,29 +38,20 @@ target_include_directories(glm      INTERFACE
 #     ${IMGUI_BACKEND_SOURCES}
 # )
 
-# target_include_directories(imgui PUBLIC             # Include directories
+# target_include_directories(imgui                          PUBLIC  # Include directories
 #     ${CMAKE_CURRENT_SOURCE_DIR}/imgui
 #     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
 # )
 
-# target_link_libraries(imgui PUBLIC                  # Link dependencies
+# target_link_libraries(imgui                               PUBLIC  # Link dependencies
 #     glfw
 #     Vulkan::Vulkan
 # )
 
-# target_compile_definitions(imgui                    # Add compile definitions for imgui
-#     PRIVATE
-#         IMGUI_IMPL_GLFW_DISABLE_X11
-#         IMGUI_IMPL_VULKAN_NO_PROTOTYPES             # Use Vulkan SDK headers instead of volk
-#         GLFW_INCLUDE_NONE                           # Don't include OpenGL headers
+# target_compile_definitions(imgui                          PRIVATE  # Add compile definitions for imgui
+#     IMGUI_IMPL_GLFW_DISABLE_X11
+#     IMGUI_IMPL_VULKAN_NO_PROTOTYPES             # Use Vulkan SDK headers instead of volk
+#     GLFW_INCLUDE_NONE                           # Don't include OpenGL headers
 # )
 
-# message(STATUS "Vendor libraries configured")
-# message(STATUS "  - GLM: header-only (interface target)")
-# message(STATUS "  - GLFW: library target 'glfw'")
-# message(STATUS "  - ImGui: static library with Vulkan+GLFW backends")
-# message(STATUS "  - vk-bootstrap: header-only library")
-# message(STATUS "  - vk_ray: Vulkan Raytracing Library")
 
-# # Make sure to install the following libs whenworking with:
-# # sudo apt install libx11-dev libxrandr-dev libxinerama-dev libxi-dev libxcursor-dev libxxf86vm-dev

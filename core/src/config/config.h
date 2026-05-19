@@ -6,6 +6,12 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
+namespace GLT::platform {
+
+	struct window_attributes;
+}
+
+
 namespace GLT::config {
 
 	// CONSTANTS =======================================================================================================
@@ -42,6 +48,9 @@ namespace GLT::config {
 	void init();
 
 	
+	void serialize_window_attributes(GLT::platform::window_attributes& attributes, const serializer::option option);
+
+
 	// @brief Creates configuration files for a specific project by ensuring the project's CONFIG_DIR exists and creating empty config files.
 	// @param project_dir The project directory where project-specific configuration files will be stored.
 	// @return void This function does not have a return value.

@@ -81,8 +81,12 @@ namespace GLT::glfw_platform {
         glm::ivec2 get_framebuffer_size() const override {
 
             int w, h;
-            if (mp_window) mp_window->get_framebuffer_size(w, h);
-            else w = h = 0;
+            if (mp_window) 
+                mp_window->get_framebuffer_size(w, h);
+
+            else
+                w = h = 0;
+
             return {w, h};
         }
 
@@ -91,7 +95,9 @@ namespace GLT::glfw_platform {
             // The window class doesn't have a direct getter, but glfwGetWindowPos can be added,
             // or you can store pos_x/pos_y from the attributes.
             // For now, return the last known position stored in mp_window->m_data.
-            if (mp_window) return { mp_window->get_attributes().pos_x, mp_window->get_attributes().pos_y };
+            if (mp_window) 
+                return { mp_window->get_attributes().pos_x, mp_window->get_attributes().pos_y };
+
             return {0, 0};
         }
 
@@ -100,6 +106,7 @@ namespace GLT::glfw_platform {
 
             if (mp_window) 
                 return static_cast<GLT::platform::window_size_state>(mp_window->get_window_size_state());
+
             return GLT::platform::window_size_state::windowed;
         }
 
@@ -113,7 +120,8 @@ namespace GLT::glfw_platform {
         // --- modifiers ---
         void show(bool visible) override {
 
-            if (mp_window) mp_window->show_window(visible);
+            if (mp_window)
+                mp_window->show_window(visible);
         }
 
 
@@ -167,12 +175,26 @@ namespace GLT::glfw_platform {
         void poll_events() override { mp_window->poll_events(); }
 
 
+        GLT::platform::backend_api get_backend_api() { return GLT::platform::backend_api::glfw; }
+
+
+        virtual const char** get_required_render_extensions(u32* count) {
+
+            return glfwGetRequiredInstanceExtensions(count);
+        }
+
+
         void* get_native_window_handle() override {
 
             return mp_window ? static_cast<void*>(mp_window->get_native_window()) : nullptr;
         }
 
-        PLUGIN_GET_NAME
+        
+        GLT::platform::window_attributes get_window_attributes() {
+
+            return mp_window->get_attributes();
+        }
+
 
     private:
 

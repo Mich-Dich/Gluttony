@@ -17,8 +17,7 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 
-namespace GLT::render::utils
-{
+namespace GLT::renderer_vk_ray::utils {
 
     // CONSTANTS =======================================================================================================
 
@@ -49,15 +48,17 @@ namespace GLT::render::utils
         const VkDebugUtilsMessengerCallbackDataEXT* p_callback_data, void* p_user_data) {
 
         // Map Vulkan severity levels to your log levels
-        if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-            LOG(error, "[VULKAN] {}", p_callback_data->pMessage);
-        } else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-            LOG(warn, "[VULKAN] {}", p_callback_data->pMessage);
-        } else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {
-            LOG(trace, "[VULKAN] {}", p_callback_data->pMessage);
-        } else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT) {
-            LOG(trace, "[VULKAN] {}", p_callback_data->pMessage);
-        }
+        if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+            LOG(error, "[VULKAN] {}", p_callback_data->pMessage)
+        
+        else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+            LOG(warn, "[VULKAN] {}", p_callback_data->pMessage)
+        
+        else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
+            LOG(trace, "[VULKAN] {}", p_callback_data->pMessage)
+        
+        else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
+            LOG(trace, "[VULKAN] {}", p_callback_data->pMessage)
 
         return VK_FALSE;
     }

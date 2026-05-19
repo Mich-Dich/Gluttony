@@ -1,5 +1,5 @@
 
-#include <plugin_system/i_render_plugin.h>  
+#include <plugin_system/i_renderer_plugin.h>  
 
 #include "renderer.h"
 
@@ -30,7 +30,7 @@ namespace GLT::renderer_vk_ray {
     static GLT::plugin_manager::plugin_descriptor descriptor = {
         .name                               = GLT_MODULE_NAME,
         .phase                              = GLT::plugin_manager::load_phase::post_window,
-        .target                             = GLT::plugin_manager::targeted_interface::graphics_api,
+        .target                             = GLT::plugin_manager::targeted_interface::renderer,
         .dependency_names_count             = ARRAY_SIZE(dependencies_names),
         .dependency_names                   = dependencies_names,
         .dependency_interface_count         = ARRAY_SIZE(dependencies_interfaces),
@@ -49,6 +49,12 @@ namespace GLT::renderer_vk_ray {
 
     class plugin : public GLT::render::i_renderer_plugin {
     public:
+
+        void on_load() { }
+
+        
+        void on_unload() { }
+        
 
         bool create() override { 
             
@@ -93,6 +99,9 @@ namespace GLT::renderer_vk_ray {
         // --- feature queries -----------------------------------------------------------------------------------------
 
         [[nodiscard]] GLT::render::renderer_feature get_supported_features() const override { return m_features; }
+
+
+        [[nodiscard]] GLT::render::backend_api get_backend_api() const override { return GLT::render::backend_api::vulkan; }
 
         // --- native access -------------------------------------------------------------------------------------------
 

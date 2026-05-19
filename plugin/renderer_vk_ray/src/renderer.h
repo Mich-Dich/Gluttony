@@ -42,6 +42,25 @@ namespace GLT::renderer_vk_ray {
 
     private:
 
+        void init_vulkan();
+
+        vr::instance_wrapper                                    m_instance;
+        vr::command_queues                                      m_queues{};
+        vk::Device                                              m_device = nullptr;
+        vk::SurfaceKHR                                          m_surface = nullptr;
+        vk::PhysicalDevice                                      m_physical_device = nullptr;
+        utils::deletion_queue                                   m_deletion_queue{};
+        vr::swapchain_builder                                   m_swapchain_builder;
+        vr::swapchain_resources                                 m_swapchain_resources;
+        vk::CommandPool                                         m_graphics_pool;
+        u32                                                     m_image_count = 0;
+        std::vector<vk::Semaphore>                              m_render_semaphores{};
+        std::vector<vk::Semaphore>                              m_present_semaphores{};
+        std::vector<vk::Fence>                                  m_in_flight_fences{};
+        std::vector<vk::ImageLayout>                            m_swapchain_images_layout{};
+        std::array<vk::CommandBuffer, MAX_CONCURRENT_FRAMES>    m_rt_render_cmd;
+        vr::device*                                             m_vr_dev = nullptr;
+
         // deletion_queue                                  m_deletion_queue{};
         // ref<GLT::camera>                                m_camera{};
 

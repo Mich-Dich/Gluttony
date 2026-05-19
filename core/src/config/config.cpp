@@ -1,6 +1,9 @@
 
 #include "util/pch.h"
 
+#include "plugin_system/i_window_plugin.h"
+#include "util/io/serializer_yaml.h"
+
 #include "config.h"
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -28,7 +31,7 @@ namespace GLT::config {
             line.end());
 
     #define BUILD_CONFIG_PATH(x)                                                                                        \
-        ( CONFIG_DIR.string() + file_type_to_string(x) + FILE_EXTENSION_CONFIG )
+        ( CONFIG_DIR.string() / file_type_to_string(x) + FILE_EXTENSION_CONFIG )
 
     // TYPES ===========================================================================================================
 
@@ -49,6 +52,19 @@ namespace GLT::config {
             VALIDATE(config_file.is_open(), return, "", "Failed to open/create config file: [{}]", file_path)
             config_file.close();
         }
+    }
+
+
+	void serialize_window_attributes(GLT::platform::window_attributes& attributes, const serializer::option option) {
+
+        serializer::yaml(GLT::util::get_executable_path() / BUILD_CONFIG_PATH(type::app_settings), "window", option)
+            .entry(KEY_VALUE(attributes.title))
+            .entry(KEY_VALUE(attributes.width))
+            .entry(KEY_VALUE(attributes.height))
+            .entry(KEY_VALUE(attributes.pos_x))
+            .entry(KEY_VALUE(attributes.pos_y))
+            .entry(KEY_VALUE(attributes.vsync))
+            .entry(KEY_VALUE(attributes.size_state));
     }
 
 

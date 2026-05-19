@@ -11,6 +11,7 @@
     "denoising",
     "glfw",
     "hlsl",
+    "imgui",
     "instrumentor",
     "spirv",
     "swapchain",

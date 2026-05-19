@@ -1,14 +1,16 @@
 
 #include "util/pch.h"
-#include "application.h"
 
 #include "event/event_bus.h"
 #include "event/application_event.h"
 #include "plugin_system/plugin_manager.h"
 #include "plugin_system/i_window_plugin.h"
+#include "plugin_system/i_renderer_plugin.h"
 
+#include "application.h"
 
 // FORWARD DECLARATIONS ================================================================================================
+
 
 namespace GLT {
 
@@ -31,17 +33,17 @@ namespace GLT {
         // PROFILE_APPLICATION_FUNCTION();
         ASSERT(!s_instance, "", "Application already exists");
         s_instance = this;
+        
+        platform::window_attributes attributes;
+        config::serialize_window_attributes(attributes, serializer::option::load_from_file);
 
         plugin_manager::load_plugins(plugin_manager::load_phase::pre_application);
         mp_window = plugin_manager::get_plugin_ref<platform::i_window_plugin>(plugin_manager::targeted_interface::window);
-        platform::window_attributes attributes {
-            .title      = "Gluttony",               // TODO: load from config, load project name prefixed with Gluttony
-            .width      = 1920,                     // TODO: load from config
-            .height     = 1080,                     // TODO: load from config
-        };
         mp_window->create(attributes);
 
         plugin_manager::load_plugins(plugin_manager::load_phase::post_window);
+        mp_renderer = plugin_manager::get_plugin_ref<render::i_renderer_plugin>(plugin_manager::targeted_interface::renderer);
+        mp_renderer->create();
 
         set_target_fps(30);         // DEBUG-ONLY - TODO: load from config
         const auto unused_handle = event_bus::subscribe<window_close_event>([this](window_close_event& event) {
@@ -57,6 +59,10 @@ namespace GLT {
 
         plugin_manager::load_plugins(plugin_manager::load_phase::pre_application_shutdown);
 
+        mp_renderer->destroy();
+
+        platform::window_attributes attributes = mp_window->get_window_attributes();
+        config::serialize_window_attributes(attributes, serializer::option::save_to_file);
         mp_window->destroy();
         mp_window.reset();
         
@@ -76,7 +82,11 @@ namespace GLT {
 
             mp_window->poll_events();        // update internal state
 
-            // ... render, update ...
+            // update the layerStack
+
+            mp_renderer->begin_frame();
+            // render the layerStack
+            mp_renderer->end_frame();
             
             m_fps_controller.limit();
         }

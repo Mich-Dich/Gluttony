@@ -8,7 +8,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT {
+namespace GLT::renderer_vk_ray::utils {
 
     // CONSTANTS =======================================================================================================
 
@@ -249,7 +249,13 @@ namespace GLT {
         // Generate SPIR-V
         std::vector<unsigned int> spirv;
         glslang::GlslangToSpv(*program.getIntermediate(shader_stage), spirv);
-        return spirv;
+
+        std::vector<u32> result;
+        result.reserve(spirv.size());
+        for (unsigned int val : spirv) {
+            result.push_back(static_cast<u32>(val));
+        }
+        return result;
     }
 
     // CLASS PROTECTED =================================================================================================
