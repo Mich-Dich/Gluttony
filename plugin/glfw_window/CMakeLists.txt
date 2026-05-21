@@ -7,7 +7,7 @@
 # =============================================================================
 
 include(${CMAKE_SOURCE_DIR}/helper.cmake)
-set(PLUGIN_NAME                                     "glfw_window")
+set(PLUGIN_NAME                                                     "glfw_window")
 
 file(GLOB_RECURSE PLUGIN_SOURCES
     CONFIGURE_DEPENDS
@@ -18,14 +18,14 @@ file(GLOB_RECURSE PLUGIN_SOURCES
 set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES" "${PLUGIN_SOURCES}")
 
 # add libraries in both static and shared
-compile_plugin(SHARED                               ${PLUGIN_NAME}          glm)
-compile_plugin(STATIC                               ${PLUGIN_NAME}_static   glm)
+compile_plugin(SHARED                                               ${PLUGIN_NAME}          glm)
+compile_plugin(STATIC                                               ${PLUGIN_NAME}_static   glm)
 
 
 # --- ensures GLFW is present in vendor/ and links it -------------------------
-function(ensure_glfw                                VENDOR_DIR)
-    file(MAKE_DIRECTORY                             "${VENDOR_DIR}")
-    set(GLFW_DIR                                    "${VENDOR_DIR}/glfw")
+function(ensure_glfw                                                VENDOR_DIR)
+    file(MAKE_DIRECTORY                                             "${VENDOR_DIR}")
+    set(GLFW_DIR                                                    "${VENDOR_DIR}/glfw")
     git_clone_or_update("https://github.com/glfw/glfw.git" "${GLFW_DIR}" DEPTH 1)           # Use the generic helper (depth 1 is default)
 
     set(GLFW_BUILD_OPENGL      OFF CACHE BOOL "Disable OpenGL support"             FORCE)
@@ -35,19 +35,24 @@ function(ensure_glfw                                VENDOR_DIR)
     set(GLFW_BUILD_DOCS        OFF CACHE BOOL "Build the GLFW documentation"       FORCE)
     set(GLFW_INSTALL           OFF CACHE BOOL "Generate installation target"       FORCE)
 
-    target_compile_definitions(${PLUGIN_NAME}       PRIVATE GLFW_INCLUDE_NONE)
+    target_compile_definitions(${PLUGIN_NAME}                       PRIVATE GLFW_INCLUDE_NONE)
     add_subdirectory("${GLFW_DIR}")
 endfunction()
 
 ensure_glfw("${CMAKE_CURRENT_SOURCE_DIR}/vendor")
-target_link_libraries(${PLUGIN_NAME}                PRIVATE glfw)
+target_link_libraries(${PLUGIN_NAME}                                PRIVATE glfw)
 
+
+set(VENDOR_DIR                                                      "${CMAKE_SOURCE_DIR}/vendor")
+set(IMGUI_DIR                                                       "${VENDOR_DIR}/imgui")
+target_include_directories(${PLUGIN_NAME}                           PRIVATE "${IMGUI_DIR}")
+target_include_directories(${PLUGIN_NAME}_static                    PRIVATE "${IMGUI_DIR}")
 
 
 print_source_file_details(
-    SOURCES                                         ${PLUGIN_SOURCES}
-    NAME                                            ${PLUGIN_NAME}
-    SOURCE_DIR                                      "${CMAKE_CURRENT_SOURCE_DIR}"
-    VERBOSE                                         CORE_VERBOSE_INFO
-    TARGET                                          ${PLUGIN_NAME}
+    SOURCES                                                         ${PLUGIN_SOURCES}
+    NAME                                                            ${PLUGIN_NAME}
+    SOURCE_DIR                                                      "${CMAKE_CURRENT_SOURCE_DIR}"
+    VERBOSE                                                         CORE_VERBOSE_INFO
+    TARGET                                                          ${PLUGIN_NAME}
 )

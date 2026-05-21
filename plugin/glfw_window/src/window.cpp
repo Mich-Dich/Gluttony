@@ -9,6 +9,7 @@
 	#include <GLFW/glfw3native.h>
 #endif
 
+#include <backends/imgui_impl_glfw.h>
 #include <event/event_bus.h>
 #include <event/application_event.h>
 #include <event/input_event.h>
@@ -208,6 +209,21 @@ namespace GLT::glfw_platform {
 
 
 	void window::release_cursor() { glfwSetInputMode(m_native_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL); }
+
+
+	void window::imgui_init(GLT::render::backend_api used_render_api) {
+
+		switch (used_render_api) {
+			
+			case GLT::render::backend_api::vulkan:
+				ImGui_ImplGlfw_InitForVulkan(static_cast<GLFWwindow*>(m_native_window), true);
+				break;
+
+			case GLT::render::backend_api::direct_x:		LOG(warn, "not implemented yet"); break;
+			case GLT::render::backend_api::metal:			LOG(warn, "not implemented yet"); break;
+			case GLT::render::backend_api::open_gl:			LOG(warn, "not implemented yet"); break;
+		}
+	}
 
     // CLASS PROTECTED =================================================================================================
 

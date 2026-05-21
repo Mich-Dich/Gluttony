@@ -11,6 +11,7 @@
 #   cmake --build .
 # =============================================================================
 
+include(${CMAKE_SOURCE_DIR}/helper.cmake)
 cmake_minimum_required(VERSION                      3.20)
 project(Gluttony VERSION 0.0                        LANGUAGES CXX)
 option(CORE_VERBOSE_INFO                            "Show detailed file list for Core" OFF)

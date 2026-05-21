@@ -46,9 +46,8 @@ namespace GLT {
         mp_renderer->create();
 
         set_target_fps(30);         // DEBUG-ONLY - TODO: load from config
-        const auto unused_handle = event_bus::subscribe<window_close_event>([this](window_close_event& event) {
-            m_running = false;
-        });
+
+        m_close_event_sub_handle = event_bus::subscribe<window_close_event>(std::bind_front(&application::on_window_close_event, this));
 
         LOG_INIT
         plugin_manager::load_plugins(plugin_manager::load_phase::post_application_run);
@@ -56,6 +55,8 @@ namespace GLT {
 
 
     application::~application() {
+
+        event_bus::unsubscribe(m_close_event_sub_handle);
 
         plugin_manager::load_plugins(plugin_manager::load_phase::pre_application_shutdown);
 
@@ -98,6 +99,12 @@ namespace GLT {
 
         const u64 time = (1 / fps) * 1000000;
         m_fps_controller.set_target_interval_duration(std::chrono::microseconds(time));
+    }
+
+
+    void application::on_window_close_event(const window_close_event& event) {
+
+        m_running = false;
     }
 
     // CLASS PROTECTED =================================================================================================

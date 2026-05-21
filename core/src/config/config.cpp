@@ -31,7 +31,7 @@ namespace GLT::config {
             line.end());
 
     #define BUILD_CONFIG_PATH(x)                                                                                        \
-        ( CONFIG_DIR.string() / file_type_to_string(x) + FILE_EXTENSION_CONFIG )
+        ( CONFIG_DIR / (file_type_to_string(x) + FILE_EXTENSION_CONFIG) )
 
     // TYPES ===========================================================================================================
 

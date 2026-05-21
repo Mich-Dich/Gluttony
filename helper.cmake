@@ -19,9 +19,8 @@ include_guard(GLOBAL)
 
 # Provides a reusable function to clone/fetch a Git repository into a vendor directory.
 function(git_clone_or_update REPO_URL TARGET_DIR)
-    # Optional: clone depth (default = 1 for shallow clone)
     set(options)
-    set(oneValueArgs DEPTH)
+    set(oneValueArgs DEPTH BRANCH)
     set(multiValueArgs)
     cmake_parse_arguments(GCOU "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -29,11 +28,23 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
         set(GCOU_DEPTH 1)
     endif()
 
-    if(NOT EXISTS "${TARGET_DIR}")
-        message(STATUS "Repository not found in ${TARGET_DIR}. Cloning from ${REPO_URL} ...")
-        find_package(Git REQUIRED)
+    find_package(Git REQUIRED)
 
-        set(clone_cmd ${GIT_EXECUTABLE} clone --depth ${GCOU_DEPTH} "${REPO_URL}" "${TARGET_DIR}")
+    # Prepare branch string for logging
+    if(GCOU_BRANCH)
+        set(branch_msg " (branch: ${GCOU_BRANCH})")
+    else()
+        set(branch_msg "")
+    endif()
+
+    if(NOT EXISTS "${TARGET_DIR}")
+        message(STATUS "Cloning ${REPO_URL}${branch_msg} into ${TARGET_DIR} ...")
+        set(clone_cmd ${GIT_EXECUTABLE} clone --depth ${GCOU_DEPTH})
+        if(GCOU_BRANCH)
+            list(APPEND clone_cmd -b ${GCOU_BRANCH})
+        endif()
+        list(APPEND clone_cmd "${REPO_URL}" "${TARGET_DIR}")
+
         execute_process(
             COMMAND ${clone_cmd}
             RESULT_VARIABLE clone_result
@@ -45,8 +56,40 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
         message(STATUS "Repository cloned successfully into ${TARGET_DIR}")
     else()
         message(STATUS "Repository already present in ${TARGET_DIR}")
-        # Optional: 'git pull' to update? Usually you want a fixed commit.
-        # If you need updates, add a second function or an UPDATE option.
+        if(GCOU_BRANCH)
+            # Check current branch
+            execute_process(
+                COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" rev-parse --abbrev-ref HEAD
+                OUTPUT_VARIABLE current_branch
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                RESULT_VARIABLE branch_check_result
+                ERROR_QUIET
+            )
+            if(branch_check_result EQUAL 0 AND NOT current_branch STREQUAL GCOU_BRANCH)
+                message(STATUS "Switching from branch '${current_branch}' to '${GCOU_BRANCH}' ...")
+                # Fetch the desired branch (shallow clone may not have it)
+                execute_process(
+                    COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" fetch --depth ${GCOU_DEPTH} origin ${GCOU_BRANCH}
+                    RESULT_VARIABLE fetch_result
+                    ERROR_VARIABLE  fetch_error
+                )
+                if(NOT fetch_result EQUAL 0)
+                    message(FATAL_ERROR "Failed to fetch branch ${GCOU_BRANCH}: ${fetch_error}")
+                endif()
+                # Checkout the branch
+                execute_process(
+                    COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" checkout ${GCOU_BRANCH}
+                    RESULT_VARIABLE checkout_result
+                    ERROR_VARIABLE  checkout_error
+                )
+                if(NOT checkout_result EQUAL 0)
+                    message(FATAL_ERROR "Failed to checkout branch ${GCOU_BRANCH}: ${checkout_error}")
+                endif()
+                message(STATUS "Now on branch '${GCOU_BRANCH}'")
+            elseif(current_branch STREQUAL GCOU_BRANCH)
+                message(STATUS "Already on correct branch '${GCOU_BRANCH}'")
+            endif()
+        endif()
     endif()
 endfunction()
 

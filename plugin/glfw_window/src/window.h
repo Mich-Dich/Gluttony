@@ -121,6 +121,9 @@ namespace GLT::glfw_platform {
 		// @return None.
 		void release_cursor();
 
+        
+		void imgui_init(GLT::render::backend_api used_render_api);
+
 	private:
 
 		// Binds all GLFW event callbacks to the window.

@@ -10,12 +10,12 @@ set(PLUGIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/plugins-$<CONFIG>")
 
 # Helper function (optional but recommended) so plugins share common settings
 function(add_plugin PLUGIN_NAME)
-    add_library(${PLUGIN_NAME} MODULE ${ARGN})
-    set_target_properties(${PLUGIN_NAME} PROPERTIES
+    add_library(${PLUGIN_NAME}                      MODULE ${ARGN})
+    set_target_properties(${PLUGIN_NAME}            PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${PLUGIN_OUTPUT_DIR}"
         PREFIX ""   # prevents "lib" prefix on Linux/macOS
     )
-    target_compile_features(${PLUGIN_NAME} PRIVATE cxx_std_17)
+    target_compile_features(${PLUGIN_NAME}          PRIVATE cxx_std_17)
 endfunction()
 
 # Scan for directories directly under this folder

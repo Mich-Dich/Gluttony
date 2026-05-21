@@ -27,7 +27,7 @@ namespace GLT::event_bus {
     // TYPES ===========================================================================================================
 
     template<typename T>
-    using event_handler_fn = std::function<void(T&)>;
+    using event_handler_fn = std::function<void(const T&)>;
 
     // STATIC VARIABLES ================================================================================================
 
@@ -50,7 +50,7 @@ namespace GLT::event_bus {
     // Subscribers that are added/removed during dispatch do not affect
     // the current iteration (snapshot taken).
     template<event_class T>
-    FORCE_INLINE void post(T& event);
+    FORCE_INLINE void post(const T event);
 
     // CLASS DECLARATION ===============================================================================================
 

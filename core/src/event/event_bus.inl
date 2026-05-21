@@ -16,7 +16,7 @@ namespace GLT::event_bus {
 
     struct subscription_entry {
         handle                                      id;
-        std::function<void(GLT::event&)>            callback;
+        std::function<void(const GLT::event&)>            callback;
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -29,10 +29,10 @@ namespace GLT::event_bus {
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     template<event_class T>
-    FORCE_INLINE std::function<void(GLT::event&)> make_wrapper(event_handler_fn<T> handler) {
+    FORCE_INLINE std::function<void(const event&)> make_wrapper(event_handler_fn<T> handler) {
 
-        return [handler = std::move(handler)](GLT::event& event) {
-            handler(static_cast<T&>(event));        // The bus only calls this when the type already matches, so the cast is safe.
+        return [handler = std::move(handler)](const event& event) {
+            handler(static_cast<const T&>(event));        // The bus only calls this when the type already matches, so the cast is safe.
         };
     }
 
@@ -66,13 +66,13 @@ namespace GLT::event_bus {
 
 
     template<event_class T>
-    FORCE_INLINE void post(T& event) {
+    FORCE_INLINE void post(const T event) {
         
         auto it = s_subscribers.find(std::type_index(typeid(event)));
         if (it == s_subscribers.end()) return;
 
         // Copy the callbacks to allow safe mutation during iteration.
-        std::vector<std::function<void(GLT::event&)>> callbacks;
+        std::vector<std::function<void(const GLT::event&)>> callbacks;
         callbacks.reserve(it->second.size());
         for (const auto& entry : it->second)
             callbacks.push_back(entry.callback);

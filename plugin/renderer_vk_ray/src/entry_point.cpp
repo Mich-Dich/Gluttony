@@ -1,5 +1,5 @@
 
-#include <plugin_system/i_renderer_plugin.h>  
+#include <plugin_system/i_renderer_plugin.h>
 
 #include "renderer.h"
 

@@ -178,9 +178,15 @@ namespace GLT::glfw_platform {
         GLT::platform::backend_api get_backend_api() { return GLT::platform::backend_api::glfw; }
 
 
-        virtual const char** get_required_render_extensions(u32* count) {
+        const char** get_required_render_extensions(u32* count) override {
 
             return glfwGetRequiredInstanceExtensions(count);
+        }
+
+
+        void imgui_init(GLT::render::backend_api used_render_api) override {
+
+            mp_window->imgui_init(used_render_api);
         }
 
 

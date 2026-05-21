@@ -12,6 +12,9 @@ namespace GLT::render {
     class i_renderer_plugin;
 }
 
+namespace GLT {
+    class window_close_event;
+}
 
 namespace GLT {
 
@@ -45,12 +48,15 @@ namespace GLT {
 
     private:
         
+        void on_window_close_event(const window_close_event& event);
+
         static application*			                    s_instance;
         version                                         m_version{};
         ref<GLT::platform::i_window_plugin>             mp_window{};
         ref<GLT::render::i_renderer_plugin>             mp_renderer{};
         bool                                            m_running = true;
         util::interval_controller                       m_fps_controller{};
+        handle                                          m_close_event_sub_handle{};
 
     };
 

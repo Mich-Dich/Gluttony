@@ -5,6 +5,8 @@
 #include "event/event.h"               // core event base class
 #include <glm/vec2.hpp>
 
+#include <plugin_system/i_renderer_plugin.h>
+
 // FORWARD DECLARATIONS ================================================================================================
 
 
@@ -85,6 +87,7 @@ namespace GLT::platform {
 
         virtual backend_api get_backend_api() = 0;
         virtual const char** get_required_render_extensions(u32* count) = 0;
+        virtual void imgui_init(GLT::render::backend_api used_render_api) = 0;
         
         // Returns a void* that render backends can cast (GLFWwindow*, HWND, etc.).
         virtual void* get_native_window_handle() = 0;
