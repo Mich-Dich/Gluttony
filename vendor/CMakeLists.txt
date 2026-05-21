@@ -28,6 +28,7 @@ target_include_directories(glm                                  INTERFACE
 
 # ------------- ImGui ------------------------------------------------------------------------------
 add_library(imgui                                               STATIC)
+set_target_properties(imgui PROPERTIES                          POSITION_INDEPENDENT_CODE ON)
 file(GLOB IMGUI_BACKEND_SOURCES                                 # Add ImGui backends (GLFW + Vulkan)
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_glfw.cpp
@@ -49,4 +50,3 @@ target_compile_definitions(imgui                                PRIVATE  # Add c
     IMGUI_IMPL_VULKAN_NO_PROTOTYPES                             # Use Vulkan SDK headers instead of volk
     GLFW_INCLUDE_NONE                                           # Don't include OpenGL headers
 )
-

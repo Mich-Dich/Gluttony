@@ -73,7 +73,8 @@ namespace GLT::renderer_vk_ray {
         auto p_window = GLT::plugin_manager::get_plugin<GLT::platform::i_window_plugin>(GLT::plugin_manager::targeted_interface::window);
         ASSERT(!p_window.expired(), "", "Failed to get window plugin")
         u32 count;
-        const char** extensions = p_window.lock()->get_required_render_extensions(&count);
+        auto p_window_strong = p_window.lock();
+        const char** extensions = p_window_strong->get_required_render_extensions(&count);
 
         vr::vulkan_builder builder;
         builder.enable_debug = USE_VULKAN_VALIDATION;
@@ -84,7 +85,7 @@ namespace GLT::renderer_vk_ray {
             builder.instance_extensions.push_back(extensions[i]);
 
         m_instance = builder.create_instance();                             // Create the instance
-        m_surface = utils::create_surface(m_instance.instance_handle);
+        m_surface = p_window_strong->create_vulkan_surface(m_instance.instance_handle);
         m_physical_device = builder.pick_physical_device(m_surface);        // Pick the physical device to use
         m_device = builder.create_device();                                 // Create the logical device
         m_queues = builder.get_queues();                                    // Get the queues for the logical device

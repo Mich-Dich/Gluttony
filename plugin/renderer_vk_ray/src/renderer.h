@@ -3,9 +3,8 @@
 
 #include <vk_ray/vk_ray.h>
 #include <vk_ray/builders/builders.h>
-// #include <imgui.h>
-// #include <backends/imgui_impl_glfw.h>
-// #include <backends/imgui_impl_vulkan.h>
+#include <imgui.h>
+#include <backends/imgui_impl_vulkan.h>
 
 #include "util/data_structures.h"
 #include "util/shader_compiler.h"

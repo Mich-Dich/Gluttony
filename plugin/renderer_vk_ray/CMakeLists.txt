@@ -21,6 +21,10 @@ set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES" "${PLUGIN_SOU
 compile_plugin(SHARED                                               ${PLUGIN_NAME}          glm imgui)
 compile_plugin(STATIC                                               ${PLUGIN_NAME}_static   glm imgui)
 
+find_package(glslang REQUIRED)
+target_link_libraries(${PLUGIN_NAME}                                PRIVATE glslang)
+target_link_libraries(${PLUGIN_NAME}_static                         PRIVATE glslang)
+
 # --- ensures vk_ray and its dependencies are present in vendor/ ------------
 set(VENDOR_DIR                                                      "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
 set(VK_BOOTSTRAP_DIR                                                "${VENDOR_DIR}/vk-bootstrap")

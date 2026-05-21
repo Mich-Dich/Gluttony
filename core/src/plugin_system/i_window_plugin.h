@@ -9,6 +9,12 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
+namespace vk {
+
+    class SurfaceKHR;
+    struct Instance;
+}
+
 
 namespace GLT::platform {
 
@@ -89,6 +95,11 @@ namespace GLT::platform {
         virtual const char** get_required_render_extensions(u32* count) = 0;
         virtual void imgui_init(GLT::render::backend_api used_render_api) = 0;
         
+        // Creates a Vulkan surface from the underlying native window.
+        // @param instance The Vulkan instance to use.
+        // @return A fully created vk::SurfaceKHR (the caller must destroy it).
+        virtual vk::SurfaceKHR create_vulkan_surface(vk::Instance instance) = 0;
+
         // Returns a void* that render backends can cast (GLFWwindow*, HWND, etc.).
         virtual void* get_native_window_handle() = 0;
         virtual window_attributes get_window_attributes() = 0;
