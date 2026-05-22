@@ -125,6 +125,8 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
         OBJECT_OUTPUT_DIRECTORY  "${CMAKE_BINARY_DIR}/bin-int/$<CONFIG>/plugin/${BASE_NAME}"
     )
     target_link_options(${TARGET_NAME}              PRIVATE -rdynamic)
+    # target_link_options(${TARGET_NAME}              PRIVATE -rdynamic -Wl,--no-undefined)
+
     # Link with any additional libraries passed as extra arguments
     if(ARGN)
         target_link_libraries(${TARGET_NAME}        PRIVATE ${ARGN})

@@ -106,23 +106,37 @@ namespace GLT::vfs_plugin {
     // For a simple setup where "/" maps to g_native_base_path, we just strip the leading '/'
     static std::filesystem::path to_native_path(const std::filesystem::path& virtual_path) {
 
-        std::string v = virtual_path.generic_string();
-        if (v.empty() || v == "/")
-            return g_native_base_path;
+        // std::string v = virtual_path.generic_string();
+        // if (v.empty() || v == "/")
+        //     return g_native_base_path;
 
-        if (v.front() == '/')
-            v.erase(0, 1);
+        // if (v.front() == '/')
+        //     v.erase(0, 1);
 
-        return std::filesystem::path(g_native_base_path) / v;
+        // return std::filesystem::path(g_native_base_path) / v;
+
+
+        return virtual_path;
     }
 
     // ----- core VFS callback implementations -------------------------------------------------------------------------
 
     bool exists_impl(const std::filesystem::path& path) {
 
-        if (!g_vfs) return false;
-        // vfspp only has IsFileExists (returns true for files and directories)
-        return g_vfs->IsFileExists(path.generic_string());
+        if (!g_vfs)
+            return false;
+
+        return g_vfs->IsFileExists(path.generic_string());      // vfspp only has IsFileExists (returns true for files and directories)
+    }
+
+
+    bool create_file_impl(const std::filesystem::path& path) {
+
+        if (std::filesystem::exists(path))      // Avoid truncating an existing file
+            return true;                        // already exists – consider success or false?
+
+        std::ofstream ofs(path);
+        return ofs.is_open();
     }
 
 
@@ -141,7 +155,17 @@ namespace GLT::vfs_plugin {
 
     bool create_directory_impl(const std::filesystem::path& path) {
 
-        return std::filesystem::create_directory(to_native_path(path));
+        std::error_code error;
+        std::filesystem::create_directory(to_native_path(path), error);
+        return !error;
+    }
+
+
+    bool create_directories_impl(const std::filesystem::path& path) {
+        
+        std::error_code error;
+        std::filesystem::create_directories(to_native_path(path), error);
+        return !error;
     }
 
 

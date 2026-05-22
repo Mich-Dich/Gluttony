@@ -69,13 +69,7 @@ namespace GLT::logger_plugin {
                 .unregister_label_for_thread    = &GLT::logger_plugin::unregister_label_for_thread,
             };
             GLT::logger::install_logger_functions(plugin_functions);
-
-            // take over messages from before logger attachment
             GLT::logger::register_label_for_thread("main");             // assume label will remain the same
-            std::vector<GLT::logger::message_data> previous_messages = GLT::logger::drain_log_buffer(true);
-            for (const auto& msg : previous_messages)
-                GLT::logger_plugin::log_msg_internal(msg.msg_sev, msg.file_name, msg.function_name, msg.line,
-                    msg.module_name, msg.thread_id, msg.message);       // Only called here directly because I know what im doing
 
             LOG_LOADED
         }

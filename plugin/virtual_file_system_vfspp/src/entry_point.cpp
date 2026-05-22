@@ -54,38 +54,37 @@ namespace GLT::vfs_plugin {
 
         void on_load() override {
 
-            // 1. Initialize the plugin's VFS backend (vfspp)
+            // Initialize the plugin's VFS backend (vfspp)
             if (!init()) {
-                // Log error and maybe prevent engine from starting
                 LOG(error, "Failed to initialize VFS plugin");
                 return;
             }
 
-            // 2. Build the function table that the core expects
+            // Build the function table that the core expects
             static const GLT::vfs::vfs_functions plugin_functions = {
-                .exists             = &exists_impl,
-                .is_directory       = &is_directory_impl,
-                .is_regular_file    = &is_regular_file_impl,
-                .create_directory   = &create_directory_impl,
-                .create_directories = &create_directories_impl,
-                .remove             = &remove_impl,
-                .rename             = &rename_impl,
-                .copy_file          = &copy_file_impl,
-                .file_size          = &file_size_impl,
-                .list_directory     = &list_directory_impl,
-                .read_text_file     = &read_text_file_impl,
-                .write_text_file    = &write_text_file_impl,
-                .open_file          = &open_file_impl,
-                .read_file          = &read_file_impl,
-                .write_file         = &write_file_impl,
-                .seek_file          = &seek_file_impl,
-                .tell_file          = &tell_file_impl,
-                .close_file         = &close_file_impl,
+                .exists                 = &exists_impl,
+                .create_file            = &create_file_impl,
+                .is_directory           = &is_directory_impl,
+                .is_regular_file        = &is_regular_file_impl,
+                .create_directory       = &create_directory_impl,
+                .create_directories     = &create_directories_impl,
+                .remove                 = &remove_impl,
+                .rename                 = &rename_impl,
+                .copy_file              = &copy_file_impl,
+                .file_size              = &file_size_impl,
+                .list_directory         = &list_directory_impl,
+                .read_text_file         = &read_text_file_impl,
+                .write_text_file        = &write_text_file_impl,
+                .open_file              = &open_file_impl,
+                .read_file              = &read_file_impl,
+                .write_file             = &write_file_impl,
+                .seek_file              = &seek_file_impl,
+                .tell_file              = &tell_file_impl,
+                .close_file             = &close_file_impl,
             };
 
-            // 3. Install the functions into the core
+            // Install the functions into the core
             GLT::vfs::install_vfs_functions(plugin_functions);
-
             LOG_LOADED
         }
         

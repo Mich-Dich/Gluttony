@@ -1,10 +1,10 @@
-# =============================================================================
+# ===========================================================================================
 # Specific Plugin CMake Configuration
-# =============================================================================
+# ===========================================================================================
 # Project:      plugin test for Gluttony
 # Location:     ${PROJECT_SOURCE_DIR}/plugin/PLUGIN_NAME/CMakeLists.txt
 # Purpose:      compile the plugin in this die as a shared lib
-# =============================================================================
+# ===========================================================================================
 
 include(${CMAKE_SOURCE_DIR}/helper.cmake)
 set(PLUGIN_NAME                                                     "glfw_window")
@@ -15,14 +15,14 @@ file(GLOB_RECURSE PLUGIN_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
-set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES" "${PLUGIN_SOURCES}")
+set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES"  "${PLUGIN_SOURCES}")
 
 # add libraries in both static and shared
 compile_plugin(SHARED                                               ${PLUGIN_NAME}          glm imgui)
 compile_plugin(STATIC                                               ${PLUGIN_NAME}_static   glm imgui)
 
 
-# --- ensures GLFW is present in vendor/ and links it -------------------------
+# --- ensures GLFW is present in vendor/ and links it ---------------------------------------
 function(ensure_glfw                                                VENDOR_DIR)
     file(MAKE_DIRECTORY                                             "${VENDOR_DIR}")
     set(GLFW_DIR                                                    "${VENDOR_DIR}/glfw")

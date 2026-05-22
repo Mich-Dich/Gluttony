@@ -90,6 +90,7 @@ namespace GLT::renderer_vk_ray {
         std::vector<vk::Framebuffer>                            m_imgui_framebuffers;
         ImTextureID                                             m_output_image_texture_id{};
         bool                                                    m_imgui_initialized = false;
+        ImGuiContext*                                           m_imgui_context = nullptr;
 
         // ref<GLT::camera>                                        m_camera{};
 

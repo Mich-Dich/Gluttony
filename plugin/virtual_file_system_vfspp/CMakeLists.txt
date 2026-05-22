@@ -1,45 +1,42 @@
-# =============================================================================
+# ===========================================================================================
 # Specific Plugin CMake Configuration
-# =============================================================================
+# ===========================================================================================
 # Project:      plugin test for Gluttony
 # Location:     ${PROJECT_SOURCE_DIR}/plugin/PLUGIN_NAME/CMakeLists.txt
-# Purpose:      compile the plugin in this die as a shared lib
-# =============================================================================
+# Purpose:      compile the plugin in this dir as a shared lib
+# ===========================================================================================
 
-# =============================================================================
-# Specific Plugin CMake Configuration
-# =============================================================================
 include(${CMAKE_SOURCE_DIR}/helper.cmake)
-set(PLUGIN_NAME                                         "virtual_file_system_vfspp")
+set(PLUGIN_NAME                                                     "virtual_file_system_vfspp")
 
+# Gather plugin sources
 file(GLOB_RECURSE PLUGIN_SOURCES
     CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
-set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES" "${PLUGIN_SOURCES}")
+set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES"  "${PLUGIN_SOURCES}")
 
-# --- vfspp integration -------------------------------------------------------
-set(VFSPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/vfspp")
+# --- Ensure vfspp is cloned, patched, and built --------------------------------------------
+function(ensure_vfspp                                               VENDOR_DIR)
+    file(MAKE_DIRECTORY                                             "${VENDOR_DIR}")
+    set(VFSPP_DIR                                                   "${VENDOR_DIR}/vfspp")
 
-if(NOT EXISTS "${VFSPP_DIR}")
-    message(STATUS "Cloning vfspp into ${VFSPP_DIR} ...")
-    execute_process(
-        COMMAND git clone --recurse-submodules https://github.com/nextgeniuspro/vfspp.git "${VFSPP_DIR}"
-        RESULT_VARIABLE clone_result
-        ERROR_VARIABLE clone_error
+    git_clone_or_update("https://github.com/nextgeniuspro/vfspp.git" "${VFSPP_DIR}" DEPTH 1)    # Clone/fetch using the generic helper
+
+    execute_process(                                                # Initialise submodules (vfspp needs miniz-cpp etc.)
+        COMMAND git submodule update --init --recursive
+        WORKING_DIRECTORY                                           "${VFSPP_DIR}"
+        RESULT_VARIABLE                                             submodule_result
     )
-    if(NOT clone_result EQUAL 0)
-        message(FATAL_ERROR "Failed to clone vfspp: ${clone_error}")
+    if(NOT submodule_result EQUAL 0)
+        message(FATAL_ERROR "Failed to update submodules for vfspp")
     endif()
 
-    # Patch miniz-cpp: fix std::uint64_t → mz_uint64 in write/read callbacks
-    set(MINIZ_HPP "${VFSPP_DIR}/vendor/miniz-cpp/zip_file.hpp")
+    set(MINIZ_HPP "${VFSPP_DIR}/vendor/miniz-cpp/zip_file.hpp")     # Patch miniz-cpp for LP64 compatibility
     if(EXISTS "${MINIZ_HPP}")
         execute_process(
-            # Change 'std::uint64_t file_ofs' to 'mz_uint64 file_ofs'
-            # in lines that contain 'write_callback' or 'read_callback'
             COMMAND sed -i "/write_callback\\|read_callback/ s/std::uint64_t file_ofs/mz_uint64 file_ofs/g" "${MINIZ_HPP}"
             RESULT_VARIABLE patch_result
         )
@@ -49,30 +46,33 @@ if(NOT EXISTS "${VFSPP_DIR}")
             message(STATUS "Patched miniz-cpp for LP64 compatibility.")
         endif()
     endif()
-endif()
 
-add_subdirectory("${VFSPP_DIR}" "${CMAKE_BINARY_DIR}/vfspp_build")
-target_include_directories(vfspp SYSTEM INTERFACE "$<BUILD_INTERFACE:${VFSPP_DIR}/include>")    # Mark as SYSTEM to suppress warnings
+    add_subdirectory("${VFSPP_DIR}"                                 "${CMAKE_BINARY_DIR}/vfspp_build")          # Add the vfspp subproject
+    target_include_directories(vfspp SYSTEM INTERFACE               "$<BUILD_INTERFACE:${VFSPP_DIR}/include>")  # Suppress warnings from vfspp headers
+endfunction()
 
-# compile the plugin
-compile_plugin(SHARED ${PLUGIN_NAME})
-compile_plugin(STATIC ${PLUGIN_NAME}_static)
+ensure_vfspp("${CMAKE_CURRENT_SOURCE_DIR}/vendor")
 
-target_link_libraries(${PLUGIN_NAME}        PUBLIC vfspp)
-target_compile_features(${PLUGIN_NAME}      PUBLIC cxx_std_20)
-target_compile_definitions(${PLUGIN_NAME}   PUBLIC VFSPP_MT_SUPPORT_ENABLED)
-# No need for explicit target_include_directories – vfspp INTERFACE handles it
+# --- Compile the plugin as both shared and static ------------------------------------------
+compile_plugin(SHARED                                               "${PLUGIN_NAME}")
+compile_plugin(STATIC                                               "${PLUGIN_NAME}_static")
 
-target_link_libraries(${PLUGIN_NAME}_static        PUBLIC vfspp)
-target_compile_features(${PLUGIN_NAME}_static      PUBLIC cxx_std_20)
-target_compile_definitions(${PLUGIN_NAME}_static   PUBLIC VFSPP_MT_SUPPORT_ENABLED)
+# Link vfspp and set compilation features/definitions
+target_link_libraries("${PLUGIN_NAME}"                              PUBLIC vfspp)
+target_link_libraries("${PLUGIN_NAME}_static"                       PUBLIC vfspp)
+
+target_compile_features("${PLUGIN_NAME}"                            PUBLIC cxx_std_20)
+target_compile_features("${PLUGIN_NAME}_static"                     PUBLIC cxx_std_20)
+
+target_compile_definitions("${PLUGIN_NAME}"                         PUBLIC VFSPP_MT_SUPPORT_ENABLED)
+target_compile_definitions("${PLUGIN_NAME}_static"                  PUBLIC VFSPP_MT_SUPPORT_ENABLED)
 
 
-
+# --- Print source file statistics (verbose controlled by CORE_VERBOSE_INFO) ----------------
 print_source_file_details(
-    SOURCES         ${PLUGIN_SOURCES}
-    NAME            ${PLUGIN_NAME}
-    SOURCE_DIR      "${CMAKE_CURRENT_SOURCE_DIR}"
-    VERBOSE         CORE_VERBOSE_INFO
-    TARGET          ${PLUGIN_NAME}
+    SOURCES                                                         ${PLUGIN_SOURCES}
+    NAME                                                            "${PLUGIN_NAME}"
+    SOURCE_DIR                                                      "${CMAKE_CURRENT_SOURCE_DIR}"
+    VERBOSE                                                         CORE_VERBOSE_INFO
+    TARGET                                                          "${PLUGIN_NAME}"
 )

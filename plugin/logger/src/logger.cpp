@@ -24,7 +24,14 @@ namespace GLT::logger_plugin {
 
     // CONSTANTS =======================================================================================================
 
-    const std::string                                           severity_names[] = {"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
+    const std::string                                           severity_names[] = {
+        "TRACE",
+        "DEBUG",
+        "INFO",
+        "WARN",
+        "ERROR",
+        "FATAL"
+    };
     const std::string                                           console_rest = "\x1b[0m";
     const std::string                                           console_color_table[] = {
         "\x1b[38;5;246m",                                           // trace: Gray
@@ -51,12 +58,13 @@ namespace GLT::logger_plugin {
         #define QUEUE_MAX_SIZE                                  16000
     #endif
 
-    #define OPEN_FILE                                           s_main_file = std::ofstream(s_main_log_file_path, std::ios::app);           \
-                                                                if (!s_main_file.is_open()) {                                               \
-                                                                    std::cerr << "Failed to open main log file path: ["                     \
-                                                                        << s_main_log_file_path.string() << "]" << std::endl;               \
-                                                                    std::quick_exit(1);                                                     \
-                                                                }
+    #define OPEN_FILE                                                                                                   \
+        s_main_file = std::ofstream(s_main_log_file_path, std::ios::app);                                               \
+        if (!s_main_file.is_open()) {                                                                                   \
+            std::cerr << "Failed to open main log file path: ["                                                         \
+                << s_main_log_file_path.string() << "]" << std::endl;                                                   \
+            std::quick_exit(1);                                                                                         \
+        }
 
     #define CLOSE_FILE                                          if (s_main_file.is_open()) { s_main_file.close(); }
     #define WRITE_TO_FILE(message)                              { OPEN_FILE s_main_file << message; CLOSE_FILE }
@@ -114,6 +122,7 @@ namespace GLT::logger_plugin {
     // FUNCTION DECLARATION ============================================================================================
 
     void process_log_message(const GLT::logger::message_data&& message);
+
     void process_queue();
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -131,11 +140,10 @@ namespace GLT::logger_plugin {
         s_main_log_dir = log_dir;
         s_main_log_file_path = s_main_log_dir / main_log_file_name;
 
-        if (!GLT::vfs::is_directory(s_main_log_dir))
-            if (!GLT::vfs::create_directories(s_main_log_dir)) {
-                std::cerr << "Failed to create the directory for log files" << std::endl;
-                return false;
-            }
+        if (!GLT::vfs::create_directories(s_main_log_file_path.parent_path())) {
+            std::cerr << "Failed to create the directory for log files" << std::endl;
+            return false;
+        }
 
         s_main_file = std::ofstream(s_main_log_file_path, (use_append_mode) ? std::ios::app : std::ios::out);
         if (!s_main_file.is_open()) {
@@ -152,6 +160,13 @@ namespace GLT::logger_plugin {
         s_buffered_messages.reserve(s_buffer_size);
         s_is_init = true;
         s_worker_thread = std::thread(&process_queue);                                                        // start after inital write to avoid using mutex
+
+        // take over messages from before logger attachment
+        std::vector<GLT::logger::message_data> previous_messages = GLT::logger::drain_log_buffer(true);
+        for (const auto& msg : previous_messages)
+            GLT::logger_plugin::log_msg_internal(msg.msg_sev, msg.file_name, msg.function_name, msg.line,
+                msg.module_name, msg.thread_id, msg.message);
+
         return true;
     }
 

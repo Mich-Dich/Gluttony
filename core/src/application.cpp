@@ -39,11 +39,12 @@ namespace GLT {
 
         plugin_manager::load_plugins(plugin_manager::load_phase::pre_application);
         mp_window = plugin_manager::get_plugin_ref<platform::i_window_plugin>(plugin_manager::targeted_interface::window);
+        ASSERT(mp_window, "", "Failed to load window plugin")
         mp_window->create(attributes);
 
         plugin_manager::load_plugins(plugin_manager::load_phase::post_window);
         mp_renderer = plugin_manager::get_plugin_ref<render::i_renderer_plugin>(plugin_manager::targeted_interface::renderer);
-        mp_renderer->create();
+        // mp_renderer->create();
 
         set_target_fps(30);         // DEBUG-ONLY - TODO: load from config
 
@@ -60,7 +61,7 @@ namespace GLT {
 
         plugin_manager::load_plugins(plugin_manager::load_phase::pre_application_shutdown);
 
-        mp_renderer->destroy();
+        // mp_renderer->destroy();
 
         platform::window_attributes attributes = mp_window->get_window_attributes();
         config::serialize_window_attributes(attributes, serializer::option::save_to_file);
@@ -85,9 +86,9 @@ namespace GLT {
 
             // update the layerStack
 
-            mp_renderer->begin_frame();
-            // render the layerStack
-            mp_renderer->end_frame();
+            // mp_renderer->begin_frame();
+            // // render the layerStack
+            // mp_renderer->end_frame();
             
             m_fps_controller.limit();
         }

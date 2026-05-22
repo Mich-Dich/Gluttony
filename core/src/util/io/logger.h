@@ -85,30 +85,40 @@ namespace GLT::logger {
 
     using init_func = bool (*)(const std::string& format, bool log_to_console, const std::filesystem::path& log_dir, 
         const std::string& main_log_file_name, bool use_append_mode);
+
     using shutdown_func = void (*)();
+
     using log_msg_internal_func = void (*)(severity msg_sev, const char* file_name, const char* function_name, int line, const char* module_name,
         std::thread::id thread_id, std::string message);
+    
     using get_log_file_location_func = std::filesystem::path (*)();
-    using set_format_func = void (*)(const std::string& new_format);
-    using use_previous_format_func = void (*)();
-    using get_format_func = const std::string (*)();
-    using set_buffer_threshold_func = void (*)(severity new_threshold);
-    using set_buffer_size_func = void (*)(size_t new_size);
-    using register_label_func = void (*)(const std::string& thread_label, std::thread::id thread_id);
-    using unregister_label_func = void (*)(std::thread::id thread_id);
 
+    using set_format_func = void (*)(const std::string& new_format);
+
+    using use_previous_format_func = void (*)();
+
+    using get_format_func = const std::string (*)();
+
+    using set_buffer_threshold_func = void (*)(severity new_threshold);
+
+    using set_buffer_size_func = void (*)(size_t new_size);
+
+    using register_label_func = void (*)(const std::string& thread_label, std::thread::id thread_id);
+
+    using unregister_label_func = void (*)(std::thread::id thread_id);
+    
     struct logger_functions {
-        init_func                  init;
-        shutdown_func              shutdown;
-        log_msg_internal_func      log_msg_internal;
-        get_log_file_location_func get_log_file_location;
-        set_format_func            set_format;
-        use_previous_format_func   use_previous_format;
-        get_format_func            get_format;
-        set_buffer_threshold_func  set_buffer_threshold;
-        set_buffer_size_func       set_buffer_size;
-        register_label_func        register_label_for_thread;
-        unregister_label_func      unregister_label_for_thread;
+        init_func                       init;
+        shutdown_func                   shutdown;
+        log_msg_internal_func           log_msg_internal;
+        get_log_file_location_func      get_log_file_location;
+        set_format_func                 set_format;
+        use_previous_format_func        use_previous_format;
+        get_format_func                 get_format;
+        set_buffer_threshold_func       set_buffer_threshold;
+        set_buffer_size_func            set_buffer_size;
+        register_label_func             register_label_for_thread;
+        unregister_label_func           unregister_label_for_thread;
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -125,15 +135,35 @@ namespace GLT::logger {
     // Existing function declarations (remain unchanged)
     bool init(const std::string& format, bool log_to_console = false, const std::filesystem::path& log_dir = "./logs", 
         const std::string& main_log_file_name = "general.log", bool use_append_mode = false);
+    
+    
     void shutdown();
+    
+    
     std::filesystem::path get_log_file_location();
+    
+    
     void set_format(const std::string& new_format);
+    
+    
     void use_previous_format();
+    
+    
     const std::string get_format();
+    
+    
     void set_buffer_threshold(severity new_threshold);
+    
+    
     void set_buffer_size(size_t new_size);
+    
+    
     void register_label_for_thread(const std::string& thread_label, std::thread::id thread_id = std::this_thread::get_id());
+    
+    
     void unregister_label_for_thread(std::thread::id thread_id = std::this_thread::get_id());
+    
+    
     void log_msg_internal(severity msg_sev, const char* file_name, const char* function_name, int line, const char* module_name,
         std::thread::id thread_id, std::string message);
 
@@ -144,6 +174,11 @@ namespace GLT::logger {
     inline void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
         std::thread::id thread_id, std::format_string<Args...> fmt, Args&&... args) {
 
+        if (message.empty())
+            return;
+        // if (msg_sev < g_min_severity.load(std::memory_order_relaxed))
+        //     return;   // avoid formatting entirely
+
         std::string message = std::format(fmt, std::forward<Args>(args)...);
         log_msg_internal(msg_sev, file_name, function_name, line, module_name, thread_id, std::move(message));
     }
@@ -152,12 +187,18 @@ namespace GLT::logger {
     inline void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
         std::thread::id thread_id, const std::string& message) {
 
+        if (message.empty())
+            return;
+
         log_msg_internal(msg_sev, file_name, function_name, line, module_name, thread_id, message);
     }
 
     inline void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
-        std::thread::id thread_id, const char* message) {
+        std::thread::id thread_id, std::string_view message) {
             
+        if (message.empty())
+            return;
+
         log_msg_internal(msg_sev, file_name, function_name, line, module_name, thread_id, std::string(message));
     }
 

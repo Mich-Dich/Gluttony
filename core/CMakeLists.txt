@@ -1,10 +1,10 @@
-# =============================================================================
+# ===========================================================================================
 # Root CMake Configuration
-# =============================================================================
+# ===========================================================================================
 # Project:      plugin test for Gluttony
 # Location:     ${PROJECT_SOURCE_DIR}/core/CMakeLists.txt
 # Purpose:      compile the core of the application (microkernel)
-# =============================================================================
+# ===========================================================================================
 
 SET(CORE_NAME                                           "Gluttony")
 
@@ -29,6 +29,7 @@ set_target_properties(${CORE_NAME} PROPERTIES
 target_link_options(${CORE_NAME}                        PRIVATE -rdynamic)
 target_link_libraries(${CORE_NAME}                      PRIVATE
     glm
+    imgui
 )
 
 # Find PCH header if it exists

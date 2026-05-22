@@ -467,7 +467,8 @@ namespace GLT::renderer_vk_ray {
 
         // Setup ImGui context
         IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
+        m_imgui_context = ImGui::CreateContext();
+        ImGui::SetCurrentContext(m_imgui_context);
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
@@ -507,6 +508,11 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::imgui_shutdown() {
 
+        // TODO: shutdown imgui on window
+        // auto p_window = GLT::plugin_manager::get_plugin<GLT::platform::i_window_plugin>(GLT::plugin_manager::targeted_interface::window);
+        // ASSERT(!p_window.expired(), "", "Failed to get window plugin")
+        // p_window.lock()->imgui_init(GLT::render::backend_api::vulkan);
+        
         destroy_imgui_resources();
         ImGui::DestroyContext();
     }

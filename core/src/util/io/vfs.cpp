@@ -38,6 +38,16 @@ namespace GLT::vfs {
     }
 
 
+    bool default_create_file(const std::filesystem::path& path) {
+
+        if (std::filesystem::exists(path))      // Avoid truncating an existing file
+            return true;                        // already exists – consider success or false?
+
+        std::ofstream ofs(path);
+        return ofs.is_open();
+    }
+
+
     [[nodiscard]] bool default_is_directory(const std::filesystem::path& path) {
 
         return std::filesystem::is_directory(path);
@@ -225,6 +235,7 @@ namespace GLT::vfs {
 
     static vfs_functions g_vfs = {
         default_exists,
+        default_create_file,
         default_is_directory,
         default_is_regular_file,
         default_create_directory,
@@ -254,6 +265,12 @@ namespace GLT::vfs {
     bool exists(const std::filesystem::path& path) {
 
         return g_vfs.exists(path);
+    }
+
+
+    bool create_file(const std::filesystem::path& path) {
+
+        return g_vfs.create_file(path);
     }
 
 

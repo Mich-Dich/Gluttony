@@ -39,6 +39,9 @@ namespace GLT::vfs_plugin {
     bool exists_impl(const std::filesystem::path& path);
     
     
+    bool create_file_impl(const std::filesystem::path& path);
+
+
     bool is_directory_impl(const std::filesystem::path& path);
     
     

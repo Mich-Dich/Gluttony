@@ -328,10 +328,10 @@ namespace GLT::plugin_manager {
 
             // Temporarily load the library to get the descriptor.
             void* handle = load_library(path.c_str(), lib_load_mode::lazy);
-            VALIDATE(handle, continue, "", "load_library failed: %s", get_dynamic_library_error().c_str());
+            VALIDATE(handle, continue, "", "load_library failed: [{}]", get_dynamic_library_error());
 
             auto desc_fn = reinterpret_cast<descriptor_func>(get_function(handle, "gluttony_plugin_descriptor"));
-            VALIDATE(desc_fn, free_library(handle); continue, "", "get_function failed: %s", get_dynamic_library_error().c_str());
+            VALIDATE(desc_fn, free_library(handle); continue, "", "get_function failed: [{}]", get_dynamic_library_error());
 
             const plugin_descriptor* desc = desc_fn();
             VALIDATE(desc, continue; free_library(handle), "", "Failed to load descriptor function");
@@ -346,7 +346,7 @@ namespace GLT::plugin_manager {
             // Reject the plugin if [configured name] != [this plugin’s name]
             if (!has_config || preferred_plugin_name.empty() || preferred_plugin_name == "unknown") {
 
-                LOG(trace, "No preferred plugin found for interface [{}], setting to first found []", to_string(iface), plugin_name)
+                LOG(trace, "No preferred plugin found for interface [{}], setting to first found [{}]", to_string(iface), plugin_name)
                 s_plugin_names_per_target_interface[iface] = plugin_name;
             
             } else if (plugin_name != preferred_plugin_name) {                             // Not the user’s chosen plugin – skip.
@@ -422,7 +422,7 @@ namespace GLT::plugin_manager {
                         case plugin_load_error::failed_to_find_factory_functions:           [[fallthrough]];
                         case plugin_load_error::failed_to_create_instance: {
                             // Permanent failure – remove from list, log, and continue.
-                            LOG(error, "Failed to load plugin '{}': {}", it->name, static_cast<int>(load_error));
+                            LOG(error, "Failed to load plugin [{}]: [{}]", it->name, static_cast<int>(load_error));
                             it = pending.erase(it);
                             break;
                         }
@@ -440,7 +440,7 @@ namespace GLT::plugin_manager {
 
         if (!pending.empty()) {
             for (const auto& p : pending) {                 // Some plugins could not be loaded due to missing dependencies.
-                LOG(error, "Plugin [%s] could not be loaded: unsatisfied dependencies or load error", p.name.c_str());
+                LOG(error, "Plugin [{}] could not be loaded: unsatisfied dependencies or load error", p.name);
             }
         }
     }
