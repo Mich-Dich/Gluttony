@@ -81,15 +81,8 @@ namespace GLT::render {
 
 
         // Ends the current frame.
-        // Submits all recorded command buffers and prepares the swapchain image for
-        // presentation.
-        virtual void end_frame() = 0;
-
-
-        // Presents the rendered frame to the screen.
-        // Usually called after end_frame(). Some implementations may combine
-        // end_frame() and present() – both patterns are acceptable.
-        virtual void present() = 0;
+        // render all 
+        virtual void draw_frame() = 0;
 
 
         // Waits for the GPU to finish all submitted work.

@@ -115,6 +115,11 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
 
     add_library(${TARGET_NAME} ${TARGET_LIB_TYPE} ${PLUGIN_SOURCES})
     target_compile_definitions(${TARGET_NAME}       PRIVATE GLT_MODULE_NAME="${BASE_NAME}")
+    target_compile_definitions(${TARGET_NAME}       PRIVATE
+        $<$<CONFIG:Debug>:DEBUG>
+        $<$<CONFIG:Release>:RELEASE>
+        $<$<CONFIG:RelWithDebInfo>:RELEASE_WITH_DEBUG_INFO>
+    )
     target_include_directories(${TARGET_NAME}       PRIVATE
         ${CMAKE_SOURCE_DIR}/core/src/
         ${CMAKE_CURRENT_SOURCE_DIR}/src/

@@ -85,13 +85,15 @@ namespace GLT {
 
             mp_window->poll_events();        // update internal state
 
-            // update the layerStack
+            for (auto layer = m_layer_stack.end(); layer != m_layer_stack.begin(); )
+                (*--layer)->update(m_delta_time);
 
-            mp_renderer->begin_frame();
-            // // render the layerStack
-            mp_renderer->end_frame();
-            
-            m_fps_controller.limit();
+            mp_renderer->begin_frame();     // start frame + start imgui frame
+            for (auto layer = m_layer_stack.begin(); layer != m_layer_stack.end(); )
+                (*--layer)->render_imgui(m_delta_time);
+            mp_renderer->draw_frame();      // finish imgui stuff and render world
+
+            m_delta_time = m_fps_controller.limit();
         }
         plugin_manager::load_plugins(plugin_manager::load_phase::post_application_run);
     }

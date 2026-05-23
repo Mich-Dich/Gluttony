@@ -1,19 +1,9 @@
 
 #include <util/pch.h>
 
-#include <imgui.h>
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_vulkan.h>
-
-#include <vk_ray/vk_ray.h>
 #include <plugin_system/plugin_manager.h>
 #include <plugin_system/i_window_plugin.h>
 #include <plugin_system/i_renderer_plugin.h>
-
-#include "util/utils.h"
-
-#include "renderer.h"
-
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -22,13 +12,9 @@ namespace GLT::renderer_vk_ray {
     // CONSTANTS =======================================================================================================
 
     #if defined(DEBUG)
-
         constexpr bool                  USE_VULKAN_VALIDATION = true;
-
     #else
-
         constexpr bool                  USE_VULKAN_VALIDATION = false;
-
     #endif
 
     // MACROS ==========================================================================================================
@@ -41,7 +27,7 @@ namespace GLT::renderer_vk_ray {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    renderer::renderer() {
+    bool renderer::create() {
 
         init_vulkan();
         create_base_resources();
@@ -50,16 +36,62 @@ namespace GLT::renderer_vk_ray {
         update_descriptor_set();
         imgui_init();
 
-        m_state = system_state::active; // renderer is now ready
+        m_state = system_state::idle;
         LOG_INIT
+        return true;
     }
 
 
-    renderer::~renderer() {
+    void renderer::destroy() {
 
+        m_state = system_state::destroyed;
+        m_device.waitIdle();
+
+        // Wait for all frames to complete
+        for (u32 x = 0; x < static_cast<u32>(m_swapchain_resources.swapchain_images.size()); x++) {
+            const auto result = m_device.waitForFences(m_in_flight_fences[x], VK_TRUE, UINT64_MAX);
+            if (result != vk::Result::eSuccess)
+                DEBUG_BREAK();
+        }
+        
+        imgui_shutdown();
+
+        if (m_swapchain_resources.swapchain_handle) {                                    // destroy the current swapchain
+            for (auto& imageView : m_swapchain_resources.swapchain_image_views)           // Destroy image views
+                m_device.destroyImageView(imageView);
+
+            m_swapchain_resources.swapchain_image_views.clear();
+            m_device.destroySwapchainKHR(m_swapchain_resources.swapchain_handle);        // Destroy the swapchain itself
+        }
+
+        if (m_old_swapchain)
+            m_device.destroySwapchainKHR(m_old_swapchain);                              // destroy old swapchain
+
+        m_swapchain_resources.swapchain_handle = nullptr;
+        m_old_swapchain = nullptr;
+
+        m_deletion_queue.shutdown();
+
+        if (m_surface) {
+            m_instance.instance_handle.destroySurfaceKHR(m_surface);                     // Destroy surface
+            m_surface = nullptr;
+        }
+
+        LOG_SHUTDOWN
     }
     
     // CLASS PUBLIC ====================================================================================================
+
+    void renderer::begin_frame() {
+
+
+    }
+
+
+    void renderer::draw_frame() {
+
+
+    }
 
     // CLASS PROTECTED =================================================================================================
 

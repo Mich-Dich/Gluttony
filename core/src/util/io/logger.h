@@ -19,8 +19,6 @@ namespace GLT::logger {
 
     // MACROS ==========================================================================================================
     
-    #define LOG_LEVEL_ENABLED                                   6
-    
     #ifndef LOG_LEVEL_ENABLED
 
         #if defined(DEBUG)

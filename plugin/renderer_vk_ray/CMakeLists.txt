@@ -21,6 +21,9 @@ set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES" "${PLUGIN_SOU
 compile_plugin(SHARED                                               ${PLUGIN_NAME}          glm imgui)
 compile_plugin(STATIC                                               ${PLUGIN_NAME}_static   glm imgui)
 
+# target_compile_definitions(${PLUGIN_NAME}                           PUBLIC USE_VULKAN_VALIDATION)
+# target_compile_definitions(${PLUGIN_NAME}_static                    PUBLIC USE_VULKAN_VALIDATION)
+
 find_package(glslang REQUIRED)
 target_link_libraries(${PLUGIN_NAME}                                PRIVATE glslang)
 target_link_libraries(${PLUGIN_NAME}_static                         PRIVATE glslang)

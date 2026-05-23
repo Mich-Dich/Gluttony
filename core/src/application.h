@@ -39,6 +39,8 @@ namespace GLT {
         ~application();
 
         GETTER(ref<GLT::platform::i_window_plugin>,     window, mp_window)
+        DEFAULT_GETTER_REF(layer_stack,                 layer_stack)
+        DEFAULT_GETTER_CC(f32,                          delta_time)
 
         FORCE_INLINE_R static application& get()	    { return *s_instance; }
 
@@ -57,6 +59,10 @@ namespace GLT {
         bool                                            m_running = true;
         util::interval_controller                       m_fps_controller{};
         handle                                          m_close_event_sub_handle{};
+        layer_stack                                     m_layer_stack{};
+        u32                                             m_focus_fps = 60;
+        u32                                             m_none_focus_fps = 30;
+        f32                                             m_delta_time = 0.f;
 
     };
 

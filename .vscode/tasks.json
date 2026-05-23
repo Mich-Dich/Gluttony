@@ -2,28 +2,31 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "CMake Build (Debug)",
+            "label": "CMake build (debug)",
             "type": "shell",
-            "command": "cmake",
-            "args": [
-                "--build",
-                "${workspaceFolder}/build",
-                "--parallel"
-            ],
+            "command": "cmake --preset debug && cmake --build --preset debug --parallel",
             "group": {
                 "kind": "build",
                 "isDefault": true
             },
             "problemMatcher": "$gcc",
-            "detail": "Build the Gluttony target in Debug mode"
+            "detail": "Configure (if needed) and build debug using presets"
         },
         {
-            "label": "CMake Clean Build (Debug)",
+            "label": "CMake build (release)",
             "type": "shell",
-            "command": "cmake -E remove_directory build && cmake -B build -DCMAKE_BUILD_TYPE=debug && cmake --build build --parallel",
+            "command": "cmake --preset release && cmake --build --preset release --parallel",
             "group": "build",
             "problemMatcher": "$gcc",
-            "detail": "Remove build dir, configure Debug, then build (cross-platform)"
+            "detail": "Configure (if needed) and build release using presets"
+        },
+        {
+            "label": "CMake build (release_with_debug_info)",
+            "type": "shell",
+            "command": "cmake --preset release_with_debug_info && cmake --build --preset release_with_debug_info --parallel",
+            "group": "build",
+            "problemMatcher": "$gcc",
+            "detail": "Configure (if needed) and build release with debug Info using presets"
         }
     ]
 }

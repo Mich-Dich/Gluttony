@@ -16,6 +16,11 @@ file(GLOB_RECURSE                                       CORE_SOURCES
 )
 add_executable(${CORE_NAME}                             ${CORE_SOURCES})
 target_compile_definitions(${CORE_NAME}                 PRIVATE GLT_MODULE_NAME="${CORE_NAME}")
+target_compile_definitions(${CORE_NAME} PRIVATE
+    $<$<CONFIG:Debug>:DEBUG>
+    $<$<CONFIG:Release>:RELEASE>
+    $<$<CONFIG:RelWithDebInfo>:RELEASE_WITH_DEBUG_INFO>
+)
 target_include_directories(${CORE_NAME}                 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/
     ${CMAKE_SOURCE_DIR}/vendor/glm

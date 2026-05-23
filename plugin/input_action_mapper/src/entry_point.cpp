@@ -73,6 +73,8 @@ namespace GLT::input_action_mapper {
 
     private:
 
+        IGNORE_UNUSED_PARAMETER_START
+
         void on_key_event(const GLT::key_event& event) {
 
         }
@@ -82,6 +84,7 @@ namespace GLT::input_action_mapper {
 
         }
 
+        IGNORE_UNUSED_PARAMETER_STOP
 
         handle              m_key_event_sub{};
         handle              m_mouse_event_sub{};

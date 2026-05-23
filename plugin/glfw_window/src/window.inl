@@ -241,6 +241,7 @@ namespace GLT::glfw_window {
         m_data.height = height;
     }
 
+    IGNORE_UNUSED_PARAMETER_START
 
     inline void plugin::set_vsync(bool vsync) {
 
@@ -250,6 +251,7 @@ namespace GLT::glfw_window {
         // glfwSwapInterval(vsync ? 1 : 0);
     }
 
+    IGNORE_UNUSED_PARAMETER_STOP
 
     inline void plugin::set_cursor_mode(GLT::platform::cursor_mode mode) {
 

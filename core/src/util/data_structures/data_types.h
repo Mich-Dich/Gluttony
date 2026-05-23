@@ -240,10 +240,10 @@ namespace GLT {
 
 	// @brief System state enumeration
 	enum class system_state : u8 {
-
-		shutdown = 0,  	// System is shut down
-		active,	   		// System is fully operational
-		suspended, 		// System is paused but retains state
+		idle = 0,
+		running,
+		paused,
+		destroyed,
 	};
 
 

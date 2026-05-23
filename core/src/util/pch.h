@@ -85,6 +85,7 @@
 #include <glm/vec4.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/ext/matrix_transform.hpp>			// glm::translate, glm::rotate, glm::scale
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/ext/matrix_clip_space.hpp>		// glm::perspective
 #include <glm/ext/scalar_constants.hpp>			// glm::pi
 #include <glm/gtc/type_ptr.hpp>
@@ -105,6 +106,9 @@
 #include "util/util.h"
 
 #include "config/config.h"
+
+#include "layer/layer.h"
+#include "layer/layer_stack.h"
 
 // #include "event/event.h"
 // #include "event/event_bus.h"
