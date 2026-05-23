@@ -23,8 +23,8 @@ namespace GLT::serializer {
 	binary::binary(const std::filesystem::path filename, const std::string& section_name, option option)
 	: m_filename(filename), m_name(section_name), m_option(option) {
 
-		// ASSERT(std::filesystem::is_regular_file(filename), "", "Provided filepath is not a file [{}]", filename.generic_string());
-		if (m_option == option::save_to_file) {
+		// ASSERT(vfs::is_regular_file(filename), "", "Provided filepath is not a file [{}]", filename.generic_string());
+		if (m_option == option::save) {
 
 			m_ostream = std::ofstream(m_filename, std::ios::out | std::ios::binary | std::ios::trunc);
 			VALIDATE(m_ostream, return, "", "Failed to save to file: [{}]", m_filename);
@@ -41,7 +41,7 @@ namespace GLT::serializer {
 
 	binary::~binary() {
 
-		if (m_option == option::save_to_file)
+		if (m_option == option::save)
 			m_ostream.close();
 		else
 			m_istream.close();

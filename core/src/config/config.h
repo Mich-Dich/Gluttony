@@ -54,7 +54,7 @@ namespace GLT::config {
 	// @brief Creates configuration files for a specific project by ensuring the project's CONFIG_DIR exists and creating empty config files.
 	// @param project_dir The project directory where project-specific configuration files will be stored.
 	// @return void This function does not have a return value.
-	void create_config_files_for_project(const std::filesystem::path& project_dir);
+    bool create_config_files(const std::filesystem::path& project_path);
 
 
 	// @brief Converts a configuration type enum value to its string representation.
@@ -67,7 +67,7 @@ namespace GLT::config {
 	// @param root The root directory containing the CONFIG_DIR.
 	// @param type The configuration file type to resolve.
 	// @return std::filesystem::path The full path to the configuration type with the configured extension (e.g., CONFIG_DIR/<type>.config).
-	FORCE_INLINE_R std::filesystem::path get_filepath_from_config_type(const type type);
+	FORCE_INLINE_R std::filesystem::path config_type_to_filepath(const type type);
 
 
 	// @brief Resolves a configuration file path (INI extension) for a given root directory and configuration file type.
@@ -75,18 +75,6 @@ namespace GLT::config {
 	// @param type The configuration file type to resolve.
 	// @return std::filesystem::path The full path to the configuration INI type (e.g., CONFIG_DIR/<type>.ini).
 	FORCE_INLINE_R std::filesystem::path get_filepath_from_config_type_ini(const type type);
-
-
-	// @brief Checks for the existence of a configuration entry in the specified configuration type. If found and override==true, the existing value is replaced.
-	//        If found and override==false the current value is loaded into the provided value reference. If not found, the key/value pair is appended.
-	// @param target_config_file The configuration file type to inspect (enum type).
-	// @param section The section name in the configuration file where the key/value is expected (e.g., "ui").
-	// @param key The key to search for inside the section.
-	// @param value Reference to a string that will be updated with the existing value (when override==false) or used to overwrite/append when override==true.
-	// @param override If true, existing value is replaced with the provided value; if false, the provided value is overwritten by the existing value if found.
-	// @return bool true if the key was found (and possibly updated/appended), false if not found or on failure.
-	bool check_for_configuration(const type target_config_file, const std::string& section, const std::string& key, 
-		std::string& value, const bool override);
 
 	// TEMPLATE DECLARATION ============================================================================================
 

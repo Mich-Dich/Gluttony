@@ -28,14 +28,14 @@ namespace GLT::vfs_plugin {
         plugin_manager::targeted_interface::none
     };
 
-    static plugin_manager::plugin_descriptor descriptor = {
-        .name                                   = GLT_MODULE_NAME,
-        .phase                                  = plugin_manager::load_phase::earliest_possible,
-        .target                                 = plugin_manager::targeted_interface::virtual_file_system,
-        .dependency_names_count                 = ARRAY_SIZE(needed_plugins_names),
-        .dependency_names                       = needed_plugins_names,
-        .dependency_interface_count             = ARRAY_SIZE(needed_plugins_interfaces),
-        .dependency_interfaces                  = needed_plugins_interfaces,
+    static plugin_manager::plugin_descriptor        descriptor = {
+        .name                                       = GLT_MODULE_NAME,
+        .phase                                      = plugin_manager::load_phase::earliest_possible,
+        .target                                     = plugin_manager::targeted_interface::virtual_file_system,
+        .dependency_names_count                     = ARRAY_SIZE(needed_plugins_names),
+        .dependency_names                           = needed_plugins_names,
+        .dependency_interface_count                 = ARRAY_SIZE(needed_plugins_interfaces),
+        .dependency_interfaces                      = needed_plugins_interfaces,
     };
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -54,10 +54,7 @@ namespace GLT::vfs_plugin {
         void on_load() override {
 
             // Initialize the plugin's VFS backend (vfspp)
-            if (!GLT::vfs_plugin::native::init()) {
-                LOG(error, "Failed to initialize VFS plugin");
-                return;
-            }
+            VALIDATE(GLT::vfs_plugin::native::init(), return, "", "Failed to initialize VFS plugin")
 
             // Build the function table that the core expects
             static const GLT::vfs::vfs_functions plugin_functions = {
@@ -71,7 +68,6 @@ namespace GLT::vfs_plugin {
                 .rename                 = &GLT::vfs_plugin::native::rename,
                 .copy_file              = &GLT::vfs_plugin::native::copy_file,
                 .file_size              = &GLT::vfs_plugin::native::file_size,
-                .list_directory         = &GLT::vfs_plugin::native::list_directory,
                 .read_text_file         = &GLT::vfs_plugin::native::read_text_file,
                 .write_text_file        = &GLT::vfs_plugin::native::write_text_file,
                 .open_file              = &GLT::vfs_plugin::native::open_file,

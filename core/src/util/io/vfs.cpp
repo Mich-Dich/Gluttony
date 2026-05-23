@@ -26,15 +26,40 @@ namespace GLT::vfs {
 
     // STATIC VARIABLES ================================================================================================
 
-    CORE_API [[nodiscard]] filesystem_type get_filesystem_type() { return s_filesystem_type; }
+    // INTERNAL FUNCTION DECLARATION ===================================================================================
+
+    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
+    // Convert file_open_mode flags to fopen mode string
+    static const char* mode_string_from_flags(file_open_mode mode) {
+
+        if ((mode & file_open_mode::read) && (mode & file_open_mode::write)) {
+            if (mode & file_open_mode::append)
+                return "a+";          // read + append
+            else if (mode & file_open_mode::truncate)
+                return "w+";          // read + write, truncate
+            else
+                return "r+";          // read + write, no truncate
+
+        } else if (mode & file_open_mode::read) {
+            return "rb";
+
+        } else if (mode & file_open_mode::write) {
+            if (mode & file_open_mode::append)
+                return "ab";
+            else if (mode & file_open_mode::truncate)
+                return "wb";
+            else
+                return "wb";          // write without truncate? Not portable, use wb
+        }
+        // fallback
+        return "rb";
+    }
 
 
-    CORE_API void set_filesystem_type(const filesystem_type type) { s_filesystem_type = type; }
+    bool default_exists(const std::filesystem::path& path, std::error_code& error) {
 
-
-    [[nodiscard]] bool default_exists(const std::filesystem::path& path) {
-
-        return std::filesystem::exists(path);
+        return std::filesystem::exists(path, error);
     }
 
 
@@ -66,76 +91,57 @@ namespace GLT::vfs {
     }
 
 
-    [[nodiscard]] bool default_is_directory(const std::filesystem::path& path) {
+    bool default_is_directory(const std::filesystem::path& path, std::error_code& error) {
 
-        return std::filesystem::is_directory(path);
+        return std::filesystem::is_directory(path, error);
     }
 
 
-    [[nodiscard]] bool default_is_regular_file(const std::filesystem::path& path) {
+    bool default_is_regular_file(const std::filesystem::path& path, std::error_code& error) {
 
-        return std::filesystem::is_regular_file(path);
+        return std::filesystem::is_regular_file(path, error);
     }
 
 
-    bool default_create_directory(const std::filesystem::path& path) {
+    void default_create_directory(const std::filesystem::path& path, std::error_code& error) {
 
-        return std::filesystem::create_directory(path);
+        std::filesystem::create_directory(path), error;
     }
 
 
-    bool default_create_directories(const std::filesystem::path& path) {
+    void default_create_directories(const std::filesystem::path& path, std::error_code& error) {
 
-		std::error_code error{};
         std::filesystem::create_directories(path, error);
-        return !error;
     }
 
 
-    bool default_remove(const std::filesystem::path& path) {
+    void default_remove(const std::filesystem::path& path, std::error_code& error) {
 
-        return std::filesystem::remove(path);
+        std::filesystem::remove(path, error);
     }
 
 
-    bool default_rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
+    void default_rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error) {
 
-        std::error_code ec;
-        std::filesystem::rename(old_path, new_path, ec);
-        return !ec;
+        std::filesystem::rename(old_path, new_path, error);
     }
 
 
-    bool default_copy_file(const std::filesystem::path& from, const std::filesystem::path& to, bool overwrite) {
+    void default_copy_file(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& error, bool overwrite) {
 
         std::filesystem::copy_options options = std::filesystem::copy_options::none;
         if (overwrite) {
             options = std::filesystem::copy_options::overwrite_existing;
         }
-        std::error_code ec;
-        std::filesystem::copy_file(from, to, options, ec);
-        return !ec;
+
+        std::filesystem::copy_file(from, to, options, error);
     }
 
 
-    [[nodiscard]] u64 default_file_size(const std::filesystem::path& path) {
+    [[nodiscard]] u64 default_file_size(const std::filesystem::path& path, std::error_code& error) {
 
-        std::error_code ec;
-        auto size = std::filesystem::file_size(path, ec);
-        return ec ? 0 : static_cast<u64>(size);
-    }
-
-
-    [[nodiscard]] std::vector<std::filesystem::path> default_list_directory(const std::filesystem::path& path) {
-
-        std::vector<std::filesystem::path> result;
-        std::error_code ec;
-        for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
-            if (!ec) {
-                result.push_back(entry.path());
-            }
-        }
-        return result;
+        auto size = std::filesystem::file_size(path);
+        return error ? 0 : static_cast<u64>(size);
     }
 
 
@@ -159,38 +165,53 @@ namespace GLT::vfs {
         return !file.fail();
     }
 
-    // Convert file_open_mode flags to fopen mode string
-    static const char* mode_string_from_flags(file_open_mode mode) {
-        if ((mode & file_open_mode::read) && (mode & file_open_mode::write)) {
-            if (mode & file_open_mode::append)
-                return "a+";          // read + append
-            else if (mode & file_open_mode::truncate)
-                return "w+";          // read + write, truncate
-            else
-                return "r+";          // read + write, no truncate
-        } else if (mode & file_open_mode::read) {
-            return "rb";
-        } else if (mode & file_open_mode::write) {
-            if (mode & file_open_mode::append)
-                return "ab";
-            else if (mode & file_open_mode::truncate)
-                return "wb";
-            else
-                return "wb";          // write without truncate? Not portable, use wb
-        }
-        // fallback
-        return "rb";
-    }
 
+    [[nodiscard]] file_handle default_open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept {
 
-    [[nodiscard]] file_handle default_open_file(const std::filesystem::path& path, file_open_mode mode) {
-        const char* mode_str = mode_string_from_flags(mode);
-        FILE* f = std::fopen(path.string().c_str(), mode_str);
-        if (!f) {
-            return invalid_file_handle;
+        error.clear();
+
+        const char* mode_str = mode_string_from_flags(mode);                // Obtain the correct fopen mode string
+        if (!mode_str)
+            return 0;                                                       // invalid mode
+
+        std::FILE* f = std::fopen(path.c_str(), mode_str);                  // First attempt to open with the chosen mode
+        if (f)
+            return reinterpret_cast<u64>(f);
+
+        // If it failed, decide whether we should create the file and retry.
+        // The "r" and "r+" modes do NOT create a missing file.
+        // If the caller asked for 'create', we create the file now and retry.
+        bool use_create_fallback = false;
+        if (mode & GLT::vfs::file_open_mode::create) {
+            int e = errno;                                                  // Check if the error is "file not found"
+            if (e == ENOENT) {
+                // Only "r" and "r+" would have failed with ENOENT.
+                // The other modes ("w","w+","a","a+") already create,
+                // so they would have succeeded or failed for another reason.
+                if (std::strcmp(mode_str, "r") == 0 || std::strcmp(mode_str, "r+") == 0) {
+                    use_create_fallback = true;
+                }
+            }
         }
-        // Store FILE* as u64 (pointer fits on 64‑bit platforms)
-        return reinterpret_cast<file_handle>(f);
+
+        if (use_create_fallback) {
+            std::FILE* creator = std::fopen(path.c_str(), "wx");            // Create the file exclusively (like 'wx'), then reopen with the original mode.
+            if (creator) {
+                std::fclose(creator);
+                f = std::fopen(path.c_str(), mode_str);                     // Now the file exists → reopen with the desired mode
+                if (f)
+                    return reinterpret_cast<u64>(f);
+            } else if (errno == EEXIST) {                                   // Reopen failed for some other reason – fall through to error
+                // Race: someone else created it between our failed open and wx.
+                // That's fine – try again with the desired mode.
+                f = std::fopen(path.c_str(), mode_str);
+                if (f)
+                    return reinterpret_cast<u64>(f);
+            }
+        }
+
+        error.assign(errno, std::generic_category());                       // If we get here, all attempts failed.
+        return 0;
     }
 
 
@@ -255,7 +276,6 @@ namespace GLT::vfs {
     }
 
 
-
     static vfs_functions g_vfs = {
         default_exists,
         default_create_file,
@@ -267,7 +287,6 @@ namespace GLT::vfs {
         default_rename,
         default_copy_file,
         default_file_size,
-        default_list_directory,
         default_read_text_file,
         default_write_text_file,
         default_open_file,
@@ -280,14 +299,20 @@ namespace GLT::vfs {
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
+    [[nodiscard]] filesystem_type get_filesystem_type() { return s_filesystem_type; }
+
+
+    void set_filesystem_type(const filesystem_type type) { s_filesystem_type = type; }
+
+
     void install_vfs_functions(const vfs_functions& funcs) {
         g_vfs = funcs;   // safe if called before any VFS operations run
     }
 
 
-    bool exists(const std::filesystem::path& path) {
+    bool exists(const std::filesystem::path& path, std::error_code& error) {
 
-        return g_vfs.exists(path);
+        return g_vfs.exists(path, error);
     }
 
 
@@ -297,57 +322,51 @@ namespace GLT::vfs {
     }
 
 
-    bool is_directory(const std::filesystem::path& path) {
+    bool is_directory(const std::filesystem::path& path, std::error_code& error) {
 
-        return g_vfs.is_directory(path);
+        return g_vfs.is_directory(path, error);
     }
 
 
-    bool is_regular_file(const std::filesystem::path& path) {
+    bool is_regular_file(const std::filesystem::path& path, std::error_code& error) {
 
-        return g_vfs.is_regular_file(path);
+        return g_vfs.is_regular_file(path, error);
     }
 
 
-    bool create_directory(const std::filesystem::path& path) {
+    void create_directory(const std::filesystem::path& path, std::error_code& error) {
 
-        return g_vfs.create_directory(path);
+        g_vfs.create_directory(path, error);
     }
 
         
-    bool create_directories(const std::filesystem::path& path) {
+    void create_directories(const std::filesystem::path& path, std::error_code& error) {
 
-        return g_vfs.create_directories(path);
+        g_vfs.create_directories(path, error);
     }
 
 
-    bool remove(const std::filesystem::path& path) {
+    void remove(const std::filesystem::path& path, std::error_code& error) {
 
-        return g_vfs.remove(path);
+        g_vfs.remove(path, error);
     }
 
 
-    bool rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
+    void rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error) {
 
-        return g_vfs.rename(old_path, new_path);
+        g_vfs.rename(old_path, new_path, error);
     }
 
 
-    bool copy_file(const std::filesystem::path& from, const std::filesystem::path& to, bool overwrite) {
+    void copy_file(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& error, bool overwrite) {
 
-        return g_vfs.copy_file(from, to, overwrite);
+        g_vfs.copy_file(from, to, error, overwrite);
     }
 
 
-    u64 file_size(const std::filesystem::path& path) {
+    u64 file_size(const std::filesystem::path& path, std::error_code& error) {
 
-        return g_vfs.file_size(path);
-    }
-
-
-    std::vector<std::filesystem::path> list_directory(const std::filesystem::path& path) {
-
-        return g_vfs.list_directory(path);
+        return g_vfs.file_size(path, error);
     }
 
 
@@ -363,9 +382,9 @@ namespace GLT::vfs {
     }
 
 
-    file_handle open_file(const std::filesystem::path& path, file_open_mode mode) {
+    [[nodiscard]] file_handle open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept {
 
-        return g_vfs.open_file(path, mode);
+        return g_vfs.open_file(path, mode, error);
     }
 
 

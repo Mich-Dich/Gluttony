@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <shared_mutex>
 #include <cstring>
+#include <cstdio>
 
 #include "native.h"
 
@@ -27,30 +28,37 @@ namespace GLT::vfs_plugin::native {
 
     static std::shared_mutex                                g_handle_mutex;
 
-    static u64                                              g_next_handle = 1;
+    // INTERNAL FUNCTION DECLARATION ===================================================================================
 
-    // FUNCTION IMPLEMENTATION =========================================================================================
-        
-    // helper: convert core’s file_open_mode to vfspp::IFile::FileMode
-    static vfspp::IFile::FileMode ToVfsppMode(GLT::vfs::file_open_mode mode) {
+    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-        using core_mode = GLT::vfs::file_open_mode;
-        using vfs_mode = vfspp::IFile::FileMode;
+    // Convert file_open_mode flags to fopen mode string
+    static const char* mode_string_from_flags(GLT::vfs::file_open_mode mode) {
 
-        int result = 0;
-        if (mode & core_mode::read)         result |= static_cast<int>(vfs_mode::Read);
-        if (mode & core_mode::write)        result |= static_cast<int>(vfs_mode::Write);
-        if (mode & core_mode::append)       result |= static_cast<int>(vfs_mode::Append);
-        if (mode & core_mode::truncate)     result |= static_cast<int>(vfs_mode::Truncate);
+        if ((mode & GLT::vfs::file_open_mode::read) && (mode & GLT::vfs::file_open_mode::write)) {
+            if (mode & GLT::vfs::file_open_mode::append)
+                return "a+";          // read + append
+            else if (mode & GLT::vfs::file_open_mode::truncate)
+                return "w+";          // read + write, truncate
+            else
+                return "r+";          // read + write, no truncate
 
-        // If neither read nor write was requested, default to read
-        if ((result & (static_cast<int>(vfs_mode::Read) | static_cast<int>(vfs_mode::Write))) == 0)
-            result |= static_cast<int>(vfs_mode::Read);
+        } else if (mode & GLT::vfs::file_open_mode::read) {
+            return "rb";
 
-        return static_cast<vfs_mode>(result);
+        } else if (mode & GLT::vfs::file_open_mode::write) {
+            if (mode & GLT::vfs::file_open_mode::append)
+                return "ab";
+            else if (mode & GLT::vfs::file_open_mode::truncate)
+                return "wb";
+            else
+                return "wb";          // write without truncate? Not portable, use wb
+        }
+        // fallback
+        return "rb";
     }
 
-    // ----- plugin lifecycle ------------------------------------------------------------------------------------------
+    // FUNCTION IMPLEMENTATION =========================================================================================
 
     bool init() {
 
@@ -62,19 +70,7 @@ namespace GLT::vfs_plugin::native {
         const auto used_type = GLT::vfs::get_filesystem_type();
         switch (used_type) {
             default:                                    [[fallthrough]];
-            case GLT::vfs::filesystem_type::native: {
-
-                // Determine a base path – here we use the current working directory.
-                // TODO: read a config value.
-                std::filesystem::path base = std::filesystem::current_path();
-                g_native_base_path = base.generic_string();
-
-                // Create and mount a native filesystem at alias "/"
-                auto native_fs = std::make_shared<vfspp::NativeFileSystem>("/", g_native_base_path);
-                VALIDATE(native_fs->Initialize(), g_vfs.reset(); return false, "", "")
-                g_vfs->AddFileSystem("/", native_fs);
-                break;
-            }   
+            case GLT::vfs::filesystem_type::native:     break;              // Dont need VFSPP for native   
             case GLT::vfs::filesystem_type::memory: {
 
                 ASSERT(false, "", "Memory filesystem not yet implemented")
@@ -106,31 +102,11 @@ namespace GLT::vfs_plugin::native {
         g_native_base_path.clear();
     }
 
-    // ----- helper: resolve a virtual path to a native path -----------------------------------------------------------
-    // For a simple setup where "/" maps to g_native_base_path, we just strip the leading '/'
-    static std::filesystem::path to_native_path(const std::filesystem::path& virtual_path) {
-
-        // std::string v = virtual_path.generic_string();
-        // if (v.empty() || v == "/")
-        //     return g_native_base_path;
-
-        // if (v.front() == '/')
-        //     v.erase(0, 1);
-
-        // return std::filesystem::path(g_native_base_path) / v;
-
-
-        return virtual_path;
-    }
-
     // ----- core VFS callback implementations -------------------------------------------------------------------------
 
-    bool exists(const std::filesystem::path& path) {
+    bool exists(const std::filesystem::path& path, std::error_code& error) {
 
-        if (!g_vfs)
-            return false;
-
-        return g_vfs->IsFileExists(path.generic_string());      // vfspp only has IsFileExists (returns true for files and directories)
+        return std::filesystem::exists(path, error);
     }
 
 
@@ -162,85 +138,70 @@ namespace GLT::vfs_plugin::native {
     }
 
 
-    bool is_directory(const std::filesystem::path& path) {
+    bool is_directory(const std::filesystem::path& path, std::error_code& error) {
 
-        // Use std::filesystem on the native path because vfspp does not expose is_directory
-        return std::filesystem::is_directory(to_native_path(path));
+        return std::filesystem::is_directory(path, error);
     }
 
 
-    bool is_regular_file(const std::filesystem::path& path) {
+    bool is_regular_file(const std::filesystem::path& path, std::error_code& error) {
 
-        return std::filesystem::is_regular_file(to_native_path(path));
+        return std::filesystem::is_regular_file(path, error);
     }
 
 
-    bool create_directory(const std::filesystem::path& path) {
+    void create_directory(const std::filesystem::path& path, std::error_code& error) {
 
-        std::error_code error;
-        std::filesystem::create_directory(to_native_path(path), error);
-        return !error;
+        std::filesystem::create_directory(path, error);
     }
 
 
-    bool create_directories(const std::filesystem::path& path) {
+    void create_directories(const std::filesystem::path& path, std::error_code& error) {
         
-        std::error_code error;
-        std::filesystem::create_directories(to_native_path(path), error);
-        return !error;
+        std::filesystem::create_directories(path, error);
     }
 
 
-    bool default_create_directories(const std::filesystem::path& path) {
-        
-        return std::filesystem::create_directories(path);
+    void remove(const std::filesystem::path& path, std::error_code& error) {
+
+        std::filesystem::remove(path, error);
     }
 
 
-    bool remove(const std::filesystem::path& path) {
+    void rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error) {
 
-        return std::filesystem::remove(to_native_path(path));
+        std::filesystem::rename(old_path, new_path, error);
     }
 
 
-    bool rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
-
-        std::error_code ec;
-        std::filesystem::rename(to_native_path(old_path), to_native_path(new_path), ec);
-        return !ec;
-    }
-
-
-    bool copy_file(const std::filesystem::path& from, const std::filesystem::path& to, bool overwrite) {
+    void copy_file(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& error, bool overwrite) {
 
         std::filesystem::copy_options opt = overwrite ? std::filesystem::copy_options::overwrite_existing
                                                       : std::filesystem::copy_options::skip_existing;
-        return std::filesystem::copy_file(to_native_path(from), to_native_path(to), opt);
+        std::filesystem::copy_file(from, to, opt, error);
     }
 
 
-    u64 file_size(const std::filesystem::path& path) {
+    u64 file_size(const std::filesystem::path& path, std::error_code& error) {
 
-        std::error_code ec;
-        auto sz = std::filesystem::file_size(to_native_path(path), ec);
-        return ec ? 0 : sz;
+        auto size = std::filesystem::file_size(path, error);
+        return error ? 0 : size;
     }
 
 
-    std::vector<std::filesystem::path> list_directory(const std::filesystem::path& path) {
+    // std::vector<std::filesystem::path> list_directory(const std::filesystem::path& path, std::error_code& error) {
 
-        std::vector<std::filesystem::path> result;
-        std::error_code ec;
-        for (auto& entry : std::filesystem::directory_iterator(to_native_path(path), ec)) {
-            result.push_back(entry.path());
-        }
-        return result;
-    }
+    //     std::vector<std::filesystem::path> result;
+    //     for (auto& entry : std::filesystem::directory_iterator(path, error)) {
+    //         result.push_back(entry.path());
+    //     }
+    //     return result;
+    // }
 
 
     std::string read_text_file(const std::filesystem::path& path) {
 
-        std::ifstream file(to_native_path(path), std::ios::binary | std::ios::ate);
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
         if (!file.is_open())
             return {};
         std::streamsize size = file.tellg();
@@ -254,7 +215,7 @@ namespace GLT::vfs_plugin::native {
 
     bool write_text_file(const std::filesystem::path& path, const std::string& content) {
 
-        std::ofstream file(to_native_path(path), std::ios::binary | std::ios::trunc);
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
         if (!file.is_open())
             return false;
         file.write(content.data(), content.size());
@@ -263,20 +224,52 @@ namespace GLT::vfs_plugin::native {
 
     // ----- handle‑based I/O (uses vfspp through g_vfs) ---------------------------------------------------------------
 
-    u64 open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode) {
+    [[nodiscard]] GLT::vfs::file_handle open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept {
 
-        if (!g_vfs)
-            return 0;
+        error.clear();
 
-        auto vfsMode = ToVfsppMode(mode);
-        auto file = g_vfs->OpenFile(path.generic_string(), vfsMode);
-        if (!file || !file->IsOpened())
-            return 0;
+        const char* mode_str = mode_string_from_flags(mode);                // Obtain the correct fopen mode string
+        if (!mode_str)
+            return 0;                                                       // invalid mode
 
-        std::unique_lock lock(g_handle_mutex);
-        u64 handle = g_next_handle++;
-        g_open_files[handle] = file;
-        return handle;
+        std::FILE* f = std::fopen(path.c_str(), mode_str);                  // First attempt to open with the chosen mode
+        if (f)
+            return reinterpret_cast<u64>(f);
+
+        // If it failed, decide whether we should create the file and retry.
+        // The "r" and "r+" modes do NOT create a missing file.
+        // If the caller asked for 'create', we create the file now and retry.
+        bool use_create_fallback = false;
+        if (mode & GLT::vfs::file_open_mode::create) {
+            int e = errno;                                                  // Check if the error is "file not found"
+            if (e == ENOENT) {
+                // Only "r" and "r+" would have failed with ENOENT.
+                // The other modes ("w","w+","a","a+") already create,
+                // so they would have succeeded or failed for another reason.
+                if (std::strcmp(mode_str, "r") == 0 || std::strcmp(mode_str, "r+") == 0) {
+                    use_create_fallback = true;
+                }
+            }
+        }
+
+        if (use_create_fallback) {
+            std::FILE* creator = std::fopen(path.c_str(), "wx");            // Create the file exclusively (like 'wx'), then reopen with the original mode.
+            if (creator) {
+                std::fclose(creator);
+                f = std::fopen(path.c_str(), mode_str);                     // Now the file exists → reopen with the desired mode
+                if (f)
+                    return reinterpret_cast<u64>(f);
+            } else if (errno == EEXIST) {                                   // Reopen failed for some other reason – fall through to error
+                // Race: someone else created it between our failed open and wx.
+                // That's fine – try again with the desired mode.
+                f = std::fopen(path.c_str(), mode_str);
+                if (f)
+                    return reinterpret_cast<u64>(f);
+            }
+        }
+
+        error.assign(errno, std::generic_category());                       // If we get here, all attempts failed.
+        return 0;
     }
 
 

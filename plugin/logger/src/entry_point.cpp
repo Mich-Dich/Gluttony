@@ -27,7 +27,7 @@ namespace GLT::logger_plugin {
         .register_label_for_thread                          = &GLT::logger_plugin::register_label_for_thread,
         .unregister_label_for_thread                        = &GLT::logger_plugin::unregister_label_for_thread,
     };
-
+    
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -71,13 +71,13 @@ namespace GLT::logger_plugin {
 
             // Bind plugins function to core
             GLT::logger::install_logger_functions(plugin_functions);
-            GLT::logger::register_label_for_thread("main");             // assume label will remain the same
 
             LOG_LOADED
         }
         
         void on_unload() override {
 
+            GLT::logger::use_default_logger_functions();
             LOG_UNLOADED
         }
 

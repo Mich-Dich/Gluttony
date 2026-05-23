@@ -28,82 +28,81 @@ namespace GLT::serializer {
 
 	// STATIC VARIABLES ================================================================================================
 
+	// INTERNAL FUNCTION DECLARATION ===================================================================================
+
+	// INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
 	// FUNCTION IMPLEMENTATION =========================================================================================
 
 	// CLASS IMPLEMENTATION ============================================================================================
 
 	yaml::yaml(const std::filesystem::path file_path, const std::string& section_name, option option, bool* success)
-		: m_file_path(file_path), m_name(section_name), m_option(option) {
+        : m_file_path(file_path), m_name(section_name), m_option(option) {
 
-		m_target = target::file;
-		if (option == option::load_from_file) {			// check if file can be loaded
+        m_target = target::file;
+        std::error_code error{};
 
-			VALIDATE(std::filesystem::exists(m_file_path), if (success) { *success = false; } return,
-				"", "Can not load from provided file [{}], it does not exist", m_file_path.string())
+        if (option == option::load) {
 
-			VALIDATE(std::filesystem::is_regular_file(m_file_path), if (success) { *success = false; } return,
-				"", "Provided filepath is not a file [{}]", m_file_path.string());
+            VALIDATE(vfs::exists(m_file_path, error) || !error, if (success) { *success = false; } return, "", "");
+            error.clear();
+            VALIDATE(vfs::is_regular_file(m_file_path, error) || !error, if (success) { *success = false; } return, "", "")
 
-		} else {										// saving to file
+        } else { // saving
 
-			// make sure the file exists
-			std::filesystem::path path = file_path.parent_path();
-			VALIDATE(vfs::create_directory(path), if (success) { *success = false; } return, "", "Could not create file-path");
-			if (!std::filesystem::exists(m_file_path)) {
+            std::filesystem::path path = file_path.parent_path();
+            
+            error.clear();
+            vfs::create_directories(path, error);
+			VALIDATE(!error, if (success) { *success = false; } return, "", "");
 
-				auto file = std::ofstream(m_file_path);
-				file.close();
-			}
-		}
+            error.clear();
+            vfs::create_file(m_file_path, error);
+            VALIDATE(!error, if (success) { *success = false; } return, "", "");
+        }
 
-		m_initalized = true;							// From here the serializer assumes that the file setup is dealt with
+        m_initalized = true;
 
-		if (m_option == option::load_from_file)
-			deserialize();
+        if (m_option == option::load)
+            deserialize();
+        
+		else {
+            m_file_content << section_name << ":\n";
+            m_level_of_indention = 1;
+        }
+
+        if (success)
+			*success = m_success;
+    }
+
+
+    yaml::yaml(std::string* content_buffer, const std::string& section_name, option option, bool* success)
+        : m_content_buffer(content_buffer), m_name(section_name), m_option(option) {
+
+        m_target = target::string;
+        if (option == option::load)
+            VALIDATE(m_content_buffer || !m_content_buffer->empty(), if (success) { *success = false; } return, "", "");
+
+        m_initalized = true;
+
+        if (m_option == option::load)
+            deserialize();
 
 		else {
+            m_file_content << section_name << ":\n";
+            m_level_of_indention = 1;
+        }
 
-			m_file_content << section_name << ":\n";
-			m_level_of_indention = 1;
-		}
-
-		if (success) { *success = m_success; }
-	}
-
-
-	yaml::yaml(std::string* content_buffer, const std::string &section_name, option option, bool *success)
-		: m_content_buffer(content_buffer), m_name(section_name), m_option(option) {
-
-		m_target = target::string;
-		if (option == option::load_from_file) {			// check if file can be loaded
-			VALIDATE(!m_content_buffer->empty(), if (success) { *success = false; } return, 
-				"", "Provided [m_content_buffer] is empty, can load from empty string")
-		}
-
-		m_initalized = true;							// From here the serializer assumes that the file setup is dealt with
-
-		if (m_option == option::load_from_file) {
-
-			deserialize();
-
-		} else {
-
-			m_file_content << section_name << ":\n";
-			m_level_of_indention = 1;
-		}
-		if (success) {
-
-			*success = true; 
-		}
-	}
+        if (success)
+			*success = true;
+    }
 
 
-	yaml::~yaml()
-    {
+    yaml::~yaml() {
 
-		if (m_option == option::save_to_file)
-			serialize();
-	}
+        if (m_option == option::save)
+            serialize();
+    }
 
 	// CLASS PUBLIC ====================================================================================================
 
@@ -113,7 +112,7 @@ namespace GLT::serializer {
             return *this;
 
 		m_level_of_indention++;
-		if (m_option == serializer::option::save_to_file) {
+		if (m_option == serializer::option::save) {
 
 			m_file_content << util::add_spaces(m_level_of_indention + static_cast<u32>(vector_func_index -1), NUM_OF_INDENTING_SPACES) << section_name << ":\n";
 			sub_section_function(*this);
@@ -208,144 +207,93 @@ namespace GLT::serializer {
 
 	void yaml::serialize() {
 
-		if (!m_initalized)
-		{
-            return;
-        }
+        if (!m_initalized) 
+			return;
 
-		if (m_target == target::file)
-        {
-			// ============ FILE TARGET ============
-			auto istream = std::ifstream(m_file_path);
-			VALIDATE(istream.is_open(), return, "", "input-file-stream is not open");
+		// Lambda that replaces the top‑level section named m_name in 'input'
+		// with the content of m_file_content. Returns the resulting string.
+		auto replace_section_in_content = [&](const std::string& input) -> std::string {
 
-			// make new stream to buffer updated file
-			std::ostringstream updatedFile;
+			std::istringstream istream(input);
+			std::ostringstream output;
+			bool found = false;
+			std::string line;
 
-			// copy content of file that is not the focus of this serialization
-			bool found = false;				// ensure only one section can be skipped
-			std::string line = "";
-			while (std::getline(istream, line))
-            {
+			while (std::getline(istream, line)) {
+				if (!found &&
+					line.find(m_name + ":") != std::string::npos &&
+					util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0) {
 
-				// is correct section
-				if (!found && (line.find(m_name + ":") != std::string::npos) && (util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0))
-                {
 					found = true;
-					updatedFile << m_file_content.str();          // override section with new content
+					output << m_file_content.str();          // Write new section content
 
-					while (std::getline(istream, line))         // SKIP CONTENT
-                    {
-						if (line.back() == ':' && util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0)         // still in section ??
-                        {
-							updatedFile << line + "\n";
+					// Skip the old content of this section
+					while (std::getline(istream, line)) {
+						if (line.back() == ':' && util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0) {
+							output << line << '\n';
 							break;
 						}
 					}
-				}
-				else
-					updatedFile << line + "\n";
+				} else
+					output << line << '\n';
 			}
 
-			// append if section not found
+			// If section not found, append new content at the end
 			if (!found)
-			{
-                updatedFile << m_file_content.str();
-            }
+				output << m_file_content.str();
 
-			istream.close();
-			auto ostream = std::ofstream(m_file_path);
-			ASSERT(ostream.is_open(), "", "output-file-stream is not open");
-			ostream << updatedFile.str();
-			ostream.close();
+			return output.str();
+		};
+		
+		if (m_target == target::file) {
+			std::string existing_content = vfs::read_text_file(m_file_path);			// Read existing file content
+			std::string updated_content = replace_section_in_content(existing_content);
 
-		}
-        else
-        {
-			// ============ STRING TARGET ============
-			ASSERT(m_content_buffer != nullptr, "", "contentBuffer is null for string target");
+			if (!vfs::write_text_file(m_file_path, updated_content))
+				m_success = false;   													// Optionally signal failure
+		
+		} else { 																		// target::string
+
+			if (!m_content_buffer)
+				return;
 
 			if (m_content_buffer->empty())
-            {
-				*m_content_buffer = m_file_content.str();       // If string is empty, just use our content
-			}
-            else
-            {
-				// Replace section in existing string content (similar to file logic)
-				std::istringstream istream(*m_content_buffer);
-				std::ostringstream updated_content;
-
-				bool found = false;
-				std::string line = "";
-
-				while (std::getline(istream, line))
-                {
-					// is correct section
-					if (!found && (line.find(m_name + ":") != std::string::npos) && (util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0))
-                    {
-						found = true;
-						updated_content << m_file_content.str();          // override section with new content
-						while (std::getline(istream, line))             // SKIP CONTENT
-                        {
-							if (line.back() == ':' && util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0)
-                            {
-								updated_content << line + "\n";
-								break;
-							}
-						}
-					}
-                    else
-                    {
-						updated_content << line + "\n";
-					}
-				}
-
-				// append if section not found
-				if (!found)
-                {
-					updated_content << m_file_content.str();
-                }
-
-				*m_content_buffer = updated_content.str();
-			}
+				*m_content_buffer = m_file_content.str();
+			else
+				*m_content_buffer = replace_section_in_content(*m_content_buffer);
 		}
-	}
+    }
 
 
 	yaml& yaml::deserialize() {
 
-		if (!m_initalized)
-        {
-            return *this;
-        }
+		if (!m_initalized || m_name.empty())
+			return *this;
 
-		ASSERT(!m_name.empty(), "", "name of section to find is empty");
-
-		if (m_target == target::file)
-        {
-			// ============ FILE TARGET ============
-			m_istream = std::ifstream(m_file_path);
-			LVALIDATE(m_istream.is_open(), return *this, "", "file-stream is not open");
-
+		// Lambda that parses YAML content from a string, fills m_file_content and
+		// m_key_value_pares with the data of the section named m_name.
+		// Returns true if the section was found, false otherwise.
+		auto parse_content = [this](const std::string& content) -> bool {
+			std::istringstream stream(content);
 			const u32 SECTION_INDENTATION = 0;
 			bool found_section = false;
 			std::string line;
-			while (std::getline(m_istream, line))
-            {
-				// skip empty lines or comments
-				if (line.empty() || line.front() == '#')
-                    continue;
 
-				// if line contains desired section enter inner-loop
-				if (line.find(m_name + ":") != std::string::npos && util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0) {
+			while (std::getline(stream, line)) {
+				if (line.empty() || line.front() == '#')
+					continue;
+
+				if (line.find(m_name + ":") != std::string::npos &&
+					util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0) {
+
 					found_section = true;
-					//     not end of file                   line has more leading spaces
-					while (std::getline(m_istream, line) && (util::measure_indentation(line, NUM_OF_INDENTING_SPACES) > SECTION_INDENTATION)) {
+					while (std::getline(stream, line) &&
+						util::measure_indentation(line, NUM_OF_INDENTING_SPACES) > SECTION_INDENTATION) {
 
 						line = line.substr(NUM_OF_INDENTING_SPACES);
-						//  more indented                                         is sub-section        is array-element
-						if ((util::measure_indentation(line, NUM_OF_INDENTING_SPACES) > SECTION_INDENTATION) || line.back() == ':' || line.front() == '-') {
-
+						// More indented or a sub-section or array element
+						if (util::measure_indentation(line, NUM_OF_INDENTING_SPACES) > SECTION_INDENTATION ||
+							line.back() == ':' || line.front() == '-') {
 							m_file_content << line << '\n';
 							continue;
 						}
@@ -354,61 +302,32 @@ namespace GLT::serializer {
 						extract_key_value(key, value, line);
 						m_key_value_pares[key] = value;
 					}
-				}
-
-				// exit outer loop if inner-loop already done
-				if (found_section)
-                    break;
-			}
-
-            // if section not found, set success to false
-            if (!found_section)
-            {
-                m_success = false;
-            }
-
-		} else {
-
-			// ============ STRING TARGET ============
-			ASSERT(m_content_buffer != nullptr, "", "contentBuffer is null for string target");
-			ASSERT(!m_content_buffer->empty(), "", "contentBuffer is empty for string target");
-
-			std::istringstream stringStream(*m_content_buffer);
-			const u32 SECTION_INDENTATION = 0;
-			bool found_section = false;
-			std::string line;
-			while (std::getline(stringStream, line)) {
-
-				// skip empty lines or comments
-				if (line.empty() || line.front() == '#')
-                    continue;
-
-				// if line contains desired section enter inner-loop
-				if (line.find(m_name + ":") != std::string::npos && util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0) {
-
-					found_section = true;
-					//     not end of string content          line has more leading spaces
-					while (std::getline(stringStream, line) && (util::measure_indentation(line, NUM_OF_INDENTING_SPACES) > SECTION_INDENTATION)) {
-
-						line = line.substr(NUM_OF_INDENTING_SPACES);
-						//  more indented                                         is sub-section        is array-element
-						if ((util::measure_indentation(line, NUM_OF_INDENTING_SPACES) > SECTION_INDENTATION) || line.back() == ':' || line.front() == '-') {
-
-							m_file_content << line << '\n';
-							continue;
-						}
-
-						std::string key, value;
-						extract_key_value(key, value, line);
-						m_key_value_pares[key] = value;
-					}
-				}
-
-				// exit outer loop if inner-loop already done
-				if (found_section)
 					break;
-
+				}
 			}
+			return found_section;
+		};
+
+		if (m_target == target::file) {
+
+			std::string file_content = vfs::read_text_file(m_file_path);
+			if (file_content.empty()) {
+				m_success = false;
+				return *this;
+			
+			}
+			if (!parse_content(file_content))
+				m_success = false;
+			
+		} else { 								// target::string
+
+			if (!m_content_buffer || m_content_buffer->empty()) {
+				m_success = false;
+				return *this;
+			}
+
+			if (!parse_content(*m_content_buffer))
+				m_success = false;
 		}
 
 		return *this;

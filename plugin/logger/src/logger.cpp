@@ -156,7 +156,9 @@ namespace GLT::logger_plugin {
         s_main_log_dir = log_dir;
         s_main_log_file_path = s_main_log_dir / main_log_file_name;
 
-        if (!GLT::vfs::create_directories(s_main_log_file_path.parent_path())) {
+        std::error_code error{};
+        GLT::vfs::create_directories(s_main_log_file_path.parent_path(), error);
+        if (error) {
             std::cerr << "Failed to create the directory for log files" << std::endl;
             return false;
         }

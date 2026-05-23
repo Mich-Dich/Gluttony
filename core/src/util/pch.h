@@ -91,18 +91,23 @@
 #include <glm/gtc/quaternion.hpp>
 
 // ------------------------- independent files (single includes)-------------------------
-#include "core_config.h"
-#include "data_structures/data_types.h"
-#include "macros.h"
-#include "io/logger.h"
-#include "io/serializer_data.h"
-#include "system.h"
-#include "crash_handler.h"
-#include "math/math.h"
-#include "timing/interval_controller.h"
-#include "timing/stopwatch.h"
-#include "util.h"
+#include "util/core_config.h"
+#include "util/data_structures/data_types.h"
+#include "util/macros.h"
+#include "util/io/logger.h"
+#include "util/io/serializer_data.h"
+#include "util/io/vfs.h"
+#include "util/system.h"
+#include "util/crash_handler.h"
+#include "util/math/math.h"
+#include "util/timing/interval_controller.h"
+#include "util/timing/stopwatch.h"
+#include "util/util.h"
+
 #include "config/config.h"
+
+// #include "event/event.h"
+// #include "event/event_bus.h"
 
 // #include "platform/window.h"
 // #include "layer/layer.h"

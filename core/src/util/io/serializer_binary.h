@@ -29,13 +29,13 @@ namespace GLT::serializer {
 
 		DELETE_COPY_AND_MOVE_CONSTRUCTOR(binary);
 
-		DEFAULT_GETTER(option, option);		// Getter for the current operation mode (save_to_file or load_from_file)
+		DEFAULT_GETTER(option, option);		// Getter for the current operation mode (save or load)
 
 		// @brief Constructs a binary serializer with the specified file, section name, and operation mode.
 		//        Opens the file for reading or writing based on the specified option.
 		// @param [filename] The path to the file to serialize to or deserialize from.
 		// @param [section_name] The name of the section being serialized (for organizational purposes).
-		// @param [option] The operation mode: save_to_file or load_from_file.
+		// @param [option] The operation mode: save or load.
 		binary(const std::filesystem::path filename, const std::string& section_name, option option);
 
 		// @brief Destructor that closes the open file streams.
@@ -51,7 +51,7 @@ namespace GLT::serializer {
 		template <typename T>
 		binary& entry(T& value) {
 
-			if (m_option == option::save_to_file) {
+			if (m_option == option::save) {
 
 				if constexpr (std::is_same_v<T, std::filesystem::path>) {
 
@@ -101,7 +101,7 @@ namespace GLT::serializer {
 		template <typename T>
 		binary& entry(std::vector<T>& vector) {
 
-			if (m_option == option::save_to_file) {
+			if (m_option == option::save) {
 
 				size_t size = vector.size();
 				m_ostream.write(reinterpret_cast<const char*>(&size), sizeof(size_t));
@@ -129,7 +129,7 @@ namespace GLT::serializer {
 		binary& array(T* array_start, size_t array_size) {
 
 			const size_t total_bytes = sizeof(T)* array_size;
-			if (m_option == option::save_to_file) {
+			if (m_option == option::save) {
 
 				m_ostream.write(reinterpret_cast<const char*>(array_start), total_bytes);
 
@@ -160,7 +160,7 @@ namespace GLT::serializer {
 
 		std::filesystem::path 			m_filename{};		// Path to the file being serialized to/from
 		std::string						m_name{};			// Name of the section being serialized
-		option							m_option;			// Current operation mode (save_to_file or load_from_file)
+		option							m_option;			// Current operation mode (save or load)
 		std::ofstream					m_ostream{};		// Output file stream for saving data
 		std::ifstream 					m_istream{};		// Input file stream for loading data
 	};

@@ -99,7 +99,7 @@ namespace GLT::logger {
     static void default_unregister_label(std::thread::id) { }
 
     // ---------- global pointer table ----------------------------------------------
-    static logger_functions g_logger = {
+    constexpr const logger_functions default_logger_func = {
         default_init,
         default_shutdown,
         default_log_msg_internal,
@@ -114,11 +114,19 @@ namespace GLT::logger {
         default_unregister_label
     };
 
+    
+    static logger_functions g_logger = default_logger_func;
+    
     // INTERNAL FUNCTION ===============================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
+
+    void use_default_logger_functions() {
+
+        install_logger_functions(default_logger_func);
+    }
 
     void install_logger_functions(const logger_functions& funcs) {
         g_logger = funcs;   // safe as long as called before any logging threads run

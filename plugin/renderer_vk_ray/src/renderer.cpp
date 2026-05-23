@@ -462,9 +462,6 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::imgui_init() {
 
-        util::stopwatch stopwatch(time_unit::milliseconds);
-        LOG(trace, "Initializing ImGui...");
-
         // Setup ImGui context
         IMGUI_CHECKVERSION();
         m_imgui_context = ImGui::CreateContext();
@@ -499,10 +496,7 @@ namespace GLT::renderer_vk_ray {
         ), "", "Failed to load Vulkan functions for ImGui");
 
         create_imgui_resources();
-        LOG(info, "ImGui initialized successfully");
-
-        const f32 duration = stopwatch.stop();
-        LOG(info, "duration [{}] ms", duration)
+        LOG(trace, "ImGui initialized");
     }
 
 
@@ -513,6 +507,7 @@ namespace GLT::renderer_vk_ray {
         // ASSERT(!p_window.expired(), "", "Failed to get window plugin")
         // p_window.lock()->imgui_init(GLT::render::backend_api::vulkan);
         
+        LOG(trace, "ImGui shutdown");
         destroy_imgui_resources();
         ImGui::DestroyContext();
     }

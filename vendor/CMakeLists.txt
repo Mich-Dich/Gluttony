@@ -27,25 +27,29 @@ target_include_directories(glm                                  INTERFACE
 )
 
 # ------------- ImGui ------------------------------------------------------------------------------
-add_library(imgui                                               STATIC)
-set_target_properties(imgui PROPERTIES                          POSITION_INDEPENDENT_CODE ON)
+add_library(imgui                                               SHARED)
+set_target_properties(imgui PROPERTIES                          
+    POSITION_INDEPENDENT_CODE                                   ON
+    CXX_VISIBILITY_PRESET                                       default
+)
 file(GLOB IMGUI_BACKEND_SOURCES                                 # Add ImGui backends (GLFW + Vulkan)
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_glfw.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_vulkan.cpp
 )
-target_sources(imgui PRIVATE                                    # Add all sources to the imgui library
+target_sources(imgui                                            PUBLIC # Add all sources to the imgui library
     ${IMGUI_BACKEND_SOURCES}
 )
-target_include_directories(imgui                                PUBLIC  # Include directories
+target_include_directories(imgui                                PUBLIC # Include directories
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
 )
-target_link_libraries(imgui                                     PUBLIC  # Link dependencies
+find_package(Vulkan                                             REQUIRED)
+target_link_libraries(imgui                                     PUBLIC # Link dependencies
     glfw
-    # Vulkan::Vulkan
+    Vulkan::Vulkan
 )
-target_compile_definitions(imgui                                PRIVATE  # Add compile definitions for imgui
+target_compile_definitions(imgui                                PRIVATE # Add compile definitions for imgui
     IMGUI_IMPL_GLFW_DISABLE_X11
     IMGUI_IMPL_VULKAN_NO_PROTOTYPES                             # Use Vulkan SDK headers instead of volk
     GLFW_INCLUDE_NONE                                           # Don't include OpenGL headers

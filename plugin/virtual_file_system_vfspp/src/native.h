@@ -37,37 +37,37 @@ namespace GLT::vfs_plugin::native {
 
     // ----- implementation of every core vfs_functions entry point ----------------------------------------------------
         
-    bool exists(const std::filesystem::path& path);
+    bool exists(const std::filesystem::path& path, std::error_code& error);
     
     
     void create_file(const std::filesystem::path& path, std::error_code& error);
 
 
-    bool is_directory(const std::filesystem::path& path);
+    bool is_directory(const std::filesystem::path& path, std::error_code& error);
     
     
-    bool is_regular_file(const std::filesystem::path& path);
+    bool is_regular_file(const std::filesystem::path& path, std::error_code& error);
     
     
-    bool create_directory(const std::filesystem::path& path);
+    void create_directory(const std::filesystem::path& path, std::error_code& error);
 
 
-    bool create_directories(const std::filesystem::path& path);
+    void create_directories(const std::filesystem::path& path, std::error_code& error);
     
     
-    bool remove(const std::filesystem::path& path);
+    void remove(const std::filesystem::path& path, std::error_code& error);
     
     
-    bool rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path);
+    void rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error);
     
     
-    bool copy_file(const std::filesystem::path& from, const std::filesystem::path& to, bool overwrite);
+    void copy_file(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& error, bool overwrite);
     
     
-    u64 file_size(const std::filesystem::path& path);
+    u64 file_size(const std::filesystem::path& path, std::error_code& error);
     
     
-    std::vector<std::filesystem::path> list_directory(const std::filesystem::path& path);
+    // std::vector<std::filesystem::path> list_directory(const std::filesystem::path& path, std::error_code& error);
     
     
     std::string read_text_file(const std::filesystem::path& path);
@@ -77,7 +77,7 @@ namespace GLT::vfs_plugin::native {
 
     // ----- handle‑based I/O ------------------------------------------------------------------------------------------
     
-    u64 open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode);
+    [[nodiscard]] GLT::vfs::file_handle open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept;
     
     
     size_t read_file(u64 handle, void* buffer, size_t size, size_t offset);

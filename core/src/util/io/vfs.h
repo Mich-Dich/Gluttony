@@ -47,20 +47,19 @@ namespace GLT::vfs {
     constexpr file_handle invalid_file_handle = 0;
 
 
-    using exists_func = bool (*)(const std::filesystem::path& path);
+    using exists_func = bool (*)(const std::filesystem::path& path, std::error_code& error);
     using create_file_func = void (*)(const std::filesystem::path& path, std::error_code& error);
-    using is_directory_func = bool (*)(const std::filesystem::path& path);
-    using is_regular_file_func = bool (*)(const std::filesystem::path& path);
-    using create_directory_func = bool (*)(const std::filesystem::path& path);
-    using create_directories_func = bool (*)(const std::filesystem::path& path);
-    using remove_func = bool (*)(const std::filesystem::path& path);
-    using rename_func = bool (*)(const std::filesystem::path& old_path, const std::filesystem::path& new_path);
-    using copy_file_func = bool (*)(const std::filesystem::path& from, const std::filesystem::path& to, bool overwrite);
-    using file_size_func = u64 (*)(const std::filesystem::path& path);
-    using list_directory_func = std::vector<std::filesystem::path> (*)(const std::filesystem::path& path);
+    using is_directory_func = bool (*)(const std::filesystem::path& path, std::error_code& error);
+    using is_regular_file_func = bool (*)(const std::filesystem::path& path, std::error_code& error);
+    using create_directory_func = void (*)(const std::filesystem::path& path, std::error_code& error);
+    using create_directories_func = void (*)(const std::filesystem::path& path, std::error_code& error);
+    using remove_func = void (*)(const std::filesystem::path& path, std::error_code& error);
+    using rename_func = void (*)(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error);
+    using copy_file_func = void (*)(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& error, bool overwrite);
+    using file_size_func = u64 (*)(const std::filesystem::path& path, std::error_code& error);
     using read_text_file_func = std::string (*)(const std::filesystem::path& path);
     using write_text_file_func = bool (*)(const std::filesystem::path& path, const std::string& content);
-    using open_file_func = file_handle (*)(const std::filesystem::path& path, file_open_mode mode);
+    using open_file_func = file_handle (*)(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept;
     using read_file_func = size_t (*)(file_handle handle, void* buffer, size_t size, size_t offset);
     using write_file_func = size_t (*)(file_handle handle, const void* data, size_t size, size_t offset);
     using seek_file_func = bool (*)(file_handle handle, i64 offset, int origin);
@@ -78,7 +77,6 @@ namespace GLT::vfs {
         rename_func                 rename;
         copy_file_func              copy_file;
         file_size_func              file_size;
-        list_directory_func         list_directory;
         read_text_file_func         read_text_file;
         write_text_file_func        write_text_file;
         open_file_func              open_file;
@@ -93,58 +91,55 @@ namespace GLT::vfs {
 
     // FUNCTION DECLARATION ============================================================================================
 
-    CORE_API void install_vfs_functions(const vfs_functions& funcs);
+    void install_vfs_functions(const vfs_functions& funcs);
 
 
-    CORE_API [[nodiscard]] filesystem_type get_filesystem_type();
+    [[nodiscard]] filesystem_type get_filesystem_type();
 
 
-    CORE_API void set_filesystem_type(const filesystem_type type);
+    void set_filesystem_type(const filesystem_type type);
 
     // ------ Standard file system operations (path‑based) ---------------------------------------------------------
 
 
     // Checks whether a file or directory exists at the given path.
-    [[nodiscard]] bool exists(const std::filesystem::path& path);
+    bool exists(const std::filesystem::path& path, std::error_code& error);
 
 
     void create_file(const std::filesystem::path& path, std::error_code& error);
 
 
     // Checks whether the given path points to a directory.
-    [[nodiscard]] bool is_directory(const std::filesystem::path& path);
+    bool is_directory(const std::filesystem::path& path, std::error_code& error);
 
 
     // Checks whether the given path points to a regular file.
-    [[nodiscard]] bool is_regular_file(const std::filesystem::path& path);
+    bool is_regular_file(const std::filesystem::path& path, std::error_code& error);
 
 
     // Creates a directory. Returns true on success.
-    bool create_directory(const std::filesystem::path& path);
+    void create_directory(const std::filesystem::path& path, std::error_code& error);
 
 
     // Creates a directory. Returns true on success.
-    bool create_directories(const std::filesystem::path& path);
+    void create_directories(const std::filesystem::path& path, std::error_code& error);
 
 
     // Removes a file or an empty directory. Returns true on success.
-    bool remove(const std::filesystem::path& path);
+    void remove(const std::filesystem::path& path, std::error_code& error);
 
 
     // Renames (moves) a file or directory. Returns true on success.
-    bool rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path);
+    void rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error);
 
 
     // Copies a file. Overwrites destination only if overwrite == true.
-    bool copy_file(const std::filesystem::path& from, const std::filesystem::path& to, bool overwrite = false);
+    void copy_file(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& error, bool overwrite = false);
 
 
     // Returns the size in bytes of a regular file. Returns 0 if file does not exist.
-    [[nodiscard]] u64 file_size(const std::filesystem::path& path);
+    [[nodiscard]] u64 file_size(const std::filesystem::path& path, std::error_code& error);
 
-
-    // Lists the contents of a directory. Returns empty vector on failure or empty directory.
-    [[nodiscard]] std::vector<std::filesystem::path> list_directory(const std::filesystem::path& path);
 
     // ------ Convenience text file operations ---------------------------------------------------------------------
 
@@ -159,7 +154,7 @@ namespace GLT::vfs {
     // ------ Handle‑based binary file I/O -------------------------------------------------------------------------
 
     // Opens a file with the given mode flags. Returns a non‑zero handle or invalid_file_handle on error.
-    [[nodiscard]] file_handle open_file(const std::filesystem::path& path, file_open_mode mode);
+    [[nodiscard]] file_handle open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept;
 
 
     // Reads up to 'size' bytes into 'buffer' from the open file.

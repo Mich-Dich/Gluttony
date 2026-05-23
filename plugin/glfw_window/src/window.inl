@@ -113,6 +113,7 @@ namespace GLT::glfw_window {
             glfwMaximizeWindow(m_native_window);
         }
 
+        glfwSetWindowUserPointer(m_native_window, &m_data);
         bind_event_callbacks();
         LOG_INIT
     }

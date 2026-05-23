@@ -133,12 +133,15 @@ namespace GLT::logger {
 
     // FUNCTION DECLARATION ============================================================================================
 
+    void use_default_logger_functions();
+
+
     // --- installation function ------------------------------------------------
     // Call once from the plugin to install the full logger backend.
     // Must be called before any logging calls (typically in on_load() of the logger plugin).
-    CORE_API void install_logger_functions(const logger_functions& funcs);
+    void install_logger_functions(const logger_functions& funcs);
 
-    CORE_API std::vector<GLT::logger::message_data> drain_log_buffer(const bool disable_buffer = true);
+    std::vector<GLT::logger::message_data> drain_log_buffer(const bool disable_buffer = true);
 
     // Existing function declarations (remain unchanged)
     bool init(const std::string& format, bool log_to_console = false, const std::filesystem::path& log_dir = "./logs", 

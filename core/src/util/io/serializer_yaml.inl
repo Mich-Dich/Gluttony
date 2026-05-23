@@ -9,7 +9,7 @@ namespace GLT::serializer {
 
     // MACROS ==========================================================================================================
 
-    #define VALIDATE_INIT()		do { if (!m_initalized) return *this; } while (0);
+    #define VALIDATE_INIT()		    { if (!m_initalized) return *this; }
 
     // TYPES ===========================================================================================================
 
@@ -26,7 +26,7 @@ namespace GLT::serializer {
 
         VALIDATE_INIT();
 
-        if (m_option == serializer::option::save_to_file) {
+        if (m_option == serializer::option::save) {
 
             std::string buffer{};
             if constexpr (is_vector<T>::value) {                    // value is a vector
@@ -103,7 +103,7 @@ namespace GLT::serializer {
         if (vector_func_index != 1)
             m_level_of_indention++;
 
-        if (m_option == serializer::option::save_to_file) {           // save to file
+        if (m_option == serializer::option::save) {           // save to file
         
             const u32 indent_buffer = vector_func_index != 1 ? m_level_of_indention - 1 : m_level_of_indention;
             m_file_content << util::add_spaces(indent_buffer) << m_prefix << vector_name << ":\n";
@@ -208,7 +208,7 @@ namespace GLT::serializer {
 
         VALIDATE_INIT();
 
-        if (m_option == serializer::option::save_to_file) {										// Serialize the map
+        if (m_option == serializer::option::save) {										// Serialize the map
 
             m_file_content << util::add_spaces(m_level_of_indention) << map_name << ":\n";
             for (const auto& [key, value] : map)
@@ -254,7 +254,7 @@ namespace GLT::serializer {
     template<typename T>
     yaml& yaml::unordered_set(const std::string& set_name, std::unordered_set<T>& set) {
 
-        if (m_option == option::save_to_file) {
+        if (m_option == option::save) {
 
             // Serialize the set as a YAML sequence
             m_file_content << util::add_spaces(m_level_of_indention) << set_name << ":\n";

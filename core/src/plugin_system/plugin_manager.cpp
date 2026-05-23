@@ -294,12 +294,12 @@ namespace GLT::plugin_manager {
             auto targeted = static_cast<targeted_interface>(index);
             std::string buffer = "unknown";
 
-            if (option == serializer::option::save_to_file)
+            if (option == serializer::option::save)
                 buffer = s_plugin_names_per_target_interface[targeted];
 
             plugin_serializer.entry(to_string(targeted), buffer);
 
-            if (option == serializer::option::load_from_file)
+            if (option == serializer::option::load)
                 s_plugin_names_per_target_interface[targeted] = buffer;
         }
     }           // serializer dies here
@@ -311,12 +311,17 @@ namespace GLT::plugin_manager {
     void discover_plugins() {
 
         const auto plugin_dir = GLT::util::get_executable_path() / config::PLUGIN_DIR;
-        VALIDATE(std::filesystem::exists(plugin_dir), return, "", "Plugin dir is invalid [{}]", plugin_dir)
+        std::error_code error{};
+        vfs::exists(plugin_dir, error);
+        VALIDATE(!error, return, "", "Plugin dir is invalid [{}]", plugin_dir)
+        s_config_path = GLT::util::get_executable_path() / GLT::config::config_type_to_filepath(GLT::config::type::plugin);
 
-        s_config_path = GLT::util::get_executable_path() / GLT::config::get_filepath_from_config_type(GLT::config::type::plugin);
-        serialize(s_config_path, serializer::option::load_from_file);       // load settings
+        error.clear();
+        const bool exits = vfs::exists(s_config_path, error);
+        if (!error && exits)
+            serialize(s_config_path, serializer::option::load);
 
-        // discover plugins             TODO: only discover plugins that fit the config
+        // discover plugins
         s_discovered.clear();
         for (const auto& entry : std::filesystem::recursive_directory_iterator(plugin_dir)) {
 
@@ -382,6 +387,7 @@ namespace GLT::plugin_manager {
             free_library(handle);   // close temporary handle
         }
 
+        serialize(s_config_path, serializer::option::save);
         GLT::logger::flush_buffer();
     }
 
@@ -453,7 +459,7 @@ namespace GLT::plugin_manager {
 
     void shutdown() {
 
-        serialize(s_config_path, serializer::option::save_to_file);
+        serialize(s_config_path, serializer::option::save);
 
         if (s_shutdown) return;
         s_shutdown = true;

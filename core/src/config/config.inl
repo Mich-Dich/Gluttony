@@ -18,7 +18,7 @@ namespace GLT::config {
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
     
-    FORCE_INLINE_R std::filesystem::path get_filepath_from_config_type(const type type) {
+    FORCE_INLINE_R std::filesystem::path config_type_to_filepath(const type type) {
 
         return std::filesystem::path(config::CONFIG_DIR) / (config::file_type_to_string(type) + config::FILE_EXTENSION_CONFIG); 
     }

@@ -18,8 +18,8 @@ namespace GLT::serializer {
 
 	enum class option {
 
-		save_to_file,
-		load_from_file,
+		save,
+		load,
 	};
 
 	// STATIC VARIABLES ================================================================================================
