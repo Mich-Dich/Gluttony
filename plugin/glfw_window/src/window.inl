@@ -243,9 +243,10 @@ namespace GLT::glfw_window {
 
     inline void plugin::set_vsync(bool vsync) {
 
-        m_data.vsync = vsync;
-        if (!m_native_window) return;
-        glfwSwapInterval(vsync ? 1 : 0);
+        // m_data.vsync = vsync;
+        // if (!m_native_window) 
+        //     return;
+        // glfwSwapInterval(vsync ? 1 : 0);
     }
 
 

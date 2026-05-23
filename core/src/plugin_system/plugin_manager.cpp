@@ -232,7 +232,8 @@ namespace GLT::plugin_manager {
             .dependencies_names         = info.dependencies_names,
             .dependencies_interfaces    = info.dependencies_interfaces,
         });
-
+        
+        GLT::logger::flush_buffer();
         return plugin_load_error::none;
     }
 
@@ -380,6 +381,8 @@ namespace GLT::plugin_manager {
             s_discovered.push_back(std::move(info));
             free_library(handle);   // close temporary handle
         }
+
+        GLT::logger::flush_buffer();
     }
 
 
@@ -443,6 +446,8 @@ namespace GLT::plugin_manager {
                 LOG(error, "Plugin [{}] could not be loaded: unsatisfied dependencies or load error", p.name);
             }
         }
+
+        GLT::logger::flush_buffer();
     }
 
 

@@ -32,7 +32,6 @@ namespace GLT::logger_plugin {
         "ERROR",
         "FATAL"
     };
-    const std::string                                           console_rest = "\x1b[0m";
     const std::string                                           console_color_table[] = {
         "\x1b[38;5;246m",                                           // trace: Gray
         "\x1b[94m",                                                 // debug: Blue
@@ -41,6 +40,7 @@ namespace GLT::logger_plugin {
         "\x1b[31m",                                                 // error: Red
         "\x1b[41m\x1b[30m",                                         // fatal: Red Background
     };
+    const std::string                                           console_rest = "\x1b[0m";
 
     // MACROS ==========================================================================================================
 
@@ -53,7 +53,7 @@ namespace GLT::logger_plugin {
     #define LOGGER_REGISTER_THREAD_LABEL                        "LOGGER register thread label"
     #define LOGGER_UNREGISTER_THREAD_LABEL                      "LOGGER unregister thread label"
     #if defined(DEBUG)
-        #define QUEUE_MAX_SIZE                                  0               // TODO: flush messages directly in debug (set to 0)
+        #define QUEUE_MAX_SIZE                                  0       // TODO: flush messages directly in debug (set to 0)
     #else
         #define QUEUE_MAX_SIZE                                  16000
     #endif
@@ -74,21 +74,37 @@ namespace GLT::logger_plugin {
     // STATIC VARIABLES ================================================================================================
 
     static bool                                                 s_is_init = false;
+    
     static bool                                                 s_write_log_to_console = false;
+    
     static std::string                                          s_format_current = "";
+    
     static std::string                                          s_format_prev = "";
+    
     static GLT::logger::severity                                s_severity_level_buffering_threshold = GLT::logger::severity::trace;
+    
     static size_t                                               s_buffer_size = 1024;
+    
     static std::string                                          s_buffered_messages{};
+    
     static std::filesystem::path                                s_main_log_dir = "";
+    
     static std::filesystem::path                                s_main_log_file_path = "";
+    
     static std::ofstream                                        s_main_file{};
+    
     static std::queue<GLT::logger::message_data>                s_log_queue{};
+    
     static std::unordered_map<std::thread::id, std::string>     s_thread_labels{};
+    
     static std::mutex                                           s_queue_mutex{};
+    
     static std::mutex                                           s_general_mutex{};
+    
     static std::condition_variable                              s_cv{};
+    
     static std::atomic<bool>                                    s_stop = false;
+    
     static std::thread                                          s_worker_thread{};
 
     // INTERNAL FUNCTION ===============================================================================================
@@ -214,7 +230,11 @@ namespace GLT::logger_plugin {
 
     // settings --------------------------------------------------------------------------------------------------------
 
-    std::filesystem::path get_log_file_location() { return s_main_log_file_path; }
+    std::filesystem::path get_log_file_location() { 
+    
+        if (!s_is_init) return {};
+        return s_main_log_file_path; 
+    }
 
 
     void set_format(const std::string& new_format) {        // needed to insert this into the queue to preserve the order
@@ -280,6 +300,23 @@ namespace GLT::logger_plugin {
         s_log_queue.emplace(GLT::logger::severity::trace, "", LOGGER_CHANGE_BUFFER_SIZE, static_cast<int>(new_size), GLT_MODULE_NAME, 
             std::thread::id(), std::format("[LOGGER] Changed buffer size to [{}]", new_size));
         s_cv.notify_all();
+    }
+
+
+    void flush_buffer() {
+
+        if (!s_is_init) {
+            std::cerr << "Tried to flush buffer befor logger was initialized" << std::endl;
+            return;
+        }
+
+        std::unique_lock<std::mutex> lock(s_general_mutex);
+
+        OPEN_FILE
+        s_main_file << s_buffered_messages;
+        CLOSE_FILE
+
+        s_buffered_messages.clear();
     }
 
     // message queue ---------------------------------------------------------------------------------------------------

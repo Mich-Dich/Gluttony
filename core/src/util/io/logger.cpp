@@ -90,6 +90,9 @@ namespace GLT::logger {
     static void default_set_buffer_size(size_t) { }
     
     
+    static void default_flush_buffer() { }
+
+
     static void default_register_label(const std::string&, std::thread::id) { }
     
     
@@ -106,6 +109,7 @@ namespace GLT::logger {
         default_get_format,
         default_set_buffer_threshold,
         default_set_buffer_size,
+        default_flush_buffer,
         default_register_label,
         default_unregister_label
     };
@@ -158,6 +162,11 @@ namespace GLT::logger {
     
     void set_buffer_size(size_t new_size) {
         g_logger.set_buffer_size(new_size);
+    }
+
+
+    void flush_buffer() {
+        g_logger.flush_buffer();
     }
 
     

@@ -42,15 +42,14 @@ namespace GLT::config {
     void init() {
 
         const std::filesystem::path root_dir = GLT::util::get_executable_path() / CONFIG_DIR;
-        vfs::create_directories(root_dir);
-        LOG(trace, "Checking Engine config files at [{}]", (root_dir).string());
+        ASSERT(vfs::create_directories(root_dir), "", "Failed to create config dir [{}]", root_dir);
         
         for (int i = 0; i <= static_cast<int>(type::input); ++i) {
 
-            std::filesystem::path file_path = root_dir / CONFIG_DIR / (file_type_to_string(static_cast<type>(i)) + FILE_EXTENSION_CONFIG);
-            std::ofstream config_file(file_path, std::ios::app);
-            VALIDATE(config_file.is_open(), return, "", "Failed to open/create config file: [{}]", file_path)
-            config_file.close();
+            std::filesystem::path file_path = root_dir / (file_type_to_string(static_cast<type>(i)) + FILE_EXTENSION_CONFIG);
+            std::error_code error{};
+            vfs::create_file(file_path, error);
+            ASSERT(!error, "", "Failed to open/create config file: [{}]: [{}]", file_path.generic_string(), error.message())
         }
     }
 
@@ -58,7 +57,10 @@ namespace GLT::config {
 	void serialize_window_attributes(GLT::platform::window_attributes& attributes, const serializer::option option) {
 
         const auto config_path = GLT::util::get_executable_path() / BUILD_CONFIG_PATH(type::app_settings);
-        vfs::create_file(config_path);
+        std::error_code error{};
+        vfs::create_file(config_path, error);
+        ASSERT(!error, "", "Failed to open/create config file: [{}]: [{}]", config_path.generic_string(), error.message())
+
         serializer::yaml(config_path, "window", option)
             .entry(KEY_VALUE(attributes.title))
             .entry(KEY_VALUE(attributes.width))

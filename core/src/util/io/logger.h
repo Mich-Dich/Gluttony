@@ -19,14 +19,14 @@ namespace GLT::logger {
 
     // MACROS ==========================================================================================================
     
-    #define LOG_LEVEL_ENABLED                               6
+    #define LOG_LEVEL_ENABLED                                   6
     
     #ifndef LOG_LEVEL_ENABLED
-    
-        #ifdef DEBUG
-            #define LOG_LEVEL_ENABLED_DEFAULT               6
+
+        #if defined(DEBUG)
+            #define LOG_LEVEL_ENABLED_DEFAULT_VALUE             6
         #else
-            #define LOG_LEVEL_ENABLED_DEFAULT           	3
+            #define LOG_LEVEL_ENABLED_DEFAULT_VALUE             2
         #endif
 
         // This enables the different log levels
@@ -37,7 +37,7 @@ namespace GLT::logger {
         //  4 = FATAL + ERROR + WARN + INFO
         //  5 = FATAL + ERROR + WARN + INFO + DEBUG
         //  6 = FATAL + ERROR + WARN + INFO + DEBUG + TRACE
-        #define LOG_LEVEL_ENABLED  LOG_LEVEL_ENABLED_DEFAULT
+        #define LOG_LEVEL_ENABLED  LOG_LEVEL_ENABLED_DEFAULT_VALUE
 
     #endif
 
@@ -45,6 +45,11 @@ namespace GLT::logger {
 
     #ifndef GLT_MODULE_NAME
         #define GLT_MODULE_NAME "Unknown"
+    #endif
+
+    // Compile-time validation: LOG_LEVEL_ENABLED must be in [0,6]
+    #if (LOG_LEVEL_ENABLED < 0) || (LOG_LEVEL_ENABLED > 6)
+        #error "LOG_LEVEL_ENABLED must be a value between 0 and 6 (inclusive)."
     #endif
 
     // TYPES ===========================================================================================================
@@ -103,6 +108,8 @@ namespace GLT::logger {
 
     using set_buffer_size_func = void (*)(size_t new_size);
 
+    using flush_buffer_func = void (*)();
+
     using register_label_func = void (*)(const std::string& thread_label, std::thread::id thread_id);
 
     using unregister_label_func = void (*)(std::thread::id thread_id);
@@ -117,6 +124,7 @@ namespace GLT::logger {
         get_format_func                 get_format;
         set_buffer_threshold_func       set_buffer_threshold;
         set_buffer_size_func            set_buffer_size;
+        flush_buffer_func               flush_buffer;
         register_label_func             register_label_for_thread;
         unregister_label_func           unregister_label_for_thread;
     };
@@ -157,6 +165,9 @@ namespace GLT::logger {
     
     void set_buffer_size(size_t new_size);
     
+
+    void flush_buffer();
+
     
     void register_label_for_thread(const std::string& thread_label, std::thread::id thread_id = std::this_thread::get_id());
     
@@ -169,31 +180,31 @@ namespace GLT::logger {
 
     // TEMPLATE DECLARATION ============================================================================================
 
+    // if (msg_sev < g_min_severity.load(std::memory_order_relaxed))
+    //     return;   // avoid formatting entirely
+
     // Template version that uses std::format for format strings with arguments
     template<typename... Args>
-    inline void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
+    FORCE_INLINE void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
         std::thread::id thread_id, std::format_string<Args...> fmt, Args&&... args) {
 
-        if (message.empty())
-            return;
-        // if (msg_sev < g_min_severity.load(std::memory_order_relaxed))
-        //     return;   // avoid formatting entirely
+        // // Early exit for empty format string with no arguments (common case)
+        // if constexpr (sizeof...(Args) == 0)
+        //     return;
+
+        // if (fmt.get()[0] == '\0')
+        //     return;   // empty message, skip formatting entirely
 
         std::string message = std::format(fmt, std::forward<Args>(args)...);
+        if (message.empty())             // still check for other sources of emptiness
+            return;
+
         log_msg_internal(msg_sev, file_name, function_name, line, module_name, thread_id, std::move(message));
     }
 
-    // Overload for plain strings (for backward compatibility)
-    inline void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
-        std::thread::id thread_id, const std::string& message) {
 
-        if (message.empty())
-            return;
-
-        log_msg_internal(msg_sev, file_name, function_name, line, module_name, thread_id, message);
-    }
-
-    inline void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
+    // Overload for plain strings
+    FORCE_INLINE void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
         std::thread::id thread_id, std::string_view message) {
             
         if (message.empty())
@@ -335,7 +346,7 @@ namespace GLT::logger {
                 DEBUG_BREAK();                                                                                          \
             }
     #else
-        #define ASSERT(expr, message_success, message_failure, ...)        if (!(expr)) { DEBUG_BREAK(); }
+        #define ASSERT(expr, message_success, message_failure, ...)         if (!(expr)) { DEBUG_BREAK(); }
         #define ASSERT_S(expr)                                              if (!(expr)) { DEBUG_BREAK(); }
     #endif
 
@@ -356,7 +367,7 @@ namespace GLT::logger {
                 LOGGED_EXCEPTION("Assertion failed: {}", #expr);                                                        \
             }
     #else
-        #define ASSERT(expr, message_success, message_failure, ...)        if (!(expr)) { LOGGED_EXCEPTION("Assertion failed: {}", #expr); }
+        #define ASSERT(expr, message_success, message_failure, ...)         if (!(expr)) { LOGGED_EXCEPTION("Assertion failed: {}", #expr); }
         #define ASSERT_S(expr)                                              if (!(expr)) { LOGGED_EXCEPTION("Assertion failed: {}", #expr); }
     #endif
 

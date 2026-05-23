@@ -38,13 +38,31 @@ namespace GLT::vfs {
     }
 
 
-    bool default_create_file(const std::filesystem::path& path) {
+    void default_create_file(const std::filesystem::path& path, std::error_code& error) noexcept {
 
-        if (std::filesystem::exists(path))      // Avoid truncating an existing file
-            return true;                        // already exists – consider success or false?
+        error.clear();
+        if (std::filesystem::exists(path, error))           // Check existence (non‑throwing)
+            return;         // File already exists – success (error is cleared by exists() on success)
 
-        std::ofstream ofs(path);
-        return ofs.is_open();
+        if (error)
+            return;         // An error occurred during the existence check – propagate it
+
+        // File does not exist → create it exclusively.
+        std::FILE* f = std::fopen(path.c_str(), "wx");      // "wx" mode: create for writing, fail if file already exists.
+        if (f) {
+
+            std::fclose(f);
+            error.clear();                                  // success
+
+        } else {
+
+            error.assign(errno, std::generic_category());   // capture failure
+
+            // If someone else created the file between our exists() and fopen(),
+            // that's still a successful outcome – the file now exists.
+            if (error == std::errc::file_exists)
+                error.clear();
+        }
     }
 
 
@@ -75,11 +93,13 @@ namespace GLT::vfs {
 
 
     bool default_remove(const std::filesystem::path& path) {
+
         return std::filesystem::remove(path);
     }
 
 
     bool default_rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
+
         std::error_code ec;
         std::filesystem::rename(old_path, new_path, ec);
         return !ec;
@@ -87,6 +107,7 @@ namespace GLT::vfs {
 
 
     bool default_copy_file(const std::filesystem::path& from, const std::filesystem::path& to, bool overwrite) {
+
         std::filesystem::copy_options options = std::filesystem::copy_options::none;
         if (overwrite) {
             options = std::filesystem::copy_options::overwrite_existing;
@@ -98,6 +119,7 @@ namespace GLT::vfs {
 
 
     [[nodiscard]] u64 default_file_size(const std::filesystem::path& path) {
+
         std::error_code ec;
         auto size = std::filesystem::file_size(path, ec);
         return ec ? 0 : static_cast<u64>(size);
@@ -105,6 +127,7 @@ namespace GLT::vfs {
 
 
     [[nodiscard]] std::vector<std::filesystem::path> default_list_directory(const std::filesystem::path& path) {
+
         std::vector<std::filesystem::path> result;
         std::error_code ec;
         for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
@@ -268,9 +291,9 @@ namespace GLT::vfs {
     }
 
 
-    bool create_file(const std::filesystem::path& path) {
+    void create_file(const std::filesystem::path& path, std::error_code& error) {
 
-        return g_vfs.create_file(path);
+        g_vfs.create_file(path, error);
     }
 
 

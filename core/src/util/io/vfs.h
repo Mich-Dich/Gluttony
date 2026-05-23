@@ -48,7 +48,7 @@ namespace GLT::vfs {
 
 
     using exists_func = bool (*)(const std::filesystem::path& path);
-    using create_file_func = bool (*)(const std::filesystem::path& path);
+    using create_file_func = void (*)(const std::filesystem::path& path, std::error_code& error);
     using is_directory_func = bool (*)(const std::filesystem::path& path);
     using is_regular_file_func = bool (*)(const std::filesystem::path& path);
     using create_directory_func = bool (*)(const std::filesystem::path& path);
@@ -108,7 +108,7 @@ namespace GLT::vfs {
     [[nodiscard]] bool exists(const std::filesystem::path& path);
 
 
-    bool create_file(const std::filesystem::path& path);
+    void create_file(const std::filesystem::path& path, std::error_code& error);
 
 
     // Checks whether the given path points to a directory.
