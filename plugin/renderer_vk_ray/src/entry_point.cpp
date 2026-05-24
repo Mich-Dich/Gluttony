@@ -153,9 +153,9 @@ namespace GLT::renderer_vk_ray {
                 m_imgui_descriptor_pool, m_imgui_initialized);
         }
 
-        void begin_imgui_frame();
+        void begin_imgui_frame(vk::CommandBuffer& current_cmd);
         
-        void end_imgui_frame();
+        void end_imgui_frame(vk::CommandBuffer& current_cmd);
         
 
         GLT::render::renderer_feature                           m_features{};

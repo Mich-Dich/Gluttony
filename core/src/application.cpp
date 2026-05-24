@@ -89,9 +89,9 @@ namespace GLT {
                 (*--layer)->update(m_delta_time);
             
             mp_renderer->begin_frame();     // start frame + start imgui frame
-            // for (auto layer = m_layer_stack.end(); layer != m_layer_stack.begin(); )
-            //     (*--layer)->render_imgui(m_delta_time);
-            // mp_renderer->draw_frame();      // finish imgui stuff and render world
+            for (auto layer = m_layer_stack.end(); layer != m_layer_stack.begin(); )
+                (*--layer)->render_imgui(m_delta_time);
+            mp_renderer->draw_frame();      // finish imgui stuff and render world
 
             m_delta_time = m_fps_controller.limit();
         }

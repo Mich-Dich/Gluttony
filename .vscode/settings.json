@@ -8,6 +8,7 @@
     "*.glt_plugin": "yaml"
   },
   "cSpell.words": [
+    "Blit",
     "denoising",
     "glfw",
     "hlsl",

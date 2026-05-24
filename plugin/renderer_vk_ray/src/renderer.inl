@@ -99,68 +99,50 @@ namespace GLT::renderer_vk_ray {
     void renderer::begin_frame() {
 
         m_state = system_state::running;
+
         // Wait for the in-flight fence for this frame
         VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[m_current_frame], VK_TRUE, UINT64_MAX));
         m_device.resetFences(m_in_flight_fences[m_current_frame]);
 
         try {
 
-            auto acquire_result = m_device.acquireNextImageKHR(m_swapchain.swapchain_handle, UINT64_MAX,
+            auto acquire_result = m_device.acquireNextImageKHR(m_swapchain.swapchain_handle, UINT64_MAX, 
                 m_present_semaphores[m_current_frame], nullptr);
             m_current_swapchain_image = acquire_result.value;
 
         } catch (const vk::OutOfDateKHRError&) {
-
             resize_swapchain(m_target_framebuffer_size);
-            return;   // skip the rest of begin_frame this frame
+            m_state = system_state::idle;
+            return;                                                         // skip the rest of begin_frame this frame
         }
 
-
-
         // Reset command buffer and begin recording
-        m_rt_render_cmd[m_current_frame].reset();
+        vk::CommandBuffer& current_cmd = m_rt_render_cmd[m_current_frame];  // Record ImGui rendering into the command buffer
+        current_cmd.reset();
         vk::CommandBufferBeginInfo begin_info{};
         begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-        m_rt_render_cmd[m_current_frame].begin(begin_info);
+        current_cmd.begin(begin_info);
 
-        begin_imgui_frame();
-        
-        draw_frame();
+        /* TODO: 
+            - Update camera matrices
+            - Begin command buffer
+            - Bind descriptor buffer
+            - Ray tracing
+            - Swapchain image transitions:
+            - Blit from output image to swapchain image
+        */
+
+        begin_imgui_frame(current_cmd);
     }
 
 
     void renderer::draw_frame() {
 
         VALIDATE_INIT
-
-        ImGui::Render();                                                                // Finalize ImGui draw data
-        vk::CommandBuffer& cmd = m_rt_render_cmd[m_current_frame];                      // Record ImGui rendering into the command buffer
         
-        vk::RenderPassBeginInfo rp_info{};                                              // Begin render pass (clears background to dark blue)
-        rp_info.renderPass = m_imgui_render_pass;
-        rp_info.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
-        rp_info.renderArea.offset = vk::Offset2D{};
-        rp_info.renderArea.extent = m_swapchain.swapchain_extent;
-
-        std::array<vk::ClearValue, 1> clear_values{};                                   // Clear colour (dark blue)
-        clear_values[0].color = {0.1f, 0.1f, 0.2f, 1.0f};
-        rp_info.clearValueCount = static_cast<u32>(clear_values.size());
-        rp_info.pClearValues = clear_values.data();
-
-        try {
-            cmd.beginRenderPass(rp_info, vk::SubpassContents::eInline);
-        } catch(...) {
-            LOG(error, "Failed to begin render pass")
-            return;
-        }
-
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-        cmd.endRenderPass();
-
-        // After the render pass, the image layout is PRESENT_SRC_KHR (set in render pass)
-        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;
-
-        cmd.end();                                                                      // End command buffer
+        vk::CommandBuffer& current_cmd = m_rt_render_cmd[m_current_frame];              // Record ImGui rendering into the command buffer
+        end_imgui_frame(current_cmd);
+        current_cmd.end();                                                              // End command buffer
 
         vk::SubmitInfo submit_info{};                                                   // Submit to graphics queue
         vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -168,10 +150,15 @@ namespace GLT::renderer_vk_ray {
         submit_info.pWaitSemaphores = &m_present_semaphores[m_current_frame];
         submit_info.pWaitDstStageMask = &wait_stage;
         submit_info.commandBufferCount = 1;
-        submit_info.pCommandBuffers = &cmd;
+        submit_info.pCommandBuffers = &current_cmd;
         submit_info.signalSemaphoreCount = 1;
         submit_info.pSignalSemaphores = &m_render_semaphores[m_current_frame];
-        m_queues.graphics_queue.submit(submit_info, m_in_flight_fences[m_current_frame]);
+
+        try {
+            m_queues.graphics_queue.submit(submit_info, m_in_flight_fences[m_current_frame]);
+        } catch (...) {
+            LOG(error, "Failed to submit");
+        }
 
         vk::PresentInfoKHR present_info{};                                              // Present
         present_info.waitSemaphoreCount = 1;
@@ -181,7 +168,9 @@ namespace GLT::renderer_vk_ray {
         present_info.pImageIndices = &m_current_swapchain_image;
 
         try {
-            m_queues.present_queue.presentKHR(present_info);
+            IGNORE_UNUSED_VARIABLE_START
+            const vk::Result result = m_queues.present_queue.presentKHR(present_info);
+            IGNORE_UNUSED_VARIABLE_STOP
         } catch (const vk::OutOfDateKHRError&) {
             resize_swapchain(m_target_framebuffer_size);
         }
@@ -465,7 +454,7 @@ namespace GLT::renderer_vk_ray {
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;        // Enable Gamepad Controls
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
-        // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
 
         ImGui::StyleColorsDark();
 
@@ -501,49 +490,48 @@ namespace GLT::renderer_vk_ray {
     }
 
 
-    void renderer::begin_imgui_frame() {
+    void renderer::begin_imgui_frame(vk::CommandBuffer& current_cmd) {
 
         VALIDATE_INIT
 
         // Transition the swapchain image to COLOR_ATTACHMENT_OPTIMAL for ImGui
-        transition_image_layout(
-            m_rt_render_cmd[m_current_frame],
-            image_type::swapchain,
-            vk::ImageLayout::eColorAttachmentOptimal
-        );
+        transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eColorAttachmentOptimal);
 
-        // Start ImGui frame (no command buffer needed)
-        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplVulkan_NewFrame();                                                    // Start ImGui frame (no command buffer needed)
         mp_window->begin_imgui_frame();
         ImGui::NewFrame();
 
-        // Example UI
-        static bool show_demo = true;
+        static bool show_demo = true;                                                   // Example UI
         if (show_demo)
             ImGui::ShowDemoWindow(&show_demo);
     }
 
 
-    void renderer::end_imgui_frame() {
+    void renderer::end_imgui_frame(vk::CommandBuffer& current_cmd) {
 
         VALIDATE_INIT
 
-        ImGui::Render();
-
-        // Begin render pass
-        vk::RenderPassBeginInfo rp_info = {};
+        ImGui::EndFrame();
+        ImGui::Render();                                                                // Finalize ImGui draw data
+        
+        vk::RenderPassBeginInfo rp_info{};                                              // Begin render pass (clears background to dark blue)
         rp_info.renderPass = m_imgui_render_pass;
         rp_info.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
-        rp_info.renderArea.offset = vk::Offset2D(0, 0);
+        rp_info.renderArea.offset = vk::Offset2D{};
         rp_info.renderArea.extent = m_swapchain.swapchain_extent;
 
-        m_rt_render_cmd[m_current_frame].beginRenderPass(rp_info, vk::SubpassContents::eInline);
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), m_rt_render_cmd[m_current_frame]);
-        m_rt_render_cmd[m_current_frame].endRenderPass();
+        std::array<vk::ClearValue, 1> clear_values{};                                   // Clear colour (dark blue)
+        clear_values[0].color = {0.1f, 0.1f, 0.2f, 1.0f};
+        rp_info.clearValueCount = static_cast<u32>(clear_values.size());
+        rp_info.pClearValues = clear_values.data();
 
-        // After the render pass, the image is in PRESENT_SRC_KHR (due to finalLayout), we need to update our tracked layout
+        current_cmd.beginRenderPass(rp_info, vk::SubpassContents::eInline);
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), current_cmd);
+        current_cmd.endRenderPass();
+
+        // After the render pass, the image layout is PRESENT_SRC_KHR (set in render pass)
         m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;
-
+        
         // Update and Render additional Platform Windows
         ImGuiIO& io = ImGui::GetIO();
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
