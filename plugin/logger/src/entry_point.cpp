@@ -39,15 +39,15 @@ namespace GLT::logger_plugin {
         nullptr
     };
 
-    static constexpr plugin_manager::targeted_interface     dependencies_interfaces[] = {
+    static constexpr plugin_manager::interface     dependencies_interfaces[] = {
 
-        plugin_manager::targeted_interface::virtual_file_system 
+        plugin_manager::interface::virtual_file_system 
     };
 
     static constexpr plugin_manager::plugin_descriptor      descriptor = {
         .name                                               = GLT_MODULE_NAME,
         .phase                                              = plugin_manager::load_phase::post_config_init,
-        .target                                             = plugin_manager::targeted_interface::logger,
+        .target                                             = plugin_manager::interface::logger,
         .dependency_names_count                             = ARRAY_SIZE(dependencies_names),
         .dependency_names                                   = dependencies_names,
         .dependency_interface_count                         = ARRAY_SIZE(dependencies_interfaces),

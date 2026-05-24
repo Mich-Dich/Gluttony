@@ -245,6 +245,171 @@ namespace GLT::renderer_vk_ray::utils {
         cmd.blitImage2(blit_I);
     }
 
+
+    void create_imgui_resources(vk::DescriptorPool& imgui_descriptor_pool, vk::Device& device, 
+        vr::swapchain_resources& swapchain, vk::RenderPass& imgui_render_pass, vr::instance_wrapper& instance,
+        vk::PhysicalDevice& physical_device, vr::command_queues& queues, 
+        std::vector<vk::Framebuffer>& imgui_framebuffers, bool& imgui_initialized) {
+
+        // Create descriptor pool for ImGui (optional in newer versions, but still recommended)
+        std::vector<vk::DescriptorPoolSize> pool_sizes = {
+            { vk::DescriptorType::eSampler, 1000 },
+            { vk::DescriptorType::eCombinedImageSampler, 1000 },
+            { vk::DescriptorType::eSampledImage, 1000 },
+            { vk::DescriptorType::eStorageImage, 1000 },
+            { vk::DescriptorType::eUniformTexelBuffer, 1000 },
+            { vk::DescriptorType::eStorageTexelBuffer, 1000 },
+            { vk::DescriptorType::eUniformBuffer, 1000 },
+            { vk::DescriptorType::eStorageBuffer, 1000 },
+            { vk::DescriptorType::eUniformBufferDynamic, 1000 },
+            { vk::DescriptorType::eStorageBufferDynamic, 1000 },
+            { vk::DescriptorType::eInputAttachment, 1000 }
+        };
+
+        vk::DescriptorPoolCreateInfo pool_info = {};
+        pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+        pool_info.maxSets = 1000 * static_cast<uint32_t>(pool_sizes.size());
+        pool_info.poolSizeCount = static_cast<u32>(pool_sizes.size());
+        pool_info.pPoolSizes = pool_sizes.data();
+
+        try {
+            imgui_descriptor_pool = device.createDescriptorPool(pool_info);
+        } catch (const vk::SystemError& e) {
+            LOG(error, "Failed to create ImGui descriptor pool: {}", e.what());
+            throw;
+        }
+
+        // Create render pass for ImGui FIRST (needed for init_info)
+        vk::AttachmentDescription attachment = {};
+        attachment.format = swapchain.swapchain_format;
+        attachment.samples = vk::SampleCountFlagBits::e1;
+        attachment.loadOp = vk::AttachmentLoadOp::eClear;  // Load existing content (our rendered image)
+        attachment.storeOp = vk::AttachmentStoreOp::eStore;
+        attachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        attachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+        attachment.initialLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        attachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+
+        vk::AttachmentReference color_attachment = {};
+        color_attachment.attachment = 0;
+        color_attachment.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+        vk::SubpassDescription subpass = {};
+        subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_attachment;
+
+        vk::SubpassDependency dependency = {};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.dstSubpass = 0;
+        dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        dependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+        dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+
+        vk::RenderPassCreateInfo render_pass_info = {};
+        render_pass_info.attachmentCount = 1;
+        render_pass_info.pAttachments = &attachment;
+        render_pass_info.subpassCount = 1;
+        render_pass_info.pSubpasses = &subpass;
+        render_pass_info.dependencyCount = 1;
+        render_pass_info.pDependencies = &dependency;
+
+        try {
+            imgui_render_pass = device.createRenderPass(render_pass_info);
+        } catch (const vk::SystemError& e) {
+            LOG(error, "Failed to create ImGui render pass: {}", e.what());
+            throw;
+        }
+
+        // Create ImGui Vulkan backend initialization info for NEW API
+        ImGui_ImplVulkan_InitInfo init_info = {};
+        init_info.Instance = instance.instance_handle;
+        init_info.PhysicalDevice = physical_device;
+        init_info.Device = device;
+        init_info.QueueFamily = queues.graphics_index;
+        init_info.Queue = queues.graphics_queue;
+        init_info.PipelineCache = VK_NULL_HANDLE;
+        init_info.DescriptorPool = imgui_descriptor_pool;
+        init_info.MinImageCount = static_cast<u32>(swapchain.swapchain_images.size());
+        init_info.ImageCount = static_cast<u32>(swapchain.swapchain_images.size());
+        init_info.Allocator = nullptr;
+
+        // Required: Set the API version
+        init_info.ApiVersion = VK_API_VERSION_1_3; // Use 1.2 or 1.3 based on what you initialized
+
+        // Set up pipeline rendering info for render pass
+        init_info.PipelineInfoMain.RenderPass = imgui_render_pass;
+        init_info.PipelineInfoMain.Subpass = 0;
+        init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+
+        // For dynamic rendering (if you were using it), you'd need to set PipelineRenderingCreateInfo
+        // But since we're using a traditional render pass, we don't need that
+
+        // Min allocation size (optional but recommended to avoid validation warnings)
+        init_info.MinAllocationSize = 256; // 256 bytes minimum allocation
+
+        init_info.CheckVkResultFn = [](VkResult err) {
+            ASSERT(err == VK_SUCCESS, "", "ImGui Vulkan error: {}", vk::to_string(static_cast<vk::Result>(err)))
+        };
+
+        // Initialize ImGui Vulkan backend (single argument in new API)
+        ASSERT(ImGui_ImplVulkan_Init(&init_info), "", "Failed to initialize ImGui Vulkan backend");
+
+        // Create framebuffers for each swapchain image
+        imgui_framebuffers.resize(swapchain.swapchain_images.size());
+        for (size_t x = 0; x < swapchain.swapchain_images.size(); x++) {
+
+            vk::ImageView attachments[] = { swapchain.swapchain_image_views[x] };
+            vk::FramebufferCreateInfo fb_info = {};
+            fb_info.renderPass = imgui_render_pass;
+            fb_info.attachmentCount = 1;
+            fb_info.pAttachments = attachments;
+            fb_info.width = swapchain.swapchain_extent.width;
+            fb_info.height = swapchain.swapchain_extent.height;
+            fb_info.layers = 1;
+
+            try {
+                imgui_framebuffers[x] = device.createFramebuffer(fb_info);
+            } catch (const vk::SystemError& e) {
+                LOG(error, "Failed to create ImGui framebuffer: [{}]", e.what());
+                throw;
+            }
+        }
+
+        // Note: In newer ImGui versions, font texture creation is automatic!
+        // The first call to ImGui::NewFrame() will create the font texture if needed.
+        // No manual font upload required anymore.
+        imgui_initialized = true;
+    }
+
+
+    void destroy_imgui_resources(vk::Device& device, std::vector<vk::Framebuffer>& imgui_framebuffers, 
+        vk::RenderPass& imgui_render_pass, vk::DescriptorPool& imgui_descriptor_pool, bool& imgui_initialized) {
+
+        device.waitIdle();
+
+        for (auto& framebuffer : imgui_framebuffers) {            // Destroy framebuffers
+            if (framebuffer)
+                device.destroyFramebuffer(framebuffer);
+        }
+        imgui_framebuffers.clear();
+
+        if (imgui_render_pass) {                                  // Destroy render pass
+            device.destroyRenderPass(imgui_render_pass);
+            imgui_render_pass = nullptr;
+        }
+
+        ImGui_ImplVulkan_Shutdown();
+
+        if (imgui_descriptor_pool) {                              // Destroy descriptor pool
+            device.destroyDescriptorPool(imgui_descriptor_pool);
+            imgui_descriptor_pool = nullptr;
+        }
+
+        imgui_initialized = false;
+    }
+
     // CLASS IMPLEMENTATION ============================================================================================
 
     // CLASS PUBLIC ====================================================================================================

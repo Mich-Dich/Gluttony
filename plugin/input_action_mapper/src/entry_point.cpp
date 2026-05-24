@@ -22,19 +22,19 @@ namespace GLT::input_action_mapper {
         nullptr
     };
 
-    static plugin_manager::targeted_interface       dependencies_interfaces[] = {
+    static plugin_manager::interface                dependencies_interfaces[] = {
 
-        plugin_manager::targeted_interface::window 
+        plugin_manager::interface::window 
     };
 
     static plugin_manager::plugin_descriptor        descriptor = {
-        .name                           = GLT_MODULE_NAME,
-        .phase                          = plugin_manager::load_phase::application_ready,
-        .target                         = plugin_manager::targeted_interface::logger,
-        .dependency_names_count         = ARRAY_SIZE(dependencies_names),
-        .dependency_names               = dependencies_names,
-        .dependency_interface_count     = ARRAY_SIZE(dependencies_interfaces),
-        .dependency_interfaces          = dependencies_interfaces,
+        .name                                       = GLT_MODULE_NAME,
+        .phase                                      = plugin_manager::load_phase::application_ready,
+        .target                                     = plugin_manager::interface::logger,
+        .dependency_names_count                     = ARRAY_SIZE(dependencies_names),
+        .dependency_names                           = dependencies_names,
+        .dependency_interface_count                 = ARRAY_SIZE(dependencies_interfaces),
+        .dependency_interfaces                      = dependencies_interfaces,
     };
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -52,13 +52,13 @@ namespace GLT::input_action_mapper {
 
         void on_load() override {
 
-            m_key_event_sub = GLT::event_bus::subscribe(
-                std::function<void(const GLT::key_event&)>(std::bind_front(&plugin::on_key_event, this))
-            );
+            // m_key_event_sub = GLT::event_bus::subscribe(
+            //     std::bind(&plugin::on_key_event, this)
+            // );
 
-            m_mouse_event_sub = GLT::event_bus::subscribe(
-                std::function<void(const GLT::mouse_event&)>(std::bind_front(&plugin::on_mouse_event, this))
-            );
+            // m_mouse_event_sub = GLT::event_bus::subscribe(
+            //     std::function<void(const GLT::mouse_event&)>(std::bind_front(&plugin::on_mouse_event, this))
+            // );
 
             LOG_LOADED
         }

@@ -75,11 +75,11 @@ namespace GLT::platform {
 
         // --- queries ---
         virtual bool should_close() const = 0;
-        virtual glm::ivec2 get_window_size() const = 0;
-        virtual glm::ivec2 get_framebuffer_size() const = 0;
-        virtual glm::ivec2 get_position() const = 0;
-        virtual window_size_state get_state() const = 0;
-        virtual bool is_vsync() const = 0;
+        [[nodiscard]] virtual glm::ivec2 get_window_size() const = 0;
+        [[nodiscard]] virtual glm::ivec2 get_framebuffer_size() const = 0;
+        [[nodiscard]] virtual glm::ivec2 get_position() const = 0;
+        [[nodiscard]] virtual window_size_state get_state() const = 0;
+        [[nodiscard]] virtual bool get_vsync() const = 0;
 
         // --- modifiers ---
         virtual void show(bool visible) = 0;
@@ -91,18 +91,21 @@ namespace GLT::platform {
 
         virtual void poll_events() = 0;
 
-        virtual backend_api get_backend_api() = 0;
-        virtual const char** get_required_render_extensions(u32* count) = 0;
+        [[nodiscard]] virtual backend_api get_backend_api() = 0;
+        [[nodiscard]] virtual const char** get_required_render_extensions(u32* count) = 0;
         virtual void imgui_init(GLT::render::backend_api used_render_api) = 0;
-        
+        virtual void imgui_shutdown() = 0;
+        virtual void begin_imgui_frame() = 0;
+
         // Creates a Vulkan surface from the underlying native window.
         // @param instance The Vulkan instance to use.
         // @return A fully created vk::SurfaceKHR (the caller must destroy it).
-        virtual vk::SurfaceKHR create_vulkan_surface(vk::Instance instance) = 0;
+        [[nodiscard]] virtual vk::SurfaceKHR create_vulkan_surface(vk::Instance instance) = 0;
 
         // Returns a void* that render backends can cast (GLFWwindow*, HWND, etc.).
-        virtual void* get_native_window_handle() = 0;
-        virtual window_attributes get_window_attributes() = 0;
+        [[nodiscard]] virtual void* get_native_window_handle() = 0;
+        [[nodiscard]] virtual window_attributes get_window_attributes() = 0;
 
     };
+
 }

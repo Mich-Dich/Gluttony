@@ -124,7 +124,7 @@ namespace GLT::plugin_manager {
     // Identifies which engine subsystem a plugin replaces or extends.
     // The plugin manager uses this to enforce that only one plugin per interface is active
     // (the one selected in the configuration file). Plugins with `custom` are free‑form.
-    enum class targeted_interface : u16 {
+    enum class interface : u16 {
         none = 0,
         logger,
         window,
@@ -147,7 +147,6 @@ namespace GLT::plugin_manager {
         custom,                     // needs to be last!
     };
 
-
     // Descriptor that every plugin must export via `gluttony_plugin_descriptor()`.
     // It provides the plugin manager with metadata: name, load phase, interface target,
     // and dependencies (by name or by interface). Dependencies are resolved automatically
@@ -155,11 +154,11 @@ namespace GLT::plugin_manager {
     struct plugin_descriptor {
         const char*                     name{};                     // Human‑readable plugin name, must be unique.
         load_phase                      phase{};                    // When this plugin should be loaded.
-        targeted_interface              target{};                   // Which core interface this plugin implements.
+        interface              target{};                   // Which core interface this plugin implements.
         int                             dependency_names_count{};   // Number of plugins this plugin depends on (by name).
         const char* const*              dependency_names{};         // Array of plugin names this plugin requires.
         int                             dependency_interface_count{}; // Number of interface dependencies.
-        const targeted_interface*       dependency_interfaces{};    // Array of interfaces this plugin depends on.
+        const interface*       dependency_interfaces{};    // Array of interfaces this plugin depends on.
     };
 
     // STATIC VARIABLES ================================================================================================

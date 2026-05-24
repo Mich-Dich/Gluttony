@@ -30,7 +30,7 @@ namespace GLT::plugin_manager {
 
 
     template<typename T>
-    FORCE_INLINE_R ref<T> get_plugin_ref(const targeted_interface targeted) {
+    FORCE_INLINE_R ref<T> get_plugin_ref(const interface targeted) {
 
         return std::dynamic_pointer_cast<T>(get_plugin_base(targeted));
     }
@@ -44,7 +44,7 @@ namespace GLT::plugin_manager {
 
 
     template<typename T>
-    FORCE_INLINE_R weak_ref<T> get_plugin(const targeted_interface targeted) {
+    FORCE_INLINE_R weak_ref<T> get_plugin(const interface targeted) {
 
         return std::dynamic_pointer_cast<T>(get_plugin_base(targeted));
     }

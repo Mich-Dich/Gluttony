@@ -5,6 +5,7 @@
 #include <vk_ray/vk_ray.h>
 #include <vk_ray/builders/builders.h>
 #include <plugin_system/i_renderer_plugin.h>
+#include <plugin_system/i_window_plugin.h>
 
 #include "util/utils.h"
 #include "util/data_structures.h"
@@ -17,7 +18,7 @@ namespace GLT::renderer_vk_ray {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr u32               MAX_CONCURRENT_FRAMES = 3;
+    constexpr u32                                       MAX_CONCURRENT_FRAMES = 3;
 
     // MACROS ==========================================================================================================
 
@@ -30,15 +31,15 @@ namespace GLT::renderer_vk_ray {
         nullptr
     };
 
-    static GLT::plugin_manager::targeted_interface      dependencies_interfaces[] = {
+    static GLT::plugin_manager::interface               dependencies_interfaces[] = {
         
-        GLT::plugin_manager::targeted_interface::none,
+        GLT::plugin_manager::interface::window,
     };
 
     static GLT::plugin_manager::plugin_descriptor       descriptor = {
         .name                                           = GLT_MODULE_NAME,
         .phase                                          = GLT::plugin_manager::load_phase::post_window,
-        .target                                         = GLT::plugin_manager::targeted_interface::renderer,
+        .target                                         = GLT::plugin_manager::interface::renderer,
         .dependency_names_count                         = ARRAY_SIZE(dependencies_names),
         .dependency_names                               = dependencies_names,
         .dependency_interface_count                     = ARRAY_SIZE(dependencies_interfaces),
@@ -117,25 +118,46 @@ namespace GLT::renderer_vk_ray {
 
     private:
 
+        enum class image_type{
+            swapchain = 0,
+            render,
+        };
+
         void init_vulkan();
 
         void create_base_resources();
+
+        void transition_image_layout(vk::CommandBuffer command_buffer, const image_type type, const vk::ImageLayout new_layout);
         
-        void create_acceleration_structures();
-        
-        void create_rt_pipeline();
-        
-        void update_descriptor_set();
-        
+	    void create_swapchain(const glm::ivec2 size);
+
+	    void destroy_swapchain();
+
+	    void resize_swapchain(const glm::ivec2 size);
+
+        // --- IMGUI ---------------------------------------------------------------------------------------------------
+
         void imgui_init();
         
         void imgui_shutdown();
-        
-        void create_imgui_resources();
-        
-        void destroy_imgui_resources();
 
+        void create_imgui_resources() {
+
+            utils::create_imgui_resources(m_imgui_descriptor_pool, m_device, m_swapchain, m_imgui_render_pass,
+                m_instance, m_physical_device, m_queues, m_imgui_framebuffers, m_imgui_initialized);
+        }
         
+        void destroy_imgui_resources() {
+
+            utils::destroy_imgui_resources(m_device, m_imgui_framebuffers, m_imgui_render_pass, 
+                m_imgui_descriptor_pool, m_imgui_initialized);
+        }
+
+        void begin_imgui_frame();
+        
+        void end_imgui_frame();
+        
+
         GLT::render::renderer_feature                           m_features{};
 
         GLT::system_state                                       m_state = GLT::system_state::destroyed;
@@ -146,14 +168,19 @@ namespace GLT::renderer_vk_ray {
         vk::PhysicalDevice                                      m_physical_device = nullptr;
         utils::deletion_queue                                   m_deletion_queue{};
         vr::swapchain_builder                                   m_swapchain_builder;
-        vr::swapchain_resources                                 m_swapchain_resources;
+        vr::swapchain_resources                                 m_swapchain;
         vk::SwapchainKHR                                        m_old_swapchain = nullptr;
+
+        
         vk::CommandPool                                         m_graphics_pool;
         u32                                                     m_image_count = 0;
+        u32                                                     m_current_frame = 0;
+        u32                                                     m_current_swapchain_image = 0;
         std::vector<vk::Semaphore>                              m_render_semaphores{};
         std::vector<vk::Semaphore>                              m_present_semaphores{};
         std::vector<vk::Fence>                                  m_in_flight_fences{};
         std::vector<vk::ImageLayout>                            m_swapchain_images_layout{};
+        vk::ImageLayout                                         m_output_image_layout = vk::ImageLayout::eUndefined;
         std::array<vk::CommandBuffer, MAX_CONCURRENT_FRAMES>    m_rt_render_cmd;
         vr::device*                                             m_vr_dev = nullptr;
         vr::allocated_image                                     m_output_image_buffer;
@@ -178,7 +205,13 @@ namespace GLT::renderer_vk_ray {
         ImTextureID                                             m_output_image_texture_id{};
         bool                                                    m_imgui_initialized = false;
         ImGuiContext*                                           m_imgui_context = nullptr;
+        glm::ivec2                                              m_target_framebuffer_size{};
 
+        GLT::platform::backend_api                              mp_window_backend_api{};
+        ref<GLT::platform::i_window_plugin>                     mp_window{};
+
+        handle                                                  m_framebuffer_resize_sub{};
+        glm::vec4                                               m_clear_color{};
         // ref<GLT::camera>                                        m_camera{};
 
     };

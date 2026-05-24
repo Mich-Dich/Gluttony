@@ -51,19 +51,19 @@ namespace GLT::glfw_window {
     
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 
-    inline void plugin::on_load() {
+    void plugin::on_load() {
 
         LOG_LOADED
     }
 
 
-    inline void plugin::on_unload() {
+    void plugin::on_unload() {
 
         LOG_UNLOADED
     }
 
 
-    inline void plugin::create(const GLT::platform::window_attributes& attrs) {
+    void plugin::create(const GLT::platform::window_attributes& attrs) {
 
         m_data = attrs;
 
@@ -119,7 +119,7 @@ namespace GLT::glfw_window {
     }
 
 
-    inline void plugin::destroy() {
+    void plugin::destroy() {
 
         if (!m_native_window)
             return;
@@ -141,13 +141,13 @@ namespace GLT::glfw_window {
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    inline bool plugin::should_close() const {
+    bool plugin::should_close() const {
 
         return m_native_window ? glfwWindowShouldClose(m_native_window) : true;
     }
 
 
-    inline glm::ivec2 plugin::get_window_size() const {
+    glm::ivec2 plugin::get_window_size() const {
 
         if (!m_native_window) return {0, 0};
         
@@ -157,7 +157,7 @@ namespace GLT::glfw_window {
     }
 
 
-    inline glm::ivec2 plugin::get_framebuffer_size() const {
+    glm::ivec2 plugin::get_framebuffer_size() const {
 
         if (!m_native_window) return {0, 0};
         
@@ -167,7 +167,7 @@ namespace GLT::glfw_window {
     }
 
 
-    inline glm::ivec2 plugin::get_position() const {
+    glm::ivec2 plugin::get_position() const {
 
         if (!m_native_window) return {0, 0};
 
@@ -177,7 +177,7 @@ namespace GLT::glfw_window {
     }
 
 
-    inline GLT::platform::window_size_state plugin::get_state() const {
+    GLT::platform::window_size_state plugin::get_state() const {
 
         if (!m_native_window) return GLT::platform::window_size_state::windowed;
 
@@ -191,20 +191,20 @@ namespace GLT::glfw_window {
     }
 
 
-    inline bool plugin::is_vsync() const {
+    bool plugin::get_vsync() const {
 
         return m_data.vsync;
     }
 
 
-    inline void plugin::show(bool visible) {
+    void plugin::show(bool visible) {
 
         if (m_native_window)
             visible ? glfwShowWindow(m_native_window) : glfwHideWindow(m_native_window);
     }
 
 
-    inline void plugin::set_state(const GLT::platform::window_size_state new_state) {
+    void plugin::set_state(const GLT::platform::window_size_state new_state) {
 
         if (!m_native_window) return;
         switch (new_state) {
@@ -224,7 +224,7 @@ namespace GLT::glfw_window {
     }
 
 
-    inline void plugin::set_title(const std::string& title) {
+    void plugin::set_title(const std::string& title) {
 
         if (!m_native_window) return;
 
@@ -233,7 +233,7 @@ namespace GLT::glfw_window {
     }
 
 
-    inline void plugin::set_size(u32 width, u32 height) {
+    void plugin::set_size(u32 width, u32 height) {
 
         if (!m_native_window) return;
         glfwSetWindowSize(m_native_window, static_cast<int>(width), static_cast<int>(height));
@@ -241,19 +241,19 @@ namespace GLT::glfw_window {
         m_data.height = height;
     }
 
+    
     IGNORE_UNUSED_PARAMETER_START
-
-    inline void plugin::set_vsync(bool vsync) {
+    void plugin::set_vsync(bool vsync) {
 
         // m_data.vsync = vsync;
         // if (!m_native_window) 
         //     return;
         // glfwSwapInterval(vsync ? 1 : 0);
     }
-
     IGNORE_UNUSED_PARAMETER_STOP
 
-    inline void plugin::set_cursor_mode(GLT::platform::cursor_mode mode) {
+
+    void plugin::set_cursor_mode(GLT::platform::cursor_mode mode) {
 
         if (!m_native_window) return;
         
@@ -272,16 +272,16 @@ namespace GLT::glfw_window {
     }
 
 
-    inline void plugin::poll_events() { glfwPollEvents(); }
+    void plugin::poll_events() { glfwPollEvents(); }
 
 
-    inline GLT::platform::backend_api plugin::get_backend_api() { return GLT::platform::backend_api::glfw; }
+    GLT::platform::backend_api plugin::get_backend_api() { return GLT::platform::backend_api::glfw; }
 
 
-    inline const char** plugin::get_required_render_extensions(u32* count) { return glfwGetRequiredInstanceExtensions(count); }
+    const char** plugin::get_required_render_extensions(u32* count) { return glfwGetRequiredInstanceExtensions(count); }
 
 
-    inline void plugin::imgui_init(GLT::render::backend_api used_render_api) {
+    void plugin::imgui_init(GLT::render::backend_api used_render_api) {
 
         if (!m_native_window) return;
 
@@ -297,13 +297,25 @@ namespace GLT::glfw_window {
     }
 
 
-    inline void* plugin::get_native_window_handle() { return static_cast<void*>(m_native_window); }
+    void plugin::imgui_shutdown() {
+
+        ImGui_ImplGlfw_Shutdown();
+    }
 
 
-    inline GLT::platform::window_attributes plugin::get_window_attributes() { return m_data; }
+    void plugin::begin_imgui_frame() {
+
+        ImGui_ImplGlfw_NewFrame();   
+    }
 
 
-    inline vk::SurfaceKHR plugin::create_vulkan_surface(vk::Instance instance) {
+    void* plugin::get_native_window_handle() { return static_cast<void*>(m_native_window); }
+
+
+    GLT::platform::window_attributes plugin::get_window_attributes() { return m_data; }
+
+
+    vk::SurfaceKHR plugin::create_vulkan_surface(vk::Instance instance) {
 
         ASSERT(glfwVulkanSupported() == GLFW_TRUE, "", "Vulkan not supported by GLFW");
         VkSurfaceKHR raw_surface;

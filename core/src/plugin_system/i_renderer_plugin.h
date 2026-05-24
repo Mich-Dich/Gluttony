@@ -52,10 +52,10 @@ namespace GLT::render {
     // The renderer typically depends on a window plugin to obtain the native
     // window handle and to handle resizing. It can retrieve the window plugin
     // via plugin_manager::get_plugin<platform::i_window_plugin>
-    // (targeted_interface::window) during on_load() or initialize().
+    // (interface::window) during on_load() or initialize().
     //
     // @see platform::i_window_plugin
-    // @see targeted_interface::render_device
+    // @see interface::render_device
     class i_renderer_plugin : public GLT::plugin_manager::i_plugin {
     public:
 

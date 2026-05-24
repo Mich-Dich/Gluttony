@@ -29,7 +29,7 @@ namespace GLT::plugin_manager {
     #endif
 
     
-    constexpr std::array<std::string_view, static_cast<size_t>(targeted_interface::custom) +1> s_targeted_interface_names = {
+    constexpr std::array<std::string_view, static_cast<size_t>(interface::custom) +1> s_interface_names = {
         "none", 
         "logger", 
         "window", 
@@ -56,7 +56,7 @@ namespace GLT::plugin_manager {
 
     // TYPES ===========================================================================================================
 
-    using underlying = std::underlying_type_t<targeted_interface>;
+    using underlying = std::underlying_type_t<interface>;
 
 
     // Internal handle for a loaded plugin.
@@ -67,7 +67,7 @@ namespace GLT::plugin_manager {
         std::shared_ptr<i_plugin>               instance;   // uses custom deleter
         load_phase                              phase;
         std::vector<std::string>                dependencies_names;
-        std::vector<targeted_interface>         dependencies_interfaces;
+        std::vector<interface>         dependencies_interfaces;
     };
 
 
@@ -76,9 +76,9 @@ namespace GLT::plugin_manager {
         std::filesystem::path                                   path;
         std::string                                             name;
         load_phase                                              phase;
-        targeted_interface                                      target{};               // is a [u16]
+        interface                                      target{};               // is a [u16]
         std::vector<std::string>                                dependencies_names;
-        std::vector<targeted_interface>                         dependencies_interfaces;
+        std::vector<interface>                         dependencies_interfaces;
     };
 
 
@@ -113,7 +113,7 @@ namespace GLT::plugin_manager {
     static bool                                                 s_shutdown = false;
     static std::vector<plugin_handle>                           s_loaded_plugins{};
     static std::vector<discovered_info>                         s_discovered{};
-    static std::unordered_map<targeted_interface, std::string>  s_plugin_names_per_target_interface{};
+    static std::unordered_map<interface, std::string>  s_plugin_names_per_target_interface{};
     static std::filesystem::path                                s_config_path{};
 
     // HELPER FUNCTIONS ===============================================================================================
@@ -256,7 +256,7 @@ namespace GLT::plugin_manager {
         // Check interface dependencies
         for (auto iface_dep : info.dependencies_interfaces) {
 
-            if (iface_dep == targeted_interface::none)
+            if (iface_dep == interface::none)
                 continue;
 
             auto it = s_plugin_names_per_target_interface.find(iface_dep);
@@ -278,11 +278,11 @@ namespace GLT::plugin_manager {
     }
 
     
-    constexpr std::string to_string(targeted_interface targeted) {
+    constexpr std::string to_string(interface targeted) {
 
         auto targeted_index = static_cast<size_t>(targeted);
-        if (targeted_index < s_targeted_interface_names.size())
-            return std::string(s_targeted_interface_names[targeted_index]);
+        if (targeted_index < s_interface_names.size())
+            return std::string(s_interface_names[targeted_index]);
         return "unknown";
     }
 
@@ -290,8 +290,8 @@ namespace GLT::plugin_manager {
     void serialize(const std::filesystem::path& config_path, serializer::option option) {
         
         GLT::serializer::yaml plugin_serializer(config_path, "plugin_settings", option);
-        for (underlying index = 0; index < static_cast<underlying>(targeted_interface::custom); index++) {
-            auto targeted = static_cast<targeted_interface>(index);
+        for (underlying index = 0; index < static_cast<underlying>(interface::custom); index++) {
+            auto targeted = static_cast<interface>(index);
             std::string buffer = "unknown";
 
             if (option == serializer::option::save)
@@ -343,7 +343,7 @@ namespace GLT::plugin_manager {
             VALIDATE(desc, continue; free_library(handle), "", "Failed to load descriptor function");
 
             // Filter based on user configuration 
-            targeted_interface iface = desc->target;                                // Retrieve the interface this plugin targets.
+            interface iface = desc->target;                                // Retrieve the interface this plugin targets.
             const auto it = s_plugin_names_per_target_interface.find(iface);        // Look up what the user configured for this interface.
             const bool has_config = (it != s_plugin_names_per_target_interface.end());
             const std::string plugin_name = desc->name ? std::string(desc->name) : path.stem().string();
@@ -490,7 +490,7 @@ namespace GLT::plugin_manager {
     }
 
     
-    [[nodiscard]] ref<i_plugin> get_plugin_base(const targeted_interface targeted) {
+    [[nodiscard]] ref<i_plugin> get_plugin_base(const interface targeted) {
 
         auto it = s_plugin_names_per_target_interface.find(targeted);
         if (it != s_plugin_names_per_target_interface.end()) {

@@ -23,15 +23,15 @@ namespace GLT::vfs_plugin {
         nullptr
     };
 
-    static plugin_manager::targeted_interface       needed_plugins_interfaces[] = {
+    static plugin_manager::interface       needed_plugins_interfaces[] = {
 
-        plugin_manager::targeted_interface::none
+        plugin_manager::interface::none
     };
 
     static plugin_manager::plugin_descriptor        descriptor = {
         .name                                       = GLT_MODULE_NAME,
         .phase                                      = plugin_manager::load_phase::earliest_possible,
-        .target                                     = plugin_manager::targeted_interface::virtual_file_system,
+        .target                                     = plugin_manager::interface::virtual_file_system,
         .dependency_names_count                     = ARRAY_SIZE(needed_plugins_names),
         .dependency_names                           = needed_plugins_names,
         .dependency_interface_count                 = ARRAY_SIZE(needed_plugins_interfaces),

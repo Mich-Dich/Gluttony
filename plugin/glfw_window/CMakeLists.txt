@@ -49,6 +49,7 @@ target_include_directories(${PLUGIN_NAME}                           PRIVATE "${I
 target_include_directories(${PLUGIN_NAME}_static                    PRIVATE "${IMGUI_DIR}")
 
 
+
 print_source_file_details(
     SOURCES                                                         ${PLUGIN_SOURCES}
     NAME                                                            ${PLUGIN_NAME}

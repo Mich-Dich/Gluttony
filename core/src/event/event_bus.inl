@@ -15,16 +15,16 @@ namespace GLT::event_bus {
     // TYPES ===========================================================================================================
 
     struct subscription_entry {
-        handle                                      id;
-        std::function<void(const GLT::event&)>            callback;
+        handle                                                                          id;
+        std::function<void(const GLT::event&)>                                          callback;
     };
 
     // STATIC VARIABLES ================================================================================================
 
     // Per‑type lists of subscribers.
-    inline std::unordered_map<std::type_index, std::list<subscription_entry>>                                  s_subscribers;
+    inline std::unordered_map<std::type_index, std::list<subscription_entry>>           s_subscribers;
 
-    inline std::atomic<handle>                                                                                 s_next_handle{1};
+    inline std::atomic<handle>                                                          s_next_handle{1};
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
