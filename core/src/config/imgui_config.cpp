@@ -111,30 +111,30 @@ namespace GLT::imgui_config {
 		s_fonts.clear();
 
 		std::filesystem::path basePath = util::get_executable_path() / "assets" / "fonts";
-		std::filesystem::path fontPath = basePath / "Open_Sans" / "static";
+		std::filesystem::path font_path = basePath / "Open_Sans" / "static";
 		std::filesystem::path inconsolataPath = basePath / "Inconsolata" / "static";
 
 		io.FontAllowUserScaling = true;
 
-		#define ADD_FONT(font_type, fontPath, fontSize) \
-			s_fonts[font_type] = io.Fonts->AddFontFromFileTTF((fontPath).string().c_str(), fontSize);
+		#define ADD_FONT(font_type, font_path, font_size) \
+			s_fonts[font_type] = io.Fonts->AddFontFromFileTTF((font_path).string().c_str(), font_size);
 
-		ADD_FONT(font_type::regular, fontPath/ "OpenSans-Regular.ttf", g_font_size)
-		ADD_FONT(font_type::bold, fontPath/ "OpenSans-Bold.ttf", g_font_size)
-		ADD_FONT(font_type::italic, fontPath/ "OpenSans-Italic.ttf", g_font_size)
+		ADD_FONT(font_type::regular, font_path / "OpenSans-Regular.ttf", g_font_size)
+		ADD_FONT(font_type::bold, font_path / "OpenSans-Bold.ttf", g_font_size)
+		ADD_FONT(font_type::italic, font_path / "OpenSans-Italic.ttf", g_font_size)
 
-		ADD_FONT(font_type::regular_big, fontPath / "OpenSans-Regular.ttf", g_big_font_size)
-		ADD_FONT(font_type::bold_big, fontPath / "OpenSans-Bold.ttf", g_big_font_size)
-		ADD_FONT(font_type::italic_big, fontPath / "OpenSans-Italic.ttf", g_big_font_size)
+		ADD_FONT(font_type::regular_big, font_path / "OpenSans-Regular.ttf", g_big_font_size)
+		ADD_FONT(font_type::bold_big, font_path / "OpenSans-Bold.ttf", g_big_font_size)
+		ADD_FONT(font_type::italic_big, font_path / "OpenSans-Italic.ttf", g_big_font_size)
 
-		ADD_FONT(font_type::small, fontPath / "OpenSans-Regular.ttf", g_font_size_small)
+		ADD_FONT(font_type::small, font_path / "OpenSans-Regular.ttf", g_font_size_small)
 
-		ADD_FONT(font_type::header0, fontPath / "OpenSans-Regular.ttf", g_font_size_header2)
-		ADD_FONT(font_type::header1, fontPath / "OpenSans-Regular.ttf", g_font_size_header1)
-		ADD_FONT(font_type::header2, fontPath / "OpenSans-Regular.ttf", g_font_size_header0)
+		ADD_FONT(font_type::header0, font_path / "OpenSans-Regular.ttf", g_font_size_header2)
+		ADD_FONT(font_type::header1, font_path / "OpenSans-Regular.ttf", g_font_size_header1)
+		ADD_FONT(font_type::header2, font_path / "OpenSans-Regular.ttf", g_font_size_header0)
 
-		ADD_FONT(font_type::giant_thin, fontPath / "OpenSans-Regular.ttf", 38.f)
-		ADD_FONT(font_type::giant, fontPath / "OpenSans-Bold.ttf", 38.f)
+		ADD_FONT(font_type::giant_thin, font_path / "OpenSans-Regular.ttf", 38.f)
+		ADD_FONT(font_type::giant, font_path / "OpenSans-Bold.ttf", 38.f)
 
 		ADD_FONT(font_type::monospace_regular, inconsolataPath / "Inconsolata-Regular.ttf", g_font_size * 0.92f)
 		ADD_FONT(font_type::monospace_regular_big, inconsolataPath / "Inconsolata-Regular.ttf", g_big_font_size * 1.92f)

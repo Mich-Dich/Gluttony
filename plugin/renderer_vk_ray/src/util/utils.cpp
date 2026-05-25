@@ -283,7 +283,8 @@ namespace GLT::renderer_vk_ray::utils {
         vk::AttachmentDescription attachment = {};
         attachment.format = swapchain.swapchain_format;
         attachment.samples = vk::SampleCountFlagBits::e1;
-        attachment.loadOp = vk::AttachmentLoadOp::eClear;  // Load existing content (our rendered image)
+        // attachment.loadOp = vk::AttachmentLoadOp::eClear;  // Load existing content (our rendered image)
+        attachment.loadOp = vk::AttachmentLoadOp::eLoad;
         attachment.storeOp = vk::AttachmentStoreOp::eStore;
         attachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
         attachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;

@@ -20,6 +20,8 @@ target_compile_definitions(${CORE_NAME} PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
     $<$<CONFIG:Release>:RELEASE>
     $<$<CONFIG:RelWithDebInfo>:RELEASE_WITH_DEBUG_INFO>
+    IMGUI_DEFINE_MATH_OPERATORS
+    USE_IMGUI
 )
 target_include_directories(${CORE_NAME}                 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/

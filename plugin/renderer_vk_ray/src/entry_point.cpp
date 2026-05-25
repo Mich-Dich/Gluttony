@@ -4,8 +4,10 @@
 #include <backends/imgui_impl_vulkan.h>
 #include <vk_ray/vk_ray.h>
 #include <vk_ray/builders/builders.h>
+
 #include <plugin_system/i_renderer_plugin.h>
 #include <plugin_system/i_window_plugin.h>
+#include <world/object/camera.h>
 
 #include "util/utils.h"
 #include "util/data_structures.h"
@@ -124,6 +126,12 @@ namespace GLT::renderer_vk_ray {
         };
 
         void init_vulkan();
+    
+        void create_acceleration_structures();
+    
+        void create_rt_pipeline();
+    
+        void update_descriptor_set();
 
         void create_base_resources();
 
@@ -157,6 +165,8 @@ namespace GLT::renderer_vk_ray {
         
         void end_imgui_frame(vk::CommandBuffer& current_cmd);
         
+
+        glm::ivec2                                              m_render_size{ 300, 400};
 
         GLT::render::renderer_feature                           m_features{};
 
@@ -211,8 +221,8 @@ namespace GLT::renderer_vk_ray {
         ref<GLT::platform::i_window_plugin>                     mp_window{};
 
         handle                                                  m_framebuffer_resize_sub{};
-        glm::vec4                                               m_clear_color{};
-        // ref<GLT::camera>                                        m_camera{};
+        glm::vec4                                               m_clear_color{0.09f, 0.09f, 0.09f, 1.f};
+        ref<GLT::world::camera>                                 m_active_camera{};
 
     };
 

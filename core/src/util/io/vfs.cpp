@@ -216,6 +216,7 @@ namespace GLT::vfs {
 
 
     size_t default_read_file(file_handle handle, void* buffer, size_t size, size_t offset) {
+
         if (handle == invalid_file_handle || !buffer || size == 0) {
             return 0;
         }
@@ -230,6 +231,7 @@ namespace GLT::vfs {
 
 
     size_t default_write_file(file_handle handle, const void* data, size_t size, size_t offset) {
+        
         if (handle == invalid_file_handle || !data || size == 0) {
             return 0;
         }
@@ -244,6 +246,7 @@ namespace GLT::vfs {
 
 
     bool default_seek_file(file_handle handle, i64 offset, int origin) {
+
         if (handle == invalid_file_handle) {
             return false;
         }

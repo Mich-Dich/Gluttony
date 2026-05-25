@@ -19,7 +19,7 @@
 ```bash
 git clone https://github.com/your-username/gluttony.git
 cd gluttony
-cmake -B build -DCMAKE_BUILD_TYPE=debug; cmake --build build --parallel
+cmake --preset debug; cmake --build --preset debug --parallel
 ./build/bin/debug/Gluttony
 ```
 

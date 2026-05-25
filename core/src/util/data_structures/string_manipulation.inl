@@ -8,6 +8,10 @@
     #include <cxxabi.h>
 #endif
 
+#if defined(USE_IMGUI)
+    #include <imgui.h>
+#endif
+
 #include "string_manipulation.h"
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -156,13 +160,23 @@ namespace GLT::util {
             return;
         }
 
-        else if constexpr (std::is_same_v<T, glm::vec2> /*|| std::is_same_v<T, ImVec2>*/) {
+        #if defined(USE_IMGUI)
+            else if constexpr (std::is_same_v<T, glm::vec2> || std::is_same_v<T, ImVec2>) {
 
-            std::ostringstream oss;
-            oss << src_value.x << ' ' << src_value.y;
-            dest_string = oss.str();
-            return;
-        }
+                std::ostringstream oss;
+                oss << src_value.x << ' ' << src_value.y;
+                dest_string = oss.str();
+                return;
+            }
+        #else
+            else if constexpr (std::is_same_v<T, glm::vec2>) {
+
+                std::ostringstream oss;
+                oss << src_value.x << ' ' << src_value.y;
+                dest_string = oss.str();
+                return;
+            }
+        #endif
 
         else if constexpr (std::is_same_v<T, glm::vec3>) {
 
@@ -172,14 +186,26 @@ namespace GLT::util {
             return;
         }
 
-        else if constexpr (std::is_same_v<T, glm::vec4> /*|| std::is_same_v<T, ImVec4>*/) {
+        #if defined(USE_IMGUI)
+            else if constexpr (std::is_same_v<T, glm::vec4> || std::is_same_v<T, ImVec4>) {
 
-            std::ostringstream oss;
-            oss << std::fixed << std::setprecision(4)
-                << src_value.x << ' ' << src_value.y << ' ' << src_value.z << ' ' << src_value.w;
-            dest_string = oss.str();
-            return;
-        }
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(4)
+                    << src_value.x << ' ' << src_value.y << ' ' << src_value.z << ' ' << src_value.w;
+                dest_string = oss.str();
+                return;
+            }
+        #else
+            else if constexpr (std::is_same_v<T, glm::vec4>) {
+
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(4)
+                    << src_value.x << ' ' << src_value.y << ' ' << src_value.z << ' ' << src_value.w;
+                dest_string = oss.str();
+                return;
+            }
+        #endif
+
         // Matrix of size 4         TODO: move into separate template for all matrixes
         else if constexpr (std::is_same_v<T, glm::mat4>) {
 
@@ -276,12 +302,21 @@ namespace GLT::util {
             return;
         }
 
-        else if constexpr (std::is_same_v<T, glm::vec2> /*|| std::is_same_v<T, ImVec2>*/) {
+        #if defined(USE_IMGUI)
+            else if constexpr (std::is_same_v<T, glm::vec2> || std::is_same_v<T, ImVec2>) {
 
-            std::istringstream iss(src_string);
-            iss >> dest_value.x >> dest_value.y;
-            return;
-        }
+                std::istringstream iss(src_string);
+                iss >> dest_value.x >> dest_value.y;
+                return;
+            }
+        #else
+            else if constexpr (std::is_same_v<T, glm::vec2>) {
+
+                std::istringstream iss(src_string);
+                iss >> dest_value.x >> dest_value.y;
+                return;
+            }
+        #endif
 
         else if constexpr (std::is_same_v<T, glm::vec3>) {
 
@@ -290,12 +325,21 @@ namespace GLT::util {
             return;
         }
 
-        else if constexpr (std::is_same_v<T, glm::vec4> /*|| std::is_same_v<T, ImVec4>*/) {
+        #if defined(USE_IMGUI)
+            else if constexpr (std::is_same_v<T, glm::vec4> || std::is_same_v<T, ImVec4>) {
 
-            std::istringstream iss(src_string);
-            iss >> dest_value.x >> dest_value.y >> dest_value.z >> dest_value.w;
-            return;
-        }
+                std::istringstream iss(src_string);
+                iss >> dest_value.x >> dest_value.y >> dest_value.z >> dest_value.w;
+                return;
+            }
+        #else
+            else if constexpr (std::is_same_v<T, glm::vec4>) {
+
+                std::istringstream iss(src_string);
+                iss >> dest_value.x >> dest_value.y >> dest_value.z >> dest_value.w;
+                return;
+            }
+        #endif
 
         else if constexpr (std::is_same_v<T, glm::mat4> || std::is_same_v<T, glm::mat3>) {
 

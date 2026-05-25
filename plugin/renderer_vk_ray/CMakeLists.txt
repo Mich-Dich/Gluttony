@@ -20,6 +20,7 @@ set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES" "${PLUGIN_SOU
 # add libraries in both static and shared
 compile_plugin(SHARED                                               ${PLUGIN_NAME}          glm imgui)
 compile_plugin(STATIC                                               ${PLUGIN_NAME}_static   glm imgui)
+target_compile_definitions(${PLUGIN_NAME}                           PRIVATE USE_IMGUI)
 
 find_package(glslang REQUIRED)
 target_link_libraries(${PLUGIN_NAME}                                PRIVATE glslang)

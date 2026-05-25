@@ -37,6 +37,14 @@ namespace GLT::world {
 			f32 fov = 45.0f, f32 aspect_ratio = 16.0f / 9.0f, f32 near_plane = 0.1f, f32 far_plane = 100.0f);
 
 
+		DEFAULT_GETTER_SETTER(glm::vec3, 	position)
+		DEFAULT_GETTER_SETTER(glm::quat, 	rotation)
+		DEFAULT_GETTER_SETTER(f32, 			fov)
+		DEFAULT_GETTER_SETTER(f32, 			aspect_ratio)
+		DEFAULT_GETTER_SETTER(f32, 			near_plane)
+		DEFAULT_GETTER_SETTER(f32, 			far_plane)
+
+
         // @brief Computes the view matrix based on current position and rotation.
         // @return 4x4 view matrix that transforms world space to camera space.
 		glm::mat4 get_view_matrix();

@@ -3,6 +3,8 @@
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
 
+#include <util/io/vfs.h>
+
 #include "shader_compiler.h"
 
 
@@ -80,7 +82,16 @@ namespace GLT::renderer_vk_ray::utils {
 
         // Read the GLSL source file
         std::string source_code;
-        VALIDATE(file_read(source_path, source_code), return {}, "", "Failed to open GLSL file: {}", source_path.string().c_str())
+        std::error_code error{};
+        GLT::vfs::file_handle opend_file = GLT::vfs::open_file(source_path, GLT::vfs::file_open_mode::read, error);
+        VALIDATE(!error && opend_file != 0, return {}, "", "Failed to open file [{}]", source_path.generic_string())
+
+        error.clear();
+        const u64 file_size = GLT::vfs::file_size(source_path, error);
+        
+        source_code.resize(file_size);
+        const u64 read_size = GLT::vfs::read_file(opend_file, source_code.data(), file_size, 0);
+        VALIDATE(read_size > 0, return {}, "", "Failed to read file content")
 
         // Determine shader stage based on file extension or content
         EShLanguage shader_stage = EShLangVertex;

@@ -1,10 +1,6 @@
 
 #include <plugin_system/plugin_interface.h>
 
-// #include <util/util.h>
-
-#include "native.h"
-
 // FORWARD DECLARATIONS ================================================================================================
 
 
@@ -53,39 +49,17 @@ namespace GLT::vfs_plugin {
 
         void on_load() override {
 
-            // Initialize the plugin's VFS backend (vfspp)
-            VALIDATE(GLT::vfs_plugin::native::init(), return, "", "Failed to initialize VFS plugin")
+            // TODO:
+            //  - read config, should it use [native] [memory] or [zip]
 
-            // Build the function table that the core expects
-            static const GLT::vfs::vfs_functions plugin_functions = {
-                .exists                 = &GLT::vfs_plugin::native::exists,
-                .create_file            = &GLT::vfs_plugin::native::create_file,
-                .is_directory           = &GLT::vfs_plugin::native::is_directory,
-                .is_regular_file        = &GLT::vfs_plugin::native::is_regular_file,
-                .create_directory       = &GLT::vfs_plugin::native::create_directory,
-                .create_directories     = &GLT::vfs_plugin::native::create_directories,
-                .remove                 = &GLT::vfs_plugin::native::remove,
-                .rename                 = &GLT::vfs_plugin::native::rename,
-                .copy_file              = &GLT::vfs_plugin::native::copy_file,
-                .file_size              = &GLT::vfs_plugin::native::file_size,
-                .read_text_file         = &GLT::vfs_plugin::native::read_text_file,
-                .write_text_file        = &GLT::vfs_plugin::native::write_text_file,
-                .open_file              = &GLT::vfs_plugin::native::open_file,
-                .read_file              = &GLT::vfs_plugin::native::read_file,
-                .write_file             = &GLT::vfs_plugin::native::write_file,
-                .seek_file              = &GLT::vfs_plugin::native::seek_file,
-                .tell_file              = &GLT::vfs_plugin::native::tell_file,
-                .close_file             = &GLT::vfs_plugin::native::close_file,
-            };
-
-            // Install the functions into the core
-            GLT::vfs::install_vfs_functions(plugin_functions);
+            // CAUTION! - currently only native is supported and for that we use just the engine defaults
+            
             LOG_LOADED
         }
         
         void on_unload() override {
 
-            GLT::vfs_plugin::native::shutdown();
+            // CAUTION! - currently only native is supported and for that we use just the engine defaults
             LOG_UNLOADED
         }
 

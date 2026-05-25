@@ -6,6 +6,7 @@
 #include "plugin_system/plugin_manager.h"
 #include "plugin_system/i_window_plugin.h"
 #include "plugin_system/i_renderer_plugin.h"
+#include "config/imgui_config.h"
 
 #include "application.h"
 
@@ -36,6 +37,7 @@ namespace GLT {
         
         platform::window_attributes attributes;
         config::serialize_window_attributes(attributes, serializer::option::load);
+        imgui_config::init();
 
         plugin_manager::load_plugins(plugin_manager::load_phase::pre_application);
         mp_window = plugin_manager::get_plugin_ref<platform::i_window_plugin>(plugin_manager::interface::window);
@@ -69,6 +71,7 @@ namespace GLT {
         mp_window->destroy();
         mp_window.reset();
         
+        imgui_config::shutdown();
         plugin_manager::load_plugins(plugin_manager::load_phase::post_application_shutdown);
         s_instance = nullptr;
         LOG_SHUTDOWN
