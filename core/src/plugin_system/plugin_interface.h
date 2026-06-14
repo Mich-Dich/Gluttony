@@ -185,6 +185,9 @@ namespace GLT::plugin_manager {
         // Clean up everything you registered in onLoad().
         virtual void on_unload() = 0;
 
+
+        virtual void update() {}
+
     };
 
 }

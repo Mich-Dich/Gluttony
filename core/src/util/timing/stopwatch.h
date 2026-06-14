@@ -47,6 +47,7 @@ namespace GLT::util
         void restart();
 
     private:
+    
         void start();
 
         f32 *m_result_pointer = &m_result;

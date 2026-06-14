@@ -143,7 +143,7 @@ namespace GLT::util {
                 << ' ' << (u16)src_value.hour
                 << ' ' << (u16)src_value.minute
                 << ' ' << (u16)src_value.secund
-                << ' ' << (u16)src_value.millisecend;
+                << ' ' << (u16)src_value.millisecond;
             dest_string = oss.str();
             return;
         }
@@ -278,7 +278,7 @@ namespace GLT::util {
         else if constexpr (std::is_same_v<T, system_time>) {
 
             std::istringstream iss(src_string);
-            iss >> dest_value.year >> dest_value.month >> dest_value.day >> dest_value.day_of_week >> dest_value.hour >> dest_value.minute >> dest_value.secund >> dest_value.millisecend;
+            iss >> dest_value.year >> dest_value.month >> dest_value.day >> dest_value.day_of_week >> dest_value.hour >> dest_value.minute >> dest_value.secund >> dest_value.millisecond;
             return;
         }
 

@@ -19,5 +19,9 @@
     "tlas",
     "VFSPP",
     "vk_ray"
-  ]
+  ],
+  "C_Cpp.errorSquiggles": "disabled",
+  "github.copilot.enable": {
+    "*": false
+  }   
 }

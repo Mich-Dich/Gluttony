@@ -26,6 +26,28 @@ namespace GLT::renderer_vk_ray {
 
     // TYPES ===========================================================================================================
 
+    class image {
+
+        image();
+        
+        ~image();
+
+        // Vulkan handle (owned by this struct if allocated_image is used)
+        vk::Image          handle = nullptr;
+        vk::ImageView      view   = nullptr;
+        vk::ImageLayout    layout = vk::ImageLayout::eUndefined;
+        uint32_t           width  = 0;
+        uint32_t           height = 0;
+        vk::Format         format = vk::Format::eUndefined;
+
+        // Optional: keep the vk_ray allocation info (if allocated via vk_ray)
+        // This allows destruction via the same system.
+        vr::allocated_image allocated;   // holds VmaAllocation and the original handle
+
+        // Destructor / cleanup: call engine's resource manager
+        void destroy(vk::Device device);
+    };
+
     // STATIC VARIABLES ================================================================================================
 
     static const char*                                  dependencies_names[] = {
@@ -143,6 +165,9 @@ namespace GLT::renderer_vk_ray {
 
 	    void resize_swapchain(const glm::ivec2 size);
 
+        // Clear the output image to a background colour (e.g., dark blue)
+        void clear_output_image(vk::CommandBuffer cmd, const glm::vec4& color);
+    
         // --- IMGUI ---------------------------------------------------------------------------------------------------
 
         void imgui_init();

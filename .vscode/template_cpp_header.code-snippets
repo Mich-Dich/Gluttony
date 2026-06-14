@@ -1,6 +1,6 @@
 {
     "C++ Header Template": {
-        "prefix": "template_cpp_header",
+        "prefix": "!head",
         "scope": "cpp",
         "body": [
             "",

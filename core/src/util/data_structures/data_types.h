@@ -22,6 +22,8 @@ typedef long double 				f128;	// 128-bit floating point (platform dependent)
 // Platform-specific types
 typedef u64 						handle; // Generic handle type for OS resources
 
+constexpr handle invalid_handle = 0U;
+
 // FORWARD DECLARATIONS ================================================================================================
 
 
@@ -152,12 +154,12 @@ namespace GLT {
 		u8 				hour;		 	// Hour (0-23)
 		u8 				minute;		 	// Minute (0-59)
 		u8 				secund;		 	// Second (0-59)
-		u16 			millisecend; 	// Millisecond (0-999)
+		u16 			millisecond; 	// Millisecond (0-999)
 
 		// “older than”
 		bool operator<(const system_time& other) const {
-			return std::tie(year, month, day, hour, minute, secund, millisecend) < std::tie(other.year, other.month, other.day,
-				other.hour, other.minute, other.secund, other.millisecend);
+			return std::tie(year, month, day, hour, minute, secund, millisecond) < std::tie(other.year, other.month, other.day,
+				other.hour, other.minute, other.secund, other.millisecond);
 		}
 
 
@@ -175,8 +177,8 @@ namespace GLT {
 
 		// equality
 		bool operator==(const system_time& other) const {
-			return std::tie(year, month, day, day_of_week, hour, minute, secund, millisecend) == std::tie(other.year, other.month, other.day,
-				other.day_of_week, other.hour, other.minute, other.secund, other.millisecend);
+			return std::tie(year, month, day, day_of_week, hour, minute, secund, millisecond) == std::tie(other.year, other.month, other.day,
+				other.day_of_week, other.hour, other.minute, other.secund, other.millisecond);
 		}
 
 
@@ -185,7 +187,7 @@ namespace GLT {
 
 
 		// @brief Converts system_time to human-readable string
-		std::string to_str() const { return std::format("{}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", year, month, day, hour, minute, secund, millisecend); }
+		std::string to_str() const { return std::format("{}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", year, month, day, hour, minute, secund, millisecond); }
 
 		// @brief Check if this time is older than another time by at least the specified duration
 		// @param other The time to compare against
@@ -203,7 +205,7 @@ namespace GLT {
 			diff_seconds += (other.hour - hour) * 60 * 60;
 			diff_seconds += (other.minute - minute) * 60;
 			diff_seconds += (other.secund - secund);
-			f64 total_diff = static_cast<f64>(diff_seconds) + (static_cast<f64>(other.millisecend) - static_cast<f64>(millisecend)) / 1000.0;
+			f64 total_diff = static_cast<f64>(diff_seconds) + (static_cast<f64>(other.millisecond) - static_cast<f64>(millisecond)) / 1000.0;
 
 			return total_diff >= seconds;
 		}
@@ -223,18 +225,6 @@ namespace GLT {
 		microseconds = 0,
 		milliseconds,
 		seconds,
-	};
-
-
-	// @brief System error codes
-	enum class error_code : u8 {
-
-		success = 0,		  // Operation succeeded
-		generic_not_found,	  // Generic "not found" error
-		file_not_found,		  // File not found
-		error_opening_file,	  // Error opening file
-		system_path_not_free, // System path in use
-		line_not_found,		  // Line not found in file
 	};
 
 
@@ -272,11 +262,11 @@ namespace GLT {
 		mouse_bu_right = mouse_bu_2,
 		mouse_bu_middle = mouse_bu_3,
 
-		mouse_moved = 110,
-		mouse_moved_x = 111,
-		mouse_moved_y = 112,
-		mouse_scrolled_x = 113,
-		mouse_scrolled_y = 114,
+		mouse_move = 110,
+		mouse_move_x = 111,
+		mouse_move_y = 112,
+		mouse_scroll_x = 113,
+		mouse_scroll_y = 114,
 
 		key_unknown = -1,
 		key_space = 32,
@@ -401,8 +391,29 @@ namespace GLT {
 		key_right_alt = 346,
 		key_right_super = 347, // windows key
 		key_menu = 348,
-
 	};
+
+
+    constexpr bool is_mouse_event(key_code key) {
+
+        return  key == key_code::mouse_bu_1 ||
+                key == key_code::mouse_bu_2 ||
+                key == key_code::mouse_bu_3 ||
+                key == key_code::mouse_bu_4 ||
+                key == key_code::mouse_bu_5 ||
+                key == key_code::mouse_bu_6 ||
+                key == key_code::mouse_bu_7 ||
+                key == key_code::mouse_bu_8 ||
+                key == key_code::mouse_bu_last ||
+                key == key_code::mouse_bu_left ||
+                key == key_code::mouse_bu_right ||
+                key == key_code::mouse_bu_middle ||
+                key == key_code::mouse_move ||
+                key == key_code::mouse_move_x ||
+                key == key_code::mouse_move_y ||
+                key == key_code::mouse_scroll_x ||
+                key == key_code::mouse_scroll_y;
+    }
 
 	// STATIC VARIABLES ================================================================================================
 

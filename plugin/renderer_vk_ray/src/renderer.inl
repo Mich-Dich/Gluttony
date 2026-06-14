@@ -149,6 +149,8 @@ namespace GLT::renderer_vk_ray {
         m_vr_dev->bind_descriptor_buffer({m_resource_desc_buffer}, current_cmd);
         m_vr_dev->bind_descriptor_set(m_pipeline_layout, 0, 0, 0, current_cmd);
 
+        transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eTransferDstOptimal);
+        clear_output_image(current_cmd, m_clear_color);
         transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eGeneral);                     // Transition output to GENERAL
 
         // Ray tracing
@@ -545,6 +547,20 @@ namespace GLT::renderer_vk_ray {
         m_vr_dev->update_descriptor_buffer(m_resource_desc_buffer, m_resource_bindings, vr::descriptor_buffer_type::resource);
     }
 
+
+    void renderer::clear_output_image(vk::CommandBuffer cmd, const glm::vec4& color) {
+
+        // Clear the image
+        vk::ClearColorValue clear_color;
+        clear_color.setFloat32({color.r, color.g, color.b, color.a});
+        cmd.clearColorImage(
+            m_swapchain.swapchain_images[m_current_swapchain_image],
+            vk::ImageLayout::eTransferDstOptimal,
+            clear_color,
+            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)
+        );
+    }
+
     // ----- SWAPCHAIN -------------------------------------------------------------------------------------------------
 
 	void renderer::create_swapchain(const glm::ivec2 size) {
@@ -624,7 +640,9 @@ namespace GLT::renderer_vk_ray {
             .setArrayLayers(1)
             .setSamples(vk::SampleCountFlagBits::e1)
             .setTiling(vk::ImageTiling::eOptimal)
-            .setUsage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc)
+            .setUsage(vk::ImageUsageFlagBits::eStorage 
+                | vk::ImageUsageFlagBits::eTransferSrc
+                | vk::ImageUsageFlagBits::eTransferDst)
             .setSharingMode(vk::SharingMode::eExclusive)
             .setInitialLayout(vk::ImageLayout::eUndefined);
 

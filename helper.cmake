@@ -123,6 +123,7 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
     target_include_directories(${TARGET_NAME}       PRIVATE
         ${CMAKE_SOURCE_DIR}/core/src/
         ${CMAKE_CURRENT_SOURCE_DIR}/src/
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/
     )
     set_target_properties(${TARGET_NAME}            PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugin/${BASE_NAME}"

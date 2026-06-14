@@ -439,7 +439,7 @@ namespace GLT::glfw_window {
 
 		glfwSetMouseButtonCallback(m_native_window, [](GLFWwindow* window, int button, int action, int mods) {
 
-			mouse_event event(static_cast<GLT::key_code>(button), static_cast<GLT::key_state>(action));
+			GLT::key_event event(static_cast<GLT::key_code>(button), static_cast<GLT::key_state>(action), mods);
 			GLT::event_bus::post(event);
 		});
 

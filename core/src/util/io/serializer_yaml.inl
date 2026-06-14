@@ -300,3 +300,128 @@ namespace GLT::serializer {
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
 }
+
+/*
+
+
+    template<typename Key, typename Item>
+    yaml& yaml::unorderedMap(const std::string& mapName, std::unordered_map<Key, Item>& map,
+        std::function<void(serializer::yaml&, Item& mapItem)> mapFunction)
+    {
+        VALIDATE_INIT();
+
+        if (mOption == serializer::option::save)
+        {
+            // Save mode: write map header then each key and its content via mapFunction
+            mFileContent << util::addSpaces(mLevelOfIndention) << mapName << ":\n";
+            for (auto& [key, item] : map)
+            {
+                std::string keyStr;
+                util::convertToString<Key>(key, keyStr);
+                mFileContent << util::addSpaces(mLevelOfIndention + 1) << keyStr << ":\n";
+                ++mLevelOfIndention;
+                mapFunction(*this, item);
+                --mLevelOfIndention;
+            }
+        }
+        else // load
+        {
+
+            struct mapItemData {
+                std::unordered_map<std::string, std::string>    keyValuePares{};
+                std::stringstream                               fileContent{};
+            };
+            std::unordered_map<std::string, mapItemData>        keyValuePerEntry{};
+            mapItemData*                                        pCurrentMapItemData{};
+
+            std::string line{};
+            bool foundMap = false;
+            while (std::getline(mFileContent, line))
+            {
+                if (!cleanLine(line))
+                {
+                    continue;
+                }
+
+                // if line contains desired section enter inner-loop
+                if ((util::measureIndentation(line) == 0)           // has correct indentation
+                    && (line.find(mapName) != std::string::npos)    // has correct sectionName
+                    && (line.back() == ':'))                        // ends with double-point
+                {
+                    foundMap = true;
+
+                    while (std::getline(mFileContent, line)         // not end of content
+                        && (util::measureIndentation(line) > 0))    // has correct indentation
+                    {
+                        const u32 indentation = util::measureIndentation(line);
+
+                        // Create new item in map
+                        if ((indentation == 1) && (line.back() != ':'))     // header of map entry
+                        {
+                            std::string mapEntryTitle = line;
+                            mapEntryTitle.erase(mapEntryTitle.begin(), std::find_if(
+                                mapEntryTitle.begin(),
+                                mapEntryTitle.end(),
+                                [](unsigned char ch) { return !std::isspace(ch); }));
+
+                            mapEntryTitle.erase(std::find_if(
+                                mapEntryTitle.rbegin(),
+                                mapEntryTitle.rend(),
+                                [](unsigned char ch) { return !std::isspace(ch); }).base(),
+                                mapEntryTitle.end());
+
+                            keyValuePerEntry[mapEntryTitle] = {};   // create empty key/value map
+                            pCurrentMapItemData = &keyValuePerEntry.at(mapEntryTitle);
+                        }
+
+                        if (indentation > 1 && pCurrentMapItemData)
+                        {
+                            pCurrentMapItemData->fileContent << line;
+                            continue;
+                        }
+
+                        if (!pCurrentMapItemData)
+                        {
+                            continue;
+                        }
+
+                        // add key/Value in map
+                        std::string key{}, value{};
+                        extractKeyValue(key, value, line);
+                        pCurrentMapItemData->keyValuePares[key] = value;
+                    }
+                }
+                if (foundMap)								        // skip rest of content if section found
+                {
+                    break;
+                }
+            }
+
+            if (!foundMap)								            // skip rest of content if section found
+            {
+                return *this;
+            }
+
+            std::unordered_map<std::string, std::string> savedKeyValues = std::move(mKeyValuePares);
+            std::stringstream fileContentBuffer = std::move(mFileContent);
+            map.clear();                                            // Clear the output map before loading new data
+
+            for (auto& [mapItemName, mapItemData] : keyValuePerEntry)
+            {
+                Item locItem{};
+                mKeyValuePares = std::move(mapItemData.keyValuePares);
+                mFileContent = std::move(mapItemData.fileContent);
+                mapFunction(this, locItem);
+                map[mapItemName] = locItem;
+            }
+
+            // Restore the original serializer state
+            mFileContent = std::move(fileContentBuffer);
+            mKeyValuePares = std::move(savedKeyValues);
+        }
+
+        return *this;
+    }
+
+
+*/

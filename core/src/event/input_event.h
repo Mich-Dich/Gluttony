@@ -24,16 +24,12 @@ namespace GLT {
     // Single mouse event class for all mouse actions
     class mouse_event : public event {
     public:
+
         enum class action_type : u8 {
-            button,     // Mouse button press/release
             move,       // Mouse movement
             scroll,     // Mouse wheel scroll
             enter       // Mouse entered/left window
         };
-
-        // Constructor for button events
-        mouse_event(const key_code code, const key_state state)
-            : m_action_type(action_type::button), m_key_code(code), m_state(state) {}
 
         // Constructor for movement/scroll events
         mouse_event(const action_type type, const glm::vec2 delta)
@@ -45,16 +41,12 @@ namespace GLT {
 
         // Getters
 		DEFAULT_GETTER_C(action_type, 		action_type)
-		DEFAULT_GETTER_C(key_code, 			key_code)
 		DEFAULT_GETTER_C(key_state,			state)
 		DEFAULT_GETTER_C(glm::vec2, 		delta)
 		DEFAULT_GETTER_C(bool, 				entered)
 
         [[nodiscard]] FORCE_INLINE std::string to_string() const override {
             switch (m_action_type) {
-                case action_type::button:
-                    return std::format("mouse button [{}] state [{}]", static_cast<i32>(m_key_code), static_cast<u8>(m_state));
-
                 case action_type::move:
                     return std::format("mouse moved to [{:.1f}, {:.1f}]", m_delta.x, m_delta.y);
 
@@ -72,7 +64,6 @@ namespace GLT {
     private:
 
         const action_type 					m_action_type;
-        key_code 							m_key_code{};
         key_state 							m_state{};
         glm::vec2 							m_delta{};
         bool 								m_entered{false};

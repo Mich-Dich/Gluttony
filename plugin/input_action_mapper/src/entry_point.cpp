@@ -4,6 +4,9 @@
 #include <util/util.h>
 #include <plugin_system/plugin_interface.h>
 
+#include "input_action_mapper.h"
+#include "action_types.h"
+
 // FORWARD DECLARATIONS ================================================================================================
 
 
@@ -50,46 +53,32 @@ namespace GLT::input_action_mapper {
     class plugin : public GLT::plugin_manager::i_plugin {
     public:
 
-        void on_load() override {
-
-            // m_key_event_sub = GLT::event_bus::subscribe(
-            //     std::bind(&plugin::on_key_event, this)
-            // );
-
-            // m_mouse_event_sub = GLT::event_bus::subscribe(
-            //     std::function<void(const GLT::mouse_event&)>(std::bind_front(&plugin::on_mouse_event, this))
-            // );
-
-            LOG_LOADED
-        }
+        void on_load() override;
 
         
-        void on_unload() override {
+        void on_unload() override;
 
-            GLT::event_bus::unsubscribe(m_key_event_sub);
-            GLT::event_bus::unsubscribe(m_mouse_event_sub);
-            LOG_UNLOADED
-        }
+        // update internal state and all registered actions
+        // after calling this, the callback will be called
+        void update() override;
 
     private:
 
-        IGNORE_UNUSED_PARAMETER_START
-
-        void on_key_event(const GLT::key_event& event) {
-
-        }
+        void on_key_event(const GLT::key_event& event);
 
 
-        void on_mouse_event(const GLT::mouse_event& event) {
+        void on_mouse_event(const GLT::mouse_event& event);
 
-        }
 
-        IGNORE_UNUSED_PARAMETER_STOP
+        handle                                          m_key_event_sub{};
+        handle                                          m_mouse_event_sub{};
+        std::unordered_map<GLT::key_code, key_info>     m_key_states{};         // buffer key states from event bus until next call of update();
+        mouse_state                                     m_mouse_state{};              // buffer mouse states from event bus until next call of update();
 
-        handle              m_key_event_sub{};
-        handle              m_mouse_event_sub{};
     };
 
 }
+
+#include "input_action_mapper.inl"
 
 EXPORT_PLUGIN_CLASS(GLT::input_action_mapper::plugin, GLT::input_action_mapper::descriptor)

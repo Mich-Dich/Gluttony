@@ -214,18 +214,14 @@ namespace GLT::logger_plugin {
             process_log_message(std::move(msg)); // Process each message
         }
 
-        if ( !s_buffered_messages.empty()) {
-
-            auto now = std::time(nullptr);
-            auto tm = *std::localtime(&now);
-
-            OPEN_FILE
-            s_main_file << s_buffered_messages;
-            s_main_file << "------------------------------------------------------------------------------------------------\n";
-            s_main_file << "Log shutdown at [" << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << "]\n";
-            s_main_file << "================================================================================================\n";
-            CLOSE_FILE
-        }
+        OPEN_FILE
+        s_main_file << s_buffered_messages;
+        auto now = std::time(nullptr);
+        auto tm = *std::localtime(&now);
+        s_main_file << "------------------------------------------------------------------------------------------------\n";
+        s_main_file << "Log shutdown at [" << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << "]\n";
+        s_main_file << "================================================================================================\n";
+        CLOSE_FILE
 
         s_is_init = false;
     }
@@ -481,7 +477,7 @@ namespace GLT::logger_plugin {
                 case 'H': formatted_message.append(std::format("{:02}", static_cast<u16>(loc_sys_time.hour))); break;                // hour
                 case 'M': formatted_message.append(std::format("{:02}", static_cast<u16>(loc_sys_time.minute))); break;              // minute
                 case 'S': formatted_message.append(std::format("{:02}", static_cast<u16>(loc_sys_time.secund))); break;              // second
-                case 'J': formatted_message.append(std::format("{:03}", static_cast<u16>(loc_sys_time.millisecend))); break;         // milliseconds
+                case 'J': formatted_message.append(std::format("{:03}", static_cast<u16>(loc_sys_time.millisecond))); break;         // milliseconds
 
                 // ------------------------ data ------------------------
                 case 'N': formatted_message.append(std::format("{:04}/{:02}/{:02}",

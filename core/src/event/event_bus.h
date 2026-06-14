@@ -43,7 +43,7 @@ namespace GLT::event_bus {
 
     // Remove a previously added subscription.
     // @param id The handle returned from subscribe<T>().
-    FORCE_INLINE void unsubscribe(handle id);
+    FORCE_INLINE void unsubscribe(handle& id);
 
 
     // Dispatch an event to all subscribers of its exact type.

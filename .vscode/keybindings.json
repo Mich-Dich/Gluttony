@@ -1,0 +1,7 @@
+{
+  "key": "ctrl+shift+t",   // choose what you like
+  "command": "editor.action.insertSnippet",
+  "args": {
+    "name": "My header template"   // must match the snippet’s "name" field exactly
+  }
+}

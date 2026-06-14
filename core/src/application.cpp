@@ -54,7 +54,7 @@ namespace GLT {
         m_close_event_sub_handle = event_bus::subscribe<window_close_event>(std::bind_front(&application::on_window_close_event, this));
 
         LOG_INIT
-        plugin_manager::load_plugins(plugin_manager::load_phase::post_application_run);
+        plugin_manager::load_plugins(plugin_manager::load_phase::application_ready);
     }
 
 
