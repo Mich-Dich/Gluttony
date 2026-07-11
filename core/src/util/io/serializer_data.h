@@ -12,7 +12,7 @@ namespace GLT::serializer {
 	// MACROS ==========================================================================================================
 
 	// @brief used with [serializer] to shorten the serializer::yaml::entry call
-	#define KEY_VALUE(var)						util::extract_variable_name(#var), var
+	#define KEY_VALUE(var)						GLT::util::extract_variable_name(#var), var
 
 	// TYPES ===========================================================================================================
 

@@ -42,7 +42,6 @@ endfunction()
 ensure_glfw("${CMAKE_CURRENT_SOURCE_DIR}/vendor")
 target_link_libraries(${PLUGIN_NAME}                                PRIVATE glfw)
 
-
 set(VENDOR_DIR                                                      "${CMAKE_SOURCE_DIR}/vendor")
 set(IMGUI_DIR                                                       "${VENDOR_DIR}/imgui")
 target_include_directories(${PLUGIN_NAME}                           PRIVATE "${IMGUI_DIR}")

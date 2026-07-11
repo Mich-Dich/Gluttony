@@ -6,6 +6,7 @@
 #include "plugin_system/plugin_manager.h"
 #include "plugin_system/i_window_plugin.h"
 #include "plugin_system/i_renderer_plugin.h"
+#include "plugin_system/i_game_loop_base.h"
 #include "config/imgui_config.h"
 
 #include "application.h"
@@ -53,6 +54,8 @@ namespace GLT {
 
         m_close_event_sub_handle = event_bus::subscribe<window_close_event>(std::bind_front(&application::on_window_close_event, this));
 
+        mp_game_loop_base = plugin_manager::get_plugin_ref<i_game_loop_base>(plugin_manager::interface::game_loop);
+
         LOG_INIT
         plugin_manager::load_plugins(plugin_manager::load_phase::application_ready);
     }
@@ -90,6 +93,8 @@ namespace GLT {
 
             for (auto layer = m_layer_stack.begin(); layer != m_layer_stack.end(); )
                 (*--layer)->update(m_delta_time);
+
+            GLT::event_bus::post<update_event>(m_delta_time);       // all systems can subscribe to this (eg: plugins)
             
             mp_renderer->begin_frame();     // start frame + start imgui frame
             for (auto layer = m_layer_stack.end(); layer != m_layer_stack.begin(); )

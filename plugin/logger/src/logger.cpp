@@ -46,12 +46,13 @@ namespace GLT::logger_plugin {
 
     #define SETW(width)                                         std::setw(width) << std::setfill('0')
 
-    #define LOGGER_UPDATE_FORMAT                                "LOGGER update format"
-    #define LOGGER_REVERSE_FORMAT                               "LOGGER reverse format"
-    #define LOGGER_CHANGE_THRESHOLD                             "LOGGER change threshold"
-    #define LOGGER_CHANGE_BUFFER_SIZE                           "LOGGER change buffer size"
-    #define LOGGER_REGISTER_THREAD_LABEL                        "LOGGER register thread label"
-    #define LOGGER_UNREGISTER_THREAD_LABEL                      "LOGGER unregister thread label"
+    #define CMD_UPDATE_FORMAT                                   0       // "LOGGER update format"
+    #define CMD_REVERSE_FORMAT                                  1       // "LOGGER reverse format"
+    #define CMD_CHANGE_THRESHOLD                                2       // "LOGGER change threshold"
+    #define CMD_CHANGE_BUFFER_SIZE                              3       // "LOGGER change buffer size"
+    #define CMD_REGISTER_THREAD_LABEL                           4       // "LOGGER register thread label"
+    #define CMD_UNREGISTER_THREAD_LABEL                         5       // "LOGGER unregister thread label"
+
     #if defined(DEBUG)
         #define QUEUE_MAX_SIZE                                  0       // TODO: flush messages directly in debug (set to 0)
     #else
@@ -143,7 +144,8 @@ namespace GLT::logger_plugin {
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
-    bool init(const std::string& format, const bool log_to_console, const std::filesystem::path& log_dir, const std::string& main_log_file_name, const bool use_append_mode) {
+    bool init(const std::string& format, const bool log_to_console, const std::filesystem::path& log_dir, 
+        const std::string& main_log_file_name, const bool use_append_mode) {
 
         if (s_is_init) {
             std::cerr << "Tried to init logger system multiple times" << std::endl;
@@ -182,8 +184,7 @@ namespace GLT::logger_plugin {
         // take over messages from before logger attachment
         std::vector<GLT::logger::message_data> previous_messages = GLT::logger::drain_log_buffer(true);
         for (const auto& msg : previous_messages)
-            GLT::logger_plugin::log_msg_internal(msg.msg_sev, msg.file_name, msg.function_name, msg.line,
-                msg.module_name, msg.thread_id, msg.message);
+            GLT::logger_plugin::log_msg_internal(msg.msg_sev, msg.location, msg.module_name, msg.thread_id, msg.message);
 
         return true;
     }
@@ -243,7 +244,7 @@ namespace GLT::logger_plugin {
         }
 
         std::lock_guard<std::mutex> lock(s_queue_mutex);
-        s_log_queue.emplace(GLT::logger::severity::trace, "", LOGGER_UPDATE_FORMAT, 0, GLT_MODULE_NAME, std::thread::id(), new_format);
+        s_log_queue.emplace(GLT::logger::severity::trace, std::source_location::current(), GLT_MODULE_NAME, std::thread::id(), new_format, CMD_UPDATE_FORMAT);
         s_cv.notify_all();
     }
 
@@ -251,7 +252,7 @@ namespace GLT::logger_plugin {
     void use_previous_format() {
 
         std::lock_guard<std::mutex> lock(s_queue_mutex);
-        s_log_queue.emplace(GLT::logger::severity::trace, "", LOGGER_REVERSE_FORMAT, 0, GLT_MODULE_NAME, std::thread::id(), "");
+        s_log_queue.emplace(GLT::logger::severity::trace, std::source_location::current(), GLT_MODULE_NAME, std::thread::id(), "", CMD_REVERSE_FORMAT);
         s_cv.notify_all();
     }
 
@@ -262,7 +263,7 @@ namespace GLT::logger_plugin {
     void register_label_for_thread(const std::string& thread_label, std::thread::id thread_id) {
 
         std::lock_guard<std::mutex> lock(s_queue_mutex);
-        s_log_queue.emplace(GLT::logger::severity::trace, "", LOGGER_REGISTER_THREAD_LABEL, 0, GLT_MODULE_NAME, thread_id, thread_label);
+        s_log_queue.emplace(GLT::logger::severity::trace, std::source_location::current(), GLT_MODULE_NAME, thread_id, thread_label, CMD_REGISTER_THREAD_LABEL);
         s_cv.notify_all();
     }
 
@@ -278,7 +279,7 @@ namespace GLT::logger_plugin {
         }
 
         std::lock_guard<std::mutex> lock(s_queue_mutex);
-        s_log_queue.emplace(GLT::logger::severity::trace, "", LOGGER_UNREGISTER_THREAD_LABEL, 0, GLT_MODULE_NAME, thread_id, std::move(loc_msg));
+        s_log_queue.emplace(GLT::logger::severity::trace, std::source_location::current(), GLT_MODULE_NAME, thread_id, std::move(loc_msg), CMD_UNREGISTER_THREAD_LABEL);
         s_cv.notify_all();
     }
 
@@ -286,8 +287,9 @@ namespace GLT::logger_plugin {
     void set_buffer_threshold(const GLT::logger::severity new_threshold) {
 
         std::lock_guard<std::mutex> lock(s_queue_mutex);
-        s_log_queue.emplace(new_threshold, "", LOGGER_CHANGE_THRESHOLD, 0, GLT_MODULE_NAME, std::thread::id(),
-            std::format("[LOGGER] Changed buffering threshold to [{}]", severity_names[static_cast<u8>(new_threshold)]));
+        s_log_queue.emplace(new_threshold, std::source_location::current(), GLT_MODULE_NAME, std::thread::id(), 
+            std::format("[LOGGER] Changed buffering threshold to [{}]", severity_names[static_cast<u8>(new_threshold)]), 
+            CMD_CHANGE_THRESHOLD);
         s_cv.notify_all();
     }
 
@@ -295,8 +297,8 @@ namespace GLT::logger_plugin {
     void set_buffer_size(const size_t new_size) {
 
         std::lock_guard<std::mutex> lock(s_queue_mutex);
-        s_log_queue.emplace(GLT::logger::severity::trace, "", LOGGER_CHANGE_BUFFER_SIZE, static_cast<int>(new_size), GLT_MODULE_NAME, 
-            std::thread::id(), std::format("[LOGGER] Changed buffer size to [{}]", new_size));
+        s_log_queue.emplace(GLT::logger::severity::trace, /*static_cast<int>(new_size)*/ std::source_location::current(), GLT_MODULE_NAME, 
+            std::thread::id(), std::format("[LOGGER] Changed buffer size to [{}]", new_size), CMD_CHANGE_BUFFER_SIZE);
         s_cv.notify_all();
     }
 
@@ -342,68 +344,79 @@ namespace GLT::logger_plugin {
                 local_queue.pop();
                 // Process control messages and log messages
 
-                if (strcmp(message.function_name, LOGGER_UPDATE_FORMAT) == 0) {
+                switch (message.command) {
+                    case CMD_UPDATE_FORMAT: {
 
-                    std::lock_guard<std::mutex> lock(s_general_mutex);
-                    s_format_prev = s_format_current;
-                    s_format_current = message.message;
+                        std::lock_guard<std::mutex> lock(s_general_mutex);
+                        s_format_prev = s_format_current;
+                        s_format_current = message.message;
 
-                    WRITE_TO_FILE("[LOGGER] Changing log-format. From [" << s_format_prev << "] to [" << s_format_current << "]\n");
-
-                } else if (strcmp(message.function_name, LOGGER_REVERSE_FORMAT) == 0) {
-
-                    std::lock_guard<std::mutex> lock(s_general_mutex);
-                    const std::string buffer = s_format_current;
-                    s_format_current = s_format_prev;
-                    s_format_prev = buffer;
-
-                } else if (strcmp(message.function_name, LOGGER_CHANGE_THRESHOLD) == 0) {
-
-                    std::lock_guard<std::mutex> lock(s_general_mutex);
-                    s_severity_level_buffering_threshold = static_cast<GLT::logger::severity>(
-                        std::min(static_cast<u8>(message.msg_sev), static_cast<u8>(GLT::logger::severity::error))
-                    );
-
-                }
-                else if (strcmp(message.function_name, LOGGER_CHANGE_BUFFER_SIZE) == 0) {
-
-                    std::lock_guard<std::mutex> lock(s_general_mutex);
-                    s_buffer_size = static_cast<size_t>(message.line);
-
-                    OPEN_FILE
-                    s_main_file << message.message;
-                    if (s_is_init && s_buffered_messages.size() >= s_buffer_size) {                   // Handle buffer overflow if the new size is smaller than the current buffer content
-
-                        s_main_file << s_buffered_messages;
-                        // if (s_write_log_to_console)
-                        // std::cout << s_buffered_messages;
-
-                        s_buffered_messages.clear();
+                        WRITE_TO_FILE("[LOGGER] Changing log-format. From [" << s_format_prev << "] to [" << s_format_current << "]\n");
+                        break;
                     }
-                    CLOSE_FILE
 
-                    s_buffered_messages.shrink_to_fit();
-                    s_buffered_messages.reserve(s_buffer_size);
+                    case CMD_REVERSE_FORMAT: {
 
-                } else if (strcmp(message.function_name, LOGGER_REGISTER_THREAD_LABEL) == 0) {            // process_reverse_in_msg_format();
+                        std::lock_guard<std::mutex> lock(s_general_mutex);
+                        const std::string buffer = s_format_current;
+                        s_format_current = s_format_prev;
+                        s_format_prev = buffer;
+                        break;
+                    }
 
-                    std::lock_guard<std::mutex> lock(s_general_mutex);
+                    case CMD_CHANGE_THRESHOLD: {
 
-                    if (s_thread_labels.find(message.thread_id) != s_thread_labels.end())
-                        WRITE_TO_FILE("[LOGGER] Thread with ID: [" << thread_id_to_string(message.thread_id) << "] already has label [" << s_thread_labels[message.thread_id] << "] registered. Overriding with the label: [" << message.message << "]\n")
-                    else
-                        WRITE_TO_FILE("[LOGGER] Registering Thread-ID: [" << thread_id_to_string(message.thread_id) << "] with the label: [" << message.message << "]\n")
+                        std::lock_guard<std::mutex> lock(s_general_mutex);
+                        s_severity_level_buffering_threshold = static_cast<GLT::logger::severity>(
+                            std::min(static_cast<u8>(message.msg_sev), static_cast<u8>(GLT::logger::severity::error))
+                        );
+                        break;
+                    }
 
-                    s_thread_labels[message.thread_id] = message.message;
+                    case CMD_CHANGE_BUFFER_SIZE: {
 
-                } else if (strcmp(message.function_name, LOGGER_UNREGISTER_THREAD_LABEL) == 0) {
+                        std::lock_guard<std::mutex> lock(s_general_mutex);
+                        s_buffer_size = static_cast<size_t>(message.location.line());
 
-                    std::lock_guard<std::mutex> lock(s_general_mutex);
-                    s_thread_labels.erase(message.thread_id);
+                        OPEN_FILE
+                        s_main_file << message.message;
+                        if (s_is_init && s_buffered_messages.size() >= s_buffer_size) {                   // Handle buffer overflow if the new size is smaller than the current buffer content
+
+                            s_main_file << s_buffered_messages;
+                            // if (s_write_log_to_console)
+                            // std::cout << s_buffered_messages;
+
+                            s_buffered_messages.clear();
+                        }
+                        CLOSE_FILE
+
+                        s_buffered_messages.shrink_to_fit();
+                        s_buffered_messages.reserve(s_buffer_size);
+                        break;
+                    }
+
+                    case CMD_REGISTER_THREAD_LABEL: {
+
+                        std::lock_guard<std::mutex> lock(s_general_mutex);
+
+                        if (s_thread_labels.find(message.thread_id) != s_thread_labels.end())
+                            WRITE_TO_FILE("[LOGGER] Thread with ID: [" << thread_id_to_string(message.thread_id) << "] already has label [" << s_thread_labels[message.thread_id] << "] registered. Overriding with the label: [" << message.message << "]\n")
+                        else
+                            WRITE_TO_FILE("[LOGGER] Registering Thread-ID: [" << thread_id_to_string(message.thread_id) << "] with the label: [" << message.message << "]\n")
+
+                        s_thread_labels[message.thread_id] = message.message;
+                        break;
+                    }
+
+                    case CMD_UNREGISTER_THREAD_LABEL: {
+
+                        std::lock_guard<std::mutex> lock(s_general_mutex);
+                        s_thread_labels.erase(message.thread_id);
+                        break;
+                    }
+
+                    default:    process_log_message(std::move(message)); break;
                 }
-
-                else
-                    process_log_message(std::move(message));
             }
 
             // Re-lock before next iteration
@@ -413,14 +426,14 @@ namespace GLT::logger_plugin {
 
     // handle message --------------------------------------------------------------------------------------------------
 
-    void log_msg_internal(const GLT::logger::severity msg_sev, const char* file_name, const char* function_name, const int line, 
-        const char* module_name, std::thread::id thread_id, std::string message) {
+    void log_msg_internal(const GLT::logger::severity msg_sev, const std::source_location location, const char* module_name, 
+        std::thread::id thread_id, std::string message) {
 
         if (message.empty())
             return;
 
         std::lock_guard<std::mutex> lock(s_queue_mutex);
-        s_log_queue.emplace(msg_sev, file_name, function_name, line, module_name, thread_id, std::move(message));
+        s_log_queue.emplace(msg_sev, location, module_name, thread_id, std::move(message));
 
         if (static_cast<u8>(msg_sev) >= static_cast<u8>(s_severity_level_buffering_threshold) 
             || s_log_queue.size() >= static_cast<size_t>(QUEUE_MAX_SIZE))           // check if thread should be notified
@@ -462,12 +475,12 @@ namespace GLT::logger_plugin {
                             } else {
                                 formatted_message.append(thread_id_to_string(message.thread_id));
                             } break;                                                                                                // Thread id or associated label
-                case 'F': formatted_message.append(message.function_name); break;                                                   // function name
+                case 'F': formatted_message.append(message.location.function_name()); break;                                                   // function name
                 case 'R': formatted_message.append(message.module_name); break;                                                     // function name
-                case 'P': formatted_message.append(SHORTEN_FUNC_NAME(message.function_name)); break;                                // short function name
-                case 'A': formatted_message.append(message.file_name); break;                                                       // file name
-                case 'I': formatted_message.append(get_filename(message.file_name)); break;                                         // short file name
-                case 'G': formatted_message.append(std::to_string(message.line)); break;                                            // line
+                case 'P': formatted_message.append(SHORTEN_FUNC_NAME(message.location.function_name())); break;                                // short function name
+                case 'A': formatted_message.append(message.location.file_name()); break;                                                       // file name
+                case 'I': formatted_message.append(get_filename(message.location.file_name())); break;                                         // short file name
+                case 'G': formatted_message.append(std::to_string(message.location.line())); break;                                            // line
 
                 // ------------------------ time ------------------------
                 case 'T': formatted_message.append(std::format("{:02}:{:02}:{:02}",

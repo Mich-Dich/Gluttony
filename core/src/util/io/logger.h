@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <thread>
 #include <vector>
+#include <source_location>
 
 #include "util/macros.h"
 #include "util/data_structures/data_types.h"
@@ -71,18 +72,17 @@ namespace GLT::logger {
 
     
     struct message_data {
+
         const GLT::logger::severity                             msg_sev;
-        const char*                                             file_name;
-        const char*                                             function_name;
-        const int                                               line;
+        const std::source_location                              location;
         const char*                                             module_name;
         const std::thread::id                                   thread_id;
         const std::string                                       message;
+        const int                                               command;
         
-        message_data(const GLT::logger::severity msg_sev, const char* file_name, const char* function_name, const int line, 
-            const char* module_name, std::thread::id thread_id, std::string message)
-        : msg_sev(msg_sev), file_name(file_name), function_name(function_name), line(line), module_name(module_name), 
-            thread_id(thread_id), message(std::move(message)) {};
+        message_data(const GLT::logger::severity msg_sev, const std::source_location location, const char* module_name, 
+            const std::thread::id thread_id, const std::string& message, const int cmd = 0)
+        : msg_sev(msg_sev), location(location), module_name(module_name), thread_id(thread_id), message(std::move(message)), command(cmd) {};
     };
 
 
@@ -91,7 +91,7 @@ namespace GLT::logger {
 
     using shutdown_func = void (*)();
 
-    using log_msg_internal_func = void (*)(severity msg_sev, const char* file_name, const char* function_name, int line, const char* module_name,
+    using log_msg_internal_func = void (*)(severity msg_sev, const std::source_location location, const char* module_name,
         std::thread::id thread_id, std::string message);
     
     using get_log_file_location_func = std::filesystem::path (*)();
@@ -176,7 +176,7 @@ namespace GLT::logger {
     void unregister_label_for_thread(std::thread::id thread_id = std::this_thread::get_id());
     
     
-    void log_msg_internal(severity msg_sev, const char* file_name, const char* function_name, int line, const char* module_name,
+    void log_msg_internal(severity msg_sev, const std::source_location location, const char* module_name, 
         std::thread::id thread_id, std::string message);
 
     // TEMPLATE DECLARATION ============================================================================================
@@ -186,7 +186,7 @@ namespace GLT::logger {
 
     // Template version that uses std::format for format strings with arguments
     template<typename... Args>
-    FORCE_INLINE void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
+    FORCE_INLINE void log_msg(const severity msg_sev, const std::source_location location, const char* module_name,
         std::thread::id thread_id, std::format_string<Args...> fmt, Args&&... args) {
 
         // // Early exit for empty format string with no arguments (common case)
@@ -200,49 +200,49 @@ namespace GLT::logger {
         if (message.empty())             // still check for other sources of emptiness
             return;
 
-        log_msg_internal(msg_sev, file_name, function_name, line, module_name, thread_id, std::move(message));
+        log_msg_internal(msg_sev, location, module_name, thread_id, std::move(message));
     }
 
 
     // Overload for plain strings
-    FORCE_INLINE void log_msg(const severity msg_sev, const char* file_name, const char* function_name, const int line, const char* module_name,
+    FORCE_INLINE void log_msg(const severity msg_sev, const std::source_location location, const char* module_name,
         std::thread::id thread_id, std::string_view message) {
             
         if (message.empty())
             return;
 
-        log_msg_internal(msg_sev, file_name, function_name, line, module_name, thread_id, std::string(message));
+        log_msg_internal(msg_sev, location, module_name, thread_id, std::string(message));
     }
 
     // CLASS DECLARATION ===============================================================================================
 
     // An exception type that logs the error message immediately when constructed.
     // The exception stores the provided message and also forwards it to the logger
-    // with context (file, function, line, thread).
+    // with context (location, thread).
     // @note This class inherits from std::exception so it can be thrown/caught like a standard exception.
     class logged_exception : public std::exception {
 		public:
 
             // Constructs a logged_exception from source location, thread id and a string message.
             template<typename... Args>
-			explicit logged_exception(const char* file, const char* function, const int line, const char* module_name,
-                std::thread::id thread_id, std::format_string<Args...> fmt, Args&&... args)
+			explicit logged_exception(const std::source_location location, const char* module_name, std::thread::id thread_id, 
+                std::format_string<Args...> fmt, Args&&... args)
             : m_msg(std::format(fmt, std::forward<Args>(args)...)) {
-                logger::log_msg_internal(logger::severity::error, file, function, line, module_name, thread_id, m_msg);
+                logger::log_msg_internal(logger::severity::error, location, module_name, thread_id, m_msg);
             }
 
             // Overload for plain string
-            explicit logged_exception(const char* file, const char* function, const int line, const char* module_name,
-                std::thread::id thread_id, const std::string& message)
+            explicit logged_exception(const std::source_location location, const char* module_name, std::thread::id thread_id, 
+                const std::string& message)
             : m_msg(message) {
-                logger::log_msg_internal(logger::severity::error, file, function, line, module_name, thread_id, m_msg);
+                logger::log_msg_internal(logger::severity::error, location, module_name, thread_id, m_msg);
             }
 
             // Overload for C-string
-            explicit logged_exception(const char* file, const char* function, const int line, const char* module_name,
-                std::thread::id thread_id, const char* message)
+            explicit logged_exception(const std::source_location location, const char* module_name, std::thread::id thread_id, 
+                const char* message)
             : m_msg(message) {
-                logger::log_msg_internal(logger::severity::error, file, function, line, module_name, thread_id, m_msg);
+                logger::log_msg_internal(logger::severity::error, location, module_name, thread_id, m_msg);
             }
 
             // Returns a C-string describing the exception. Marked noexcept to match std::exception::what().
@@ -266,7 +266,7 @@ namespace GLT::logger {
 
 #define LOG_Master(severity_level, fmt, ...)                                                                            \
     {                                                                                                                   \
-        GLT::logger::log_msg(GLT::logger::severity::severity_level, __FILE__, __FUNCTION__, __LINE__,                   \
+        GLT::logger::log_msg(GLT::logger::severity::severity_level, std::source_location::current(),                    \
             GLT_MODULE_NAME, std::this_thread::get_id(), fmt __VA_OPT__(,) __VA_ARGS__);                                \
     }
 
@@ -317,7 +317,7 @@ namespace GLT::logger {
 
 #define LOGGED_EXCEPTION(fmt, ...)                                                                                      \
     {                                                                                                                   \
-        throw GLT::logger::logged_exception(__FILE__, __FUNCTION__, __LINE__, GLT_MODULE_NAME,                          \
+        throw GLT::logger::logged_exception(std::source_location::current(), GLT_MODULE_NAME,                           \
             std::this_thread::get_id(), "LOGGER EXCEPTION: " fmt __VA_OPT__(,) __VA_ARGS__);                            \
     }
 

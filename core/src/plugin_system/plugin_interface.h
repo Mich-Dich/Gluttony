@@ -1,9 +1,17 @@
 
 #pragma once
 
+// #include <event/application_event.h>
+
 #include "util/io/logger.h"         // expose logger for all plugins
 
+
 // FORWARD DECLARATIONS ================================================================================================
+
+namespace GLT {
+    class update_event;
+}
+
 
 namespace GLT::plugin_manager {
 
@@ -144,6 +152,7 @@ namespace GLT::plugin_manager {
         editor_core,
         networking,
         online_subsystem,
+        game_loop,
         custom,                     // needs to be last!
     };
 
@@ -186,7 +195,7 @@ namespace GLT::plugin_manager {
         virtual void on_unload() = 0;
 
 
-        virtual void update() {}
+        virtual void update(const GLT::update_event&) {}
 
     };
 

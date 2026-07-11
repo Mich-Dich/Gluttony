@@ -54,6 +54,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/util/pch.h")
     )
 endif()
 
+target_compile_options(${CORE_NAME}                     PRIVATE
+    -std=c++26
+    -freflection
+)
 
 
 # Copy assets directory to output

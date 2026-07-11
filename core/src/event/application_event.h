@@ -21,6 +21,22 @@ namespace GLT {
 
     // CLASS DECLARATION ===============================================================================================
 
+    class update_event : public event {
+    public:
+
+        update_event(const f32 delta_time) : m_delta_time(delta_time) {}
+
+        DEFAULT_GETTER_C(u32, delta_time);
+
+        FORCE_INLINE_R std::string to_string() const override {
+            return std::format("update event [{}]", m_delta_time);
+        }
+
+    private:
+        f32 m_delta_time;
+    };
+
+
     class window_resize_event : public event {
     public:
         window_resize_event(u32 width, u32 height) : m_width(width), m_height(height) {}

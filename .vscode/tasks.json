@@ -4,7 +4,7 @@
         {
             "label": "CMake build (debug)",
             "type": "shell",
-            "command": "cmake --preset debug && cmake --build --preset debug --parallel",
+            "command": "clear; cmake --preset debug && cmake --build --preset debug --parallel",
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -15,7 +15,7 @@
         {
             "label": "CMake build (release)",
             "type": "shell",
-            "command": "cmake --preset release && cmake --build --preset release --parallel",
+            "command": "clear; cmake --preset release && cmake --build --preset release --parallel",
             "group": "build",
             "problemMatcher": "$gcc",
             "detail": "Configure (if needed) and build release using presets"
@@ -23,7 +23,7 @@
         {
             "label": "CMake build (release_with_debug_info)",
             "type": "shell",
-            "command": "cmake --preset release_with_debug_info && cmake --build --preset release_with_debug_info --parallel",
+            "command": "clear; cmake --preset release_with_debug_info && cmake --build --preset release_with_debug_info --parallel",
             "group": "build",
             "problemMatcher": "$gcc",
             "detail": "Configure (if needed) and build release with debug Info using presets"

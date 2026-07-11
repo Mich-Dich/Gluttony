@@ -9,7 +9,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT {
+namespace GLT::util {
 
     // CONSTANTS =======================================================================================================
 
@@ -23,10 +23,21 @@ namespace GLT {
 
     // TEMPLATE DECLARATION ============================================================================================
 
+    template <typename E>
+    requires std::is_enum_v<E>
+    constexpr std::string_view enum_to_string(E value);
+
+
+    // Convert a STRING to an optional enum value.
+    template <typename E>
+    requires std::is_enum_v<E>
+    constexpr std::optional<E> string_to_enum(std::string_view str);
+
     // CLASS DECLARATION ===============================================================================================
 
 }
 
+#include "util.inl"
 
 namespace std {
 

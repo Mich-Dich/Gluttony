@@ -14,6 +14,7 @@ namespace GLT::render {
 
 namespace GLT {
     class window_close_event;
+    class i_game_loop_base;
 }
 
 namespace GLT {
@@ -56,6 +57,7 @@ namespace GLT {
         version                                         m_version{};
         ref<GLT::platform::i_window_plugin>             mp_window{};
         ref<GLT::render::i_renderer_plugin>             mp_renderer{};
+        ref<GLT::i_game_loop_base>                      mp_game_loop_base{};
         bool                                            m_running = true;
         util::interval_controller                       m_fps_controller{};
         handle                                          m_close_event_sub_handle{};

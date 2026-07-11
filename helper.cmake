@@ -120,6 +120,7 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
         $<$<CONFIG:Release>:RELEASE>
         $<$<CONFIG:RelWithDebInfo>:RELEASE_WITH_DEBUG_INFO>
     )
+
     target_include_directories(${TARGET_NAME}       PRIVATE
         ${CMAKE_SOURCE_DIR}/core/src/
         ${CMAKE_CURRENT_SOURCE_DIR}/src/
@@ -139,10 +140,15 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
     endif()
 
     if(MSVC)
-        target_compile_options(${PLUGIN_NAME}       PRIVATE /W4)
+        target_compile_options(${TARGET_NAME}       PRIVATE /W4)
     else()
-        target_compile_options(${PLUGIN_NAME}       PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(${TARGET_NAME}       PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+
+    target_compile_options(${TARGET_NAME}                               PRIVATE
+        -std=c++26
+        -freflection
+    )
 endfunction()
 
 

@@ -28,6 +28,8 @@ namespace GLT::renderer_vk_ray {
         #define VK_CHECK(expr, successMsg, failureMsg)		ASSERT(expr == vk::Result::eSuccess)
     #else
         #define VALIDATE_INIT
+        #define VK_CHECK_S(expr)
+        #define VK_CHECK(expr, successMsg, failureMsg)
     #endif
 
     // TYPES ===========================================================================================================

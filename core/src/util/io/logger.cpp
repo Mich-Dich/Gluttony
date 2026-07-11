@@ -53,8 +53,8 @@ namespace GLT::logger {
     }
 
 
-    static void default_log_msg_internal(severity msg_sev, const char* file_name, const char* function_name, int line, 
-        const char* module_name, std::thread::id thread_id, std::string message) {
+    static void default_log_msg_internal(severity msg_sev, const std::source_location location, const char* module_name, 
+        std::thread::id thread_id, std::string message) {
         
         if (message.empty())
             return;
@@ -62,7 +62,7 @@ namespace GLT::logger {
         if (s_use_buffer) {
 
             std::lock_guard lock(s_buffer_mutex);
-            s_log_buffer.emplace_back(msg_sev, file_name, function_name, line, module_name, thread_id, message);
+            s_log_buffer.emplace_back(msg_sev, location, module_name, thread_id, message);
 
         } else {
             
@@ -188,10 +188,10 @@ namespace GLT::logger {
     }
 
 
-    void log_msg_internal(severity msg_sev, const char* file_name, const char* function_name, int line, const char* module_name,
+    void log_msg_internal(severity msg_sev, const std::source_location location, const char* module_name,
         std::thread::id thread_id, std::string message) {
 
-        g_logger.log_msg_internal(msg_sev, file_name, function_name, line, module_name, thread_id, std::move(message));
+        g_logger.log_msg_internal(msg_sev, location, module_name, thread_id, std::move(message));
     }
 
 

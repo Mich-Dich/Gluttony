@@ -1,8 +1,6 @@
 
 #pragma once
 
-#include <new>  // For placement new
-
 // Core Language Features
 #include <algorithm>
 #include <functional>
@@ -13,6 +11,9 @@
 #include <typeinfo>
 #include <utility>
 #include <concepts>
+#include <new>
+#include <meta>
+#include <source_location>
 
 // Strings and Text Manipulation
 #include <string>

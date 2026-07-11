@@ -89,6 +89,8 @@ namespace GLT::input_action_mapper {
 
         m_key_event_sub = GLT::event_bus::subscribe<GLT::key_event>( std::bind_front(&plugin::on_key_event, this) );
         m_mouse_event_sub = GLT::event_bus::subscribe<GLT::mouse_event>( std::bind_front(&plugin::on_mouse_event, this) );
+        m_update_event_sub = GLT::event_bus::subscribe<GLT::update_event>( std::bind_front(&plugin::update, this) );
+        
         LOG_LOADED
     }
 
@@ -97,11 +99,12 @@ namespace GLT::input_action_mapper {
 
         GLT::event_bus::unsubscribe(m_key_event_sub);
         GLT::event_bus::unsubscribe(m_mouse_event_sub);
+        GLT::event_bus::unsubscribe(m_update_event_sub);
         LOG_UNLOADED
     }
 
 
-    void plugin::update() {
+    void plugin::update(const GLT::update_event& event) {
 
         auto now = std::chrono::steady_clock::now();
 
@@ -399,6 +402,7 @@ namespace GLT::input_action_mapper {
         m_key_states.clear();
         m_mouse_state = {};
     }
+
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================

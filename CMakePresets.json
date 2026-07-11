@@ -8,6 +8,9 @@
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc-16",
+        "CMAKE_CXX_COMPILER": "g++-16",
+        "CMAKE_CXX_STANDARD": "26",
         "CMAKE_BUILD_TYPE": "debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
@@ -19,6 +22,9 @@
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc-16",
+        "CMAKE_CXX_COMPILER": "g++-16",
+        "CMAKE_CXX_STANDARD": "26",
         "CMAKE_BUILD_TYPE": "release"
       }
     },
@@ -29,6 +35,9 @@
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc-16",
+        "CMAKE_CXX_COMPILER": "g++-16",
+        "CMAKE_CXX_STANDARD": "26",
         "CMAKE_BUILD_TYPE": "release_with_debug_info"
       }
     }

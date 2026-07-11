@@ -120,8 +120,8 @@ namespace GLT::logger_plugin {
 
     // THIS SHOULD NEVER BE DIRECTLY CALLED
     // @note empty log messages will be ignored
-    void log_msg_internal(const GLT::logger::severity msg_sev, const char* file_name, const char* function_name, const int line, 
-        const char* module_name, std::thread::id thread_id, std::string message);
+    void log_msg_internal(const GLT::logger::severity msg_sev, const std::source_location location, const char* module_name, 
+        std::thread::id thread_id, std::string message);
 
     // TEMPLATE DECLARATION ============================================================================================
 

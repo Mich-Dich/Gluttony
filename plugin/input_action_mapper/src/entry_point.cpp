@@ -1,6 +1,7 @@
 
 #include <event/event_bus.h>
 #include <event/input_event.h>
+#include <event/application_event.h>
 #include <util/util.h>
 #include <plugin_system/plugin_interface.h>
 
@@ -60,7 +61,7 @@ namespace GLT::input_action_mapper {
 
         // update internal state and all registered actions
         // after calling this, the callback will be called
-        void update() override;
+        void update(const GLT::update_event& event) override;
 
     private:
 
@@ -72,6 +73,7 @@ namespace GLT::input_action_mapper {
 
         handle                                          m_key_event_sub{};
         handle                                          m_mouse_event_sub{};
+        handle                                          m_update_event_sub{};
         std::unordered_map<GLT::key_code, key_info>     m_key_states{};         // buffer key states from event bus until next call of update();
         mouse_state                                     m_mouse_state{};              // buffer mouse states from event bus until next call of update();
 
