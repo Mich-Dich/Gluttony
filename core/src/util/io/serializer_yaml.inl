@@ -1,5 +1,8 @@
 #pragma once
 
+#include "util/util.h"
+
+
 // FORWARD DECLARATIONS ================================================================================================
 
 
@@ -30,50 +33,66 @@ namespace GLT::serializer {
 
             std::string buffer{};
             if constexpr (is_vector<T>::value) {                    // value is a vector
-            
-                m_file_content << util::add_spaces(m_level_of_indention) << m_prefix << key_name << ":\n";
-                for (auto interation : value) {
 
-                    util::to_string<typename T::value_type>(interation, buffer);
+                m_file_content << util::add_spaces(m_level_of_indention) << m_prefix << key_name << ":\n";
+                using Elem = typename T::value_type;
+                for (auto& element : value) {
+
+                    if constexpr (std::is_enum_v<Elem>)
+                        buffer = GLT::util::enum_to_string(element);
+                    else
+                        util::to_string<Elem>(element, buffer);
+                    
                     m_file_content << util::add_spaces(m_level_of_indention + 1) << "- " << buffer << "\n";
                 }
-            
+
             } else {
 
-                util::to_string<T>(value, buffer);
-                m_file_content << util::add_spaces(m_level_of_indention) << m_prefix << key_name << ": " << buffer << "\n";
+                if constexpr (std::is_enum_v<T>)
+                    buffer = GLT::util::enum_to_string(value);
+                else
+                    util::to_string<T>(value, buffer);
+                
+                    m_file_content << util::add_spaces(m_level_of_indention) << m_prefix << key_name << ": " << buffer << "\n";
             }
-        
-        } else {                           				            // load from file
-        
-            if constexpr (is_vector<T>::value) {					    // value is a vector
-            
-                // deserialize content of subsections
-                typename T::value_type buffer{};
+
+        } else {   // load from file
+
+            if constexpr (is_vector<T>::value) {                    // value is a vector
+
+                using Elem = typename T::value_type;
+                Elem buffer{};
                 bool found_section = false;
                 std::string line;
                 while (std::getline(m_file_content, line)) {
 
-                    if (line.empty() || line.front() == '#')		// skip empty lines or comments
+                    if (line.empty() || line.front() == '#')        // skip empty lines or comments
                         continue;
 
-                    // if line contains desired section enter inner-loop
-                    //   has correct indentation                                 has correct sectionName                      ends with double-point
                     if ((util::measure_indentation(line) == 0) && (line.find(key_name) != std::string::npos) && (line.back() == ':')) {
 
                         found_section = true;
-                        value.clear();								// clear previous data when section found
-                        //     not end of content                     has correct indentation	         		doesn't end in double-points
+                        value.clear();
                         while (std::getline(m_file_content, line) && (util::measure_indentation(line) == 0) && (line.back() != ':')) {
 
-                            // 				   remove indentation		 remove "- " (array element marker)
                             line = line.substr(NUM_OF_INDENTING_SPACES);
-                            util::from_string(line, buffer);
-                            value.emplace_back(buffer);
+                            if constexpr (std::is_enum_v<Elem>) {
+
+                                auto opt = GLT::util::string_to_enum<Elem>(line);
+                                if (opt)
+                                    value.emplace_back(*opt);
+                                else
+                                    LOG(warn, "Fail to convert the string [{}] to a corresponding enum value", line)
+                            
+                            } else {
+
+                                util::from_string(line, buffer);
+                                value.emplace_back(buffer);
+                            }
                         }
                     }
 
-                    if (found_section)								// skip rest of content if section found
+                    if (found_section)
                         break;
                 }
 
@@ -81,11 +100,18 @@ namespace GLT::serializer {
 
                 std::string buffer{};
                 auto iterator = m_key_value_pares.find(key_name);
-                if (iterator == m_key_value_pares.end())			// key is not in map
+                if (iterator == m_key_value_pares.end())
                     return *this;
-                
+
                 buffer = iterator->second;
-                util::from_string(buffer, value);
+                if constexpr (std::is_enum_v<T>) {
+                    auto opt = GLT::util::string_to_enum<T>(buffer);
+                    if (opt)
+                        value = *opt;
+                    else 
+                        LOG(warn, "Fail to convert the string [{}] to a corresponding enum value", buffer)
+                } else
+                    util::from_string(buffer, value);
             }
         }
 
@@ -103,12 +129,12 @@ namespace GLT::serializer {
         if (vector_func_index != 1)
             m_level_of_indention++;
 
-        if (m_option == serializer::option::save) {           // save to file
-        
-            const u32 indent_buffer = vector_func_index != 1 ? m_level_of_indention - 1 : m_level_of_indention;
-            m_file_content << util::add_spaces(indent_buffer) << m_prefix << vector_name << ":\n";
-            for (u64 x = 0; x < vector.size(); x++) {
+        if (m_option == serializer::option::save) {                      // save to file
 
+            const u32 indentBuffer = vector_func_index != 1 ? m_level_of_indention - 1 : m_level_of_indention;
+            m_file_content << GLT::util::add_spaces(indentBuffer) << m_prefix << vector_name << ":\n";
+            for (u64 x = 0; x < vector.size(); x++)
+            {
                 // start of array element
                 m_prefix = "- ";
                 m_prefix_fallback = "  ";
@@ -117,8 +143,8 @@ namespace GLT::serializer {
             m_prefix = "";
             m_prefix_fallback = "";
 
-        } else {                                   		            // load from file
-        
+        } else {                                    		            // load from file
+
             // buffer [m_key_value_pares] for duration of function
             std::unordered_map<std::string, std::string> key_value_pares_buffer = m_key_value_pares;
             std::vector<std::unordered_map<std::string, std::string>> vector_of_key_value_pares{};
@@ -140,10 +166,10 @@ namespace GLT::serializer {
                     continue;
 
                 // if line contains desired section enter inner-loop
-                if ((util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0)		// has correct indentation
-                    && (line.find(vector_name) != std::string::npos)					// has correct vector_name
-                    && (line.back() == ':')) {											// ends with double-point
-                
+                if ((GLT::util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0)    // has correct indentation
+                    && (line.find(vector_name) != std::string::npos)					    // has correct vector_name
+                    && (line.back() == ':')) {											    // ends with double-point
+
                     //     not end of content
                     while (std::getline(file_content_buffer, line)) {
 
@@ -154,13 +180,15 @@ namespace GLT::serializer {
                             index++;
                         }
 
-                        if (line.back() == ':' && util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0)
+                        if (line.back() == ':' && GLT::util::measure_indentation(line, NUM_OF_INDENTING_SPACES) == 0)
                             break;		// end of vector content
 
                         line = line.substr(NUM_OF_INDENTING_SPACES);                // remove array-prefix "- " or "  "
 
                         //  more indented                                        beginning of new sub-section
-                        if (util::measure_indentation(line, NUM_OF_INDENTING_SPACES) != 0 || line.back() == ':' || line.front() == '-') {
+                        if (GLT::util::measure_indentation(line, NUM_OF_INDENTING_SPACES) != 0 
+                            || line.back() == ':' 
+                            || line.front() == '-') {
 
                             //m_file_content << line << "\n";
                             vector_of_file_content[index] << line << "\n";
@@ -183,16 +211,16 @@ namespace GLT::serializer {
 
                     m_key_value_pares = vector_of_key_value_pares[x];
                     m_file_content = {};
-                    auto temp_buffer = vector_of_file_content[x].str();
-                    m_file_content << temp_buffer;
+                    auto tempBuffer = vector_of_file_content[x].str();
+                    m_file_content << tempBuffer;
                     vector_function(*this, x);
                 }
             }
 
             // restore
             m_key_value_pares = key_value_pares_buffer;
-            auto temp_buffer = file_content_buffer.str();
-            m_file_content << temp_buffer;
+            auto tempBuffer = file_content_buffer.str();
+            m_file_content << tempBuffer;
         }
 
         if (vector_func_index != 1)
@@ -208,42 +236,43 @@ namespace GLT::serializer {
 
         VALIDATE_INIT();
 
-        if (m_option == serializer::option::save) {										// Serialize the map
+        if (m_option == serializer::option::save) { 									// Serialize the map
 
-            m_file_content << util::add_spaces(m_level_of_indention) << map_name << ":\n";
+            m_file_content << GLT::util::add_spaces(m_level_of_indention) << map_name << ":\n";
             for (const auto& [key, value] : map)
-                m_file_content << util::add_spaces(m_level_of_indention + 1) << util::to_string<T>(key) << ": " << util::to_string<K>(value) << "\n";
-            
-        } else {																				// Deserialize the map
-    
+                m_file_content << GLT::util::add_spaces(m_level_of_indention + 1) << util::to_string<T>(key) << ": " << util::to_string<K>(value) << "\n";
+
+        } else {											                        // Deserialize the map
+
             // Deserialize map from YAML
-            std::unordered_map<std::string, std::string> temp_map;
+            std::unordered_map<std::string, std::string> tempMap;
             std::string line;
 
             // Read until we find the map section
             while (std::getline(m_file_content, line)) {
 
-                if (line.find(map_name + ":") != std::string::npos && util::measure_indentation(line) == m_level_of_indention)
+                if (line.find(map_name + ":") != std::string::npos &&
+                    util::measure_indentation(line) == m_level_of_indention)
                     break;
             }
 
             while (std::getline(m_file_content, line)) {   							// Read key-value pairs
-            
+
                 if (util::measure_indentation(line) <= m_level_of_indention)		    // End of map section
                     break;
 
                 std::string key, value;
                 extract_key_value(key, value, line);
-                temp_map.emplace(std::move(key), std::move(value));
+                tempMap.emplace(std::move(key), std::move(value));
             }
 
             // Convert strings to actual types
-            for (const auto& [key_str, value_str] : temp_map) {
+            for (const auto& [keyStr, valueStr] : tempMap) {
 
                 T key;
                 K value;
-                util::from_string(key_str, key);
-                util::from_string(value_str, value);
+                util::from_string(keyStr, key);
+                util::from_string(valueStr, value);
                 map.emplace(std::move(key), std::move(value));
             }
         }
@@ -251,81 +280,26 @@ namespace GLT::serializer {
     }
 
 
-    template<typename T>
-    yaml& yaml::unordered_set(const std::string& set_name, std::unordered_set<T>& set) {
-
-        if (m_option == option::save) {
-
-            // Serialize the set as a YAML sequence
-            m_file_content << util::add_spaces(m_level_of_indention) << set_name << ":\n";
-            for (const auto& element : set) {
-
-                std::string buffer;
-                util::to_string<T>(element, buffer);
-                m_file_content << util::add_spaces(m_level_of_indention) << "- " << buffer << "\n";
-            }
-
-        } else {																	// Deserialize the set from YAML
-
-            std::unordered_set<T> temp_set;
-            std::string line;
-            while (std::getline(m_file_content, line)) {								// Read until we find the set section
-            
-                if (line.find(set_name + ":") != std::string::npos && util::measure_indentation(line) == 0)
-                    break;
-            }
-
-            while (std::getline(m_file_content, line)) {							    // Read sequence elements
-                if (util::measure_indentation(line) < 0 || line.back() == ':') 		// End of set section
-                    break;
-
-                if (line.find("- ") == std::string::npos) 							// Extract element value
-                    continue;
-
-                size_t dash_pos = line.find("- ");
-                std::string elementStr = line.substr(dash_pos + 2);
-                T element;
-                util::from_string(elementStr, element);
-                temp_set.insert(element);
-            }
-            set = std::move(temp_set);
-        }
-        return *this;
-    }
-
-    #undef VALIDATE_INIT
-
-    // TEMPLATE CLASS PROTECTED ========================================================================================
-
-    // TEMPLATE CLASS PRIVATE ==========================================================================================
-
-}
-
-/*
-
-
     template<typename Key, typename Item>
-    yaml& yaml::unorderedMap(const std::string& mapName, std::unordered_map<Key, Item>& map,
-        std::function<void(serializer::yaml&, Item& mapItem)> mapFunction)
-    {
+    yaml& yaml::unordered_map(const std::string& map_name, std::unordered_map<Key, Item>& map, std::function<void(serializer::yaml&, Item& mapItem)> map_function) {
+
         VALIDATE_INIT();
 
-        if (mOption == serializer::option::save)
-        {
-            // Save mode: write map header then each key and its content via mapFunction
-            mFileContent << util::addSpaces(mLevelOfIndention) << mapName << ":\n";
+        if (m_option == serializer::option::save) {
+
+            // Save mode: write map header then each key and its content via map_function
+            m_file_content << GLT::util::add_spaces(m_level_of_indention) << map_name << ":\n";
             for (auto& [key, item] : map)
             {
                 std::string keyStr;
-                util::convertToString<Key>(key, keyStr);
-                mFileContent << util::addSpaces(mLevelOfIndention + 1) << keyStr << ":\n";
-                ++mLevelOfIndention;
-                mapFunction(*this, item);
-                --mLevelOfIndention;
+                util::to_string<Key>(key, keyStr);
+                m_file_content << GLT::util::add_spaces(m_level_of_indention + 1) << keyStr << ":\n";
+                m_level_of_indention =+ 2;
+                map_function(*this, item);
+                m_level_of_indention =- 2;
             }
-        }
-        else // load
-        {
+
+        } else {                                                    // load
 
             struct mapItemData {
                 std::unordered_map<std::string, std::string>    keyValuePares{};
@@ -335,29 +309,27 @@ namespace GLT::serializer {
             mapItemData*                                        pCurrentMapItemData{};
 
             std::string line{};
-            bool foundMap = false;
-            while (std::getline(mFileContent, line))
-            {
-                if (!cleanLine(line))
-                {
+            bool found_map = false;
+            while (std::getline(m_file_content, line)) {
+
+                if (!clean_line(line))
                     continue;
-                }
 
                 // if line contains desired section enter inner-loop
-                if ((util::measureIndentation(line) == 0)           // has correct indentation
-                    && (line.find(mapName) != std::string::npos)    // has correct sectionName
-                    && (line.back() == ':'))                        // ends with double-point
-                {
-                    foundMap = true;
+                if ((util::measure_indentation(line) == 0)              // has correct indentation
+                    && (line.find(map_name) != std::string::npos)       // has correct sectionName
+                    && (line.back() == ':')) {                          // ends with double-point
 
-                    while (std::getline(mFileContent, line)         // not end of content
-                        && (util::measureIndentation(line) > 0))    // has correct indentation
-                    {
-                        const u32 indentation = util::measureIndentation(line);
+                    found_map = true;
+
+                    while (std::getline(m_file_content, line)           // not end of content
+                        && (util::measure_indentation(line) > 0)) {     // has correct indentation
+
+                        const u32 indentation = util::measure_indentation(line);
 
                         // Create new item in map
-                        if ((indentation == 1) && (line.back() != ':'))     // header of map entry
-                        {
+                        if ((indentation == 1) && (line.back() == ':')) {       // header of map entry
+
                             std::string mapEntryTitle = line;
                             mapEntryTitle.erase(mapEntryTitle.begin(), std::find_if(
                                 mapEntryTitle.begin(),
@@ -374,54 +346,99 @@ namespace GLT::serializer {
                             pCurrentMapItemData = &keyValuePerEntry.at(mapEntryTitle);
                         }
 
-                        if (indentation > 1 && pCurrentMapItemData)
-                        {
+                        if (indentation > 1 && pCurrentMapItemData) {
+
                             pCurrentMapItemData->fileContent << line;
                             continue;
                         }
 
                         if (!pCurrentMapItemData)
-                        {
                             continue;
-                        }
 
                         // add key/Value in map
                         std::string key{}, value{};
-                        extractKeyValue(key, value, line);
+                        extract_key_value(key, value, line);
                         pCurrentMapItemData->keyValuePares[key] = value;
                     }
                 }
-                if (foundMap)								        // skip rest of content if section found
-                {
+                if (found_map)								        // skip rest of content if section found
                     break;
-                }
             }
 
-            if (!foundMap)								            // skip rest of content if section found
-            {
+            if (!found_map)								            // skip rest of content if section found
                 return *this;
-            }
 
-            std::unordered_map<std::string, std::string> savedKeyValues = std::move(mKeyValuePares);
-            std::stringstream fileContentBuffer = std::move(mFileContent);
+            std::unordered_map<std::string, std::string> savedKeyValues = std::move(m_key_value_pares);
+            std::stringstream file_content_buffer = std::move(m_file_content);
             map.clear();                                            // Clear the output map before loading new data
 
-            for (auto& [mapItemName, mapItemData] : keyValuePerEntry)
-            {
+            for (auto& [mapItemName, mapItemData] : keyValuePerEntry) {
+
                 Item locItem{};
-                mKeyValuePares = std::move(mapItemData.keyValuePares);
-                mFileContent = std::move(mapItemData.fileContent);
-                mapFunction(this, locItem);
+                m_key_value_pares = std::move(mapItemData.keyValuePares);
+                m_file_content = std::move(mapItemData.fileContent);
+                m_level_of_indention =+ 2;
+                map_function(*this, locItem);
+                m_level_of_indention =- 2;
                 map[mapItemName] = locItem;
             }
 
             // Restore the original serializer state
-            mFileContent = std::move(fileContentBuffer);
-            mKeyValuePares = std::move(savedKeyValues);
+            m_file_content = std::move(file_content_buffer);
+            m_key_value_pares = std::move(savedKeyValues);
         }
 
         return *this;
     }
 
 
-*/
+    template<typename T>
+    yaml& yaml::unordered_set(const std::string& set_name, std::unordered_set<T>& set) {
+
+        if (m_option == option::save) {
+
+            // Serialize the set as a YAML sequence
+            m_file_content << GLT::util::add_spaces(m_level_of_indention) << set_name << ":\n";
+            for (const auto& element : set) {
+
+                std::string buffer;
+                util::to_string<T>(element, buffer);
+                m_file_content << GLT::util::add_spaces(m_level_of_indention) << "- " << buffer << "\n";
+            }
+
+        } else {																	// Deserialize the set from YAML
+
+            std::unordered_set<T> tempSet;
+            std::string line;
+            while (std::getline(m_file_content, line)) {								// Read until we find the set section
+
+                if (line.find(set_name + ":") != std::string::npos && util::measure_indentation(line) == 0)
+                    break;
+            }
+
+            while (std::getline(m_file_content, line)) {							    // Read sequence elements
+
+                if (util::measure_indentation(line) < 0 || line.back() == ':') 		// End of set section
+                    break;
+
+                if (line.find("- ") == std::string::npos) 							// Extract element value
+                    continue;
+
+                size_t dashPos = line.find("- ");
+                std::string elementStr = line.substr(dashPos + 2);
+                T element;
+                util::from_string(elementStr, element);
+                tempSet.insert(element);
+            }
+            set = std::move(tempSet);
+        }
+        return *this;
+    }
+
+    #undef VALIDATE_INIT
+
+    // TEMPLATE CLASS PROTECTED ========================================================================================
+
+    // TEMPLATE CLASS PRIVATE ==========================================================================================
+
+}

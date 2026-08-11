@@ -8,6 +8,7 @@
 #endif
 
 #include "util/io/serializer_yaml.h"
+#include "util/io/directory_iterator.h"
 #include "config/config.h"
 #include "plugin_manager.h"
 
@@ -61,24 +62,24 @@ namespace GLT::plugin_manager {
 
     // Internal handle for a loaded plugin.
     struct plugin_handle {
-        std::string                             name;
-        std::filesystem::path                   path;
-        void*                                   module_handle = nullptr;
-        std::shared_ptr<i_plugin>               instance;   // uses custom deleter
-        load_phase                              phase;
-        std::vector<std::string>                dependencies_names;
-        std::vector<interface>         dependencies_interfaces;
+        std::string                                         name;
+        std::filesystem::path                               path;
+        void*                                               module_handle = nullptr;
+        std::shared_ptr<i_plugin>                           instance;   // uses custom deleter
+        load_phase                                          phase;
+        std::vector<std::string>                            dependencies_names;
+        std::vector<interface>                              dependencies_interfaces;
     };
 
 
     // TODO: add descriptive comment
     struct discovered_info {
-        std::filesystem::path                                   path;
-        std::string                                             name;
-        load_phase                                              phase;
-        interface                                      target{};               // is a [u16]
-        std::vector<std::string>                                dependencies_names;
-        std::vector<interface>                         dependencies_interfaces;
+        std::filesystem::path                               path;
+        std::string                                         name;
+        load_phase                                          phase;
+        interface                                           target{};               // is a [u16]
+        std::vector<std::string>                            dependencies_names;
+        std::vector<interface>                              dependencies_interfaces;
     };
 
 
@@ -110,11 +111,11 @@ namespace GLT::plugin_manager {
 
     // STATIC VARIABLES ================================================================================================
 
-    static bool                                                 s_shutdown = false;
-    static std::vector<plugin_handle>                           s_loaded_plugins{};
-    static std::vector<discovered_info>                         s_discovered{};
-    static std::unordered_map<interface, std::string>  s_plugin_names_per_target_interface{};
-    static std::filesystem::path                                s_config_path{};
+    static bool                                             s_shutdown = false;
+    static std::vector<plugin_handle>                       s_loaded_plugins{};
+    static std::vector<discovered_info>                     s_discovered{};
+    static std::unordered_map<interface, std::string>       s_plugin_names_per_target_interface{};
+    static std::filesystem::path                            s_config_path{};
 
     // HELPER FUNCTIONS ===============================================================================================
 
@@ -126,7 +127,7 @@ namespace GLT::plugin_manager {
         }
 
 
-        void* get_function(void* handle, const char* name) {
+        void* get_symbol(void* handle, const char* name) {
             return dlsym(handle, name);
         }
 
@@ -148,7 +149,7 @@ namespace GLT::plugin_manager {
         }
 
 
-        void* get_function(void* handle, const char* name) {
+        void* get_symbol(void* handle, const char* name) {
             return GetProcAddress((HMODULE)handle, name);
         }
 
@@ -195,8 +196,8 @@ namespace GLT::plugin_manager {
         }
 
         // Get factory functions.
-        auto create = reinterpret_cast<create_plugin_func>(get_function(handle, "create_plugin"));
-        auto destroy = reinterpret_cast<destroy_plugin_func>(get_function(handle, "destroy_plugin"));
+        auto create = reinterpret_cast<create_plugin_func>(get_symbol(handle, "create_plugin"));
+        auto destroy = reinterpret_cast<destroy_plugin_func>(get_symbol(handle, "destroy_plugin"));
         if (!create || !destroy) {
             LOG(error, "Plugin '%s' missing required symbols.", info.name.c_str());
             free_library(handle);
@@ -314,16 +315,17 @@ namespace GLT::plugin_manager {
         std::error_code error{};
         vfs::exists(plugin_dir, error);
         VALIDATE(!error, return, "", "Plugin dir is invalid [{}]", plugin_dir)
+        
         s_config_path = GLT::util::get_executable_path() / GLT::config::config_type_to_filepath(GLT::config::type::plugin);
-
-        error.clear();
         const bool exits = vfs::exists(s_config_path, error);
         if (!error && exits)
             serialize(s_config_path, serializer::option::load);
 
         // discover plugins
-        s_discovered.clear();
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(plugin_dir)) {
+        s_discovered.clear();    
+        GLT::vfs::recursive_directory_iterator iterator(plugin_dir, GLT::vfs::directory_options::skip_permission_denied, error);
+        VALIDATE(!error, continue, "", "Fail to create recursive_directory_iterator for [{}]", plugin_dir.generic_string())
+        for (const auto& entry : iterator) {
 
             if (!entry.is_regular_file())
                 continue;
@@ -336,14 +338,14 @@ namespace GLT::plugin_manager {
             void* handle = load_library(path.c_str(), lib_load_mode::lazy);
             VALIDATE(handle, continue, "", "load_library failed: [{}]", get_dynamic_library_error());
 
-            auto desc_fn = reinterpret_cast<descriptor_func>(get_function(handle, "gluttony_plugin_descriptor"));
-            VALIDATE(desc_fn, free_library(handle); continue, "", "get_function failed: [{}]", get_dynamic_library_error());
+            auto desc_fn = reinterpret_cast<descriptor_func>(get_symbol(handle, "gluttony_plugin_descriptor"));
+            VALIDATE(desc_fn, free_library(handle); continue, "", "get_symbol failed: [{}]", get_dynamic_library_error());
 
             const plugin_descriptor* desc = desc_fn();
             VALIDATE(desc, continue; free_library(handle), "", "Failed to load descriptor function");
 
             // Filter based on user configuration 
-            interface iface = desc->target;                                // Retrieve the interface this plugin targets.
+            const interface iface = desc->target;                                // Retrieve the interface this plugin targets.
             const auto it = s_plugin_names_per_target_interface.find(iface);        // Look up what the user configured for this interface.
             const bool has_config = (it != s_plugin_names_per_target_interface.end());
             const std::string plugin_name = desc->name ? std::string(desc->name) : path.stem().string();
@@ -371,17 +373,15 @@ namespace GLT::plugin_manager {
 
             // Name dependencies
             info.dependencies_names.reserve(desc->dependency_names_count);
-            for (int i = 0; i < desc->dependency_names_count; ++i) {
+            for (int i = 0; i < desc->dependency_names_count; ++i)
                 if (desc->dependency_names && desc->dependency_names[i])
                     info.dependencies_names.emplace_back(desc->dependency_names[i]);
-            }
 
             // Interface dependencies
             info.dependencies_interfaces.reserve(desc->dependency_interface_count);
-            for (int i = 0; i < desc->dependency_interface_count; ++i) {
+            for (int i = 0; i < desc->dependency_interface_count; ++i)
                 if (desc->dependency_interfaces)
                     info.dependencies_interfaces.push_back(desc->dependency_interfaces[i]);
-            }
 
             s_discovered.push_back(std::move(info));
             free_library(handle);   // close temporary handle
@@ -389,10 +389,11 @@ namespace GLT::plugin_manager {
 
         serialize(s_config_path, serializer::option::save);
         GLT::logger::flush_buffer();
+        s_shutdown = false;
     }
 
 
-    void load_plugins(const load_phase currentPhase) {
+    void load_plugins(const load_phase current_phase) {
 
         if (s_shutdown)
             return;
@@ -401,12 +402,13 @@ namespace GLT::plugin_manager {
         std::vector<discovered_info> pending;
         for (const auto& plugin : s_discovered) {
 
-            if (plugin.phase != currentPhase)
+            if (plugin.phase != current_phase)
                 continue;
                 
             // Check if already loaded (shouldn't be, but safe).
-            if (std::any_of(s_loaded_plugins.begin(), s_loaded_plugins.end(),
-                    [&](const plugin_handle& h) { return h.name == plugin.name; })) {
+            if (std::any_of(s_loaded_plugins.begin(), s_loaded_plugins.end(), 
+                [&](const plugin_handle& h) { return h.name == plugin.name; })) {
+
                 continue;
             }
             pending.push_back(plugin);
@@ -415,11 +417,13 @@ namespace GLT::plugin_manager {
         // Repeatedly load plugins whose dependencies are satisfied.
         bool progress = true;
         while (!pending.empty() && progress) {
+
             progress = false;
             for (auto it = pending.begin(); it != pending.end(); ) {
-                if (dependencies_satisfied(*it)) {
-                    plugin_load_error load_error = load_single(*it);
 
+                if (dependencies_satisfied(*it)) {
+
+                    plugin_load_error load_error = load_single(*it);
                     switch (load_error) {
 
                         case plugin_load_error::none: {
@@ -441,17 +445,14 @@ namespace GLT::plugin_manager {
                         }
                         default:                                                            break;
                     }
-                } else {
+                } else
                     ++it;
-                }
             }
         }
 
-        if (!pending.empty()) {
-            for (const auto& p : pending) {                 // Some plugins could not be loaded due to missing dependencies.
+        if (!pending.empty())
+            for (const auto& p : pending)       // Some plugins could not be loaded due to missing dependencies.
                 LOG(error, "Plugin [{}] could not be loaded: unsatisfied dependencies or load error", p.name);
-            }
-        }
 
         GLT::logger::flush_buffer();
     }

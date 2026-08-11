@@ -14,6 +14,7 @@
 #include <new>
 #include <meta>
 #include <source_location>
+#include <cstddef>
 
 // Strings and Text Manipulation
 #include <string>

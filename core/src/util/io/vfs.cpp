@@ -65,7 +65,6 @@ namespace GLT::vfs {
 
     void default_create_file(const std::filesystem::path& path, std::error_code& error) noexcept {
 
-        error.clear();
         if (std::filesystem::exists(path, error))           // Check existence (non‑throwing)
             return;         // File already exists – success (error is cleared by exists() on success)
 
@@ -105,7 +104,7 @@ namespace GLT::vfs {
 
     void default_create_directory(const std::filesystem::path& path, std::error_code& error) {
 
-        std::filesystem::create_directory(path), error;
+        std::filesystem::create_directory(path, error);
     }
 
 
@@ -145,13 +144,20 @@ namespace GLT::vfs {
     }
 
 
-    [[nodiscard]] std::string default_read_text_file(const std::filesystem::path& path) {
+    [[nodiscard]] std::string default_read_text_file(const std::filesystem::path& path, std::error_code& error) {
+
         std::ifstream file(path, std::ios::binary);
-        if (!file.is_open()) {
+        if (!file.is_open())
+        {
+            // Capture errno immediately – it may be reset by other calls.
+            error = std::error_code(errno, std::generic_category());
             return {};
         }
         std::ostringstream oss;
         oss << file.rdbuf();
+
+        // If we reach here, no error occurred – clear any previous error.
+        error.clear();
         return oss.str();
     }
 
@@ -167,8 +173,6 @@ namespace GLT::vfs {
 
 
     [[nodiscard]] file_handle default_open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept {
-
-        error.clear();
 
         const char* mode_str = mode_string_from_flags(mode);                // Obtain the correct fopen mode string
         if (!mode_str)
@@ -315,67 +319,78 @@ namespace GLT::vfs {
 
     bool exists(const std::filesystem::path& path, std::error_code& error) {
 
+        error.clear();
         return g_vfs.exists(path, error);
     }
 
 
     void create_file(const std::filesystem::path& path, std::error_code& error) {
 
+        error.clear();
         g_vfs.create_file(path, error);
     }
 
 
     bool is_directory(const std::filesystem::path& path, std::error_code& error) {
 
+        error.clear();
         return g_vfs.is_directory(path, error);
     }
 
 
     bool is_regular_file(const std::filesystem::path& path, std::error_code& error) {
 
+        error.clear();
         return g_vfs.is_regular_file(path, error);
     }
 
 
     void create_directory(const std::filesystem::path& path, std::error_code& error) {
 
+        error.clear();
         g_vfs.create_directory(path, error);
     }
 
         
     void create_directories(const std::filesystem::path& path, std::error_code& error) {
 
+        error.clear();
         g_vfs.create_directories(path, error);
     }
 
 
     void remove(const std::filesystem::path& path, std::error_code& error) {
 
+        error.clear();
         g_vfs.remove(path, error);
     }
 
 
     void rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error) {
 
+        error.clear();
         g_vfs.rename(old_path, new_path, error);
     }
 
 
     void copy_file(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& error, bool overwrite) {
 
+        error.clear();
         g_vfs.copy_file(from, to, error, overwrite);
     }
 
 
     u64 file_size(const std::filesystem::path& path, std::error_code& error) {
 
+        error.clear();
         return g_vfs.file_size(path, error);
     }
 
 
-    std::string read_text_file(const std::filesystem::path& path) {
+    [[nodiscard]] std::string read_text_file(const std::filesystem::path& path, std::error_code& error) {
 
-        return g_vfs.read_text_file(path);
+        error.clear();
+        return g_vfs.read_text_file(path, error);
     }
 
 
@@ -387,6 +402,7 @@ namespace GLT::vfs {
 
     [[nodiscard]] file_handle open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept {
 
+        error.clear();
         return g_vfs.open_file(path, mode, error);
     }
 

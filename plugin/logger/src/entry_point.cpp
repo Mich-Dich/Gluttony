@@ -86,3 +86,12 @@ namespace GLT::logger_plugin {
 }
 
 EXPORT_PLUGIN_CLASS(GLT::logger_plugin::plugin, GLT::logger_plugin::descriptor)
+
+
+extern "C" { 
+    const GLT::plugin_manager::plugin_descriptor* gluttony_plugin_descriptor() { return &GLT::logger_plugin::descriptor; }
+    
+    GLT::plugin_manager::i_plugin* create_plugin() { return new GLT::logger_plugin::plugin(); } 
+    
+    void destroy_plugin(GLT::plugin_manager::i_plugin* p) { delete p; } 
+}

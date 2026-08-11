@@ -27,7 +27,7 @@ namespace GLT::plugin_manager {
         }
 
     // TYPES ===========================================================================================================
-    
+
     // Defines the exact moment in the engine's lifecycle when a plugin should be loaded.
     // Plugins declare their required phase via their descriptor; the plugin manager
     // loads all plugins belonging to the current phase in dependency order.
@@ -161,13 +161,14 @@ namespace GLT::plugin_manager {
     // and dependencies (by name or by interface). Dependencies are resolved automatically
     // during the load phase.
     struct plugin_descriptor {
+
         const char*                     name{};                     // Human‑readable plugin name, must be unique.
         load_phase                      phase{};                    // When this plugin should be loaded.
-        interface              target{};                   // Which core interface this plugin implements.
+        interface                       target{};                   // Which core interface this plugin implements.
         int                             dependency_names_count{};   // Number of plugins this plugin depends on (by name).
         const char* const*              dependency_names{};         // Array of plugin names this plugin requires.
         int                             dependency_interface_count{}; // Number of interface dependencies.
-        const interface*       dependency_interfaces{};    // Array of interfaces this plugin depends on.
+        const interface*                dependency_interfaces{};    // Array of interfaces this plugin depends on.
     };
 
     // STATIC VARIABLES ================================================================================================

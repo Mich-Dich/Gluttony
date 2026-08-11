@@ -46,12 +46,12 @@ namespace GLT::logger_plugin {
 
     #define SETW(width)                                         std::setw(width) << std::setfill('0')
 
-    #define CMD_UPDATE_FORMAT                                   0       // "LOGGER update format"
-    #define CMD_REVERSE_FORMAT                                  1       // "LOGGER reverse format"
-    #define CMD_CHANGE_THRESHOLD                                2       // "LOGGER change threshold"
-    #define CMD_CHANGE_BUFFER_SIZE                              3       // "LOGGER change buffer size"
-    #define CMD_REGISTER_THREAD_LABEL                           4       // "LOGGER register thread label"
-    #define CMD_UNREGISTER_THREAD_LABEL                         5       // "LOGGER unregister thread label"
+    #define CMD_UPDATE_FORMAT                                   1       // "LOGGER update format"
+    #define CMD_REVERSE_FORMAT                                  2       // "LOGGER reverse format"
+    #define CMD_CHANGE_THRESHOLD                                3       // "LOGGER change threshold"
+    #define CMD_CHANGE_BUFFER_SIZE                              4       // "LOGGER change buffer size"
+    #define CMD_REGISTER_THREAD_LABEL                           5       // "LOGGER register thread label"
+    #define CMD_UNREGISTER_THREAD_LABEL                         6       // "LOGGER unregister thread label"
 
     #if defined(DEBUG)
         #define QUEUE_MAX_SIZE                                  0       // TODO: flush messages directly in debug (set to 0)

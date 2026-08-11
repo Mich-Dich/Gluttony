@@ -57,7 +57,7 @@ namespace GLT::vfs {
     using rename_func = void (*)(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error);
     using copy_file_func = void (*)(const std::filesystem::path& from, const std::filesystem::path& to, std::error_code& error, bool overwrite);
     using file_size_func = u64 (*)(const std::filesystem::path& path, std::error_code& error);
-    using read_text_file_func = std::string (*)(const std::filesystem::path& path);
+    using read_text_file_func = std::string (*)(const std::filesystem::path& path, std::error_code& error);
     using write_text_file_func = bool (*)(const std::filesystem::path& path, const std::string& content);
     using open_file_func = file_handle (*)(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept;
     using read_file_func = size_t (*)(file_handle handle, void* buffer, size_t size, size_t offset);
@@ -145,7 +145,7 @@ namespace GLT::vfs {
 
 
     // Reads the entire content of a text file as a string. Returns empty string on failure.
-    [[nodiscard]] std::string read_text_file(const std::filesystem::path& path);
+    [[nodiscard]] std::string read_text_file(const std::filesystem::path& path, std::error_code& error);
 
 
     // Writes a string to a text file (overwrites). Returns true on success.

@@ -36,7 +36,7 @@ namespace GLT::serializer {
         // @param section_name  Name of the top‑level section to read/write.
         // @param option        Load or save mode.
         // @param success       Optional pointer to a bool that receives success status.
-        yaml(const std::filesystem::path filename, const std::string& section_name, option option, bool* success = nullptr);
+        yaml(const std::filesystem::path& filename, const std::string& section_name, const option option, bool* success = nullptr);
     
 
         // @brief Constructs a YAML serializer for an in‑memory string buffer.
@@ -44,7 +44,7 @@ namespace GLT::serializer {
         // @param section_name   Name of the top‑level section to read/write.
         // @param option         Load or save mode.
         // @param success        Optional pointer to a bool that receives success status.
-		yaml(std::string* content_buffer, const std::string& section_name, option option, bool* success = nullptr);
+		yaml(std::string* content_buffer, const std::string& section_name, const option option, bool* success = nullptr);
     
 		~yaml();
 
@@ -52,51 +52,106 @@ namespace GLT::serializer {
         DEFAULT_GETTER(option, 							option);
 
 
-        // @brief Enters a subsection (nested YAML mapping) and executes a user function inside it.
-        // @param section_name           Name of the subsection.
-        // @param sub_section_function   Function that receives a reference to this YAML object.
-        // @return Reference to this YAML object for chaining.
+        // @brief Opens or searches for a named subsection within the YAML
+        //        structure.
+        //
+        // When **saving**, the subsection name is emitted at the current
+        // indentation level, indentation is increased, the provided function
+        // is called (allowing nested entries), and then indentation is
+        // restored.
+        //
+        // When **loading**, the file/buffer content is searched for a section
+        // with the given name and correct indentation. If found, its key‑value
+        // pairs are made available to the provided callback. Sub‑sections
+        // inside the searched section are forwarded as text so they can be
+        // parsed recursively.
+        //
+        // @param section_name          The name of the subsection (without colon).
+        // @param sub_section_function  Callback that receives a reference to this
+        //                              yaml object for adding/reading entries.
+        // @return A reference to `*this` for chaining.
         yaml& sub_section(const std::string& section_name, std::function<void(serializer::yaml&)> sub_section_function);
 
 
-		// @brief Serializes or deserializes a single variable (or a vector) to/from YAML.
-		//        For vectors, writes a sequence of "- value" lines or reads them back.
-		// @tparam T Type of the variable (must support util::to_string / util::from_string).
-		// @param key_name The key under which the value is stored in YAML.
-		// @param value    Reference to the variable to read/write.
-		// @return Reference to this YAML object for chaining.
+        // @brief Serializes or deserializes a single value as a YAML key‑value
+        //        pair.
+        //
+        // When **saving**:
+        // - If `T` is a `std::vector`, a scalar sequence is written (each element
+        //   on a new line prefixed with `- `).
+        // - Otherwise, the value is converted to a string via
+        //   `util::convertToString<T>()` and written as `keyName: value`.
+        //
+        // When **loading**:
+        // - For `std::vector`: the sequence matching `keyName` is parsed and each
+        //   element is converted back via `util::convertFromString`.
+        // - Otherwise, the value is looked up in the current section’s key‑value
+        //   map and converted back.
+        //
+        // @tparam T        Type of the value. Must be supported by
+        //                  `util::convertToString` / `util::convertFromString`.
+        // @param key_name  The YAML key under which the value is stored.
+        // @param value     The value to write (save) or to receive (load).
+        // @return A reference to `*this` for chaining.
         template <typename T>
         yaml& entry(const std::string& key_name, T& value);
 
 
-		// @brief Serializes or deserializes a std::vector as a YAML sequence.
-		//        Each element is handled by the user‑provided function, which can
-		//        contain further serialization logic (e.g., subsections, entries).
-		// @tparam T Element type of the vector.
-		// @param vector_name     Name of the sequence in YAML.
-		// @param vector          The vector to read/write.
-		// @param vector_function Function called for each element. Receives a yaml reference
-		//                        and the current iteration index.
-		// @return Reference to this YAML object for chaining.
+        // @brief Serializes or deserializes a vector with a custom callback for
+        //        each element.
+        //
+        // Allows complex element types that cannot be captured by a simple
+        // key‑value pair (e.g., nested structures). The callback receives a
+        // `yaml&` reference that can be used to add/read multiple key‑value
+        // pairs per element.
+        //
+        // When **saving**, the vector name is written as a section, each element
+        // is preceded by `- `, and the indentation is adjusted so that the
+        // callback’s output appears inside the element.
+        //
+        // When **loading**, the vector section is located, each `- ` entry
+        // defines a new element. The callback is called once per element with a
+        // fresh set of key‑value pairs.
+        //
+        // @tparam T                Vector element type.
+        // @param vector_name       The YAML key under which the vector is stored.
+        // @param vector            The vector to write (save) or to receive (load).
+        // @param vector_function   Callback invoked for each element. Signature:
+        //                          `void(serializer::yaml&, u64 iteration)`.
+        // @return A reference to   `*this` for chaining.
         template <typename T>
         yaml& vector(const std::string& vector_name, std::vector<T>& vector, std::function<void(serializer::yaml&, const u64 iteration)> vector_function);
 
 
-		// @brief Serializes or deserializes an unordered_map as a YAML mapping.
-		// @tparam T Key type (must be convertible to/from string).
-		// @tparam K Value type (must be convertible to/from string).
-		// @param map_name Name of the mapping in YAML.
-		// @param map      The unordered_map to read/write.
-		// @return Reference to this YAML object for chaining.
+        // @brief Serializes or deserializes an `std::unordered_map<T, K>`.
+        //
+        // The map is stored as a YAML mapping: each key‑value pair becomes a
+        // line `key: value` indented one level deeper than the map name.
+        // `util::toString` / `util::convertFromString` are used for the key and
+        // value types.
+        //
+        // @tparam T        Key type.
+        // @tparam K        Mapped value type.
+        // @param map_name  The YAML key for the map section.
+        // @param map       The map to write (save) or to receive (load).
+        // @return A reference to `*this` for chaining.
         template <typename T, typename K>
         yaml& unordered_map(const std::string& map_name, std::unordered_map<T, K>& map);
 
 
-		// @brief Serializes or deserializes an unordered_set as a YAML sequence.
-		// @tparam T Element type (must be convertible to/from string).
-		// @param set_name Name of the sequence in YAML.
-		// @param set      The unordered_set to read/write.
-		// @return Reference to this YAML object for chaining.
+        template<typename Key, typename Item>
+		yaml& unordered_map(const std::string& map_name, std::unordered_map<Key, Item>& map, std::function<void(serializer::yaml&, Item& mapItem)> map_function);
+
+
+        // @brief Serializes or deserializes an `std::unordered_set<T>`.
+        //
+        // The set is stored as a YAML sequence. Each element appears on a
+        // new line starting with `- `.
+        //
+        // @tparam T        Element type.
+        // @param set_name  The YAML key for the set sequence.
+        // @param set       The set to write (save) or to receive (load).
+        // @return A reference to `*this` for chaining.
         template <typename T>
         yaml& unordered_set(const std::string& set_name, std::unordered_set<T>& set);
 
@@ -129,23 +184,29 @@ namespace GLT::serializer {
         void extract_key_value(std::string& key, std::string& value, std::string& line);
 
 
-        bool         									m_initalized = false;       // True after successful construction.
-        u32          									m_level_of_indention = 0;   // Current indentation depth.
-        u64          									vector_func_index = 0;      // Nesting level for vector() calls.
-        std::string  									m_prefix{};                 // Prefix added before keys (e.g., "- " for array elements).
-        std::string  									m_prefix_fallback{};        // Saved prefix to restore after a custom vector element.
+        bool clean_line(std::string& line);
+
+
+        bool         									m_initalized = false;       // True after successful construction
+        u32          									m_level_of_indention = 0;   // Current indentation depth
+        u64          									vector_func_index = 0;      // Nesting level for vector() calls
+        std::string  									m_prefix{};                 // Prefix added before keys (e.g., "- " for array elements)
+        std::string  									m_prefix_fallback{};        // Saved prefix to restore after a custom vector element
 
         // ---- File / buffer data -----------------------------------------------
-        std::filesystem::path 							m_file_path{};        		// File path when target is file.
-        std::string*          							m_content_buffer = nullptr; // External string buffer when target is string.
-        target                							m_target = target::file;    // Active target medium.
+        std::filesystem::path                           m_file_path{};                // Associated file path (file mode)
+        std::ofstream                                   m_ostream{};                 // Output stream (unused; kept for symmetry)
+        std::ifstream                                   m_istream{};                 // Input stream (file mode)
+        std::string*                                    m_content_buffer = nullptr;   // Pointer to external string buffer (string mode)
+        target                                          m_target = target::file;     // Active target medium
 
         // ---- Content data ----------------------------------------------------
-        std::string                                     m_name{};            		// Name of the top‑level section.
-        option                                          m_option;            		// Load or save mode.
-        std::stringstream                               m_file_content{};    		// Accumulated YAML content.
-        std::unordered_map<std::string, std::string>    m_key_value_pares{}; 		// Key‑value pairs of the current section.
-        bool                                            m_success = true;    		// False if a required section was not found.
+        bool                                            m_is_correct_struct = false;   // (Reserved for future use)
+        std::string                                     m_name{};                    // Name of the top‑level section
+        option                                          m_option;                    // Current I/O mode
+        std::stringstream                               m_file_content{};             // Accumulated YAML content (text)
+        std::unordered_map<std::string, std::string>    m_key_value_pares{};           // Current section's key‑value pairs
+        bool                                            m_success = true;            // Set to `false` if a section was not found
     };
 	
 }
