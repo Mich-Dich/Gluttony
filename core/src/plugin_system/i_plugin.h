@@ -31,7 +31,7 @@ namespace GLT::plugin_manager {
     // Defines the exact moment in the engine's lifecycle when a plugin should be loaded.
     // Plugins declare their required phase via their descriptor; the plugin manager
     // loads all plugins belonging to the current phase in dependency order.
-    enum class load_phase : u16 {
+    enum class phase : u16 {
 
         // ----- ENTRY POINT / EARLY GLOBAL SETUP ----------------------------------------------------------------------
 
@@ -156,19 +156,21 @@ namespace GLT::plugin_manager {
         custom,                     // needs to be last!
     };
 
+
     // Descriptor that every plugin must export via `gluttony_plugin_descriptor()`.
     // It provides the plugin manager with metadata: name, load phase, interface target,
     // and dependencies (by name or by interface). Dependencies are resolved automatically
     // during the load phase.
     struct plugin_descriptor {
 
-        const char*                     name{};                     // Human‑readable plugin name, must be unique.
-        load_phase                      phase{};                    // When this plugin should be loaded.
-        interface                       target{};                   // Which core interface this plugin implements.
-        int                             dependency_names_count{};   // Number of plugins this plugin depends on (by name).
-        const char* const*              dependency_names{};         // Array of plugin names this plugin requires.
-        int                             dependency_interface_count{}; // Number of interface dependencies.
-        const interface*                dependency_interfaces{};    // Array of interfaces this plugin depends on.
+        const char*                     name{};                         // Human‑readable plugin name, must be unique.
+        phase                           load_phase{};                   // When this plugin should be loaded.
+        phase                           unload_phase{};                 // When this plugin should be loaded.
+        interface                       target{};                       // Which core interface this plugin implements.
+        int                             dependency_names_count{};       // Number of plugins this plugin depends on (by name).
+        const char* const*              dependency_names{};             // Array of plugin names this plugin requires.
+        int                             dependency_interface_count{};   // Number of interface dependencies.
+        const interface*                dependency_interfaces{};        // Array of interfaces this plugin depends on.
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -178,7 +180,6 @@ namespace GLT::plugin_manager {
     // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================
-
     
     // Base interface for all plugins. Every plugin implements on_load() and on_unload(),
     // which are called at the appropriate moments. The plugin manager manages the lifecycle.

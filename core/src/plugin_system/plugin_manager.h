@@ -1,6 +1,6 @@
 #pragma once
 
-#include "plugin_interface.h"
+#include "i_plugin.h"
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -30,7 +30,10 @@ namespace GLT::plugin_manager {
     // dependencies are not yet satisfied will be deferred until later in the same
     // load phase. Calls on_load() on each successfully loaded plugin.
     // This function may be called multiple times with different phases.
-    void load_plugins(load_phase currentPhase);
+    void load_plugins(phase currentPhase);
+
+
+    void unload_plugins(const phase current_phase);
 
 
     // Gracefully unloads all loaded plugins in reverse dependency order.

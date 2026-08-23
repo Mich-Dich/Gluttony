@@ -5,7 +5,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT:::vfs {
+namespace GLT::vfs {
 
     // CONSTANTS =======================================================================================================
 
@@ -48,8 +48,8 @@ namespace GLT:::vfs {
     // CLASS IMPLEMENTATION ============================================================================================
 
     directory_iterator::directory_iterator(const std::filesystem::path& p, std::error_code& error) noexcept
-        : m_it(p, error)
-    {
+        : m_it(p, error) {
+
         if (!error && m_it != std::filesystem::end(m_it))
             m_current = directory_entry(m_it->path());
         else
@@ -92,7 +92,7 @@ namespace GLT:::vfs {
     directory_iterator directory_iterator::end() const noexcept                             { return directory_iterator(); }
 
 
-    directory_iterator& directory_iterator::increment(std::error_code& error) noexcept{
+    directory_iterator& directory_iterator::increment(std::error_code& error) noexcept {
 
         if (m_it == std::filesystem::end(m_it)) {
 

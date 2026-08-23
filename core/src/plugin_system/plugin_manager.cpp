@@ -62,24 +62,26 @@ namespace GLT::plugin_manager {
 
     // Internal handle for a loaded plugin.
     struct plugin_handle {
-        std::string                                         name;
-        std::filesystem::path                               path;
+        std::string                                         name{};
+        std::filesystem::path                               path{};
         void*                                               module_handle = nullptr;
         std::shared_ptr<i_plugin>                           instance;   // uses custom deleter
-        load_phase                                          phase;
-        std::vector<std::string>                            dependencies_names;
-        std::vector<interface>                              dependencies_interfaces;
+        phase                                               load_phase{};
+        phase                                               unload_phase{};
+        std::vector<std::string>                            dependencies_names{};
+        std::vector<interface>                              dependencies_interfaces{};
     };
 
 
     // TODO: add descriptive comment
     struct discovered_info {
-        std::filesystem::path                               path;
-        std::string                                         name;
-        load_phase                                          phase;
+        std::filesystem::path                               path{};
+        std::string                                         name{};
+        phase                                               load_phase{};
+        phase                                               unload_phase{};
         interface                                           target{};               // is a [u16]
-        std::vector<std::string>                            dependencies_names;
-        std::vector<interface>                              dependencies_interfaces;
+        std::vector<std::string>                            dependencies_names{};
+        std::vector<interface>                              dependencies_interfaces{};
     };
 
 
@@ -229,7 +231,8 @@ namespace GLT::plugin_manager {
             .path                       = info.path,
             .module_handle              = handle,
             .instance                   = instance,
-            .phase                      = info.phase,
+            .load_phase                 = info.load_phase,
+            .unload_phase               = info.unload_phase,
             .dependencies_names         = info.dependencies_names,
             .dependencies_interfaces    = info.dependencies_interfaces,
         });
@@ -324,10 +327,11 @@ namespace GLT::plugin_manager {
         // discover plugins
         s_discovered.clear();    
         GLT::vfs::recursive_directory_iterator iterator(plugin_dir, GLT::vfs::directory_options::skip_permission_denied, error);
-        VALIDATE(!error, continue, "", "Fail to create recursive_directory_iterator for [{}]", plugin_dir.generic_string())
+        VALIDATE(!error, return, "", "Fail to create recursive_directory_iterator for [{}]", plugin_dir.generic_string())
         for (const auto& entry : iterator) {
 
-            if (!entry.is_regular_file())
+            const bool regular_file = entry.is_regular_file(error);
+            if (!regular_file || error)
                 continue;
 
             const auto& path = entry.path();
@@ -365,10 +369,11 @@ namespace GLT::plugin_manager {
 
             // Plugin passes the filter
             discovered_info info {
-                .path   = path,
-                .name   = plugin_name,
-                .phase  = desc->phase,
-                .target = iface,
+                .path           = path,
+                .name           = plugin_name,
+                .load_phase     = desc->load_phase,
+                .unload_phase   = desc->unload_phase,
+                .target         = iface,
             };
 
             // Name dependencies
@@ -393,7 +398,7 @@ namespace GLT::plugin_manager {
     }
 
 
-    void load_plugins(const load_phase current_phase) {
+    void load_plugins(const phase current_phase) {
 
         if (s_shutdown)
             return;
@@ -402,7 +407,7 @@ namespace GLT::plugin_manager {
         std::vector<discovered_info> pending;
         for (const auto& plugin : s_discovered) {
 
-            if (plugin.phase != current_phase)
+            if (plugin.load_phase != current_phase)
                 continue;
                 
             // Check if already loaded (shouldn't be, but safe).
@@ -455,6 +460,33 @@ namespace GLT::plugin_manager {
                 LOG(error, "Plugin [{}] could not be loaded: unsatisfied dependencies or load error", p.name);
 
         GLT::logger::flush_buffer();
+    }
+
+
+    void unload_plugins(const phase current_phase) {
+
+        // Iterate from the end of the vector to the beginning.
+        // This ensures plugins that were loaded later (i.e., dependents)
+        // are unloaded before the plugins they depend on.
+        for (size_t i = s_loaded_plugins.size(); i > 0; --i) {
+            
+            auto& handle = s_loaded_plugins[i - 1];
+            if (handle.unload_phase != current_phase)                       // Skip plugins that do not belong to the requested unload phase.
+                continue;
+
+            if (handle.instance) {                                          // Call the plugin's unload hook if it exists.
+                handle.instance->on_unload();
+                handle.instance.reset();                                    // Release
+
+            } else if (handle.module_handle) {
+
+                free_library(handle.module_handle);                         // Fallback: instance missing but library still loaded
+            }
+
+            s_loaded_plugins.erase(s_loaded_plugins.begin() + (i - 1));     // Remove the plugin handle from the loaded list.
+        }
+
+        GLT::logger::flush_buffer();                                        // Flush any log messages produced during unloading.
     }
 
 

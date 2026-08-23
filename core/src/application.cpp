@@ -40,12 +40,14 @@ namespace GLT {
         config::serialize_window_attributes(attributes, serializer::option::load);
         imgui_config::init();
 
-        plugin_manager::load_plugins(plugin_manager::load_phase::pre_application);
+        plugin_manager::load_plugins(plugin_manager::phase::pre_application);
+        plugin_manager::unload_plugins(plugin_manager::phase::pre_application);
         mp_window = plugin_manager::get_plugin_ref<platform::i_window_plugin>(plugin_manager::interface::window);
         ASSERT(mp_window, "", "Failed to load window plugin")
         mp_window->create(attributes);
 
-        plugin_manager::load_plugins(plugin_manager::load_phase::post_window);
+        plugin_manager::load_plugins(plugin_manager::phase::post_window);
+        plugin_manager::unload_plugins(plugin_manager::phase::post_window);
         mp_renderer = plugin_manager::get_plugin_ref<render::i_renderer_plugin>(plugin_manager::interface::renderer);
         ASSERT(mp_renderer, "", "Failed to load render plugin")
         mp_renderer->create();
@@ -57,7 +59,8 @@ namespace GLT {
         mp_game_loop_base = plugin_manager::get_plugin_ref<i_game_loop_base>(plugin_manager::interface::game_loop);
 
         LOG_INIT
-        plugin_manager::load_plugins(plugin_manager::load_phase::application_ready);
+        plugin_manager::load_plugins(plugin_manager::phase::application_ready);
+        plugin_manager::unload_plugins(plugin_manager::phase::application_ready);
     }
 
 
@@ -65,7 +68,8 @@ namespace GLT {
 
         event_bus::unsubscribe(m_close_event_sub_handle);
 
-        plugin_manager::load_plugins(plugin_manager::load_phase::pre_application_shutdown);
+        plugin_manager::load_plugins(plugin_manager::phase::pre_application_shutdown);
+        plugin_manager::unload_plugins(plugin_manager::phase::pre_application_shutdown);
 
         mp_renderer->destroy();
 
@@ -75,7 +79,8 @@ namespace GLT {
         mp_window.reset();
         
         imgui_config::shutdown();
-        plugin_manager::load_plugins(plugin_manager::load_phase::post_application_shutdown);
+        plugin_manager::load_plugins(plugin_manager::phase::post_application_shutdown);
+        plugin_manager::unload_plugins(plugin_manager::phase::post_application_shutdown);
         s_instance = nullptr;
         LOG_SHUTDOWN
     }
@@ -84,26 +89,28 @@ namespace GLT {
 
     void application::run() {
 
-        plugin_manager::load_plugins(plugin_manager::load_phase::pre_application_run);
+        plugin_manager::load_plugins(plugin_manager::phase::pre_application_run);
+        plugin_manager::unload_plugins(plugin_manager::phase::pre_application_run);
         mp_window->show(true);              // show window now
 
         while (m_running) {
 
             mp_window->poll_events();       // update internal state
 
-            for (auto layer = m_layer_stack.begin(); layer != m_layer_stack.end(); )
+            for (auto layer = m_layer_stack.end(); layer != m_layer_stack.begin(); )
                 (*--layer)->update(m_delta_time);
 
             GLT::event_bus::post<update_event>(m_delta_time);       // all systems can subscribe to this (eg: plugins)
             
             mp_renderer->begin_frame();     // start frame + start imgui frame
-            for (auto layer = m_layer_stack.end(); layer != m_layer_stack.begin(); )
-                (*--layer)->render_imgui(m_delta_time);
+            for (auto layer = m_layer_stack.begin(); layer != m_layer_stack.end(); )
+                (*layer++)->render_imgui(m_delta_time);
             mp_renderer->draw_frame();      // finish imgui stuff and render world
 
             m_delta_time = m_fps_controller.limit();
         }
-        plugin_manager::load_plugins(plugin_manager::load_phase::post_application_run);
+        plugin_manager::load_plugins(plugin_manager::phase::post_application_run);
+        plugin_manager::unload_plugins(plugin_manager::phase::post_application_run);
     }
 
 

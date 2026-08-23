@@ -21,10 +21,12 @@ set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES"  "${PLUGIN_SO
 compile_plugin(SHARED                                               ${PLUGIN_NAME}          glm imgui)
 compile_plugin(STATIC                                               ${PLUGIN_NAME}_static   glm imgui)
 
-# set(VENDOR_DIR                                                      "${CMAKE_SOURCE_DIR}/vendor")
-# set(IMGUI_DIR                                                       "${VENDOR_DIR}/imgui")
-# target_include_directories(${PLUGIN_NAME}                           PRIVATE "${IMGUI_DIR}")
-# target_include_directories(${PLUGIN_NAME}_static                    PRIVATE "${IMGUI_DIR}")
+
+set(VENDOR_DIR                                                      "${CMAKE_SOURCE_DIR}/vendor")
+set(IMGUI_DIR                                                       "${VENDOR_DIR}/imgui")
+target_include_directories(${PLUGIN_NAME}                           PRIVATE "${IMGUI_DIR}")
+target_include_directories(${PLUGIN_NAME}_static                    PRIVATE "${IMGUI_DIR}")
+
 
 
 print_source_file_details(

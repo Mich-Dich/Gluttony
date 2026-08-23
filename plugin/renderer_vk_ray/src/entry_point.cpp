@@ -50,24 +50,26 @@ namespace GLT::renderer_vk_ray {
 
     // STATIC VARIABLES ================================================================================================
 
-    static const char*                                  dependencies_names[] = {
+    static constexpr const char*                                dependencies_names[] = {
 
         nullptr
     };
 
-    static GLT::plugin_manager::interface               dependencies_interfaces[] = {
+    static constexpr GLT::plugin_manager::interface             dependencies_interfaces[] = {
         
         GLT::plugin_manager::interface::window,
     };
 
-    static GLT::plugin_manager::plugin_descriptor       descriptor = {
-        .name                                           = GLT_MODULE_NAME,
-        .phase                                          = GLT::plugin_manager::load_phase::post_window,
-        .target                                         = GLT::plugin_manager::interface::renderer,
-        .dependency_names_count                         = ARRAY_SIZE(dependencies_names),
-        .dependency_names                               = dependencies_names,
-        .dependency_interface_count                     = ARRAY_SIZE(dependencies_interfaces),
-        .dependency_interfaces                          = dependencies_interfaces,
+    static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
+
+        .name                                                   = GLT_MODULE_NAME,
+        .load_phase                                             = GLT::plugin_manager::phase::post_window,
+        .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
+        .target                                                 = GLT::plugin_manager::interface::renderer,
+        .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
+        .dependency_names                                       = dependencies_names,
+        .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
+        .dependency_interfaces                                  = dependencies_interfaces,
     };
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -126,6 +128,8 @@ namespace GLT::renderer_vk_ray {
         IGNORE_UNUSED_VARIABLE_STOP
         IGNORE_UNUSED_PARAMETER_STOP
 
+        void set_render_size(const glm::ivec2& size) override { m_render_size = size; }
+
         // --- feature queries -----------------------------------------------------------------------------------------
 
         [[nodiscard]] GLT::render::renderer_feature get_supported_features() const override { return m_features; }
@@ -134,6 +138,9 @@ namespace GLT::renderer_vk_ray {
         [[nodiscard]] GLT::render::backend_api get_backend_api() const override { return GLT::render::backend_api::vulkan; }
 
         // --- native access -------------------------------------------------------------------------------------------
+
+        [[nodiscard]] ImTextureID get_rendered_image() override { return create_imgui_texture(m_output_image); }
+
 
         [[nodiscard]] void* get_native_device_handle() const override { return {}; }
 
@@ -168,6 +175,8 @@ namespace GLT::renderer_vk_ray {
         // Clear the output image to a background colour (e.g., dark blue)
         void clear_output_image(vk::CommandBuffer cmd, const glm::vec4& color);
     
+        ImTextureID create_imgui_texture(vr::accessible_image& img);
+
         // --- IMGUI ---------------------------------------------------------------------------------------------------
 
         void imgui_init();
@@ -205,7 +214,6 @@ namespace GLT::renderer_vk_ray {
         vr::swapchain_builder                                   m_swapchain_builder;
         vr::swapchain_resources                                 m_swapchain;
         vk::SwapchainKHR                                        m_old_swapchain = nullptr;
-
         
         vk::CommandPool                                         m_graphics_pool;
         u32                                                     m_image_count = 0;

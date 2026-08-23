@@ -23,24 +23,26 @@ namespace GLT::glfw_window {
 
     // STATIC VARIABLES ================================================================================================
 
-    static const char* dependencies_names[] = {
+    static constexpr const char*                                dependencies_names[] = {
 
         nullptr
     };
     
-    static GLT::plugin_manager::interface dependencies_interfaces[] = {
+    static constexpr GLT::plugin_manager::interface             dependencies_interfaces[] = {
         
         GLT::plugin_manager::interface::none,
     };
 
-    static GLT::plugin_manager::plugin_descriptor descriptor = {
-        .name                               = GLT_MODULE_NAME,
-        .phase                              = GLT::plugin_manager::load_phase::pre_application,
-        .target                             = GLT::plugin_manager::interface::window,
-        .dependency_names_count             = ARRAY_SIZE(dependencies_names),
-        .dependency_names                   = dependencies_names,
-        .dependency_interface_count         = ARRAY_SIZE(dependencies_interfaces),
-        .dependency_interfaces              = dependencies_interfaces,
+    static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
+
+        .name                                                   = GLT_MODULE_NAME,
+        .load_phase                                             = GLT::plugin_manager::phase::pre_application,
+        .unload_phase                                           = GLT::plugin_manager::phase::post_setup,
+        .target                                                 = GLT::plugin_manager::interface::window,
+        .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
+        .dependency_names                                       = dependencies_names,
+        .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
+        .dependency_interfaces                                  = dependencies_interfaces,
     };
 
     // FUNCTION IMPLEMENTATION =========================================================================================

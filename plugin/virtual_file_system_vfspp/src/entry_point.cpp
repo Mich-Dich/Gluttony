@@ -1,5 +1,5 @@
 
-#include <plugin_system/plugin_interface.h>
+#include <plugin_system/i_plugin.h>
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -14,24 +14,26 @@ namespace GLT::vfs_plugin {
 
     // STATIC VARIABLES ================================================================================================
 
-    static const char*                              needed_plugins_names[] = { 
+    static constexpr const char*                                needed_plugins_names[] = { 
         
         nullptr
     };
 
-    static plugin_manager::interface       needed_plugins_interfaces[] = {
+    static constexpr plugin_manager::interface                  needed_plugins_interfaces[] = {
 
         plugin_manager::interface::none
     };
 
-    static plugin_manager::plugin_descriptor        descriptor = {
-        .name                                       = GLT_MODULE_NAME,
-        .phase                                      = plugin_manager::load_phase::earliest_possible,
-        .target                                     = plugin_manager::interface::virtual_file_system,
-        .dependency_names_count                     = ARRAY_SIZE(needed_plugins_names),
-        .dependency_names                           = needed_plugins_names,
-        .dependency_interface_count                 = ARRAY_SIZE(needed_plugins_interfaces),
-        .dependency_interfaces                      = needed_plugins_interfaces,
+    static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
+
+        .name                                                   = GLT_MODULE_NAME,
+        .load_phase                                             = GLT::plugin_manager::phase::earliest_possible,
+        .unload_phase                                           = GLT::plugin_manager::phase::final_cleanup,
+        .target                                                 = plugin_manager::interface::virtual_file_system,
+        .dependency_names_count                                 = ARRAY_SIZE(needed_plugins_names),
+        .dependency_names                                       = needed_plugins_names,
+        .dependency_interface_count                             = ARRAY_SIZE(needed_plugins_interfaces),
+        .dependency_interfaces                                  = needed_plugins_interfaces,
     };
 
     // FUNCTION IMPLEMENTATION =========================================================================================

@@ -104,7 +104,7 @@ namespace GLT::input_action_mapper {
     }
 
 
-    void plugin::update(const GLT::update_event& event) {
+    void plugin::update(const GLT::update_event& /*event*/) {
 
         auto now = std::chrono::steady_clock::now();
 

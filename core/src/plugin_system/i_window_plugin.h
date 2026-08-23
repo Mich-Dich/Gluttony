@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include "plugin_interface.h"
+#include "i_plugin.h"
 #include "event/event.h"               // core event base class
 #include <glm/vec2.hpp>
 

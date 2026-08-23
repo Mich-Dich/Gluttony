@@ -1,7 +1,7 @@
 
 #include <iostream>
 #include <vector>
-#include <plugin_system/plugin_interface.h>
+#include <plugin_system/i_plugin.h>
 
 #include "logger.h"                 // plugin logger implementation
 #include "util/util.h"
@@ -34,24 +34,26 @@ namespace GLT::logger_plugin {
 
     // STATIC VARIABLES ================================================================================================
 
-    static constexpr const char*                            dependencies_names[] = {
+    static constexpr const char*                                dependencies_names[] = {
         
         nullptr
     };
 
-    static constexpr plugin_manager::interface     dependencies_interfaces[] = {
+    static constexpr plugin_manager::interface                  dependencies_interfaces[] = {
 
         plugin_manager::interface::virtual_file_system 
     };
 
-    static constexpr plugin_manager::plugin_descriptor      descriptor = {
-        .name                                               = GLT_MODULE_NAME,
-        .phase                                              = plugin_manager::load_phase::post_config_init,
-        .target                                             = plugin_manager::interface::logger,
-        .dependency_names_count                             = ARRAY_SIZE(dependencies_names),
-        .dependency_names                                   = dependencies_names,
-        .dependency_interface_count                         = ARRAY_SIZE(dependencies_interfaces),
-        .dependency_interfaces                              = dependencies_interfaces,
+    static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
+        
+        .name                                                   = GLT_MODULE_NAME,
+        .load_phase                                             = GLT::plugin_manager::phase::post_config_init,
+        .unload_phase                                           = GLT::plugin_manager::phase::final_cleanup,
+        .target                                                 = plugin_manager::interface::logger,
+        .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
+        .dependency_names                                       = dependencies_names,
+        .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
+        .dependency_interfaces                                  = dependencies_interfaces,
     };
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -86,12 +88,3 @@ namespace GLT::logger_plugin {
 }
 
 EXPORT_PLUGIN_CLASS(GLT::logger_plugin::plugin, GLT::logger_plugin::descriptor)
-
-
-extern "C" { 
-    const GLT::plugin_manager::plugin_descriptor* gluttony_plugin_descriptor() { return &GLT::logger_plugin::descriptor; }
-    
-    GLT::plugin_manager::i_plugin* create_plugin() { return new GLT::logger_plugin::plugin(); } 
-    
-    void destroy_plugin(GLT::plugin_manager::i_plugin* p) { delete p; } 
-}

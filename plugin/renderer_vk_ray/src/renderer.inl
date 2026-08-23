@@ -116,11 +116,11 @@ namespace GLT::renderer_vk_ray {
 
         try {
 
-            auto acquire_result = m_device.acquireNextImageKHR(m_swapchain.swapchain_handle, UINT64_MAX, 
-                m_present_semaphores[m_current_frame], nullptr);
+            auto acquire_result = m_device.acquireNextImageKHR(m_swapchain.swapchain_handle, UINT64_MAX, m_present_semaphores[m_current_frame], nullptr);
             m_current_swapchain_image = acquire_result.value;
 
         } catch (const vk::OutOfDateKHRError&) {
+
             resize_swapchain(m_target_framebuffer_size);
             m_state = system_state::idle;
             return;                                                         // skip the rest of begin_frame this frame
@@ -133,7 +133,6 @@ namespace GLT::renderer_vk_ray {
         begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
         current_cmd.begin(begin_info);
 
-
         // Update camera matrices
         {
             m_active_camera->set_aspect_ratio((f32)m_render_size.x / (f32)m_render_size.y);
@@ -145,7 +144,6 @@ namespace GLT::renderer_vk_ray {
             memcpy(data, mats, sizeof(mats));
             m_vr_dev->unmap_buffer(m_uniform_buffer);
         }
-
 
         // Bind descriptor buffer
         m_vr_dev->bind_descriptor_buffer({m_resource_desc_buffer}, current_cmd);
@@ -165,8 +163,10 @@ namespace GLT::renderer_vk_ray {
 
         // Blit from output image to swapchain image
         current_cmd.blitImage(
-            m_output_image_buffer.image, vk::ImageLayout::eTransferSrcOptimal,
-            m_swapchain.swapchain_images[m_current_swapchain_image], vk::ImageLayout::eTransferDstOptimal,
+            m_output_image_buffer.image, 
+            vk::ImageLayout::eTransferSrcOptimal,
+            m_swapchain.swapchain_images[m_current_swapchain_image], 
+            vk::ImageLayout::eTransferDstOptimal,
             vk::ImageBlit(vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
                 {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)},
                 vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
@@ -563,6 +563,41 @@ namespace GLT::renderer_vk_ray {
         );
     }
 
+
+    ImTextureID renderer::create_imgui_texture(vr::accessible_image& img) {
+
+        vk::ImageLayout layout = img.layout;                        // Ensure the image layout is correct for sampling
+        if (layout == vk::ImageLayout::eUndefined)
+            layout = vk::ImageLayout::eShaderReadOnlyOptimal;       // OR shader read only optimal
+
+        // If sampler is null, create a default sampler (see below)
+        vk::Sampler& sampler = img.sampler;
+        if (!sampler) {
+            
+            vk::SamplerCreateInfo sampler_info{};
+            sampler_info.magFilter = vk::Filter::eLinear;
+            sampler_info.minFilter = vk::Filter::eLinear;
+            sampler_info.mipmapMode = vk::SamplerMipmapMode::eLinear;
+            sampler_info.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+            sampler_info.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+            sampler_info.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+            sampler_info.anisotropyEnable = VK_FALSE;
+            sampler_info.maxAnisotropy = 1.0f;
+            sampler_info.borderColor = vk::BorderColor::eFloatOpaqueBlack;
+            sampler_info.unnormalizedCoordinates = VK_FALSE;
+            sampler_info.compareEnable = VK_FALSE;
+            sampler_info.compareOp = vk::CompareOp::eAlways;
+            sampler_info.mipLodBias = 0.0f;
+            sampler_info.minLod = 0.0f;
+            sampler_info.maxLod = 0.0f;
+            sampler = m_device.createSampler(sampler_info);
+        }
+
+        return reinterpret_cast<ImTextureID>(
+            ImGui_ImplVulkan_AddTexture(sampler, img.view, static_cast<VkImageLayout>(layout))
+        );
+    }
+
     // ----- SWAPCHAIN -------------------------------------------------------------------------------------------------
 
 	void renderer::create_swapchain(const glm::ivec2 size) {
@@ -790,10 +825,6 @@ namespace GLT::renderer_vk_ray {
         ImGui_ImplVulkan_NewFrame();                                                    // Start ImGui frame (no command buffer needed)
         mp_window->begin_imgui_frame();
         ImGui::NewFrame();
-
-        static bool show_demo = true;                                                   // Example UI
-        if (show_demo)
-            ImGui::ShowDemoWindow(&show_demo);
     }
 
 

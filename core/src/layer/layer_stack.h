@@ -78,6 +78,9 @@ namespace GLT {
         void pop_layer();
 
 
+        void pop_layer(const weak_ref<layer>& layer_ref);
+
+
         void pop_overlay();
 
 

@@ -23,21 +23,17 @@ namespace GLT {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    layer_stack::layer_stack() {
-
-    }
+    layer_stack::layer_stack() { }
 
 
-    layer_stack::~layer_stack() {
-
-        clear();
-    }
+    layer_stack::~layer_stack()                                         { clear(); }
 
     // CLASS PUBLIC ====================================================================================================
 
     void layer_stack::pop_layer() {
 
         if (m_layer_count > 0) {
+
             auto it = m_layers.begin() + (m_layer_count - 1);           // Get the last layer
             (*it)->on_detach();                                         // Call on_detach for the layer
             m_layers.erase(it);
@@ -46,9 +42,33 @@ namespace GLT {
     }
 
 
+    void layer_stack::pop_layer(const weak_ref<layer>& layer_ref) {
+
+        auto shared = layer_ref.lock();
+        if (!shared)
+            return;                                                     // layer is already gone
+
+        auto it = std::find_if(                                         // Search only the layer range, not overlays
+            m_layers.begin(),
+            layer_end(),
+            [&](const unique_ref<layer>& ptr) {
+                return ptr.get() == shared.get();
+            }
+        );
+
+        if (it == layer_end())
+            return;                                                     // not found
+
+        (*it)->on_detach();                                             // if you have a detach callback
+        m_layers.erase(it);
+        --m_layer_count;
+    }
+
+
     void layer_stack::pop_overlay() {
 
         if (m_overlay_count > 0) {
+
             auto it = m_layers.end() - 1;                               // Get the last overlay (end of vector)
             (*it)->on_detach();                                         // Call on_detach for the overlay
             m_layers.erase(it);
@@ -59,9 +79,8 @@ namespace GLT {
 
     void layer_stack::clear() {
 
-        for (auto& layer : m_layers) {                                  // Call on_detach for all layers and overlays
+        for (auto& layer : m_layers)                                    // Call on_detach for all layers and overlays
             layer->on_detach();
-        }
 
         m_layers.clear();
         m_layer_count = 0;
@@ -69,10 +88,7 @@ namespace GLT {
     }
 
 
-    bool layer_stack::is_empty() const {
-        
-        return m_layer_count == 0 && m_overlay_count == 0; 
-    }
+    bool layer_stack::is_empty() const                                  { return m_layer_count == 0 && m_overlay_count == 0; }
 
     // CLASS PROTECTED =================================================================================================
 

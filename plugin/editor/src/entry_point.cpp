@@ -1,17 +1,15 @@
 
-#include <event/event_bus.h>
-#include <event/input_event.h>
-#include <event/application_event.h>
-#include <util/util.h>
 #include <plugin_system/i_plugin.h>
 
-#include "input_action_mapper.h"
-#include "action_types.h"
+
 
 // FORWARD DECLARATIONS ================================================================================================
 
+namespace GLT::editor {
+    class editor_layer;
+}
 
-namespace GLT::input_action_mapper {
+namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
 
@@ -22,26 +20,36 @@ namespace GLT::input_action_mapper {
     // STATIC VARIABLES ================================================================================================
 
     static constexpr const char*                                dependencies_names[] = {
-        
+
         nullptr
     };
-
-    static constexpr plugin_manager::interface                  dependencies_interfaces[] = {
-
-        plugin_manager::interface::window 
+    
+    static constexpr GLT::plugin_manager::interface             dependencies_interfaces[] = {
+        
+        GLT::plugin_manager::interface::renderer,
     };
 
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
         .name                                                   = GLT_MODULE_NAME,
         .load_phase                                             = GLT::plugin_manager::phase::application_ready,
-        .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
-        .target                                                 = plugin_manager::interface::input_system,
+        .unload_phase                                           = GLT::plugin_manager::phase::pre_application_shutdown,
+        .target                                                 = GLT::plugin_manager::interface::editor_core,
         .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
         .dependency_names                                       = dependencies_names,
         .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
         .dependency_interfaces                                  = dependencies_interfaces,
     };
+
+    // INTERNAL TEMPLATE DECLARATION ===================================================================================
+
+    // INTERNAL FUNCTION DECLARATION ===================================================================================
+
+    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
+
+    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
+    // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
@@ -56,33 +64,25 @@ namespace GLT::input_action_mapper {
     class plugin : public GLT::plugin_manager::i_plugin {
     public:
 
+        plugin();
+        ~plugin();
+
+
         void on_load() override;
 
-        
+
         void on_unload() override;
 
-        // update internal state and all registered actions
-        // after calling this, the callback will be called
-        void update(const GLT::update_event& event) override;
+
+        void update(const GLT::update_event&) override;
 
     private:
 
-        void on_key_event(const GLT::key_event& event);
-
-
-        void on_mouse_event(const GLT::mouse_event& event);
-
-
-        handle                                          m_key_event_sub{};
-        handle                                          m_mouse_event_sub{};
-        handle                                          m_update_event_sub{};
-        std::unordered_map<GLT::key_code, key_info>     m_key_states{};         // buffer key states from event bus until next call of update();
-        mouse_state                                     m_mouse_state{};              // buffer mouse states from event bus until next call of update();
-
+        weak_ref<editor::editor_layer>          mp_editor_layer{};
     };
 
 }
 
-#include "input_action_mapper.inl"
+#include "editor.inl"
 
-EXPORT_PLUGIN_CLASS(GLT::input_action_mapper::plugin, GLT::input_action_mapper::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::editor::plugin, GLT::editor::descriptor)

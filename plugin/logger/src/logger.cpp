@@ -435,9 +435,19 @@ namespace GLT::logger_plugin {
         std::lock_guard<std::mutex> lock(s_queue_mutex);
         s_log_queue.emplace(msg_sev, location, module_name, thread_id, std::move(message));
 
-        if (static_cast<u8>(msg_sev) >= static_cast<u8>(s_severity_level_buffering_threshold) 
-            || s_log_queue.size() >= static_cast<size_t>(QUEUE_MAX_SIZE))           // check if thread should be notified
-            s_cv.notify_all();
+
+        #if QUEUE_MAX_SIZE > 0
+
+            if (static_cast<u8>(msg_sev) >= static_cast<u8>(s_severity_level_buffering_threshold) 
+                || s_log_queue.size() >= static_cast<size_t>(QUEUE_MAX_SIZE))                           // check if thread should be notified
+                s_cv.notify_all();
+    
+        #else
+
+            if (static_cast<u8>(msg_sev) >= static_cast<u8>(s_severity_level_buffering_threshold))      // check if thread should be notified
+                s_cv.notify_all();
+            
+        #endif
     }
 
 
