@@ -82,11 +82,11 @@ namespace GLT::editor {
             ImGui::EndMainMenuBar();
         }
 
+        ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Viewport", nullptr)) {
             
-            ImTextureID tex_id = m_renderer->get_rendered_image();
             m_content_size = ImGui::GetContentRegionAvail();        // update the window size
-            ImGui::Image(tex_id, m_content_size);
+            ImGui::Image(m_renderer->get_rendered_image(), m_content_size);
         }
         ImGui::End();
     }

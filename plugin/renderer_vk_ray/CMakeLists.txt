@@ -1,9 +1,9 @@
 # ===========================================================================================
 # Specific Plugin CMake Configuration
 # ===========================================================================================
-# Project:      plugin test for Gluttony
+# Project:      renderer plugin for Gluttony
 # Location:     ${PROJECT_SOURCE_DIR}/plugin/PLUGIN_NAME/CMakeLists.txt
-# Purpose:      compile the plugin in this die as a shared lib
+# Purpose:      compile the plugin in this dir as a Vulkan renderer
 # ===========================================================================================
 
 include(${CMAKE_SOURCE_DIR}/helper.cmake)
@@ -34,8 +34,8 @@ set(VMA_DIR                                                         "${VENDOR_DI
 file(MAKE_DIRECTORY                                                 "${VENDOR_DIR}")
 
 git_clone_or_update("git@github.com:charles-lunarg/vk-bootstrap.git"                            "${VK_BOOTSTRAP_DIR}" DEPTH 1)
-git_clone_or_update("git@github.com:Mich-Dich/vk_ray.git"                                       "${VK_RAY_DIR}" DEPTH 1)
 git_clone_or_update("https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"     "${VMA_DIR}" DEPTH 1)
+git_clone_or_update("git@github.com:Mich-Dich/vk_ray.git"                                       "${VK_RAY_DIR}" DEPTH 1)
 
 add_subdirectory("${VK_BOOTSTRAP_DIR}")
 set_target_properties(vk-bootstrap                                  PROPERTIES POSITION_INDEPENDENT_CODE ON) 

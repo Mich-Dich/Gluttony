@@ -20,67 +20,11 @@ namespace GLT::renderer_vk_ray {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr u32                                       MAX_CONCURRENT_FRAMES = 3;
+    constexpr u32                                               MAX_CONCURRENT_FRAMES = 3;
 
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
-
-    class image {
-
-        image();
-        
-        ~image();
-
-        // Vulkan handle (owned by this struct if allocated_image is used)
-        vk::Image          handle = nullptr;
-        vk::ImageView      view   = nullptr;
-        vk::ImageLayout    layout = vk::ImageLayout::eUndefined;
-        uint32_t           width  = 0;
-        uint32_t           height = 0;
-        vk::Format         format = vk::Format::eUndefined;
-
-        // Optional: keep the vk_ray allocation info (if allocated via vk_ray)
-        // This allows destruction via the same system.
-        vr::allocated_image allocated;   // holds VmaAllocation and the original handle
-
-        // Destructor / cleanup: call engine's resource manager
-        void destroy(vk::Device device);
-    };
-
-    // STATIC VARIABLES ================================================================================================
-
-    static constexpr const char*                                dependencies_names[] = {
-
-        nullptr
-    };
-
-    static constexpr GLT::plugin_manager::interface             dependencies_interfaces[] = {
-        
-        GLT::plugin_manager::interface::window,
-    };
-
-    static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
-
-        .name                                                   = GLT_MODULE_NAME,
-        .load_phase                                             = GLT::plugin_manager::phase::post_window,
-        .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
-        .target                                                 = GLT::plugin_manager::interface::renderer,
-        .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
-        .dependency_names                                       = dependencies_names,
-        .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
-        .dependency_interfaces                                  = dependencies_interfaces,
-    };
-
-    // FUNCTION IMPLEMENTATION =========================================================================================
-
-    // CLASS IMPLEMENTATION ============================================================================================
-
-    // CLASS PUBLIC ====================================================================================================
-
-    // CLASS PROTECTED =================================================================================================
-
-    // CLASS PRIVATE ===================================================================================================
 
     class renderer : public GLT::render::i_renderer_plugin {
     public:
@@ -139,7 +83,7 @@ namespace GLT::renderer_vk_ray {
 
         // --- native access -------------------------------------------------------------------------------------------
 
-        [[nodiscard]] ImTextureID get_rendered_image() override { return create_imgui_texture(m_output_image); }
+        [[nodiscard]] void* get_rendered_image() override { return nullptr; }
 
 
         [[nodiscard]] void* get_native_device_handle() const override { return {}; }
@@ -240,12 +184,13 @@ namespace GLT::renderer_vk_ray {
         utils::shader_compiler                                  m_shader_compiler{};
         vk::Pipeline                                            m_rt_pipeline = nullptr;
         vr::sbt_buffer                                          m_sbt_buffer; // contains the shader records for the SBT
+        // vk::Sampler											    m_default_sampler_linear{};
+        // vk::Sampler											    m_default_sampler_nearest{};
 
         // ImGui resources
         vk::DescriptorPool                                      m_imgui_descriptor_pool = nullptr;
         vk::RenderPass                                          m_imgui_render_pass = nullptr;
         std::vector<vk::Framebuffer>                            m_imgui_framebuffers;
-        ImTextureID                                             m_output_image_texture_id{};
         bool                                                    m_imgui_initialized = false;
         ImGuiContext*                                           m_imgui_context = nullptr;
         glm::ivec2                                              m_target_framebuffer_size{};
@@ -259,8 +204,116 @@ namespace GLT::renderer_vk_ray {
 
     };
 
+
+
+    // class image : public GLT::render::image {
+    // public:
+
+    //     DEFAULT_CONSTRUCTORS(image);
+    //     // DEFAULT_COPY_CONSTRUCTOR(image);
+
+
+    //     image(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped = false);
+
+
+    //     image(const void* data, const u32 width, const u32 height, const GLT::render::image_format format, const bool mipmapped = false);
+
+
+    //     image(const std::filesystem::path image_path, const GLT::render::image_format format, const bool mipmapped = false);
+
+
+    //     image(const std::filesystem::path image_path);
+
+
+    //     ~image();
+
+
+    //     SETTER(VmaAllocation, allocation,                       m_allocated_image.allocation);
+    //     DEFAULT_GETTER_SETTER_ALL(vk::Image,                    image);
+    //     DEFAULT_GETTER_SETTER_ALL(vk::ImageView,                image_view);
+    //     DEFAULT_GETTER_SETTER_ALL(glm::uvec3,                   extend);
+
+
+    //     [[nodiscard]] FORCE_INLINE u32 get_width() override;
+
+
+    //     [[nodiscard]] FORCE_INLINE u32 get_height() override;
+
+
+    //     [[nodiscard]] FORCE_INLINE void* get_descriptor_set() override;
+
+
+    //     [[nodiscard]] void* decode(const void* data, const u64 length, u32& outWidth, u32& outHeight) override;
+
+
+    //     [[nodiscard]] void* load(const std::filesystem::path& path, const u64 length, u32& outWidth, u32& outHeight) override;
+
+    // private:
+
+	//     vk::DescriptorSet generate_descriptor_set(const vk::Sampler sampler, const vk::ImageLayout layout);
+
+
+    //     void allocate_memory(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped, 
+    //         const VkImageUsageFlags usage);
+
+
+    //     void allocate_image(const glm::uvec3 size, const vk::Format format, const vk::ImageUsageFlags usage, const bool mipmapped);
+
+
+    //     void release();
+
+
+    //     void immediate_submit(std::function<void(vk::CommandBuffer)>&& function);
+
+    //     // Vulkan resources
+    //     bool                                                    m_initialized = false;
+    //     vk::Image                                               m_image = nullptr;
+    //     vk::ImageView                                           m_image_view = nullptr;
+    //     vr::allocated_image                                     m_allocated_image{};   // holds VmaAllocation and handle
+    //     glm::uvec3                                              m_extend{};
+    //     vk::DescriptorSet                                       m_descriptor_set{};
+
+    //     GLT::ref<GLT::renderer_vk_ray::renderer>                m_renderer{};
+
+    // };
+
+    // STATIC VARIABLES ================================================================================================
+
+    static constexpr const char*                                dependencies_names[] = {
+
+        nullptr
+    };
+
+    static constexpr GLT::plugin_manager::interface             dependencies_interfaces[] = {
+
+        GLT::plugin_manager::interface::window,
+    };
+
+    static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
+
+        .name                                                   = GLT_MODULE_NAME,
+        .load_phase                                             = GLT::plugin_manager::phase::post_window,
+        .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
+        .target                                                 = GLT::plugin_manager::interface::renderer,
+        .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
+        .dependency_names                                       = dependencies_names,
+        .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
+        .dependency_interfaces                                  = dependencies_interfaces,
+    };
+
+    // FUNCTION IMPLEMENTATION =========================================================================================
+
+    // CLASS IMPLEMENTATION ============================================================================================
+
+    // CLASS PUBLIC ====================================================================================================
+
+    // CLASS PROTECTED =================================================================================================
+
+    // CLASS PRIVATE ===================================================================================================
+
 }
 
+// #include "image.inl"
 #include "renderer.inl"
 
 EXPORT_PLUGIN_CLASS(GLT::renderer_vk_ray::renderer, GLT::renderer_vk_ray::descriptor)

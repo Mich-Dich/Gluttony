@@ -35,6 +35,13 @@ namespace GLT::render {
         metal,
     };
 
+
+    enum class image_format {
+        None = 0,
+        RGBA,
+        RGBA32F
+    };
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -214,7 +221,7 @@ namespace GLT::render {
         // frame or until the renderer is destroyed, depending on the backend.
         //
         // @return Texture identifier for the current output image.
-        [[nodiscard]] virtual ImTextureID get_rendered_image() = 0;
+        [[nodiscard]] virtual void* get_rendered_image() = 0;
 
 
         // @brief Returns an opaque handle to the native graphics device.
@@ -235,7 +242,38 @@ namespace GLT::render {
         //
         // @return Opaque pointer to the native context, or nullptr if unavailable.
         [[nodiscard]] virtual void* get_native_context_handle() const = 0;
+
+    };
+
+
+
+    class image {
+    public:
+
+        DEFAULT_CONSTRUCTORS(image);
+        // DEFAULT_COPY_CONSTRUCTOR(image);
+
+        image(const void* data, const glm::ivec3 size, const image_format format, const bool mipmapped = false);
         
+        image(const void* data, const u32 width, const u32 height, const image_format format, const bool mipmapped = false);
+        
+        image(const std::filesystem::path& image_path, const image_format format, const bool mipmapped = false);
+        
+        image(const std::filesystem::path& image_path);
+        
+        ~image();
+
+
+        [[nodiscard]] virtual FORCE_INLINE u32 get_width() = 0;
+
+        [[nodiscard]] virtual FORCE_INLINE u32 get_height() = 0;
+
+        [[nodiscard]] virtual void* get_descriptor_set();
+
+        [[nodiscard]] virtual void* decode(const void* data, const u64 length, u32& outWidth, u32& outHeight);
+
+        [[nodiscard]] virtual void* load(const std::filesystem::path& path, const u64 length, u32& outWidth, u32& outHeight);
+
     };
 
 }

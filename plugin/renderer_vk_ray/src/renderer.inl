@@ -289,6 +289,30 @@ namespace GLT::renderer_vk_ray {
 
         m_vr_dev = new vr::device(m_instance.instance_handle, m_device, m_physical_device);
 
+
+        // vk::SamplerCreateInfo sampler_info{};
+        // sampler_info.magFilter = vk::Filter::eNearest;
+        // sampler_info.minFilter = vk::Filter::eNearest;
+        // sampler_info.mipmapMode = vk::SamplerMipmapMode::eNearest;
+        // sampler_info.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+        // sampler_info.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+        // sampler_info.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+        // sampler_info.anisotropyEnable = VK_FALSE;
+        // sampler_info.maxAnisotropy = 1.0f;
+        // sampler_info.borderColor = vk::BorderColor::eFloatOpaqueBlack;
+        // sampler_info.unnormalizedCoordinates = VK_FALSE;
+        // sampler_info.compareEnable = VK_FALSE;
+        // sampler_info.compareOp = vk::CompareOp::eAlways;
+        // sampler_info.mipLodBias = 0.0f;
+        // sampler_info.minLod = 0.0f;
+        // sampler_info.maxLod = 0.0f;
+        // m_default_sampler_nearest = m_device.createSampler(sampler_info);
+
+        // sampler_info.magFilter = vk::Filter::eLinear;
+        // sampler_info.minFilter = vk::Filter::eLinear;
+        // m_default_sampler_linear = m_device.createSampler(sampler_info);
+
+
         m_deletion_queue.push_func([&]() {
 
             // Destroy semaphores
@@ -593,8 +617,9 @@ namespace GLT::renderer_vk_ray {
             sampler = m_device.createSampler(sampler_info);
         }
 
-        return reinterpret_cast<ImTextureID>(
-            ImGui_ImplVulkan_AddTexture(sampler, img.view, static_cast<VkImageLayout>(layout))
+        return reinterpret_cast<ImTextureID>(ImGui_ImplVulkan_AddTexture(
+            static_cast<VkImageView>(img.view), 
+            static_cast<VkImageLayout>(layout))
         );
     }
 
@@ -699,6 +724,25 @@ namespace GLT::renderer_vk_ray {
         u32 uniform_buffer_size = sizeof(f32) * 4 * 4 * 2; // two 4x4 matrix
         uniform_buffer_size += sizeof(f32) * 4;            // pass time, and 3 floats for padding or whatever else in the future
 
+        // {       // create descriptor set
+        //     // Image info for the combined image sampler
+        //     vk::DescriptorImageInfo descriptor_image_info{};
+        //     descriptor_image_info.sampler       = m_default_sampler_linear;
+        //     descriptor_image_info.imageView     = m_output_image.view;
+        //     descriptor_image_info.imageLayout   = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+        //     // Write descriptor set
+        //     vk::WriteDescriptorSet write{};
+        //     write.dstSet                        = m_output_image.descriptor;   // must be a valid descriptor set
+        //     write.dstBinding                    = 0;
+        //     write.dstArrayElement               = 0;
+        //     write.descriptorCount               = 1;
+        //     write.descriptorType                = vk::DescriptorType::eCombinedImageSampler;
+        //     write.pImageInfo                    = &descriptor_image_info;      // pointer to image info
+        //     m_device.updateDescriptorSets(write, nullptr); 
+        // }
+
+
         // we will be writing to this buffer on the CPU
         m_uniform_buffer = m_vr_dev->create_buffer(uniform_buffer_size, vk::BufferUsageFlagBits::eUniformBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
@@ -723,7 +767,9 @@ namespace GLT::renderer_vk_ray {
         const vk::ImageLayout new_layout) {
 
         switch (type) {
+
             case image_type::swapchain: {
+
                 // Define the image subresource range for swapchain images
                 vk::ImageSubresourceRange swapchain_range(
                     vk::ImageAspectFlagBits::eColor,            // Color aspect
@@ -745,7 +791,9 @@ namespace GLT::renderer_vk_ray {
                 m_swapchain_images_layout[m_current_swapchain_image] = new_layout;
 
             } break;
+
             case image_type::render: {
+
                 // Define the image subresource range for render images
                 vk::ImageSubresourceRange render_range(
                     vk::ImageAspectFlagBits::eColor,            // Color aspect
@@ -760,11 +808,12 @@ namespace GLT::renderer_vk_ray {
                     m_output_image_buffer.image,
                     m_output_image_layout,
                     new_layout,
-                    render_range,                               // Added: Image subresource range
-                    vk::PipelineStageFlagBits::eAllGraphics,    // Added: Source stage
-                    vk::PipelineStageFlagBits::eAllCommands     // Added: Destination stage
+                    render_range,                                   // Added: Image subresource range
+                    vk::PipelineStageFlagBits::eAllGraphics,        // Added: Source stage
+                    vk::PipelineStageFlagBits::eAllCommands         // Added: Destination stage
                 );
                 m_output_image_layout = new_layout;
+                m_output_image.layout = new_layout;
 
             } break;
         }

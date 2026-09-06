@@ -11,11 +11,35 @@
 
 ## Quickstart
 
-**Prerequisites**  
+**Prerequisites**
 - Linux (Windows maybe later, when I buy a new keyboard to smash)  
 - C++23 compiler (GCC ≥ 11 or Clang ≥ 13)  
 - CMake ≥ 3.21  
+- Vulkan 1.4.357.0 or newer
 
+**Install Vulkan SDK:**
+- Download the newest [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) (1.4.357.0 or newer) and save it at `~/vulkan-sdk/`
+
+- Extract the tar using:
+```bash
+tar -xf vulkansdk-linux-x86_64-1.4.357.1.tar.xz
+```
+This will create the dir: `~/vulkan-sdk/1.4.357.1`
+
+- Append the following to your `~/bashrc`:
+```bash
+export VULKAN_SDK=~/vulkan-sdk/1.4.357.1/x86_64
+export PATH=$VULKAN_SDK/bin:$PATH
+export LD_LIBRARY_PATH=$VULKAN_SDK/lib:$LD_LIBRARY_PATH
+export VK_LAYER_PATH=$VULKAN_SDK/etc/vulkan/explicit_layer.d
+```
+
+- Refresh the terminal and compile:
+```bash
+source ~/.bashrc
+```
+
+**Clone and Build project**
 ```bash
 git clone https://github.com/your-username/gluttony.git
 cd gluttony
@@ -91,5 +115,3 @@ It’ll start up, discover any plugins in the `plugin/` directory, load the ones
 ---
 
 If you find a bug or want to add something, open an issue or a PR – I can’t promise prompt responses, but I’ll be thrilled that someone else looked at the code.
-
-*Thanks for stopping by. Now go build something equally half‑baked.*

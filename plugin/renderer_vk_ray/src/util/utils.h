@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include <vk_ray/builders/builders.h>
 
 
 // FORWARD DECLARATIONS ================================================================================================
