@@ -272,7 +272,7 @@ namespace GLT::render {
 
         [[nodiscard]] virtual void* decode(const void* data, const u64 length, u32& outWidth, u32& outHeight);
 
-        [[nodiscard]] virtual void* load(const std::filesystem::path& path, const u64 length, u32& outWidth, u32& outHeight);
+        [[nodiscard]] virtual void* load(const std::filesystem::path& path, u32& outWidth, u32& outHeight);
 
     };
 

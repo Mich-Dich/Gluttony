@@ -30,13 +30,18 @@ target_link_libraries(${PLUGIN_NAME}_static                         PRIVATE glsl
 set(VENDOR_DIR                                                      "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
 set(VK_BOOTSTRAP_DIR                                                "${VENDOR_DIR}/vk-bootstrap")
 set(VK_RAY_DIR                                                      "${VENDOR_DIR}/vk_ray")
+set(VK_STB_IMAGE_DIR                                                "${VENDOR_DIR}/stb_image")
 set(VMA_DIR                                                         "${VENDOR_DIR}/VulkanMemoryAllocator")
+set(VULKAN_HEADERS_DIR                                              "${VENDOR_DIR}/Vulkan-Headers")
 file(MAKE_DIRECTORY                                                 "${VENDOR_DIR}")
 
 git_clone_or_update("git@github.com:charles-lunarg/vk-bootstrap.git"                            "${VK_BOOTSTRAP_DIR}" DEPTH 1)
 git_clone_or_update("https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"     "${VMA_DIR}" DEPTH 1)
+git_clone_or_update("git@github.com:franko/stb_image.git"                                       "${VK_STB_IMAGE_DIR}" DEPTH 1)
+git_clone_or_update("https://github.com/KhronosGroup/Vulkan-Headers.git"                        "${VULKAN_HEADERS_DIR}" DEPTH 1)
 git_clone_or_update("git@github.com:Mich-Dich/vk_ray.git"                                       "${VK_RAY_DIR}" DEPTH 1)
 
+set(VK_BOOTSTRAP_VULKAN_HEADERS_DIR "${VULKAN_HEADERS_DIR}/include" CACHE PATH "Path to Vulkan headers" FORCE)
 add_subdirectory("${VK_BOOTSTRAP_DIR}")
 set_target_properties(vk-bootstrap                                  PROPERTIES POSITION_INDEPENDENT_CODE ON) 
 
@@ -54,6 +59,11 @@ target_include_directories(${PLUGIN_NAME}                           PRIVATE "${V
 target_include_directories(${PLUGIN_NAME}_static                    PRIVATE "${VK_RAY_DIR}/include")
 target_link_libraries(${PLUGIN_NAME}                                PRIVATE vk_ray)
 target_link_libraries(${PLUGIN_NAME}_static                         PRIVATE vk_ray)
+
+target_include_directories(${PLUGIN_NAME}                           PRIVATE "${VK_STB_IMAGE_DIR}/include")
+target_include_directories(${PLUGIN_NAME}_static                    PRIVATE "${VK_STB_IMAGE_DIR}/include")
+# target_link_libraries(${PLUGIN_NAME}                                PRIVATE stb_image)
+# target_link_libraries(${PLUGIN_NAME}_static                         PRIVATE stb_image)
 
 set(VENDOR_DIR                                                      "${CMAKE_SOURCE_DIR}/vendor")
 set(IMGUI_DIR                                                       "${VENDOR_DIR}/imgui")

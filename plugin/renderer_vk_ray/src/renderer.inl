@@ -221,6 +221,30 @@ namespace GLT::renderer_vk_ray {
         m_state = system_state::idle;
     }
 
+
+	void renderer::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
+
+        VK_CHECK_S(m_device.waitForFences(m_immediate_submit_fence, VK_TRUE, UINT64_MAX));          // Wait for any previous submission to finish (fence was signaled on creation)
+        m_device.resetFences(m_immediate_submit_fence);
+        m_immediate_submit_command_buffer.reset();
+
+        vk::CommandBufferBeginInfo begin_info = vk::CommandBufferBeginInfo()            // Begin command buffer
+            .setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+            
+        m_immediate_submit_command_buffer.begin(begin_info);
+        function(m_immediate_submit_command_buffer);                                    // Execute user function
+        m_immediate_submit_command_buffer.end();
+
+        vk::CommandBufferSubmitInfo cmd_submit_info = vk::CommandBufferSubmitInfo()
+            .setCommandBuffer(m_immediate_submit_command_buffer);
+
+        vk::SubmitInfo2 submit_info = vk::SubmitInfo2()
+            .setCommandBufferInfoCount(1)
+            .setPCommandBufferInfos(&cmd_submit_info);
+
+        m_queues.graphics_queue.submit2(submit_info, m_immediate_submit_fence);
+	}
+
     // CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
@@ -693,6 +717,25 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::create_base_resources() {
 
+        vk::CommandPoolCreateInfo command_pool_CI = vk::CommandPoolCreateInfo()
+            .setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
+		m_immediate_submit_command_pool = m_device.createCommandPool(command_pool_CI);
+
+		vk::CommandBufferAllocateInfo cmd_alloc_I = vk::CommandBufferAllocateInfo()
+            .setCommandPool(m_immediate_submit_command_pool)
+            .setLevel(vk::CommandBufferLevel::ePrimary)
+            .setCommandBufferCount(1);
+        std::vector<vk::CommandBuffer> command_buffer_result = m_device.allocateCommandBuffers(cmd_alloc_I);
+        VALIDATE(command_buffer_result.size() > 0, , "", "Failed to allocate command buffer")
+        m_immediate_submit_command_buffer = command_buffer_result[0];
+
+        vk::FenceCreateInfo fence_CI = vk::FenceCreateInfo()
+            .setFlags(vk::FenceCreateFlagBits::eSignaled);
+		m_immediate_submit_fence = m_device.createFence(fence_CI);
+
+        // m_deletion_queue.push_pointer(m_immediate_submit_command_pool);
+		// m_deletion_queue.push_pointer(m_immediate_submit_fence);
+
         // Create an image to render to
         auto image_create_info = vk::ImageCreateInfo()
             .setImageType(vk::ImageType::e2D)
@@ -733,15 +776,14 @@ namespace GLT::renderer_vk_ray {
 
         //     // Write descriptor set
         //     vk::WriteDescriptorSet write{};
-        //     write.dstSet                        = m_output_image.descriptor;   // must be a valid descriptor set
-        //     write.dstBinding                    = 0;
-        //     write.dstArrayElement               = 0;
-        //     write.descriptorCount               = 1;
-        //     write.descriptorType                = vk::DescriptorType::eCombinedImageSampler;
-        //     write.pImageInfo                    = &descriptor_image_info;      // pointer to image info
+        //         .setDstSet                        = m_output_image.descriptor;   // must be a valid descriptor set
+        //         .setDstBinding                    = 0;
+        //         .setDstArrayElement               = 0;
+        //         .setDescriptorCount               = 1;
+        //         .setDescriptorType                = vk::DescriptorType::eCombinedImageSampler;
+        //         .setPImageInfo                    = &descriptor_image_info;      // pointer to image info
         //     m_device.updateDescriptorSets(write, nullptr); 
         // }
-
 
         // we will be writing to this buffer on the CPU
         m_uniform_buffer = m_vr_dev->create_buffer(uniform_buffer_size, vk::BufferUsageFlagBits::eUniformBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);

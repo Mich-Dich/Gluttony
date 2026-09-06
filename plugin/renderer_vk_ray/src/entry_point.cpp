@@ -29,6 +29,9 @@ namespace GLT::renderer_vk_ray {
     class renderer : public GLT::render::i_renderer_plugin {
     public:
 
+        DEFAULT_GETTER(vr::device*,                             vr_dev);
+        GETTER(vk::Device, vk_device,                           m_vr_dev->get_device())
+
         void on_load() { }
 
         
@@ -90,6 +93,8 @@ namespace GLT::renderer_vk_ray {
 
 
         [[nodiscard]] void* get_native_context_handle() const override { return {}; }
+
+        void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
     private:
 
@@ -202,80 +207,66 @@ namespace GLT::renderer_vk_ray {
         glm::vec4                                               m_clear_color{0.09f, 0.09f, 0.09f, 1.f};
         ref<GLT::world::camera>                                 m_active_camera{};
 
+        // ---------------------------- immediate-submit ---------------------------- 
+		vk::Fence										        m_immediate_submit_fence{};
+		vk::CommandBuffer								        m_immediate_submit_command_buffer{};
+		vk::CommandPool								            m_immediate_submit_command_pool{};
+    
     };
 
 
+    class image : public GLT::render::image {
+    public:
 
-    // class image : public GLT::render::image {
-    // public:
+        DEFAULT_CONSTRUCTORS(image);
 
-    //     DEFAULT_CONSTRUCTORS(image);
-    //     // DEFAULT_COPY_CONSTRUCTOR(image);
-
-
-    //     image(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped = false);
+        image(const std::filesystem::path& image_path);
 
 
-    //     image(const void* data, const u32 width, const u32 height, const GLT::render::image_format format, const bool mipmapped = false);
+        ~image();
 
 
-    //     image(const std::filesystem::path image_path, const GLT::render::image_format format, const bool mipmapped = false);
+        SETTER(VmaAllocation, allocation,                       m_allocated_image.allocation);
+        DEFAULT_GETTER_SETTER_ALL(vk::Image,                    image);
+        DEFAULT_GETTER_SETTER_ALL(vk::ImageView,                image_view);
+        DEFAULT_GETTER_SETTER_ALL(glm::uvec3,                   extend);
 
 
-    //     image(const std::filesystem::path image_path);
+        [[nodiscard]] FORCE_INLINE u32 get_width() override;
 
 
-    //     ~image();
+        [[nodiscard]] FORCE_INLINE u32 get_height() override;
 
 
-    //     SETTER(VmaAllocation, allocation,                       m_allocated_image.allocation);
-    //     DEFAULT_GETTER_SETTER_ALL(vk::Image,                    image);
-    //     DEFAULT_GETTER_SETTER_ALL(vk::ImageView,                image_view);
-    //     DEFAULT_GETTER_SETTER_ALL(glm::uvec3,                   extend);
+        [[nodiscard]] FORCE_INLINE void* get_descriptor_set() override;
 
 
-    //     [[nodiscard]] FORCE_INLINE u32 get_width() override;
+        [[nodiscard]] void* decode(const void* data, const u64 length, u32& out_width, u32& out_height) override;
 
 
-    //     [[nodiscard]] FORCE_INLINE u32 get_height() override;
+        [[nodiscard]] void* load(const std::filesystem::path& path, u32& out_width, u32& out_height) override;
+
+    private:
+
+	    void allocate_memory(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped);
 
 
-    //     [[nodiscard]] FORCE_INLINE void* get_descriptor_set() override;
+        void allocate_image(const glm::uvec3 size, const vk::Format format, const vk::ImageUsageFlags usage, const bool mipmapped);
 
 
-    //     [[nodiscard]] void* decode(const void* data, const u64 length, u32& outWidth, u32& outHeight) override;
+        void release();
 
 
-    //     [[nodiscard]] void* load(const std::filesystem::path& path, const u64 length, u32& outWidth, u32& outHeight) override;
+        // Vulkan resources
+        bool                                                    m_initialized = false;
+        vk::Image                                               m_image = nullptr;
+        vk::ImageView                                           m_image_view = nullptr;
+        vr::allocated_image                                     m_allocated_image{};   // holds VmaAllocation and handle
+        glm::uvec3                                              m_extend{};
+        vk::DescriptorSet                                       m_descriptor_set{};
+        GLT::ref<GLT::renderer_vk_ray::renderer>                m_renderer{};
 
-    // private:
-
-	//     vk::DescriptorSet generate_descriptor_set(const vk::Sampler sampler, const vk::ImageLayout layout);
-
-
-    //     void allocate_memory(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped, 
-    //         const VkImageUsageFlags usage);
-
-
-    //     void allocate_image(const glm::uvec3 size, const vk::Format format, const vk::ImageUsageFlags usage, const bool mipmapped);
-
-
-    //     void release();
-
-
-    //     void immediate_submit(std::function<void(vk::CommandBuffer)>&& function);
-
-    //     // Vulkan resources
-    //     bool                                                    m_initialized = false;
-    //     vk::Image                                               m_image = nullptr;
-    //     vk::ImageView                                           m_image_view = nullptr;
-    //     vr::allocated_image                                     m_allocated_image{};   // holds VmaAllocation and handle
-    //     glm::uvec3                                              m_extend{};
-    //     vk::DescriptorSet                                       m_descriptor_set{};
-
-    //     GLT::ref<GLT::renderer_vk_ray::renderer>                m_renderer{};
-
-    // };
+    };
 
     // STATIC VARIABLES ================================================================================================
 
@@ -313,7 +304,7 @@ namespace GLT::renderer_vk_ray {
 
 }
 
-// #include "image.inl"
+#include "image.inl"
 #include "renderer.inl"
 
 EXPORT_PLUGIN_CLASS(GLT::renderer_vk_ray::renderer, GLT::renderer_vk_ray::descriptor)
