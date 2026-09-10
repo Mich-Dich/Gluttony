@@ -62,8 +62,6 @@ target_link_libraries(${PLUGIN_NAME}_static                         PRIVATE vk_r
 
 target_include_directories(${PLUGIN_NAME}                           PRIVATE "${VK_STB_IMAGE_DIR}/include")
 target_include_directories(${PLUGIN_NAME}_static                    PRIVATE "${VK_STB_IMAGE_DIR}/include")
-# target_link_libraries(${PLUGIN_NAME}                                PRIVATE stb_image)
-# target_link_libraries(${PLUGIN_NAME}_static                         PRIVATE stb_image)
 
 set(VENDOR_DIR                                                      "${CMAKE_SOURCE_DIR}/vendor")
 set(IMGUI_DIR                                                       "${VENDOR_DIR}/imgui")

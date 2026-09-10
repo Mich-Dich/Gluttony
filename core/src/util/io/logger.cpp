@@ -65,7 +65,7 @@ namespace GLT::logger {
             s_log_buffer.emplace_back(msg_sev, location, module_name, thread_id, message);
 
         } else {
-            
+
             static const char* sev_names[] = {"TRACE","DEBUG","INFO","WARN","ERROR","FATAL"};
             fprintf(stdout, "[%s] %s\n", sev_names[static_cast<int>(msg_sev)], message.c_str());
         }

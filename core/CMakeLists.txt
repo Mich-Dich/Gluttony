@@ -31,6 +31,8 @@ target_include_directories(${CORE_NAME}                 PRIVATE
 set(COMPILE_OUTPUT_DIR                                  "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 set_target_properties(${CORE_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY                            "${COMPILE_OUTPUT_DIR}"
+    CXX_VISIBILITY_PRESET                               default
+    VISIBILITY_INLINES_HIDDEN                           OFF
 )
 # For the main executable target (e.g., "Gluttony")
 target_link_options(${CORE_NAME}                        PRIVATE -rdynamic)

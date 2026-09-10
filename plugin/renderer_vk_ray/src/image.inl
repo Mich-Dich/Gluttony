@@ -158,14 +158,14 @@ namespace GLT::renderer_vk_ray {
     }
 
 
-	image::~image()                 { release(); }
+	image::~image()                     { release(); }
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    u32 image::get_width()          { return m_extend.x; }
+    u32 image::get_width()              { return m_extend.x; }
 
 
-    u32 image::get_height()         { return m_extend.y; }
+    u32 image::get_height()             { return m_extend.y; }
 
 
     void* image::load(const std::filesystem::path& path, u32& out_width, u32& out_height) {
@@ -178,6 +178,9 @@ namespace GLT::renderer_vk_ray {
         out_height = height;
         return buffer; // caller owns the memory, free with stbi_image_free
     }
+
+
+    void* image::get_descriptor_set()   { return m_descriptor_set; }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

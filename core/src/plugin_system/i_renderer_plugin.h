@@ -254,25 +254,26 @@ namespace GLT::render {
         // DEFAULT_COPY_CONSTRUCTOR(image);
 
         image(const void* data, const glm::ivec3 size, const image_format format, const bool mipmapped = false);
-        
+
         image(const void* data, const u32 width, const u32 height, const image_format format, const bool mipmapped = false);
-        
+
         image(const std::filesystem::path& image_path, const image_format format, const bool mipmapped = false);
-        
+
         image(const std::filesystem::path& image_path);
-        
-        ~image();
+
+        virtual ~image() = default;      // inline
+
+
+        virtual void anchor();
 
 
         [[nodiscard]] virtual FORCE_INLINE u32 get_width() = 0;
 
         [[nodiscard]] virtual FORCE_INLINE u32 get_height() = 0;
 
-        [[nodiscard]] virtual void* get_descriptor_set();
+        [[nodiscard]] virtual void* get_descriptor_set() = 0;
 
-        [[nodiscard]] virtual void* decode(const void* data, const u64 length, u32& outWidth, u32& outHeight);
-
-        [[nodiscard]] virtual void* load(const std::filesystem::path& path, u32& outWidth, u32& outHeight);
+        [[nodiscard]] virtual void* load(const std::filesystem::path& path, u32& outWidth, u32& outHeight) = 0;
 
     };
 

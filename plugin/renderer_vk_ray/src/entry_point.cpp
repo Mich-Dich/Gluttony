@@ -241,9 +241,6 @@ namespace GLT::renderer_vk_ray {
         [[nodiscard]] FORCE_INLINE void* get_descriptor_set() override;
 
 
-        [[nodiscard]] void* decode(const void* data, const u64 length, u32& out_width, u32& out_height) override;
-
-
         [[nodiscard]] void* load(const std::filesystem::path& path, u32& out_width, u32& out_height) override;
 
     private:
