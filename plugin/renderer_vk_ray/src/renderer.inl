@@ -1,6 +1,8 @@
 
 #include <util/pch.h>
 
+#include <imgui.h>
+
 #include <event/event_bus.h>
 #include <event/application_event.h>
 #include <plugin_system/plugin_manager.h>
@@ -56,6 +58,10 @@ namespace GLT::renderer_vk_ray {
         update_descriptor_set();
         imgui_init();
 
+        IGNORE_UNUSED_VARIABLE_START
+        void* unused_buffer = m_output_image->get_descriptor_set();        // ensure descriptor is available
+        IGNORE_UNUSED_VARIABLE_STOP
+
         m_framebuffer_resize_sub = GLT::event_bus::subscribe<GLT::window_framebuffer_resize_event>(
             [this](const GLT::window_framebuffer_resize_event& event) { 
                 m_target_framebuffer_size = glm::ivec2{event.get_width(), event.get_height()};
@@ -81,6 +87,7 @@ namespace GLT::renderer_vk_ray {
                 VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[i], VK_TRUE, UINT64_MAX));
         }
 
+        m_output_image.reset();
         imgui_shutdown();
 
         // Destroy swapchain resources
@@ -163,14 +170,12 @@ namespace GLT::renderer_vk_ray {
 
         // Blit from output image to swapchain image
         current_cmd.blitImage(
-            m_output_image_buffer.image, 
-            vk::ImageLayout::eTransferSrcOptimal,
-            m_swapchain.swapchain_images[m_current_swapchain_image], 
-            vk::ImageLayout::eTransferDstOptimal,
+            m_output_image->get_allocated_image_ref().image,            vk::ImageLayout::eTransferSrcOptimal,
+            m_swapchain.swapchain_images[m_current_swapchain_image],    vk::ImageLayout::eTransferDstOptimal,
             vk::ImageBlit(vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
-                {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)},
-                vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
-                {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)}),
+            {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)},
+            vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
+            {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)}),
             vk::Filter::eLinear);
 
         begin_imgui_frame(current_cmd);
@@ -220,6 +225,9 @@ namespace GLT::renderer_vk_ray {
         m_current_frame = (m_current_frame + 1) % MAX_CONCURRENT_FRAMES;
         m_state = system_state::idle;
     }
+
+
+    void* renderer::get_rendered_image()    { return static_cast<void*>(m_output_image->get_descriptor_set()); }
 
 
 	void renderer::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
@@ -503,9 +511,12 @@ namespace GLT::renderer_vk_ray {
         // if we want to update the descriptor set later with another item,
         // we can just reassign the vr::descriptor_item::pItems with new items and update the descriptor set
         m_resource_bindings = {
-            vr::descriptor_item(0, vk::DescriptorType::eAccelerationStructureKHR, vk::ShaderStageFlagBits::eRaygenKHR, 1, &m_tlas_handle.buffer.dev_address),
-            vr::descriptor_item(1, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eRaygenKHR, 1, &m_uniform_buffer),
-            vr::descriptor_item(2, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eRaygenKHR, 10, &m_output_image, 1)
+            vr::descriptor_item(0, vk::DescriptorType::eAccelerationStructureKHR, vk::ShaderStageFlagBits::eRaygenKHR, 1, 
+                &m_tlas_handle.buffer.dev_address),
+            vr::descriptor_item(1, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eRaygenKHR, 1, 
+                &m_uniform_buffer),
+            vr::descriptor_item(2, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eRaygenKHR, 10, 
+                &m_output_image->get_accessible_image_ref(), 1)
         };
 
         // create a descriptor set layout, for the ray tracing pipeline
@@ -611,42 +622,6 @@ namespace GLT::renderer_vk_ray {
         );
     }
 
-
-    ImTextureID renderer::create_imgui_texture(vr::accessible_image& img) {
-
-        vk::ImageLayout layout = img.layout;                        // Ensure the image layout is correct for sampling
-        if (layout == vk::ImageLayout::eUndefined)
-            layout = vk::ImageLayout::eShaderReadOnlyOptimal;       // OR shader read only optimal
-
-        // If sampler is null, create a default sampler (see below)
-        vk::Sampler& sampler = img.sampler;
-        if (!sampler) {
-            
-            vk::SamplerCreateInfo sampler_info{};
-            sampler_info.magFilter = vk::Filter::eLinear;
-            sampler_info.minFilter = vk::Filter::eLinear;
-            sampler_info.mipmapMode = vk::SamplerMipmapMode::eLinear;
-            sampler_info.addressModeU = vk::SamplerAddressMode::eClampToEdge;
-            sampler_info.addressModeV = vk::SamplerAddressMode::eClampToEdge;
-            sampler_info.addressModeW = vk::SamplerAddressMode::eClampToEdge;
-            sampler_info.anisotropyEnable = VK_FALSE;
-            sampler_info.maxAnisotropy = 1.0f;
-            sampler_info.borderColor = vk::BorderColor::eFloatOpaqueBlack;
-            sampler_info.unnormalizedCoordinates = VK_FALSE;
-            sampler_info.compareEnable = VK_FALSE;
-            sampler_info.compareOp = vk::CompareOp::eAlways;
-            sampler_info.mipLodBias = 0.0f;
-            sampler_info.minLod = 0.0f;
-            sampler_info.maxLod = 0.0f;
-            sampler = m_device.createSampler(sampler_info);
-        }
-
-        return reinterpret_cast<ImTextureID>(ImGui_ImplVulkan_AddTexture(
-            static_cast<VkImageView>(img.view), 
-            static_cast<VkImageLayout>(layout))
-        );
-    }
-
     // ----- SWAPCHAIN -------------------------------------------------------------------------------------------------
 
 	void renderer::create_swapchain(const glm::ivec2 size) {
@@ -736,68 +711,16 @@ namespace GLT::renderer_vk_ray {
         // m_deletion_queue.push_pointer(m_immediate_submit_command_pool);
 		// m_deletion_queue.push_pointer(m_immediate_submit_fence);
 
-        // Create an image to render to
-        auto image_create_info = vk::ImageCreateInfo()
-            .setImageType(vk::ImageType::e2D)
-            .setFormat(vk::Format::eR16G16B16A16Sfloat)
-            .setExtent(vk::Extent3D(m_swapchain.swapchain_extent, 1))
-            .setMipLevels(1)
-            .setArrayLayers(1)
-            .setSamples(vk::SampleCountFlagBits::e1)
-            .setTiling(vk::ImageTiling::eOptimal)
-            .setUsage(vk::ImageUsageFlagBits::eStorage 
-                | vk::ImageUsageFlagBits::eTransferSrc
-                | vk::ImageUsageFlagBits::eTransferDst)
-            .setSharingMode(vk::SharingMode::eExclusive)
-            .setInitialLayout(vk::ImageLayout::eUndefined);
-
-        // create the image with dedicated memory
-        m_output_image_buffer = m_vr_dev->create_image(image_create_info, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
-
-        // create a view for the image
-        auto view_create_info = vk::ImageViewCreateInfo()
-            .setImage(m_output_image_buffer.image)
-            .setViewType(vk::ImageViewType::e2D)
-            .setFormat(vk::Format::eR16G16B16A16Sfloat)
-            .setSubresourceRange(vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1));
-
-        m_output_image.view = m_device.createImageView(view_create_info);
+        m_output_image = GLT::create_unique_ref<image>(glm::uvec3{m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height, 1});
 
         // create a uniform buffer
         u32 uniform_buffer_size = sizeof(f32) * 4 * 4 * 2; // two 4x4 matrix
         uniform_buffer_size += sizeof(f32) * 4;            // pass time, and 3 floats for padding or whatever else in the future
 
-        // {       // create descriptor set
-        //     // Image info for the combined image sampler
-        //     vk::DescriptorImageInfo descriptor_image_info{};
-        //     descriptor_image_info.sampler       = m_default_sampler_linear;
-        //     descriptor_image_info.imageView     = m_output_image.view;
-        //     descriptor_image_info.imageLayout   = vk::ImageLayout::eShaderReadOnlyOptimal;
-
-        //     // Write descriptor set
-        //     vk::WriteDescriptorSet write{};
-        //         .setDstSet                        = m_output_image.descriptor;   // must be a valid descriptor set
-        //         .setDstBinding                    = 0;
-        //         .setDstArrayElement               = 0;
-        //         .setDescriptorCount               = 1;
-        //         .setDescriptorType                = vk::DescriptorType::eCombinedImageSampler;
-        //         .setPImageInfo                    = &descriptor_image_info;      // pointer to image info
-        //     m_device.updateDescriptorSets(write, nullptr); 
-        // }
-
         // we will be writing to this buffer on the CPU
         m_uniform_buffer = m_vr_dev->create_buffer(uniform_buffer_size, vk::BufferUsageFlagBits::eUniformBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
         m_deletion_queue.push_func([&]() {
-
-            if (m_output_image.view)                                    // Destroy image view
-                m_device.destroyImageView(m_output_image.view);
-
-            if (m_output_image_buffer.image)                            // destroy the image
-                m_vr_dev->destroy_image(m_output_image_buffer);
-
-            m_output_image.view = nullptr;
-            m_output_image_buffer.image = nullptr;
 
             if (m_uniform_buffer.buffer)
                 m_vr_dev->destroy_buffer(m_uniform_buffer);
@@ -814,11 +737,11 @@ namespace GLT::renderer_vk_ray {
 
                 // Define the image subresource range for swapchain images
                 vk::ImageSubresourceRange swapchain_range(
-                    vk::ImageAspectFlagBits::eColor,            // Color aspect
-                    0,                                          // Base mip level
-                    1,                                          // Level count
-                    0,                                          // Base array layer
-                    1                                           // Layer count
+                    vk::ImageAspectFlagBits::eColor,                // Color aspect
+                    0,                                              // Base mip level
+                    1,                                              // Level count
+                    0,                                              // Base array layer
+                    1                                               // Layer count
                 );
 
                 m_vr_dev->transition_image_layout(
@@ -826,9 +749,9 @@ namespace GLT::renderer_vk_ray {
                     m_swapchain.swapchain_images[m_current_swapchain_image],
                     m_swapchain_images_layout[m_current_swapchain_image],
                     new_layout,
-                    swapchain_range,                            // Added: Image subresource range
-                    vk::PipelineStageFlagBits::eAllGraphics,    // Added: Source stage (using default)
-                    vk::PipelineStageFlagBits::eAllCommands     // Added: Destination stage (using default)
+                    swapchain_range,                                // Image subresource range
+                    vk::PipelineStageFlagBits::eAllGraphics,        // Source stage (using default)
+                    vk::PipelineStageFlagBits::eAllCommands         // Destination stage (using default)
                 );
                 m_swapchain_images_layout[m_current_swapchain_image] = new_layout;
 
@@ -838,24 +761,23 @@ namespace GLT::renderer_vk_ray {
 
                 // Define the image subresource range for render images
                 vk::ImageSubresourceRange render_range(
-                    vk::ImageAspectFlagBits::eColor,            // Color aspect
-                    0,                                          // Base mip level
-                    1,                                          // Level count
-                    0,                                          // Base array layer
-                    1                                           // Layer count
+                    vk::ImageAspectFlagBits::eColor,                // Color aspect
+                    0,                                              // Base mip level
+                    1,                                              // Level count
+                    0,                                              // Base array layer
+                    1                                               // Layer count
                 );
 
                 m_vr_dev->transition_image_layout(
                     command_buffer,
-                    m_output_image_buffer.image,
-                    m_output_image_layout,
+                    m_output_image->get_allocated_image_ref().image,
+                    m_output_image->get_accessible_image_ref().layout,
                     new_layout,
-                    render_range,                                   // Added: Image subresource range
-                    vk::PipelineStageFlagBits::eAllGraphics,        // Added: Source stage
-                    vk::PipelineStageFlagBits::eAllCommands         // Added: Destination stage
+                    render_range,                                   // Image subresource range
+                    vk::PipelineStageFlagBits::eAllGraphics,        // Source stage
+                    vk::PipelineStageFlagBits::eAllCommands         // Destination stage
                 );
-                m_output_image_layout = new_layout;
-                m_output_image.layout = new_layout;
+                m_output_image->get_accessible_image_ref().layout = new_layout;
 
             } break;
         }
@@ -893,6 +815,7 @@ namespace GLT::renderer_vk_ray {
         ), "", "Failed to load Vulkan functions for ImGui");
 
         create_imgui_resources();
+
         LOG(trace, "ImGui initialized");
     }
 

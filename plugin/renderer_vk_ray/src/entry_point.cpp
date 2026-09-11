@@ -13,7 +13,14 @@
 #include "util/data_structures.h"
 #include "util/shader_compiler.h"
 
+
+
 // FORWARD DECLARATIONS ================================================================================================
+
+namespace GLT::renderer_vk_ray {
+
+    class image;
+}
 
 
 namespace GLT::renderer_vk_ray {
@@ -86,7 +93,7 @@ namespace GLT::renderer_vk_ray {
 
         // --- native access -------------------------------------------------------------------------------------------
 
-        [[nodiscard]] void* get_rendered_image() override { return nullptr; }
+        [[nodiscard]] void* get_rendered_image() override;
 
 
         [[nodiscard]] void* get_native_device_handle() const override { return {}; }
@@ -124,7 +131,7 @@ namespace GLT::renderer_vk_ray {
         // Clear the output image to a background colour (e.g., dark blue)
         void clear_output_image(vk::CommandBuffer cmd, const glm::vec4& color);
     
-        ImTextureID create_imgui_texture(vr::accessible_image& img);
+        vk::DescriptorSet create_imgui_texture(vr::accessible_image& img);
 
         // --- IMGUI ---------------------------------------------------------------------------------------------------
 
@@ -172,11 +179,9 @@ namespace GLT::renderer_vk_ray {
         std::vector<vk::Semaphore>                              m_present_semaphores{};
         std::vector<vk::Fence>                                  m_in_flight_fences{};
         std::vector<vk::ImageLayout>                            m_swapchain_images_layout{};
-        vk::ImageLayout                                         m_output_image_layout = vk::ImageLayout::eUndefined;
         std::array<vk::CommandBuffer, MAX_CONCURRENT_FRAMES>    m_rt_render_cmd;
         vr::device*                                             m_vr_dev = nullptr;
-        vr::allocated_image                                     m_output_image_buffer;
-        vr::accessible_image                                    m_output_image;
+        GLT::unique_ref<image>                                  m_output_image = nullptr;
         vr::allocated_buffer                                    m_uniform_buffer = {};
         vr::allocated_buffer                                    m_vertex_buffer;
         vr::allocated_buffer                                    m_index_buffer;
@@ -218,49 +223,44 @@ namespace GLT::renderer_vk_ray {
     class image : public GLT::render::image {
     public:
 
-        DEFAULT_CONSTRUCTORS(image);
+        image();
 
-        image(const std::filesystem::path& image_path);
+        image(const glm::uvec3 size);
 
+        image(const std::filesystem::path& image_path, const bool mipmapped = false);
 
         ~image();
 
 
         SETTER(VmaAllocation, allocation,                       m_allocated_image.allocation);
-        DEFAULT_GETTER_SETTER_ALL(vk::Image,                    image);
-        DEFAULT_GETTER_SETTER_ALL(vk::ImageView,                image_view);
-        DEFAULT_GETTER_SETTER_ALL(glm::uvec3,                   extend);
+
+        DEFAULT_GETTER_REF(vr::allocated_image,                 allocated_image);
+        DEFAULT_SETTER(vr::allocated_image,                     allocated_image);
+        DEFAULT_GETTER_REF(vr::accessible_image,                accessible_image);
+        DEFAULT_SETTER(vr::accessible_image,                    accessible_image);
+
+        FORCE_INLINE_R glm::uvec2 get_size() override;
 
 
-        [[nodiscard]] FORCE_INLINE u32 get_width() override;
-
-
-        [[nodiscard]] FORCE_INLINE u32 get_height() override;
-
-
-        [[nodiscard]] FORCE_INLINE void* get_descriptor_set() override;
+        FORCE_INLINE_R void* get_descriptor_set() override;
 
 
         [[nodiscard]] void* load(const std::filesystem::path& path, u32& out_width, u32& out_height) override;
 
     private:
 
-	    void allocate_memory(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped);
+	    void allocate_memory(const void* data, const glm::uvec3 size, 
+            const GLT::render::image_format format = GLT::render::image_format::RGBA16F, const bool mipmapped = true);
 
 
-        void allocate_image(const glm::uvec3 size, const vk::Format format, const vk::ImageUsageFlags usage, const bool mipmapped);
+        void assign_data(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const u32 mip_levels);
 
 
         void release();
 
 
-        // Vulkan resources
-        bool                                                    m_initialized = false;
-        vk::Image                                               m_image = nullptr;
-        vk::ImageView                                           m_image_view = nullptr;
-        vr::allocated_image                                     m_allocated_image{};   // holds VmaAllocation and handle
-        glm::uvec3                                              m_extend{};
-        vk::DescriptorSet                                       m_descriptor_set{};
+        vr::allocated_image                                     m_allocated_image{};
+        vr::accessible_image                                    m_accessible_image{};
         GLT::ref<GLT::renderer_vk_ray::renderer>                m_renderer{};
 
     };

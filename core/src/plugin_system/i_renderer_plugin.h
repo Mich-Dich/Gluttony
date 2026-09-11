@@ -39,7 +39,8 @@ namespace GLT::render {
     enum class image_format {
         None = 0,
         RGBA,
-        RGBA32F
+        RGBA16F,
+        RGBA32F,
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -250,26 +251,15 @@ namespace GLT::render {
     class image {
     public:
 
-        DEFAULT_CONSTRUCTORS(image);
-        // DEFAULT_COPY_CONSTRUCTOR(image);
+        image();
 
-        image(const void* data, const glm::ivec3 size, const image_format format, const bool mipmapped = false);
+        image(const glm::uvec3 size);
 
-        image(const void* data, const u32 width, const u32 height, const image_format format, const bool mipmapped = false);
+        image(const std::filesystem::path& image_path, const bool mipmapped = false);
 
-        image(const std::filesystem::path& image_path, const image_format format, const bool mipmapped = false);
+        virtual ~image();
 
-        image(const std::filesystem::path& image_path);
-
-        virtual ~image() = default;      // inline
-
-
-        virtual void anchor();
-
-
-        [[nodiscard]] virtual FORCE_INLINE u32 get_width() = 0;
-
-        [[nodiscard]] virtual FORCE_INLINE u32 get_height() = 0;
+        [[nodiscard]] virtual FORCE_INLINE glm::uvec2 get_size() = 0;
 
         [[nodiscard]] virtual void* get_descriptor_set() = 0;
 

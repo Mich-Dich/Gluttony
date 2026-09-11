@@ -11,17 +11,10 @@
 #include "util/io/directory_iterator.h"
 #include "config/config.h"
 #include "plugin_manager.h"
-#include "plugin_system/i_renderer_plugin.h"
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
-
-namespace GLT::render {
-
-    void image::anchor() {}
-
-}
 
 
 namespace GLT::plugin_manager {

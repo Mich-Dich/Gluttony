@@ -61,9 +61,10 @@ namespace GLT::renderer_vk_ray {
     static vk::Format image_format_to_vulkan_format(const GLT::render::image_format format) {
 
         switch (format) {
-            case GLT::render::image_format::RGBA:    return vk::Format::eR8G8B8A8Unorm;
-            case GLT::render::image_format::RGBA32F: return vk::Format::eR32G32B32A32Sfloat;
-            default:                    return vk::Format::eUndefined;
+            case GLT::render::image_format::RGBA:       return vk::Format::eR8G8B8A8Unorm;
+            case GLT::render::image_format::RGBA32F:    return vk::Format::eR32G32B32A32Sfloat;
+            case GLT::render::image_format::RGBA16F:    return vk::Format::eR16G16B16A16Sfloat;
+            default:                                    return vk::Format::eUndefined;
         }
     }
 
@@ -145,27 +146,50 @@ namespace GLT::renderer_vk_ray {
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 
-    image::image(const std::filesystem::path& image_path) {
+    image::image() {         
+        
+        allocate_memory(nullptr, glm::uvec3{2, 2, 1}, GLT::render::image_format::RGBA, false);      // super small image buffer
+    }
+
+
+    image::image(const glm::uvec3 size) {
+        
+        allocate_memory(nullptr, size, GLT::render::image_format::RGBA16F, false);      // super small image buffer
+    }
+
+
+    image::image(const std::filesystem::path& image_path, const bool mipmapped) {
 
         int channels;
         int width = 0, height = 0;
         void* data = stbi_load(image_path.string().c_str(), &width, &height, &channels, 4);
-        VALIDATE(data != nullptr, return, "", "Could not load image from path [{}]", image_path.generic_string())
-
-        // no explicit format given -> stbi_load with 4 requested channels always yields 8-bit RGBA
-        allocate_memory(data, glm::uvec3{width, height, 1}, GLT::render::image_format::RGBA, false);
+        allocate_memory(data, glm::uvec3{width, height, 1}, GLT::render::image_format::RGBA, mipmapped);
         stbi_image_free(data);
     }
 
 
-	image::~image()                     { release(); }
+	image::~image() {
+
+        vr::device* vr_dev = m_renderer->get_vr_dev();
+        vk::Device vk_device = m_renderer->get_vk_device();
+
+        if (m_accessible_image.descriptor_set)
+            ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(m_accessible_image.descriptor_set));
+
+        if (m_accessible_image.view)                                    // Destroy image view
+            vk_device.destroyImageView(m_accessible_image.view);
+
+        if (m_allocated_image.image)                            // destroy the image
+            vr_dev->destroy_image(m_allocated_image);
+
+        m_accessible_image.descriptor_set = nullptr;
+        m_accessible_image.view = nullptr;
+        m_allocated_image.image = nullptr;
+    }
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    u32 image::get_width()              { return m_extend.x; }
-
-
-    u32 image::get_height()             { return m_extend.y; }
+    glm::uvec2 image::get_size()              { return glm::uvec2{m_allocated_image.width, m_allocated_image.height}; }
 
 
     void* image::load(const std::filesystem::path& path, u32& out_width, u32& out_height) {
@@ -180,66 +204,56 @@ namespace GLT::renderer_vk_ray {
     }
 
 
-    void* image::get_descriptor_set()   { return m_descriptor_set; }
+    void* image::get_descriptor_set()   { 
+        
+        if (m_accessible_image.descriptor_set)
+            return m_accessible_image.descriptor_set;
+        
+        vk::ImageLayout layout = m_accessible_image.layout;                        // Ensure the image layout is correct for sampling
+        if (layout == vk::ImageLayout::eUndefined)
+            layout = vk::ImageLayout::eShaderReadOnlyOptimal;       // OR shader read only optimal
+
+        m_accessible_image.descriptor_set = static_cast<vk::DescriptorSet>(ImGui_ImplVulkan_AddTexture(
+            static_cast<VkImageView>(m_accessible_image.view),
+            static_cast<VkImageLayout>(layout)));
+        
+        return m_accessible_image.descriptor_set;
+    }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
-    void image::allocate_memory(const void* data, const glm::uvec3 size, const GLT::render::image_format format, 
-        const bool mipmapped) {
+    void image::allocate_memory(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped) {
 
         m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::renderer_vk_ray::renderer>(GLT::plugin_manager::interface::renderer);
-        
-        const size_t data_size = size.x * size.y * size.z * bytes_per_pixel(format);
-        const vk::Format vk_format = image_format_to_vulkan_format(format);
-        vk::ImageUsageFlags full_usage =            // every image needs to be a blit/copy target, and sampled from in shaders
-            vk::ImageUsageFlagBits::eTransferDst |
-            vk::ImageUsageFlagBits::eTransferSrc |
-            vk::ImageUsageFlagBits::eSampled;
-        allocate_image(size, vk_format, full_usage, mipmapped);
-
-        vr::device* device = m_renderer->get_vr_dev();
+        vr::device* vr_dev = m_renderer->get_vr_dev();
+        vk::Device vk_device = m_renderer->get_vk_device();
         const u32 mip_levels = mipmapped ? static_cast<u32>(std::floor(std::log2(std::max(size.x, size.y)))) + 1 : 1;
-        if (data != nullptr) {
 
-            vr::allocated_buffer staging = device->create_buffer(data_size, vk::BufferUsageFlagBits::eTransferSrc,
-                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        const auto image_create_info = vk::ImageCreateInfo()                            // Create an image to render to
+            .setImageType(vk::ImageType::e2D)
+            .setFormat(vk::Format::eR16G16B16A16Sfloat)
+            .setExtent(vk::Extent3D(size.x, size.y, size.z))
+            .setMipLevels(1)
+            .setArrayLayers(1)
+            .setSamples(vk::SampleCountFlagBits::e1)
+            .setTiling(vk::ImageTiling::eOptimal)
+            .setUsage(vk::ImageUsageFlagBits::eStorage 
+                | vk::ImageUsageFlagBits::eTransferSrc
+                | vk::ImageUsageFlagBits::eTransferDst)
+            .setSharingMode(vk::SharingMode::eExclusive)
+            .setInitialLayout(vk::ImageLayout::eUndefined);
 
-            device->update_buffer(staging, const_cast<void*>(data), data_size);
+        // create the image with dedicated memory
+        m_allocated_image = vr_dev->create_image(image_create_info, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
 
-            m_renderer->immediate_submit([&](vk::CommandBuffer cmd) {
+        assign_data(data, size, format, mip_levels);
 
-                vk::ImageSubresourceRange base_range = vk::ImageSubresourceRange()
-                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                    .setBaseMipLevel(0)
-                    .setLevelCount(mip_levels)
-                    .setBaseArrayLayer(0)
-                    .setLayerCount(1);
-
-                device->transition_image_layout(cmd, m_image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-                    base_range, vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer);
-
-                vk::BufferImageCopy copy_region = vk::BufferImageCopy()
-                    .setImageSubresource(vk::ImageSubresourceLayers().setAspectMask(vk::ImageAspectFlagBits::eColor).setMipLevel(0).setBaseArrayLayer(0).setLayerCount(1))
-                    .setImageExtent({size.x, size.y, 1});
-
-                cmd.copyBufferToImage(staging.buffer, m_image, vk::ImageLayout::eTransferDstOptimal, 1, &copy_region);
-
-                if (mip_levels > 1)
-                    generate_mipmaps(cmd, m_image, size.x, size.y, mip_levels); // leaves every level in eShaderReadOnlyOptimal
-                else
-                    device->transition_image_layout(cmd, m_image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
-                        base_range, vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader);
-            });
-
-            device->destroy_buffer(staging);
-        }
-
-        vk::ImageViewCreateInfo view_info = vk::ImageViewCreateInfo()
-            .setImage(m_image)
+        const auto view_create_info = vk::ImageViewCreateInfo()     // create a view for the image
+            .setImage(m_allocated_image.image)
             .setViewType(vk::ImageViewType::e2D)
-            .setFormat(vk_format)
+            .setFormat(image_format_to_vulkan_format(format))
             .setSubresourceRange(vk::ImageSubresourceRange()
                 .setAspectMask(vk::ImageAspectFlagBits::eColor)
                 .setBaseMipLevel(0)
@@ -247,58 +261,47 @@ namespace GLT::renderer_vk_ray {
                 .setBaseArrayLayer(0)
                 .setLayerCount(1));
 
-        m_image_view = device->get_device().createImageView(view_info); // adjust accessor name if needed
-        m_extend = size;
-        m_initialized = true;
+        m_accessible_image.view = vk_device.createImageView(view_create_info);
     }
 
 
-    void image::allocate_image(const glm::uvec3 size, const vk::Format format, const vk::ImageUsageFlags usage, const bool mipmapped) {
+    void image::assign_data(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const u32 mip_levels) {
 
-        const u32 mip_levels = mipmapped ? static_cast<u32>(std::floor(std::log2(std::max(size.x, size.y)))) + 1 : 1;
-        vk::ImageCreateInfo image_info = vk::ImageCreateInfo()
-            .setImageType(vk::ImageType::e2D)
-            .setFormat(format)
-            .setExtent(vk::Extent3D{size.x, size.y, 1})
-            .setMipLevels(mip_levels)
-            .setArrayLayers(1)
-            .setSamples(vk::SampleCountFlagBits::e1)
-            .setTiling(vk::ImageTiling::eOptimal)
-            .setUsage(usage)
-            .setInitialLayout(vk::ImageLayout::eUndefined)
-            .setSharingMode(vk::SharingMode::eExclusive);
+        vr::device* vr_dev = m_renderer->get_vr_dev();
+        const size_t data_size = size.x * size.y * size.z * bytes_per_pixel(format);
+        if (data != nullptr) {
 
-        // create_image fills in width/height/size (allocation size in bytes) on the returned struct itself,
-        // so there's no need to set m_allocated_image fields manually beforehand
-        vr::device* device = m_renderer->get_vr_dev();
-        m_allocated_image = device->create_image(image_info, 0, nullptr);
-        m_image = m_allocated_image.image;
+            vr::allocated_buffer staging = vr_dev->create_buffer(data_size, vk::BufferUsageFlagBits::eTransferSrc,
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
-        m_initialized = true;
-    }
+            vr_dev->update_buffer(staging, const_cast<void*>(data), data_size);
+            m_renderer->immediate_submit([&](vk::CommandBuffer cmd) {
 
+                const vk::ImageSubresourceRange base_range = vk::ImageSubresourceRange()
+                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                    .setBaseMipLevel(0)
+                    .setLevelCount(mip_levels)
+                    .setBaseArrayLayer(0)
+                    .setLayerCount(1);
 
-    void image::release() {
+                vr_dev->transition_image_layout(cmd, m_allocated_image.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+                    base_range, vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer);
 
-        if (!m_initialized)
-            return;
+                const vk::BufferImageCopy copy_region = vk::BufferImageCopy()
+                    .setImageSubresource(vk::ImageSubresourceLayers().setAspectMask(vk::ImageAspectFlagBits::eColor).setMipLevel(0).setBaseArrayLayer(0).setLayerCount(1))
+                    .setImageExtent({size.x, size.y, 1});
 
-        vr::device* device = m_renderer->get_vr_dev();
-        if (m_descriptor_set) {
+                cmd.copyBufferToImage(staging.buffer, m_allocated_image.image, vk::ImageLayout::eTransferDstOptimal, 1, &copy_region);
 
-            ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(m_descriptor_set));
-            m_descriptor_set = nullptr;
+                if (mip_levels > 1)
+                    generate_mipmaps(cmd, m_allocated_image.image, size.x, size.y, mip_levels); // leaves every level in eShaderReadOnlyOptimal
+                else
+                    vr_dev->transition_image_layout(cmd, 
+                        m_allocated_image.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        base_range,              vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader);
+            });
+            vr_dev->destroy_buffer(staging);
         }
-
-        if (m_image_view) {
-
-            device->get_device().destroyImageView(m_image_view);
-            m_image_view = nullptr;
-        }
-
-        device->destroy_image(m_allocated_image);
-        m_image = nullptr;
-        m_initialized = false;
     }
 
 }
