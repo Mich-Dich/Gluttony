@@ -227,6 +227,19 @@ namespace GLT::renderer_vk_ray {
     }
 
 
+    glm::ivec2 renderer::get_swapchain_size() const {
+
+        return {m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height}; 
+    }
+
+    IGNORE_UNUSED_PARAMETER_START
+    IGNORE_UNUSED_VARIABLE_START
+
+    void renderer::resize(const u32 width, const u32 height) { }
+
+    IGNORE_UNUSED_VARIABLE_STOP
+    IGNORE_UNUSED_PARAMETER_STOP
+
     void* renderer::get_rendered_image()    { return static_cast<void*>(m_output_image->get_descriptor_set()); }
 
 
@@ -662,6 +675,7 @@ namespace GLT::renderer_vk_ray {
 		vkDeviceWaitIdle(m_device);
 		destroy_swapchain();
 		create_swapchain(size);
+        // m_output_image->resize(glm::uvec3{m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height, 1});
 
         // re‑initialise layout tracking
         m_image_count = static_cast<u32>(m_swapchain.swapchain_images.size());
@@ -825,6 +839,20 @@ namespace GLT::renderer_vk_ray {
         mp_window->imgui_shutdown();
         destroy_imgui_resources();
         LOG(trace, "ImGui shutdown");
+    }
+
+
+    void renderer::create_imgui_resources() {
+
+        utils::create_imgui_resources(m_imgui_descriptor_pool, m_device, m_swapchain, m_imgui_render_pass,
+            m_instance, m_physical_device, m_queues, m_imgui_framebuffers, m_imgui_initialized);
+    }
+
+
+    void renderer::destroy_imgui_resources() {
+
+        utils::destroy_imgui_resources(m_device, m_imgui_framebuffers, m_imgui_render_pass, 
+            m_imgui_descriptor_pool, m_imgui_initialized);
     }
 
 

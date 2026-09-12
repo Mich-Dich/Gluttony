@@ -39,11 +39,11 @@ namespace GLT::renderer_vk_ray {
         DEFAULT_GETTER(vr::device*,                             vr_dev);
         GETTER(vk::Device, vk_device,                           m_vr_dev->get_device())
 
-        void on_load() { }
+        void on_load();
 
-        
-        void on_unload() { }
-        
+
+        void on_unload();
+
 
         bool create() override;
 
@@ -58,48 +58,48 @@ namespace GLT::renderer_vk_ray {
         void draw_frame() override;
 
 
-        void wait_for_gpu() override { m_device.waitIdle(); }
+        FORCE_INLINE void wait_for_gpu() override { m_device.waitIdle(); }
 
         // --- swapchain & configuration -------------------------------------------------------------------------------
 
+        FORCE_INLINE_R glm::ivec2 get_swapchain_size() const override;
+
         IGNORE_UNUSED_PARAMETER_START
         IGNORE_UNUSED_VARIABLE_START
-        
-        [[nodiscard]] glm::ivec2 get_swapchain_size() const override { return {}; }
 
-
-        void resize(const u32 width, const u32 height) override { }
+        void resize(const u32 width, const u32 height) override;
 
 
         void set_vsync(const bool enabled) override { }
 
-
-        [[nodiscard]] bool get_vsync() const override { return false; }
-
-
-        void set_clear_color(const glm::vec4& color) override { }
-
         IGNORE_UNUSED_VARIABLE_STOP
         IGNORE_UNUSED_PARAMETER_STOP
 
-        void set_render_size(const glm::ivec2& size) override { m_render_size = size; }
+        FORCE_INLINE_R bool get_vsync() const override { return false; }
+
+
+        FORCE_INLINE void set_clear_color(const glm::vec4& color) override { m_clear_color = color; }
+
+
+        FORCE_INLINE void set_render_size(const glm::ivec2& size) override { m_render_size = size; }
 
         // --- feature queries -----------------------------------------------------------------------------------------
 
-        [[nodiscard]] GLT::render::renderer_feature get_supported_features() const override { return m_features; }
+        FORCE_INLINE_R GLT::render::renderer_feature get_supported_features() const override { return m_features; }
 
 
-        [[nodiscard]] GLT::render::backend_api get_backend_api() const override { return GLT::render::backend_api::vulkan; }
+        FORCE_INLINE_R GLT::render::backend_api get_backend_api() const override { return GLT::render::backend_api::vulkan; }
 
         // --- native access -------------------------------------------------------------------------------------------
 
-        [[nodiscard]] void* get_rendered_image() override;
+        FORCE_INLINE_R void* get_rendered_image() override;
 
 
-        [[nodiscard]] void* get_native_device_handle() const override { return {}; }
+        FORCE_INLINE_R void* get_native_device_handle() const override { return {m_physical_device}; }
 
 
-        [[nodiscard]] void* get_native_context_handle() const override { return {}; }
+        FORCE_INLINE_R void* get_native_context_handle() const override { return {}; }
+
 
         void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
@@ -110,51 +110,59 @@ namespace GLT::renderer_vk_ray {
             render,
         };
 
+
         void init_vulkan();
-    
+
+
         void create_acceleration_structures();
-    
+
+
         void create_rt_pipeline();
-    
+
+
         void update_descriptor_set();
+
 
         void create_base_resources();
 
+
         void transition_image_layout(vk::CommandBuffer command_buffer, const image_type type, const vk::ImageLayout new_layout);
-        
-	    void create_swapchain(const glm::ivec2 size);
 
-	    void destroy_swapchain();
 
-	    void resize_swapchain(const glm::ivec2 size);
+        void create_swapchain(const glm::ivec2 size);
+
+
+        void destroy_swapchain();
+
+
+        void resize_swapchain(const glm::ivec2 size);
+
 
         // Clear the output image to a background colour (e.g., dark blue)
         void clear_output_image(vk::CommandBuffer cmd, const glm::vec4& color);
-    
+
+
         vk::DescriptorSet create_imgui_texture(vr::accessible_image& img);
 
         // --- IMGUI ---------------------------------------------------------------------------------------------------
 
         void imgui_init();
-        
+
+
         void imgui_shutdown();
 
-        void create_imgui_resources() {
 
-            utils::create_imgui_resources(m_imgui_descriptor_pool, m_device, m_swapchain, m_imgui_render_pass,
-                m_instance, m_physical_device, m_queues, m_imgui_framebuffers, m_imgui_initialized);
-        }
-        
-        void destroy_imgui_resources() {
+        void create_imgui_resources();
 
-            utils::destroy_imgui_resources(m_device, m_imgui_framebuffers, m_imgui_render_pass, 
-                m_imgui_descriptor_pool, m_imgui_initialized);
-        }
+
+        void destroy_imgui_resources();
+
 
         void begin_imgui_frame(vk::CommandBuffer& current_cmd);
-        
+
+
         void end_imgui_frame(vk::CommandBuffer& current_cmd);
-        
+
 
         glm::ivec2                                              m_render_size{ 300, 400};
 
@@ -247,6 +255,10 @@ namespace GLT::renderer_vk_ray {
 
         [[nodiscard]] void* load(const std::filesystem::path& path, u32& out_width, u32& out_height) override;
 
+
+        void resize(const glm::uvec3& new_size, const GLT::render::image_format format = GLT::render::image_format::RGBA16F,
+            const bool mipmapped = false) override;
+
     private:
 
 	    void allocate_memory(const void* data, const glm::uvec3 size, 
@@ -302,6 +314,7 @@ namespace GLT::renderer_vk_ray {
 }
 
 #include "image.inl"
+#include "plugin.inl"
 #include "renderer.inl"
 
 EXPORT_PLUGIN_CLASS(GLT::renderer_vk_ray::renderer, GLT::renderer_vk_ray::descriptor)

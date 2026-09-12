@@ -18,7 +18,7 @@
 - Vulkan 1.4.357.0 or newer
 
 **Install Vulkan SDK:**
-- Download the newest [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) (1.4.357.0 or newer) and save it at `~/vulkan-sdk/`
+- Download the newest [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) (1.4.357.x) and save it at `~/vulkan-sdk/`
 
 - Extract the tar using:
 ```bash

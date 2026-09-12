@@ -39,13 +39,14 @@ namespace GLT::editor {
     editor_layer::editor_layer() 
         : layer("editor_layer") {
 
-        m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::render::i_renderer_plugin>(
-            GLT::plugin_manager::interface::renderer);
+        m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::render::i_renderer_plugin>(GLT::plugin_manager::interface::renderer);
+        m_logo = GLT::create_unique_ref<GLT::render::image>(std::filesystem::path(GLT::util::get_executable_path() / "assets/image/logo_small.jpeg"));
     }
 
 
     editor_layer::~editor_layer() {
 
+        m_logo.reset();
         m_renderer.reset();
     }
 
@@ -84,9 +85,18 @@ namespace GLT::editor {
 
         ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Viewport", nullptr)) {
-            
+
             m_content_size = ImGui::GetContentRegionAvail();        // update the window size
             ImGui::Image(m_renderer->get_rendered_image(), m_content_size);
+        }
+        ImGui::End();
+
+
+        const auto logo_size = m_logo->get_size();
+        ImGui::SetNextWindowContentSize(ImVec2(logo_size.x, logo_size.y));
+        if (ImGui::Begin("Logo", nullptr, ImGuiWindowFlags_NoResize)) {
+
+            ImGui::Image(m_logo->get_descriptor_set(), ImVec2(logo_size.x, logo_size.y));
         }
         ImGui::End();
     }

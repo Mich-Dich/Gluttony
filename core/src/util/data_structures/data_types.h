@@ -104,9 +104,29 @@ namespace GLT {
 	};
 
 
-	// @brief Creates a reference-counted object with perfect forwarding
+	// @brief Detects a plugin-registered "virtual constructor" hook: a static
+	// T::create_instance(args...) returning something convertible to a
+	// std::unique_ptr<T>. Lets create_ref/create_unique_ref transparently
+	// defer to a runtime-registered derived type instead of constructing T
+	// directly - see GLT::render::image for the reference implementation.
 	template <typename T, typename... args>
-	constexpr ref<T> create_ref(args &&...arguments)						{ return std::make_shared<T>(std::forward<args>(arguments)...); }
+	concept has_create_instance = requires(args&&... arguments) {
+		{ T::create_instance(std::forward<args>(arguments)...) } -> std::convertible_to<std::unique_ptr<T>>;
+	};
+
+
+	// @brief Creates a reference-counted object with perfect forwarding.
+	// If T exposes a create_instance(args...) hook, defers to it (wrapping
+	// the resulting unique_ptr into a shared_ptr); otherwise constructs T
+	// directly, exactly as before.
+	template <typename T, typename... args>
+	[[nodiscard]] constexpr ref<T> create_ref(args &&...arguments) {
+
+		if constexpr (has_create_instance<T, args...>)
+			return ref<T>(T::create_instance(std::forward<args>(arguments)...));
+		else
+			return std::make_shared<T>(std::forward<args>(arguments)...);
+	}
 
 
 	// Create weak reference from existing shared reference
@@ -114,12 +134,18 @@ namespace GLT {
 	constexpr weak_ref<T> create_weak_ref(const ref<T>& shared)				{ return shared; } 	// Implicit conversion from shared_ptr to weak_ptr
 
 
-	// @brief Creates a scoped object with perfect forwarding
+	// @brief Creates a scoped object with perfect forwarding.
+	// Same create_instance hook as create_ref, above.
 	template <typename T, typename... args>
-	constexpr unique_ref<T> create_unique_ref(args &&...arguments)			{ return std::make_unique<T>(std::forward<args>(arguments)...); }
+	[[nodiscard]] constexpr unique_ref<T> create_unique_ref(args &&...arguments) {
+
+		if constexpr (has_create_instance<T, args...>)
+			return T::create_instance(std::forward<args>(arguments)...);
+		else
+			return std::make_unique<T>(std::forward<args>(arguments)...);
+	}
 
 	// smart pointer ---------------------------------------------------------------------------------------------------
-	//  ---------------------------------------------------------------------------------------------------
 
 	// @brief Semantic versioning structure
 	struct version {

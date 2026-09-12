@@ -61,13 +61,13 @@ namespace GLT::renderer_vk_ray {
     static vk::Format image_format_to_vulkan_format(const GLT::render::image_format format) {
 
         switch (format) {
+            case GLT::render::image_format::RGB:        return vk::Format::eR8G8B8Unorm;
             case GLT::render::image_format::RGBA:       return vk::Format::eR8G8B8A8Unorm;
             case GLT::render::image_format::RGBA32F:    return vk::Format::eR32G32B32A32Sfloat;
             case GLT::render::image_format::RGBA16F:    return vk::Format::eR16G16B16A16Sfloat;
             default:                                    return vk::Format::eUndefined;
         }
     }
-
 
     // Successively blits each mip level down from the previous one, transitioning each level to eShaderReadOnlyOptimal as it finishes being used as a blit source.
     static void generate_mipmaps(vk::CommandBuffer cmd, vk::Image image, u32 width, u32 height, u32 mip_levels) {
@@ -148,7 +148,7 @@ namespace GLT::renderer_vk_ray {
 
     image::image() {         
         
-        allocate_memory(nullptr, glm::uvec3{2, 2, 1}, GLT::render::image_format::RGBA, false);      // super small image buffer
+        allocate_memory(nullptr, glm::uvec3{2, 2, 1}, GLT::render::image_format::RGBA16F, false);      // super small image buffer
     }
 
 
@@ -168,40 +168,11 @@ namespace GLT::renderer_vk_ray {
     }
 
 
-	image::~image() {
-
-        vr::device* vr_dev = m_renderer->get_vr_dev();
-        vk::Device vk_device = m_renderer->get_vk_device();
-
-        if (m_accessible_image.descriptor_set)
-            ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(m_accessible_image.descriptor_set));
-
-        if (m_accessible_image.view)                                    // Destroy image view
-            vk_device.destroyImageView(m_accessible_image.view);
-
-        if (m_allocated_image.image)                            // destroy the image
-            vr_dev->destroy_image(m_allocated_image);
-
-        m_accessible_image.descriptor_set = nullptr;
-        m_accessible_image.view = nullptr;
-        m_allocated_image.image = nullptr;
-    }
+	image::~image()                             { release(); }
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    glm::uvec2 image::get_size()              { return glm::uvec2{m_allocated_image.width, m_allocated_image.height}; }
-
-
-    void* image::load(const std::filesystem::path& path, u32& out_width, u32& out_height) {
-
-        int width, height, channels;
-        u8* buffer = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
-        VALIDATE(buffer != nullptr, return nullptr, "", "Could not load image from path [{}]", path.generic_string())
-
-        out_width = width;
-        out_height = height;
-        return buffer; // caller owns the memory, free with stbi_image_free
-    }
+    glm::uvec2 image::get_size()                { return glm::uvec2{m_allocated_image.width, m_allocated_image.height}; }
 
 
     void* image::get_descriptor_set()   { 
@@ -220,6 +191,30 @@ namespace GLT::renderer_vk_ray {
         return m_accessible_image.descriptor_set;
     }
 
+
+    void* image::load(const std::filesystem::path& path, u32& out_width, u32& out_height) {
+
+        int width, height, channels;
+        u8* buffer = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
+        VALIDATE(buffer != nullptr, return nullptr, "", "Could not load image from path [{}]", path.generic_string())
+
+        out_width = width;
+        out_height = height;
+        return buffer; // caller owns the memory, free with stbi_image_free
+    }
+
+
+    void image::resize(const glm::uvec3& new_size, const GLT::render::image_format format, const bool mipmapped) {
+
+        const glm::uvec3 current_size{ m_allocated_image.width, m_allocated_image.height, 1 };
+        if (current_size == new_size) 
+            return;                                                 // already the right size, nothing to do
+
+        m_renderer->get_vk_device().waitIdle();                     // Make sure the GPU is done with the image before we destroy it
+        release();
+        allocate_memory(nullptr, new_size, format, mipmapped);
+    }
+
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
@@ -233,15 +228,16 @@ namespace GLT::renderer_vk_ray {
 
         const auto image_create_info = vk::ImageCreateInfo()                            // Create an image to render to
             .setImageType(vk::ImageType::e2D)
-            .setFormat(vk::Format::eR16G16B16A16Sfloat)
+            .setFormat(image_format_to_vulkan_format(format))
             .setExtent(vk::Extent3D(size.x, size.y, size.z))
-            .setMipLevels(1)
+            .setMipLevels(mip_levels)
             .setArrayLayers(1)
             .setSamples(vk::SampleCountFlagBits::e1)
             .setTiling(vk::ImageTiling::eOptimal)
-            .setUsage(vk::ImageUsageFlagBits::eStorage 
-                | vk::ImageUsageFlagBits::eTransferSrc
-                | vk::ImageUsageFlagBits::eTransferDst)
+            .setUsage(vk::ImageUsageFlagBits::eSampled |
+                vk::ImageUsageFlagBits::eStorage |
+                vk::ImageUsageFlagBits::eTransferSrc |
+                vk::ImageUsageFlagBits::eTransferDst)
             .setSharingMode(vk::SharingMode::eExclusive)
             .setInitialLayout(vk::ImageLayout::eUndefined);
 
@@ -302,6 +298,29 @@ namespace GLT::renderer_vk_ray {
             });
             vr_dev->destroy_buffer(staging);
         }
+    }
+
+
+    void image::release() {
+
+        if (!m_renderer)
+            return;                                                 // never allocated, nothing to do
+
+        vr::device* vr_dev = m_renderer->get_vr_dev();
+        vk::Device vk_device = m_renderer->get_vk_device();
+
+        if (m_accessible_image.descriptor_set)
+            ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(m_accessible_image.descriptor_set));
+
+        if (m_accessible_image.view)                                // Destroy image view
+            vk_device.destroyImageView(m_accessible_image.view);
+
+        if (m_allocated_image.image)                                // destroy the image
+            vr_dev->destroy_image(m_allocated_image);
+
+        m_accessible_image.descriptor_set = nullptr;
+        m_accessible_image.view = nullptr;
+        m_allocated_image.image = nullptr;
     }
 
 }
