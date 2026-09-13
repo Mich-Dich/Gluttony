@@ -45,14 +45,24 @@ namespace GLT::editor {
     private:
 
         void render_toolbar();
+        void render_dockspace();
+
+        void render_viewport();
+        void render_content_browser();
+        void render_details();
+        void render_tools();
+
+        void build_default_layout(ImGuiID dockspace_id, const ImVec2& size);
 
         GLT::ref<GLT::render::i_renderer_plugin>        m_renderer{};
         ImVec2                                          m_content_size{100, 60};
         GLT::unique_ref<GLT::render::image>             m_logo{};
-        
-        bool                                            m_show_demo = true;
-        bool                                            m_show_style = true;
 
+        bool                                            m_show_demo  = false;
+        bool                                            m_show_style = false;
+
+        // Set to true in the ctor or from the View > Reset Layout menu item.
+        bool                                            m_reset_layout = true;
     };
 
 }

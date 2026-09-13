@@ -18,6 +18,7 @@
 
 #include <plugin_system/plugin_manager.h>
 #include <plugin_system/i_renderer_plugin.h>
+#include <util/io/vfs.h>
 
 #include "util/utils.h"
 
@@ -162,11 +163,17 @@ namespace GLT::renderer_vk_ray {
 
     image::image(const std::filesystem::path& image_path, const bool mipmapped) {
 
+        std::error_code error{};
+        const auto image_exists = GLT::vfs::exists(image_path, error);
+
+        VALIDATE(image_exists && !error, allocate_memory(nullptr, glm::uvec3{2, 2, 1}, GLT::render::image_format::RGBA, false); return, 
+            "", "Failed to find image at [{}]", image_path)
+
         int channels;
         int width = 0, height = 0;
         void* data = stbi_load(image_path.string().c_str(), &width, &height, &channels, 4);
         allocate_memory(data, glm::uvec3{width, height, 1}, GLT::render::image_format::RGBA, mipmapped);
-        stbi_image_free(data);
+        stbi_image_free(data);            
     }
 
 

@@ -195,7 +195,7 @@ namespace GLT::plugin_manager {
         void* handle = load_library(info.path.c_str(), lib_load_mode::now);
         if (!handle) {
             const auto error_str = get_dynamic_library_error();
-            LOG(error, "Plugin load failed: %s", error_str);     // Log error and fail.
+            LOG(error, "Plugin load failed [{}]", error_str);     // Log error and fail.
             return plugin_load_error::failed_to_load;
         }
 

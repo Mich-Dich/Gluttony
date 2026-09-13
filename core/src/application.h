@@ -48,6 +48,8 @@ namespace GLT {
         void run();
         
         void set_target_fps(const f32 fps);
+        
+        void shutdown();
 
     private:
         
