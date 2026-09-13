@@ -148,13 +148,13 @@ namespace GLT::renderer_vk_ray {
 
     image::image() {         
         
-        allocate_memory(nullptr, glm::uvec3{2, 2, 1}, GLT::render::image_format::RGBA16F, false);      // super small image buffer
+        allocate_memory(nullptr, glm::uvec3{2, 2, 1}, GLT::render::image_format::RGBA, false);      // super small image buffer
     }
 
 
     image::image(const glm::uvec3 size) {
         
-        allocate_memory(nullptr, size, GLT::render::image_format::RGBA16F, false);      // super small image buffer
+        allocate_memory(nullptr, size, GLT::render::image_format::RGBA, false);      // super small image buffer
     }
 
 
@@ -175,14 +175,14 @@ namespace GLT::renderer_vk_ray {
     glm::uvec2 image::get_size()                { return glm::uvec2{m_allocated_image.width, m_allocated_image.height}; }
 
 
-    void* image::get_descriptor_set()   { 
-        
+    void* image::get_descriptor_set() {
+
         if (m_accessible_image.descriptor_set)
             return m_accessible_image.descriptor_set;
         
-        vk::ImageLayout layout = m_accessible_image.layout;                        // Ensure the image layout is correct for sampling
+        vk::ImageLayout layout = m_accessible_image.layout;             // Ensure the image layout is correct for sampling
         if (layout == vk::ImageLayout::eUndefined)
-            layout = vk::ImageLayout::eShaderReadOnlyOptimal;       // OR shader read only optimal
+            layout = vk::ImageLayout::eShaderReadOnlyOptimal;           // OR shader read only optimal
 
         m_accessible_image.descriptor_set = static_cast<vk::DescriptorSet>(ImGui_ImplVulkan_AddTexture(
             static_cast<VkImageView>(m_accessible_image.view),
@@ -200,7 +200,7 @@ namespace GLT::renderer_vk_ray {
 
         out_width = width;
         out_height = height;
-        return buffer; // caller owns the memory, free with stbi_image_free
+        return buffer;                                                  // caller owns the memory, free with stbi_image_free
     }
 
 
@@ -208,9 +208,9 @@ namespace GLT::renderer_vk_ray {
 
         const glm::uvec3 current_size{ m_allocated_image.width, m_allocated_image.height, 1 };
         if (current_size == new_size) 
-            return;                                                 // already the right size, nothing to do
+            return;                                                     // already the right size, nothing to do
 
-        m_renderer->get_vk_device().waitIdle();                     // Make sure the GPU is done with the image before we destroy it
+        m_renderer->get_vk_device().waitIdle();                         // Make sure the GPU is done with the image before we destroy it
         release();
         allocate_memory(nullptr, new_size, format, mipmapped);
     }
@@ -226,7 +226,7 @@ namespace GLT::renderer_vk_ray {
         vk::Device vk_device = m_renderer->get_vk_device();
         const u32 mip_levels = mipmapped ? static_cast<u32>(std::floor(std::log2(std::max(size.x, size.y)))) + 1 : 1;
 
-        const auto image_create_info = vk::ImageCreateInfo()                            // Create an image to render to
+        const auto image_create_info = vk::ImageCreateInfo()            // Create an image to render to
             .setImageType(vk::ImageType::e2D)
             .setFormat(image_format_to_vulkan_format(format))
             .setExtent(vk::Extent3D(size.x, size.y, size.z))
@@ -246,7 +246,7 @@ namespace GLT::renderer_vk_ray {
 
         assign_data(data, size, format, mip_levels);
 
-        const auto view_create_info = vk::ImageViewCreateInfo()     // create a view for the image
+        const auto view_create_info = vk::ImageViewCreateInfo()         // create a view for the image
             .setImage(m_allocated_image.image)
             .setViewType(vk::ImageViewType::e2D)
             .setFormat(image_format_to_vulkan_format(format))
@@ -304,7 +304,7 @@ namespace GLT::renderer_vk_ray {
     void image::release() {
 
         if (!m_renderer)
-            return;                                                 // never allocated, nothing to do
+            return;                                                     // never allocated, nothing to do
 
         vr::device* vr_dev = m_renderer->get_vr_dev();
         vk::Device vk_device = m_renderer->get_vk_device();
@@ -312,15 +312,17 @@ namespace GLT::renderer_vk_ray {
         if (m_accessible_image.descriptor_set)
             ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(m_accessible_image.descriptor_set));
 
-        if (m_accessible_image.view)                                // Destroy image view
+        if (m_accessible_image.view)                                    // Destroy image view
             vk_device.destroyImageView(m_accessible_image.view);
 
-        if (m_allocated_image.image)                                // destroy the image
+        if (m_allocated_image.image)                                    // destroy the image
             vr_dev->destroy_image(m_allocated_image);
 
         m_accessible_image.descriptor_set = nullptr;
         m_accessible_image.view = nullptr;
+        m_accessible_image = {};
         m_allocated_image.image = nullptr;
+        m_allocated_image = {};
     }
 
 }

@@ -63,12 +63,12 @@ namespace GLT::renderer_vk_ray {
         // --- swapchain & configuration -------------------------------------------------------------------------------
 
         FORCE_INLINE_R glm::ivec2 get_swapchain_size() const override;
+        
+        
+        void resize(const u32 width, const u32 height) override;
 
         IGNORE_UNUSED_PARAMETER_START
         IGNORE_UNUSED_VARIABLE_START
-
-        void resize(const u32 width, const u32 height) override;
-
 
         void set_vsync(const bool enabled) override { }
 
@@ -81,7 +81,7 @@ namespace GLT::renderer_vk_ray {
         FORCE_INLINE void set_clear_color(const glm::vec4& color) override { m_clear_color = color; }
 
 
-        FORCE_INLINE void set_render_size(const glm::ivec2& size) override { m_render_size = size; }
+        void set_render_size(const glm::ivec2& size) override;
 
         // --- feature queries -----------------------------------------------------------------------------------------
 
@@ -92,7 +92,10 @@ namespace GLT::renderer_vk_ray {
 
         // --- native access -------------------------------------------------------------------------------------------
 
-        FORCE_INLINE_R void* get_rendered_image() override;
+        [[nodiscard]] void* get_rendered_image() override;
+
+
+        [[nodiscard]] glm::uvec2 get_rendered_image_size() override;
 
 
         FORCE_INLINE_R void* get_native_device_handle() const override { return {m_physical_device}; }
@@ -189,7 +192,7 @@ namespace GLT::renderer_vk_ray {
         std::vector<vk::ImageLayout>                            m_swapchain_images_layout{};
         std::array<vk::CommandBuffer, MAX_CONCURRENT_FRAMES>    m_rt_render_cmd;
         vr::device*                                             m_vr_dev = nullptr;
-        GLT::unique_ref<image>                                  m_output_image = nullptr;
+        GLT::ref<image>                                         m_output_image = nullptr;
         vr::allocated_buffer                                    m_uniform_buffer = {};
         vr::allocated_buffer                                    m_vertex_buffer;
         vr::allocated_buffer                                    m_index_buffer;

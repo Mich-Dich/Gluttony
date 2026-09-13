@@ -72,6 +72,11 @@ namespace GLT {
 
 		weak_ref(const ref<T>& shared) : m_weak_ptr(shared) {}							// Constructor from shared_ptr
 
+		// Converting constructor: weak_ref<Derived> -> weak_ref<Base>
+		// Enabled only when U* is convertible to T* (Derived* -> Base*)
+		template <typename U, typename = std::enable_if_t<std::is_convertible_v<U*, T*> && !std::is_same_v<U, T>>>
+		weak_ref(const weak_ref<U>& other) : m_weak_ptr(other.lock()) {}
+
 		// CAUTION, this moves ownership!
 		template <typename U = T>
 		weak_ref(unique_ref<U>&& unique) : m_weak_ptr(ref<U>(std::move(unique))) {}		// Constructor from unique_ref - converts to shared_ptr first

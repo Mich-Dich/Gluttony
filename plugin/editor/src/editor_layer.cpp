@@ -64,25 +64,6 @@ namespace GLT::editor {
         if (show_demo)
             ImGui::ShowDemoWindow(&show_demo);
 
-        // ============ MAIN MENU BAR ============
-        if (ImGui::BeginMainMenuBar()) {
-
-            if (ImGui::BeginMenu("File")) {
-
-                if (ImGui::MenuItem("New")) { /* TODO */ }
-                if (ImGui::MenuItem("Open", "Ctrl+O")) { /* TODO */ }
-                if (ImGui::MenuItem("Save", "Ctrl+S")) { /* TODO */ }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Exit", "Alt+F4")) { /* TODO */ }
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("View")) {
-                ImGui::MenuItem("Demo Window", nullptr, &show_demo);
-                ImGui::EndMenu();
-            }
-            ImGui::EndMainMenuBar();
-        }
-
         ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Viewport", nullptr)) {
 
@@ -90,7 +71,6 @@ namespace GLT::editor {
             ImGui::Image(m_renderer->get_rendered_image(), m_content_size);
         }
         ImGui::End();
-
 
         const auto logo_size = m_logo->get_size();
         ImGui::SetNextWindowContentSize(ImVec2(logo_size.x, logo_size.y));

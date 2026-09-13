@@ -178,6 +178,8 @@ namespace GLT::renderer_vk_ray {
             {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)}),
             vk::Filter::eLinear);
 
+        transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eShaderReadOnlyOptimal);       // to SHADER_READ_ONLY_OPTIMAL
+
         begin_imgui_frame(current_cmd);
     }
 
@@ -240,7 +242,21 @@ namespace GLT::renderer_vk_ray {
     IGNORE_UNUSED_VARIABLE_STOP
     IGNORE_UNUSED_PARAMETER_STOP
 
-    void* renderer::get_rendered_image()    { return static_cast<void*>(m_output_image->get_descriptor_set()); }
+    void renderer::set_render_size(const glm::ivec2& size) {
+
+        if (size.x <= 0 || size.y <= 0)         return;     // guard first-frame {0,0} from editor_layer::update()
+        if (m_render_size == size)              return;
+
+        m_render_size = size;
+        m_output_image->resize({size.x, size.y, 1});        // keep the image in sync with what's actually rendered
+        update_descriptor_set();
+    }
+
+
+    void* renderer::get_rendered_image() { return static_cast<void*>(m_output_image->get_descriptor_set()); }
+
+
+    glm::uvec2 renderer::get_rendered_image_size() { return m_output_image->get_size(); }
 
 
 	void renderer::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
@@ -764,8 +780,8 @@ namespace GLT::renderer_vk_ray {
                     m_swapchain_images_layout[m_current_swapchain_image],
                     new_layout,
                     swapchain_range,                                // Image subresource range
-                    vk::PipelineStageFlagBits::eAllGraphics,        // Source stage (using default)
-                    vk::PipelineStageFlagBits::eAllCommands         // Destination stage (using default)
+                    vk::PipelineStageFlagBits::eAllCommands,        // Source stage
+                    vk::PipelineStageFlagBits::eAllCommands         // Destination stage
                 );
                 m_swapchain_images_layout[m_current_swapchain_image] = new_layout;
 
@@ -788,7 +804,7 @@ namespace GLT::renderer_vk_ray {
                     m_output_image->get_accessible_image_ref().layout,
                     new_layout,
                     render_range,                                   // Image subresource range
-                    vk::PipelineStageFlagBits::eAllGraphics,        // Source stage
+                    vk::PipelineStageFlagBits::eAllCommands ,       // Source stage
                     vk::PipelineStageFlagBits::eAllCommands         // Destination stage
                 );
                 m_output_image->get_accessible_image_ref().layout = new_layout;
