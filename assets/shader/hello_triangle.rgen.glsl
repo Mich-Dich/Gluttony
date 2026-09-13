@@ -39,5 +39,5 @@ void main() {
         0
     );
 
-    imageStore(storageImage, launchID, vec4(hitValue, 0.0));
+    imageStore(storageImage, launchID, vec4(hitValue, 1.0));
 }

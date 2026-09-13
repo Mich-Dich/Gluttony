@@ -44,9 +44,14 @@ namespace GLT::editor {
 
     private:
 
+        void render_toolbar();
+
         GLT::ref<GLT::render::i_renderer_plugin>        m_renderer{};
         ImVec2                                          m_content_size{100, 60};
         GLT::unique_ref<GLT::render::image>             m_logo{};
+        
+        bool                                            m_show_demo = true;
+        bool                                            m_show_style = true;
 
     };
 

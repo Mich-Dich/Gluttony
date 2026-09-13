@@ -51,9 +51,11 @@ namespace GLT::renderer_vk_ray {
     static u32 bytes_per_pixel(const GLT::render::image_format format) {
 
         switch (format) {
-            case GLT::render::image_format::RGBA:    return 4;
-            case GLT::render::image_format::RGBA32F: return 16;
-            default: return 0;
+            case GLT::render::image_format::RGB:        return 3;
+            case GLT::render::image_format::RGBA:       return 4;
+            case GLT::render::image_format::RGBA16F:    return 8;
+            case GLT::render::image_format::RGBA32F:    return 16;
+            default:                                    return 0;
         }
     }
 
@@ -63,8 +65,8 @@ namespace GLT::renderer_vk_ray {
         switch (format) {
             case GLT::render::image_format::RGB:        return vk::Format::eR8G8B8Unorm;
             case GLT::render::image_format::RGBA:       return vk::Format::eR8G8B8A8Unorm;
-            case GLT::render::image_format::RGBA32F:    return vk::Format::eR32G32B32A32Sfloat;
             case GLT::render::image_format::RGBA16F:    return vk::Format::eR16G16B16A16Sfloat;
+            case GLT::render::image_format::RGBA32F:    return vk::Format::eR32G32B32A32Sfloat;
             default:                                    return vk::Format::eUndefined;
         }
     }

@@ -38,7 +38,7 @@ namespace GLT::render {
     };
 
 
-    enum class image_format {
+    enum class image_format : u8 {
 
         None = 0,
         RGB,
@@ -60,7 +60,7 @@ namespace GLT::render {
         [[nodiscard]] virtual glm::uvec2 get_size();
         [[nodiscard]] virtual void* get_descriptor_set();
         [[nodiscard]] virtual void* load(const std::filesystem::path& path, u32& outWidth, u32& outHeight);
-        virtual void resize(const glm::uvec3& new_size, const GLT::render::image_format format = GLT::render::image_format::RGBA16F,
+        virtual void resize(const glm::uvec3& new_size, const GLT::render::image_format format = GLT::render::image_format::RGBA,
             const bool mipmapped = false);
 
         // --- pluggable creation ------------------------------------------------------

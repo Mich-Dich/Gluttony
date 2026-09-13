@@ -41,9 +41,9 @@ endif()
 # Important:    Defined before core/plugin so their targets are visible to them
 # =================================================================================================
 
-set(VENDOR_DIR "${CMAKE_SOURCE_DIR}/vendor")
-set(IMGUI_DIR  "${VENDOR_DIR}/imgui")
-set(GLM_DIR    "${VENDOR_DIR}/glm")
+set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
+set(IMGUI_DIR                                                           "${VENDOR_DIR}/imgui")
+set(GLM_DIR                                                             "${VENDOR_DIR}/glm")
 
 # clone libs for core (or ones that are shared across multiple plugins)
 git_clone_or_update("git@github.com:icaven/glm.git"        "${GLM_DIR}"   DEPTH 1)
@@ -56,29 +56,29 @@ target_include_directories(glm INTERFACE
 )
 
 # ------------- ImGui -----------------------------------------------------------------------------
-add_library(imgui SHARED)
-set_target_properties(imgui PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    CXX_VISIBILITY_PRESET     default
+add_library(imgui                                                       SHARED)
+set_target_properties(imgui                                             PROPERTIES
+    POSITION_INDEPENDENT_CODE                                           ON
+    CXX_VISIBILITY_PRESET                                               default
 )
-file(GLOB IMGUI_BACKEND_SOURCES
+file(GLOB                                                               IMGUI_BACKEND_SOURCES
     ${IMGUI_DIR}/*.cpp
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
 )
-target_sources(imgui PUBLIC
+target_sources(imgui                                                    PUBLIC
     ${IMGUI_BACKEND_SOURCES}
 )
-target_include_directories(imgui PUBLIC
+target_include_directories(imgui                                        PUBLIC
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
 )
-find_package(Vulkan REQUIRED)
-target_link_libraries(imgui PUBLIC
+find_package(Vulkan                                                     REQUIRED)
+target_link_libraries(imgui                                             PUBLIC
     glfw
     Vulkan::Vulkan
 )
-target_compile_definitions(imgui PRIVATE
+target_compile_definitions(imgui                                        PRIVATE
     IMGUI_IMPL_GLFW_DISABLE_X11
     IMGUI_IMPL_VULKAN_NO_PROTOTYPES
     GLFW_INCLUDE_NONE

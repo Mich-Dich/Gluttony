@@ -259,13 +259,13 @@ namespace GLT::renderer_vk_ray {
         [[nodiscard]] void* load(const std::filesystem::path& path, u32& out_width, u32& out_height) override;
 
 
-        void resize(const glm::uvec3& new_size, const GLT::render::image_format format = GLT::render::image_format::RGBA16F,
+        void resize(const glm::uvec3& new_size, const GLT::render::image_format format = GLT::render::image_format::RGBA,
             const bool mipmapped = false) override;
 
     private:
 
 	    void allocate_memory(const void* data, const glm::uvec3 size, 
-            const GLT::render::image_format format = GLT::render::image_format::RGBA16F, const bool mipmapped = true);
+            const GLT::render::image_format format = GLT::render::image_format::RGBA, const bool mipmapped = true);
 
 
         void assign_data(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const u32 mip_levels);

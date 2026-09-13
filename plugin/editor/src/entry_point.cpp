@@ -83,6 +83,6 @@ namespace GLT::editor {
 
 }
 
-#include "editor.inl"
+#include "plugin.inl"
 
 EXPORT_PLUGIN_CLASS(GLT::editor::plugin, GLT::editor::descriptor)
