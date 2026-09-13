@@ -19,10 +19,10 @@ namespace GLT::imgui_config {
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
-	FORCE_INLINE_R static u32 convert_color_to_int(const ImVec4& color) {
+    FORCE_INLINE_R static u32 convert_color_to_int(const ImVec4& color) {
 
-		return IM_COL32(255 * color.x, 255 * color.y, 255 * color.z, 255 * color.w);
-	}
+        return IM_COL32(255 * color.x, 255 * color.y, 255 * color.z, 255 * color.w);
+    }
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 

@@ -8,20 +8,22 @@
 
 namespace GLT::imgui_config {
 
-    // CONSTANTS =======================================================================================================
+	// CONSTANTS =======================================================================================================
 
-    // MACROS ==========================================================================================================
+	// MACROS ==========================================================================================================
 
-    // TYPES ===========================================================================================================
+	// TYPES ===========================================================================================================
 
 	// Enum representing available UI theme options.
 	enum class theme_selection : u8 {
+
 		dark = 0, 				// Dark theme.
 		light 					// Light theme.
 	};
 
 
-	enum class font_type {
+	enum class font_type : u8 {
+
 		regular,
 		regular_big,
 		bold,
@@ -37,10 +39,10 @@ namespace GLT::imgui_config {
 		monospace_regular,
 		monospace_regular_big,
 	};
-    
-    // STATIC VARIABLES ================================================================================================
+	
+	// STATIC VARIABLES ================================================================================================
 
-    // FUNCTION DECLARATION ============================================================================================
+	// FUNCTION DECLARATION ============================================================================================
 
 	ImVec4& get_main_color_ref();
 	ImVec4& get_main_titlebar_color_ref();
@@ -58,7 +60,7 @@ namespace GLT::imgui_config {
 	ImVec4& get_action_color_gray_hover_ref();
 	ImVec4& get_action_color_gray_active_ref();
 
-    ImGuiContext* get_context_imgui();
+	ImGuiContext* get_context_imgui();
 
 
 	void init();
@@ -85,36 +87,36 @@ namespace GLT::imgui_config {
 	void update_ui_colors(ImVec4 new_color);
 
 
-    // Retrieves a font by name.
-    // @param type Font identifier (e.g., font_type::regular, font_type::bold).
-    // @return Pointer to the requested ImFont, or nullptr if not found.
-    ImFont* get_font(const font_type type = font_type::regular);
+	// Retrieves a font by name.
+	// @param type Font identifier (e.g., font_type::regular, font_type::bold).
+	// @return Pointer to the requested ImFont, or nullptr if not found.
+	ImFont* get_font(const font_type type = font_type::regular);
 
 
-    // Resizes fonts based on a single base size.
-    // @note !! IMPORTANT !! - Do not call during rendering. Call it during update
-    // @param font_size New base font size.
-    void resize_fonts(const f32 font_size);
+	// Resizes fonts based on a single base size.
+	// @note !! IMPORTANT !! - Do not call during rendering. Call it during update
+	// @param font_size New base font size.
+	void resize_fonts(const f32 font_size);
 
 
-    // Resizes fonts based on multiple custom sizes.
-    // @note !! IMPORTANT !! - Do not call during rendering. Call it during update
-    // @param font_size Base font size.
-    // @param big_font_size Larger font size for emphasis.
-    // @param font_size_header_0 Font size for header level 0.
-    // @param font_size_header_1 Font size for header level 1.
-    // @param font_size_header_2 Font size for header level 2.
-    void resize_fonts(const f32 regular, const f32 small, const f32 big,
-        const f32 header0, const f32 header1, const f32 header2);
+	// Resizes fonts based on multiple custom sizes.
+	// @note !! IMPORTANT !! - Do not call during rendering. Call it during update
+	// @param font_size Base font size.
+	// @param big_font_size Larger font size for emphasis.
+	// @param font_size_header_0 Font size for header level 0.
+	// @param font_size_header_1 Font size for header level 1.
+	// @param font_size_header_2 Font size for header level 2.
+	void resize_fonts(const f32 regular, const f32 small, const f32 big,
+		const f32 header0, const f32 header1, const f32 header2);
 
 
-    void serialize(GLT::serializer::option option);
+	void serialize(GLT::serializer::option option);
 
-    // TEMPLATE DECLARATION ============================================================================================
+	// TEMPLATE DECLARATION ============================================================================================
 
 	FORCE_INLINE_R static u32 convert_color_to_int(const ImVec4& color);
 
-    // CLASS DECLARATION ===============================================================================================
+	// CLASS DECLARATION ===============================================================================================
 
 }
 

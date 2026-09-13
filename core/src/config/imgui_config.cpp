@@ -1,6 +1,7 @@
 
 #include "util/pch.h"
 
+
 #include <imgui.h>
 #include <imgui_internal.h>
 
@@ -15,85 +16,85 @@
 
 namespace GLT::imgui_config {
 
-    // CONSTANTS =======================================================================================================
+	// CONSTANTS =======================================================================================================
 
-    // MACROS ==========================================================================================================
+	// MACROS ==========================================================================================================
 
-    #define UI_ACTIVE_THEME                         UI::THEME::current_theme
+	#define UI_ACTIVE_THEME                         	UI::THEME::current_theme
 
-	#define LERP_GRAY(value)					    { value, value, value, 1.f }
+	#define LERP_GRAY(value)					    	{ value, value, value, 1.f }
 
-    #define LERP_GRAY_A(value, alpha)               {value, value, value, alpha}
+	#define LERP_GRAY_A(value, alpha)               	{ value, value, value, alpha}
 
-	#define IMCOLOR_GRAY(value)					    ImColor{ value, value, value, 255 }
+	#define IMCOLOR_GRAY(value)					    	ImColor{ value, value, value, 255 }
 
-    #define LERP_MAIN_COLOR_DARK(value)             {main_color.x * value, main_color.y * value, main_color.z * value, 1.f }
+	#define LERP_MAIN_COLOR_DARK(value)             	{ main_color.x * value, main_color.y * value, main_color.z * value, 1.f }
 
-    #define LERP_MAIN_COLOR_LIGHT(value)                                                                \
-        {	(1.f - value) * 1.f + value * main_color.x,                                                  \
-            (1.f - value) * 1.f + value * main_color.y,                                                  \
-            (1.f - value) * 1.f + value * main_color.z,                                                  \
-            1.f }						// Set [w] to be [1.f] to disable accidental transparency
+	#define LERP_MAIN_COLOR_LIGHT(value)                                                                				\
+		{	(1.f - value) * 1.f + value * main_color.x,                                                  				\
+			(1.f - value) * 1.f + value * main_color.y,                                                  				\
+			(1.f - value) * 1.f + value * main_color.z,                                                  				\
+			1.f }						// Set [w] to be [1.f] to disable accidental transparency
 
-    // TYPES ===========================================================================================================
+	// TYPES ===========================================================================================================
 
-    // STATIC VARIABLES ================================================================================================
+	// STATIC VARIABLES ================================================================================================
 
-	static std::unordered_map<font_type, ImFont*>   s_fonts{}; 				// Loaded fonts mapped by name.
+	static std::unordered_map<font_type, ImFont*>   	s_fonts{}; 				// Loaded fonts mapped by name.
 
-    ImGuiContext* 								    s_context_imgui{}; 		// Pointer to the ImGui context.
+	ImGuiContext* 								    	s_context_imgui{}; 		// Pointer to the ImGui context.
 
-    // ImPlotContext* 								    s_context_implot{}; 	    // Pointer to the ImPlot context.
+	// ImPlotContext* 								    	s_context_implot{}; 	    // Pointer to the ImPlot context.
 
-    // Path to the ImGui .ini file.
-	static std::filesystem::path                    g_ini_file_location = GLT::util::get_executable_path() /
-        GLT::config::get_filepath_from_config_type_ini(GLT::config::type::imgui);
+	// Path to the ImGui .ini file.
+	static std::filesystem::path                    	g_ini_file_location = GLT::util::get_executable_path() /
+		GLT::config::get_filepath_from_config_type_ini(GLT::config::type::imgui);
 
-    static f32                                      g_font_size = 15.f; 					                            // Default UI font size.
+	static f32                                      	g_font_size = 15.f; 					                            // Default UI font size.
 	
-    static f32                                      g_font_size_header0 = 19.f; 			                            // Font size for small headers.
+	static f32                                      	g_font_size_header0 = 19.f; 			                            // Font size for small headers.
 	
-    static f32                                      g_font_size_header1 = 23.f; 			                            // Font size for medium headers.
+	static f32                                      	g_font_size_header1 = 23.f; 			                            // Font size for medium headers.
 	
-    static f32                                      g_font_size_header2 = 27.f; 			                            // Font size for large headers.
+	static f32	                                      	g_font_size_header2 = 27.f; 			                            // Font size for large headers.
 	
-    static f32                                      g_big_font_size = 18.f; 				                            // Font size for emphasized text.
+	static f32  	                                    g_big_font_size = 18.f; 				                            // Font size for emphasized text.
 	
-    static f32                                      g_font_size_small = 14.4f;				                            // Font size for emphasized text.
+	static f32      	                                g_font_size_small = 14.4f;				                            // Font size for emphasized text.
 	
-    static theme_selection                          g_ui_theme = theme_selection::dark; 	                            // Currently selected UI theme.
+	static theme_selection	                          	g_ui_theme = theme_selection::dark; 	                            // Currently selected UI theme.
 	
-    static bool                                     g_window_border = false; 				                            // Whether window borders are enabled.
+	static bool             	                        g_window_border = false; 				                            // Whether window borders are enabled.
 	
-    static ImVec4                                   g_highlighted_window_bg = {0.5700f, 0.5700f, 0.5700f, 1.0000f};    // Highlighted background color for selected windows.
+	static ImVec4               	                    g_highlighted_window_bg = {0.5700f, 0.5700f, 0.5700f, 1.0000f};     // Highlighted background color for selected windows.
 	
-    static ImVec4                                   main_color = {0.0000f, 0.4609f, 0.7382f, 1.0000f};
+	static ImVec4	                                    main_color = {0.0000f, 0.4609f, 0.7382f, 1.0000f};
 	
-    static ImVec4                                   main_titlebar_color = {};
+	static ImVec4   	                                main_titlebar_color = {};
 	
-    static ImVec4                                   action_color00_faded = {};
+	static ImVec4       	                            action_color00_faded = {};
 	
-    static ImVec4                                   action_color00_weak = {};
+	static ImVec4           	                        action_color00_weak = {};
 	
-    static ImVec4                                   action_color00_default = {};
+	static ImVec4               	                    action_color00_default = {};
 	
-    static ImVec4                                   action_color00_hover = {};
+	static ImVec4                   	                action_color00_hover = {};
 	
-    static ImVec4                                   action_color00_active = {};
+	static ImVec4                       	            action_color00_active = {};
 	
-    static ImVec4                                   default_gray = IMCOLOR_GRAY(30);
+	static ImVec4                           	        default_gray = IMCOLOR_GRAY(30);
 	
-    static ImVec4                                   default_gray1 = IMCOLOR_GRAY(35);
+	static ImVec4                               	    default_gray1 = IMCOLOR_GRAY(35);
 	
-    static ImVec4                                   action_color_gray_default = LERP_GRAY(0.2f);
+	static ImVec4                                   	action_color_gray_default = LERP_GRAY(0.2f);
 	
-    static ImVec4                                   action_color_gray_hover = LERP_GRAY(0.27f);
+	static ImVec4                                   	action_color_gray_hover = LERP_GRAY(0.27f);
 	
-    static ImVec4                                   actionColorGrayActive = LERP_GRAY(0.35f);
+	static ImVec4                                   	actionColorGrayActive = LERP_GRAY(0.35f);
 
-    // INTERNAL FUNCTION DECLARATION ===================================================================================
+	// INTERNAL FUNCTION DECLARATION ===================================================================================
 
-    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+	// INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
 	[[maybe_unused]] static ImVec4 vector_multi(const ImVec4& vec_0, const ImVec4& vec_1) {
 
@@ -147,7 +148,7 @@ namespace GLT::imgui_config {
 
 	void update_ui_theme() {
 
-		//LOG(debug, "updating UI theme");
+		LOG(debug, "updating UI theme");
 
 		ImGuiStyle* style = &ImGui::GetStyle();
 		ImVec4* colors = style->Colors;
@@ -163,7 +164,7 @@ namespace GLT::imgui_config {
 		style->ScrollbarSize = 14.f;
 		style->GrabMinSize = 14.f;
 		style->WindowMenuButtonPosition = ImGuiDir_Right;
-        style->ButtonTextAlign = ImVec2(.0f, .5f);
+		style->ButtonTextAlign = ImVec2(.0f, .5f);
 
 		// border
 		style->WindowBorderSize = 1.0f;
@@ -336,48 +337,48 @@ namespace GLT::imgui_config {
 
 	}
 
-    // FUNCTION IMPLEMENTATION =========================================================================================
+	// FUNCTION IMPLEMENTATION =========================================================================================
 
 	
-    ImVec4& get_main_color_ref()                        { return main_color; }
+	ImVec4& get_main_color_ref()                        { return main_color; }
 	
-    ImVec4& get_main_titlebar_color_ref()               { return main_titlebar_color; }
+	ImVec4& get_main_titlebar_color_ref()               { return main_titlebar_color; }
 	
-    ImVec4& get_action_color00_faded_ref()              { return action_color00_faded; }
+	ImVec4& get_action_color00_faded_ref()              { return action_color00_faded; }
 	
-    ImVec4& get_action_color00_weak_ref()               { return action_color00_weak; }
+	ImVec4& get_action_color00_weak_ref()               { return action_color00_weak; }
 	
-    ImVec4& get_action_color00_default_ref()            { return action_color00_default; }
+	ImVec4& get_action_color00_default_ref()            { return action_color00_default; }
 	
-    ImVec4& get_action_color00_hover_ref()              { return action_color00_hover; }
+	ImVec4& get_action_color00_hover_ref()              { return action_color00_hover; }
 	
-    ImVec4& get_action_color00_active_ref()             { return action_color00_active; }
+	ImVec4& get_action_color00_active_ref()             { return action_color00_active; }
 	
-    ImVec4& get_default_gray_ref()                      { return default_gray; }
+	ImVec4& get_default_gray_ref()                      { return default_gray; }
 	
-    ImVec4& get_default_gray1_ref()                     { return default_gray1; }
+	ImVec4& get_default_gray1_ref()                     { return default_gray1; }
 	
-    ImVec4& get_action_color_gray_default_ref()         { return action_color_gray_default; }
+	ImVec4& get_action_color_gray_default_ref()         { return action_color_gray_default; }
 	
-    ImVec4& get_action_color_gray_hover_ref()           { return action_color_gray_hover; }
+	ImVec4& get_action_color_gray_hover_ref()           { return action_color_gray_hover; }
 	
-    ImVec4& get_action_color_gray_active_ref()          { return actionColorGrayActive; }
+	ImVec4& get_action_color_gray_active_ref()          { return actionColorGrayActive; }
 
-    ImGuiContext* get_context_imgui()                   { return s_context_imgui; }
-    
-    // ImPlotContext* get_context_implot()                 { return s_context_implot; }
+	ImGuiContext* get_context_imgui()                   { return s_context_imgui; }
+	
+	// ImPlotContext* get_context_implot()                 { return s_context_implot; }
 
-	void init()
-    {
+	void init() {
+
 		IMGUI_CHECKVERSION();
 		s_context_imgui = ImGui::CreateContext();
 		// s_context_implot = ImPlot::CreateContext();
 
-        std::filesystem::path ini_path = GLT::util::get_executable_path() /
-            GLT::config::get_filepath_from_config_type_ini(GLT::config::type::imgui);
+		std::filesystem::path ini_path = GLT::util::get_executable_path() /
+			GLT::config::get_filepath_from_config_type_ini(GLT::config::type::imgui);
 
-        ImGuiIO& io = ImGui::GetIO();
-        io.IniFilename = ImStrdup(ini_path.string().c_str());
+		ImGuiIO& io = ImGui::GetIO();
+		io.IniFilename = ImStrdup(ini_path.string().c_str());
 		io.BackendFlags |= ImGuiBackendFlags_PlatformHasViewports;
 		io.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
 		// Viewport enable flags (require both ImGuiBackendFlags_PlatformHasViewports + ImGuiBackendFlags_RendererHasViewports set by the respective backends)
@@ -386,12 +387,11 @@ namespace GLT::imgui_config {
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;		// Enable Gamepad Controls
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
 
-        // Initialize the backend for ImGui
-        ImGui::StyleColorsDark();
+		ImGui::StyleColorsDark();
 
 		g_highlighted_window_bg = LERP_GRAY(0.57f);
 
-        serialize(GLT::serializer::option::load);
+		serialize(GLT::serializer::option::load);
 		main_titlebar_color = LERP_MAIN_COLOR_DARK(.5f);			// lerp after loading main color
 		action_color00_faded = LERP_MAIN_COLOR_DARK(0.5f);
 		action_color00_weak = LERP_MAIN_COLOR_DARK(0.6f);
@@ -405,8 +405,8 @@ namespace GLT::imgui_config {
 	}
 
 
-	void shutdown()
-    {
+	void shutdown() {
+
 		ImGui::DestroyContext(s_context_imgui);
 		// ImPlot::DestroyContext(s_context_implot);
 
@@ -428,16 +428,16 @@ namespace GLT::imgui_config {
 	}
 
 
-	void update_ui_colors(ImVec4 new_color)
-    {
+	void update_ui_colors(ImVec4 new_color) {
+
 		main_color = new_color;
 		serialize(GLT::serializer::option::save);
 		update_ui_theme();
 	}
 
 
-	void resize_fonts(const f32 font_size)
-    {
+	void resize_fonts(const f32 font_size) {
+
 		g_font_size = font_size;
 		g_font_size_small = font_size * 0.8f;
 		g_big_font_size = font_size * 1.2f;
@@ -449,8 +449,8 @@ namespace GLT::imgui_config {
 
 
 	void resize_fonts(const f32 regular, const f32 small, const f32 big, const f32 header_0,
-        const f32 header_1, const f32 header_2)
-    {
+		const f32 header_1, const f32 header_2) {
+
 		g_font_size = regular;
 		g_font_size_small = small;
 		g_big_font_size = big;
@@ -461,19 +461,18 @@ namespace GLT::imgui_config {
 	}
 
 
-	ImFont* get_font(const font_type type)
-    {
+	ImFont* get_font(const font_type type) {
+
 		if (s_fonts.contains(type))
-        {
-            return s_fonts.at(type);
-        }
+			return s_fonts.at(type);
+			
 		return nullptr;
 	}
 
 
 	void serialize(const GLT::serializer::option option) {
 
-        const auto confip_path = GLT::util::get_executable_path() / config_type_to_filepath(GLT::config::type::ui);
+		const auto confip_path = GLT::util::get_executable_path() / config_type_to_filepath(GLT::config::type::ui);
 		GLT::serializer::yaml(confip_path, "theme", option)
 			.entry(KEY_VALUE(g_font_size))
 			.entry(KEY_VALUE(g_font_size_header0))
@@ -495,12 +494,12 @@ namespace GLT::imgui_config {
 			.entry(KEY_VALUE(actionColorGrayActive));
 	}
 
-    // CLASS IMPLEMENTATION ============================================================================================
+	// CLASS IMPLEMENTATION ============================================================================================
 
-    // CLASS PUBLIC ====================================================================================================
+	// CLASS PUBLIC ====================================================================================================
 
-    // CLASS PROTECTED =================================================================================================
+	// CLASS PROTECTED =================================================================================================
 
-    // CLASS PRIVATE ===================================================================================================
+	// CLASS PRIVATE ===================================================================================================
 
 }

@@ -59,7 +59,7 @@ namespace GLT::renderer_vk_ray {
         imgui_init();
 
         IGNORE_UNUSED_VARIABLE_START
-        void* unused_buffer = m_output_image->get_descriptor_set();        // ensure descriptor is available
+        const void* unused_buffer = m_output_image->get_descriptor_set();        // ensure descriptor is available
         IGNORE_UNUSED_VARIABLE_STOP
 
         m_framebuffer_resize_sub = GLT::event_bus::subscribe<GLT::window_framebuffer_resize_event>(
@@ -164,19 +164,17 @@ namespace GLT::renderer_vk_ray {
         current_cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, m_rt_pipeline);
         m_vr_dev->dispatch_rays(m_rt_pipeline, m_sbt_buffer, m_render_size.x, m_render_size.y, 1, current_cmd);
 
-        // Swapchain image transitions:
-        transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eTransferDstOptimal);       // to TRANSFER_DST_OPTIMAL
-        transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eTransferSrcOptimal);          // to TRANSFER_SRC_OPTIMAL
-
-        // Blit from output image to swapchain image
-        current_cmd.blitImage(
-            m_output_image->get_allocated_image_ref().image,            vk::ImageLayout::eTransferSrcOptimal,
-            m_swapchain.swapchain_images[m_current_swapchain_image],    vk::ImageLayout::eTransferDstOptimal,
-            vk::ImageBlit(vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
-            {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)},
-            vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
-            {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)}),
-            vk::Filter::eLinear);
+        // // Blit from output image to swapchain image
+        // transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eTransferDstOptimal);       // to TRANSFER_DST_OPTIMAL
+        // transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eTransferSrcOptimal);          // to TRANSFER_SRC_OPTIMAL
+        // current_cmd.blitImage(
+        //     m_output_image->get_allocated_image_ref().image,            vk::ImageLayout::eTransferSrcOptimal,
+        //     m_swapchain.swapchain_images[m_current_swapchain_image],    vk::ImageLayout::eTransferDstOptimal,
+        //     vk::ImageBlit(vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
+        //     {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)},
+        //     vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
+        //     {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)}),
+        //     vk::Filter::eLinear);
 
         transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eShaderReadOnlyOptimal);       // to SHADER_READ_ONLY_OPTIMAL
 
@@ -741,7 +739,7 @@ namespace GLT::renderer_vk_ray {
         // m_deletion_queue.push_pointer(m_immediate_submit_command_pool);
 		// m_deletion_queue.push_pointer(m_immediate_submit_fence);
 
-        m_output_image = GLT::create_unique_ref<image>(glm::uvec3{m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height, 1});
+        m_output_image = GLT::create_ref<image>();
 
         // create a uniform buffer
         u32 uniform_buffer_size = sizeof(f32) * 4 * 4 * 2; // two 4x4 matrix
@@ -818,20 +816,11 @@ namespace GLT::renderer_vk_ray {
     void renderer::imgui_init() {
 
         ImGui::SetCurrentContext(imgui_config::get_context_imgui());
-        ImGuiIO& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;        // Enable Gamepad Controls
-        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
-        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
-
-        ImGui::StyleColorsDark();
-
-        // When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
-        ImGuiStyle& style = ImGui::GetStyle();
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-            style.WindowRounding = 0.0f;
-            style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-        }
+        // ImGuiIO& io = ImGui::GetIO();
+        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
+        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;        // Enable Gamepad Controls
+        // io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
+        // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
 
         mp_window->imgui_init(GLT::render::backend_api::vulkan);
 
