@@ -2,6 +2,9 @@
 #pragma once
 
 #include "util/timing/interval_controller.h"
+#include "config/project.h"
+
+
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -36,7 +39,7 @@ namespace GLT {
     class application {
     public:
         
-        application(int argc, char* argv[]);
+        application(const std::filesystem::path& project_path);
         ~application();
 
         GETTER(ref<GLT::platform::i_window_plugin>,     window, mp_window)
@@ -67,6 +70,7 @@ namespace GLT {
         u32                                             m_focus_fps = 60;
         u32                                             m_none_focus_fps = 30;
         f32                                             m_delta_time = 0.f;
+        project                                         m_project{};
 
     };
 

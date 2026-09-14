@@ -1,20 +1,17 @@
 
-/* INCLUDES *******************************************************************************************/
-
 #include "util/pch.h"
-
 #include "argument_parser.h"
 
-/* FORWARD DECLARATION ********************************************************************************/
 
+// FORWARD DECLARATIONS ================================================================================================
 
 namespace GLT::argument_parser {
 
-    /* CONSTANTS **************************************************************************************/
+    // CONSTANTS =======================================================================================================
 
-    /* MACROS *****************************************************************************************/
+    // MACROS ==========================================================================================================
 
-    /* TYPES ******************************************************************************************/
+    // TYPES ===========================================================================================================
 
     class loc_error_category : public std::error_category {
     public:
@@ -36,11 +33,20 @@ namespace GLT::argument_parser {
         }
     };
 
-    /* STATIC VARIABLES *******************************************************************************/
+    // STATIC VARIABLES ================================================================================================
 
-    /* INTERNAL FUNCTION DECLARATION ******************************************************************/
+    // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
-    /* INTERNAL FUNCTION IMPLEMENTATION ***************************************************************/
+    // INTERNAL FUNCTION DECLARATION ===================================================================================
+
+    const std::error_category& arg_error_category();
+
+    // Helper: convert string to value based on type
+    static std::error_code convert_value(const std::string& raw, const std::string& typeName, value& out);
+
+    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
+
+    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
     const std::error_category& arg_error_category() {
 
@@ -49,7 +55,6 @@ namespace GLT::argument_parser {
     }
 
 
-    // Helper: convert string to value based on type
     static std::error_code convert_value(const std::string& raw, const std::string& typeName, value& out) {
 
         if (typeName == "string")
@@ -100,7 +105,9 @@ namespace GLT::argument_parser {
         return make_error_code(arg_error::success);
     }
 
-    /* FUNCTION IMPLEMENTATION ************************************************************************/
+    // TEMPLATE IMPLEMENTATION =========================================================================================
+
+    // FUNCTION IMPLEMENTATION =========================================================================================
 
     std::error_code make_error_code(arg_error e) {
 
@@ -108,7 +115,7 @@ namespace GLT::argument_parser {
     }
 
 
-    parsed_result parseArguments(const std::vector<argument_spec>& specs, int argc, char* argv[], std::error_code& error) {
+    parsed_result parse_arguments(const std::vector<argument_spec>& specs, int argc, char* argv[], std::error_code& error) {
 
         parsed_result out{};
 
@@ -237,7 +244,7 @@ namespace GLT::argument_parser {
     }
 
     
-    std::vector<std::string> tokenizeString(const std::string& cmd) {
+    std::vector<std::string> tokenize_string(const std::string& cmd) {
 
         std::vector<std::string> tokens;
         std::stringstream ss(cmd);
@@ -248,12 +255,12 @@ namespace GLT::argument_parser {
         return tokens;
     }
 
-    /* CLASS IMPLEMENTATION ***************************************************************************/
+    // CLASS IMPLEMENTATION ============================================================================================
 
-    /* CLASS PUBLIC ***********************************************************************************/
+    // CLASS PUBLIC ====================================================================================================
 
-    /* CLASS PROTECTED ********************************************************************************/
+    // CLASS PROTECTED =================================================================================================
 
-    /* CLASS PRIVATE **********************************************************************************/
+    // CLASS PRIVATE ===================================================================================================
 
 }

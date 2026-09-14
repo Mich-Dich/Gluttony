@@ -1,15 +1,15 @@
 
 #include "util/pch.h"
-#include "i_project_manager.h"
+#include "project.h"
 
-#include "util/core_config.h"
-#include "util/io/vfs.h"
+#include "util/io/serializer_yaml.h"
 #include "util/io/directory_iterator.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::project_manager {
+namespace GLT {
 
     // CONSTANTS =======================================================================================================
 
@@ -32,7 +32,7 @@ namespace GLT::project_manager {
     // FUNCTION IMPLEMENTATION =========================================================================================
 
     bool project::is_valid_project_path(const std::filesystem::path& project_file) { 
-        
+
         std::error_code error{};
         const bool project_exists = GLT::vfs::exists(project_file, error);
         return (!project_file.empty() 
@@ -71,7 +71,7 @@ namespace GLT::project_manager {
             break;
         }
     }
-    
+
     // CLASS IMPLEMENTATION ============================================================================================
 
     // CLASS PUBLIC ====================================================================================================

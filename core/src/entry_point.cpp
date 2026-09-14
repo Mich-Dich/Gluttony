@@ -1,23 +1,44 @@
 
 #include "util/pch.h"
 #include "plugin_system/plugin_manager.h"
+#include "util/argument_parser.h"
 #include "application.h"
+
+
 
 // FORWARD DECLARATIONS ================================================================================================
 
 // CONSTANTS =======================================================================================================
 
+// Define expected arguments
+const std::vector<GLT::argument_parser::argument_spec> specs = {
+
+    {
+        .name = "project_path",
+        .short_name = "",
+        .required = true,
+        .positional = true,
+        .position = 0,
+        .type = "path",
+        .default_value = std::filesystem::path(),
+        .help_text = "Path to the project file"
+    },
+};
+
 // MACROS ==========================================================================================================
 
 #if defined(PLATFORM_LINUX)
+
     #define MAIN_FUNC   main(int argc, char* argv[])
     #define ARGC        argc
     #define ARGV        argv
+
 #elif defined(PLATFORM_WINDOWS)
-    #include <Windows.h>
+
     #define MAIN_FUNC   WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
     #define ARGC        __argc
     #define ARGV        __argv
+
 #endif
 
 // TYPES ===========================================================================================================
@@ -29,8 +50,14 @@
 
 int MAIN_FUNC {
 
+    std::error_code error{};
+    const auto parsed = GLT::argument_parser::parse_arguments(specs, argc, argv, error);
+    ASSERT(!error, "", "Argument error [{}]", error.message())
+    const auto project_path = GLT::argument_parser::get<std::filesystem::path>(parsed, "project_path");
+    const auto project_config_path = project_path.parent_path() / GLT::config::config_type_to_filepath(GLT::config::type::plugin);
+
     // setup some core systems
-    GLT::plugin_manager::discover_plugins();
+    GLT::plugin_manager::discover_plugins(project_config_path);
     GLT::plugin_manager::load_plugins(GLT::plugin_manager::phase::earliest_possible);
     GLT::plugin_manager::unload_plugins(GLT::plugin_manager::phase::earliest_possible);
     GLT::config::init();
@@ -45,7 +72,7 @@ int MAIN_FUNC {
     GLT::plugin_manager::unload_plugins(GLT::plugin_manager::phase::post_setup);
 
     {
-        GLT::application app{ARGC, ARGV};
+        GLT::application app{project_path};
         app.run();
     }
 

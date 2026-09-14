@@ -11,6 +11,8 @@
 
 #include "application.h"
 
+
+
 // FORWARD DECLARATIONS ================================================================================================
 
 
@@ -30,12 +32,12 @@ namespace GLT {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    application::application(int argc, char* argv[]) {
+    application::application(const std::filesystem::path& project_path) {
 
         // PROFILE_APPLICATION_FUNCTION();
         ASSERT(!s_instance, "", "Application already exists");
         s_instance = this;
-        
+
         platform::window_attributes attributes;
         config::serialize_window_attributes(attributes, serializer::option::load);
         imgui_config::init();

@@ -11,6 +11,7 @@
 #include <config/imgui_config.h>
 #include <plugin_system/plugin_manager.h>
 #include <plugin_system/i_renderer_plugin.h>
+#include <render/image.h>
 
 #include "resource_manager/icon_manager.h"
 

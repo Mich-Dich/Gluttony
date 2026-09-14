@@ -1,6 +1,6 @@
 
 #include "util/pch.h"
-#include "i_renderer_plugin.h"
+#include "image.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================

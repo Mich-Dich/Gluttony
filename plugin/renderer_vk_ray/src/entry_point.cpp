@@ -8,6 +8,7 @@
 #include <plugin_system/i_renderer_plugin.h>
 #include <plugin_system/i_window_plugin.h>
 #include <world/object/camera.h>
+#include <render/image.h>
 
 #include "util/utils.h"
 #include "util/data_structures.h"

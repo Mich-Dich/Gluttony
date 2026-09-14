@@ -314,14 +314,14 @@ namespace GLT::plugin_manager {
 
     // PUBLIC API =====================================================================================================
 
-    void discover_plugins() {
+    void discover_plugins(const std::filesystem::path& project_config_path) {
 
         const auto plugin_dir = GLT::util::get_executable_path() / config::PLUGIN_DIR;
         std::error_code error{};
         vfs::exists(plugin_dir, error);
         VALIDATE(!error, return, "", "Plugin dir is invalid [{}]", plugin_dir)
         
-        s_config_path = GLT::util::get_executable_path() / GLT::config::config_type_to_filepath(GLT::config::type::plugin);
+        s_config_path = project_config_path;
         const bool exits = vfs::exists(s_config_path, error);
         if (!error && exits)
             serialize(s_config_path, serializer::option::load);

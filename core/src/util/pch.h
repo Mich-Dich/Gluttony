@@ -72,7 +72,7 @@
 #if defined(PLATFORM_LINUX)
     #include <sys/wait.h>
 #elif defined(PLATFORM_WINDOWS)
-    
+    #include <Windows.h>
 #else
     #error unsupported platform
 #endif

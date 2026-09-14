@@ -6,7 +6,9 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/debug/Gluttony",
-            "args": [],
+            "args": [
+                "~/workspace/gluttony_test_project/project.glt_proj",
+            ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

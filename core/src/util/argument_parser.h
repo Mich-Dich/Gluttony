@@ -31,7 +31,7 @@ namespace GLT::argument_parser {
     };
 
     // Custom error codes
-    enum class arg_error {
+    enum class arg_error : u8 {
 
         success = 0,
         unknown_argument,
@@ -61,8 +61,7 @@ namespace GLT::argument_parser {
 
 
     // Main parsing function
-    parsed_result parse_arguments(const std::vector<argument_spec>& specs, int argc, char* argv[],
-        std::error_code& error);
+    parsed_result parse_arguments(const std::vector<argument_spec>& specs, int argc, char* argv[], std::error_code& error);
 
 
     std::vector<std::string> tokenize_string(const std::string& cmd);
@@ -76,11 +75,9 @@ namespace GLT::argument_parser {
 #include "argument_parser.inl"
 
 // Specialization must be in global namespace std
-namespace std
-{
+namespace std {
 
     template<>
     struct is_error_code_enum<GLT::argument_parser::arg_error> : true_type { };
 
 }
-
