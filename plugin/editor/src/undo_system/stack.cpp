@@ -1,11 +1,11 @@
 
 #include "util/pch.h"
-#include "i_renderer_plugin.h"
+#include "stack.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::render {
+namespace GLT::undo_system {
 
     // CONSTANTS =======================================================================================================
 
@@ -14,8 +14,6 @@ namespace GLT::render {
     // TYPES ===========================================================================================================
 
     // STATIC VARIABLES ================================================================================================
-
-    image::factory_table                            image::s_factory{};
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
@@ -31,67 +29,59 @@ namespace GLT::render {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    image::image() {}
-
-
-    image::image(const glm::uvec3 size) {}
-
-
-    image::image(const std::filesystem::path& image_path, const bool mipmapped) {}
-
-        
-    image::image(const void* data, const u32 width, const u32 height, const bool mipmapped) {}
-
-
-    image::~image() {};
-
     // CLASS PUBLIC ====================================================================================================
 
-    void image::register_factory(const factory_table& table) { s_factory = table; }
+    void stack::push(step undo_step, f32 now) {
 
+        if (undo_step.can_combine && m_cursor > 0) {                 // Try to merge with the top of the stack.
+            step& top = m_steps[m_cursor - 1];
+            if (top.is_compact() && undo_step.is_compact() 
+                && top.id == undo_step.id && top.can_combine) {
 
-    std::unique_ptr<image> image::create_instance() {
+                top.merge(undo_step);
+                return;
+            }
+        }
 
-        if (s_factory.default_fn)
-            return s_factory.default_fn();
-        return std::unique_ptr<image>(new image());
+        m_size = m_cursor;                                      // Drop the redo tail — the user did something new.
+
+        if (m_size == max_steps) {                              // Ring-buffer behaviour: if full, drop the oldest.
+            std::memmove(m_steps.data(), m_steps.data() + 1, (max_steps - 1) * sizeof(step));
+            m_steps[max_steps - 1] = std::move(undo_step);
+        } else
+            m_steps[m_size++] = std::move(undo_step);
+
+        m_cursor = m_size;
     }
 
 
-    std::unique_ptr<image> image::create_instance(const glm::uvec3& size) {
+    bool stack::undo() { 
         
-        if (s_factory.size_fn)
-            return s_factory.size_fn(size);
-        return std::unique_ptr<image>(new image(size));
-    }
-
-
-    std::unique_ptr<image> image::create_instance(const void* data, const u32 width, const u32 height, const bool mipmapped) {
+        if (m_cursor == 0)
+            return false; 
         
-        if (s_factory.data_fn)
-            return s_factory.data_fn(data, width, height, mipmapped);
-        return std::unique_ptr<image>(new image(data, width, height, mipmapped));
+        m_steps[--m_cursor].revert(); 
+        return true; 
     }
 
 
-    std::unique_ptr<image> image::create_instance(const std::filesystem::path& path, bool mipmapped) {
-        
-        if (s_factory.path_fn)
-            return s_factory.path_fn(path, mipmapped);
-        return std::unique_ptr<image>(new image(path, mipmapped));
+    bool stack::redo() {
+
+        if (m_cursor == m_size) 
+            return false; 
+            
+        m_steps[m_cursor++].apply();  
+        return true; 
     }
 
 
-    glm::uvec2 image::get_size()                    { return {}; }
+    bool stack::can_undo() const noexcept       { return m_cursor > 0; }
 
 
-    void* image::get_descriptor_set()               { return {}; }
+    bool stack::can_redo() const noexcept       { return m_cursor < m_size; }
 
 
-    void* image::load(const std::filesystem::path& path, u32& outWidth, u32& outHeight) { return {}; }
-
-    
-    void image::resize(const glm::uvec3& new_size, const GLT::render::image_format format, const bool mipmapped) {}
+    void stack::clear()        noexcept         { m_size = m_cursor = 0; }
 
     // CLASS PROTECTED =================================================================================================
 

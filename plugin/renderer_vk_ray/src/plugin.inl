@@ -37,6 +37,9 @@ namespace GLT::renderer_vk_ray {
         table.size_fn = [](const glm::uvec3& size) -> std::unique_ptr<GLT::render::image> {
             return std::make_unique<GLT::renderer_vk_ray::image>(size);
         };
+        table.data_fn = [](const void* data, const u32 width, const u32 height, const bool mipmapped = false) -> std::unique_ptr<GLT::render::image> {
+            return std::make_unique<GLT::renderer_vk_ray::image>(data, width, height, mipmapped);
+        };
         table.path_fn = [](const std::filesystem::path& path, bool mipmapped) -> std::unique_ptr<GLT::render::image> {
             return std::make_unique<GLT::renderer_vk_ray::image>(path, mipmapped);
         };

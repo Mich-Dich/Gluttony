@@ -11,12 +11,13 @@ namespace GLT {
 
     namespace config {
 
-        inline constexpr std::string                ASSET_EXTENTION(".gltasset");       // Extension for asset files
-        inline constexpr std::string                PROJECT_EXTENTION(".gltproj");      // Extension for project files
-        inline constexpr std::string                FILE_EXTENSION_CONFIG(".yml");      // Extension for YAML config files
-        inline constexpr std::string                FILE_EXTENSION_INI(".ini");         // Extension for INI config files
+        inline constexpr std::string                ASSET_EXTENTION(".gltasset");       // Extension for asset files: ".gltasset"
+        inline constexpr std::string                PROJECT_EXTENTION(".gltproj");      // Extension for project files: ".gltproj"
+        inline constexpr std::string                FILE_EXTENSION_CONFIG(".yml");      // Extension for YAML config files: ".yml"
+        inline constexpr std::string                FILE_EXTENSION_INI(".ini");         // Extension for INI config files: ".ini"
 
         inline const std::filesystem::path          METADATA_DIR("metadata");           // relative to executable dir
+        inline const std::filesystem::path          ASSET_DIR("asset");                 // relative to executable dir
         inline const std::filesystem::path          CONFIG_DIR("config");               // relative to executable dir
         inline const std::filesystem::path          CONTENT_DIR("content");             // relative to executable dir
         inline const std::filesystem::path          SOURCE_DIR("source");               // relative to executable dir
@@ -35,12 +36,6 @@ namespace GLT {
     }
 
     // MACROS ==========================================================================================================
-
-    #if 1
-        #define RENDER_API_VULKAN
-    #else
-        #define RENDER_API_OPENGL
-    #endif
 
     // collect timing-data from every major function?
     #define PROFILE								    0	// general

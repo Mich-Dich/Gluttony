@@ -1,15 +1,5 @@
 #pragma once
 
-#include <util/pch.h>
-#include <layer/layer.h>
-#include <layer/layer_stack.h>
-#include <application.h>
-
-#include "editor_layer.h"
-
-#include "resource_manager/icon_manager.h"
-
-
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -35,30 +25,9 @@ namespace GLT::editor {
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 
-    plugin::plugin() {}
-    
-    
-    plugin::~plugin() {}
-
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    void plugin::on_load() {
-
-        icon_manager::init();
-        mp_editor_layer = GLT::application::get().get_layer_stack_ref().push_layer<editor_layer>();
-    }
-
-
-    void plugin::on_unload() {
-
-        GLT::application::get().get_layer_stack_ref().pop_layer();
-        mp_editor_layer = {};
-    }
-
-
-    void plugin::update(const GLT::update_event&) {
-
-    }
+    bool base_window::should_close() const { return !m_show_window; }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

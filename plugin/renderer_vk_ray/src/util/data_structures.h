@@ -2,9 +2,8 @@
 
 #include "util/pch.h"
 
-#if defined(RENDER_API_VULKAN)
-    #include <vulkan/vulkan.h>
-#endif
+#include <vulkan/vulkan.h>
+
 #include "util/data_structures/type_deletion_queue.h"
 
 
@@ -62,18 +61,14 @@ namespace GLT::renderer_vk_ray::utils {
     class deletion_queue : public GLT::util::type_deletion_queue {
     public:
 
-        #if defined(RENDER_API_VULKAN)
-            void setup(VkDevice device);
-        #endif
+        void setup(VkDevice device);
 
         void shutdown();
 
         void flush_pointer(std::pair<std::type_index, void*> pointer) override;
 
     private:
-        #if defined(RENDER_API_VULKAN)
-            VkDevice							    m_dq_device{};
-        #endif
+        VkDevice							    m_dq_device{};
     };
 
 }

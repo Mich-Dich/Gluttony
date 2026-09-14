@@ -111,11 +111,14 @@ namespace GLT::imgui_config {
 		io.Fonts->Clear();			// Clear the font atlas before adding new fonts
 		s_fonts.clear();
 
-		std::filesystem::path basePath = util::get_executable_path() / "assets" / "fonts";
+		std::filesystem::path basePath = util::get_executable_path() / GLT::config::ASSET_DIR / "fonts";
 		std::filesystem::path font_path = basePath / "Open_Sans" / "static";
 		std::filesystem::path inconsolataPath = basePath / "Inconsolata" / "static";
 
 		io.FontAllowUserScaling = true;
+
+		const bool font_exists = std::filesystem::exists(font_path / "OpenSans-Regular.ttf");
+		ASSERT(font_exists, "", "FONT does not exist [{}]", (font_path / "OpenSans-Regular.ttf").generic_string())
 
 		#define ADD_FONT(font_type, font_path, font_size) \
 			s_fonts[font_type] = io.Fonts->AddFontFromFileTTF((font_path).string().c_str(), font_size);

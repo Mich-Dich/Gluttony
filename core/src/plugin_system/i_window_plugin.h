@@ -25,12 +25,14 @@ namespace GLT::platform {
     // TYPES ===========================================================================================================
 
     enum class backend_api : u8 {
+
         glfw = 0,
         sdl,
     };
 
 
     enum class window_size_state : u8 {
+
         windowed,
         minimized,
         fullscreen,
@@ -39,6 +41,7 @@ namespace GLT::platform {
 
 
     enum class cursor_mode : u8 {
+
         cursor_normal = 0,
         cursor_hidden,
         cursor_disabled,
@@ -47,6 +50,7 @@ namespace GLT::platform {
 
 
     struct window_attributes {
+
         std::string             title = "Gluttony";
         u32                     width = 1600;
         u32                     height = 900;

@@ -46,13 +46,12 @@ namespace GLT::editor {
 
         void render_toolbar();
         void render_dockspace();
+        void build_default_layout(ImGuiID dockspace_id, const ImVec2& size);
 
         void render_viewport();
         void render_content_browser();
         void render_details();
         void render_tools();
-
-        void build_default_layout(ImGuiID dockspace_id, const ImVec2& size);
 
         GLT::ref<GLT::render::i_renderer_plugin>        m_renderer{};
         ImVec2                                          m_content_size{100, 60};

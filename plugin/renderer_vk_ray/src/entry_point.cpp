@@ -240,6 +240,8 @@ namespace GLT::renderer_vk_ray {
 
         image(const std::filesystem::path& image_path, const bool mipmapped = false);
 
+        image(const void* data, const u32 width, const u32 height, const bool mipmapped = false);
+
         ~image();
 
 

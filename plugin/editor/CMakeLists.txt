@@ -27,6 +27,27 @@ set(IMGUI_DIR                                                           "${VENDO
 target_include_directories(${PLUGIN_NAME}                               PRIVATE "${IMGUI_DIR}")
 target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${IMGUI_DIR}")
 
+set(VENDOR_DIR                                                          "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+set(VK_STB_IMAGE_DIR                                                    "${VENDOR_DIR}/stb_image")
+
+git_clone_or_update("git@github.com:franko/stb_image.git"               "${VK_STB_IMAGE_DIR}")
+target_include_directories(${PLUGIN_NAME}                               PRIVATE "${VK_STB_IMAGE_DIR}/include")
+target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${VK_STB_IMAGE_DIR}/include")
+
+
+# ------------- Copy assets directory to output ---------------------------------------------------
+set(COMPILE_OUTPUT_DIR                                                  "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/asset)
+    add_custom_command(TARGET                                           ${PLUGIN_NAME}
+        POST_BUILD COMMAND                                              ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/asset
+            ${COMPILE_OUTPUT_DIR}/asset
+        COMMENT "Copying assets to build directory: ${COMPILE_OUTPUT_DIR}/asset"
+    )
+else()
+    message(WARNING "Assets directory not found at ${CMAKE_CURRENT_SOURCE_DIR}/asset")
+endif()
+
 
 
 print_source_file_details(

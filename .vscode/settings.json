@@ -18,6 +18,7 @@
     "spirv",
     "swapchain",
     "tlas",
+    "undoable",
     "VFSPP",
     "vk_ray"
   ],

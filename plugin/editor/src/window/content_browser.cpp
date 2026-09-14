@@ -1,14 +1,6 @@
-#pragma once
 
-#include <util/pch.h>
-#include <layer/layer.h>
-#include <layer/layer_stack.h>
-#include <application.h>
-
-#include "editor_layer.h"
-
-#include "resource_manager/icon_manager.h"
-
+#include "util/pch.h"
+#include "content_browser.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -33,35 +25,14 @@ namespace GLT::editor {
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
-    // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
+    // FUNCTION IMPLEMENTATION =========================================================================================
 
-    plugin::plugin() {}
-    
-    
-    plugin::~plugin() {}
+    // CLASS IMPLEMENTATION ============================================================================================
 
-    // TEMPLATE CLASS PUBLIC ===========================================================================================
+    // CLASS PUBLIC ====================================================================================================
 
-    void plugin::on_load() {
+    // CLASS PROTECTED =================================================================================================
 
-        icon_manager::init();
-        mp_editor_layer = GLT::application::get().get_layer_stack_ref().push_layer<editor_layer>();
-    }
-
-
-    void plugin::on_unload() {
-
-        GLT::application::get().get_layer_stack_ref().pop_layer();
-        mp_editor_layer = {};
-    }
-
-
-    void plugin::update(const GLT::update_event&) {
-
-    }
-
-    // TEMPLATE CLASS PROTECTED ========================================================================================
-
-    // TEMPLATE CLASS PRIVATE ==========================================================================================
+    // CLASS PRIVATE ===================================================================================================
 
 }

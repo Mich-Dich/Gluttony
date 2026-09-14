@@ -1,5 +1,6 @@
 
 #include <util/pch.h>
+#include "editor_layer.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -11,8 +12,7 @@
 #include <plugin_system/plugin_manager.h>
 #include <plugin_system/i_renderer_plugin.h>
 
-#include "editor_layer.h"
-
+#include "resource_manager/icon_manager.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -175,7 +175,6 @@ namespace GLT::editor {
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(win_pad, win_pad));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        // ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 0.0f));
         if (ImGui::Begin("##editor_toolbar", nullptr, flags)) {
 
             ImGui::Image(m_logo->get_descriptor_set(), ImVec2(logo_side, logo_side), ImVec2(0, 0), ImVec2(1, 1), 
@@ -279,6 +278,26 @@ namespace GLT::editor {
     }
 
 
+    void editor_layer::build_default_layout(ImGuiID dockspace_id, const ImVec2& size) {
+
+        ImGui::DockBuilderRemoveNode(dockspace_id);
+        ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockspace_id, size);
+
+        ImGuiID dock_main = dockspace_id;
+        ImGuiID dock_right = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.25f, nullptr, &dock_main);
+        ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.30f, nullptr, &dock_main);
+        ImGuiID dock_right_b = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.50f, nullptr, &dock_right);
+
+        ImGui::DockBuilderDockWindow("Viewport",        dock_main);
+        ImGui::DockBuilderDockWindow("Content Browser", dock_bottom);
+        ImGui::DockBuilderDockWindow("Details",         dock_right);
+        ImGui::DockBuilderDockWindow("Tools",           dock_right_b);
+
+        ImGui::DockBuilderFinish(dockspace_id);
+    }
+
+
     void editor_layer::render_viewport() {
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -293,8 +312,11 @@ namespace GLT::editor {
 
     void editor_layer::render_content_browser() {
 
-        if (ImGui::Begin("Content Browser"))
-            ImGui::TextUnformatted("Content Browser");
+        if (ImGui::Begin("Content Browser")) {
+
+            const auto folder_data = icon_manager::get(icon_manager::icon::folder);
+            ImGui::Image(folder_data.tex_ref, folder_data.image_size, folder_data.uv0, folder_data.uv1);
+        }
         ImGui::End();
     }
 
@@ -302,7 +324,7 @@ namespace GLT::editor {
     void editor_layer::render_details() {
 
         if (ImGui::Begin("Details"))
-            ImGui::TextUnformatted("Details");
+            ImGui::Text("Details");
         ImGui::End();
     }
 
@@ -310,34 +332,8 @@ namespace GLT::editor {
     void editor_layer::render_tools() {
 
         if (ImGui::Begin("Tools"))
-            ImGui::TextUnformatted("Tools");
+            ImGui::Text("Tools");
         ImGui::End();
-    }
-
-
-    void editor_layer::build_default_layout(ImGuiID dockspace_id, const ImVec2& size) {
-
-        ImGui::DockBuilderRemoveNode(dockspace_id);
-        ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-        ImGui::DockBuilderSetNodeSize(dockspace_id, size);
-
-        ImGuiID dock_main = dockspace_id;
-
-        // Right column: 25% of the total width, holds Details (top) / Tools (bottom).
-        ImGuiID dock_right = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.25f, nullptr, &dock_main);
-
-        // Left column, split top/bottom: Viewport (top) / Content Browser (bottom).
-        ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.30f, nullptr, &dock_main);
-
-        // Right column split again: Details (top) / Tools (bottom).
-        ImGuiID dock_right_b = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.50f, nullptr, &dock_right);
-
-        ImGui::DockBuilderDockWindow("Viewport",        dock_main);
-        ImGui::DockBuilderDockWindow("Content Browser", dock_bottom);
-        ImGui::DockBuilderDockWindow("Details",         dock_right);
-        ImGui::DockBuilderDockWindow("Tools",           dock_right_b);
-
-        ImGui::DockBuilderFinish(dockspace_id);
     }
 
 }

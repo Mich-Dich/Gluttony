@@ -1,10 +1,13 @@
 
 #pragma once
 
+#include <meta>
+
 #include "util/system.h"
 #include "util/timing/stopwatch.h"
 #include "util/timing/interval_controller.h"
 #include "util/io/vfs.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -32,6 +35,23 @@ namespace GLT::util {
     template <typename E>
     requires std::is_enum_v<E>
     constexpr std::optional<E> string_to_enum(std::string_view str);
+
+    
+    template <typename E>
+    requires std::is_enum_v<E>
+    inline constexpr auto enum_enumerators = std::define_static_array(std::meta::enumerators_of(^^E));
+
+
+    template <typename E, std::size_t... Is>
+    constexpr auto make_enum_values(std::index_sequence<Is...>) {
+        return std::array<E, sizeof...(Is)>{ [: enum_enumerators<E>[Is] :]... };
+    }
+
+    template <typename E>
+    requires std::is_enum_v<E>
+    inline constexpr auto enum_values = make_enum_values<E>(
+        std::make_index_sequence<enum_enumerators<E>.size()>{}
+    );
 
     // CLASS DECLARATION ===============================================================================================
 

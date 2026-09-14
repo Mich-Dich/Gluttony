@@ -555,17 +555,17 @@ namespace GLT::renderer_vk_ray {
         // Spir-V bytecode is required
 
         // load the ray gen shader
-        auto ray_gen_spv = m_shader_compiler.compile_glsl_to_spirv(GLT::util::get_executable_path() / "assets" / "shader" / "hello_triangle.rgen.glsl");
+        auto ray_gen_spv = m_shader_compiler.compile_glsl_to_spirv(GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "hello_triangle.rgen.glsl");
         ASSERT(!ray_gen_spv.empty(), "", "Failed to load shader")
         auto ray_gen_shader_module = m_vr_dev->create_shader_from_spv(ray_gen_spv);
 
         // load the miss shader
-        auto ray_miss_spv = m_shader_compiler.compile_glsl_to_spirv(GLT::util::get_executable_path() / "assets" / "shader" / "hello_triangle.rmiss.glsl");
+        auto ray_miss_spv = m_shader_compiler.compile_glsl_to_spirv(GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "hello_triangle.rmiss.glsl");
         ASSERT(!ray_miss_spv.empty(), "", "Failed to load shader")
         auto ray_miss_shader_module = m_vr_dev->create_shader_from_spv(ray_miss_spv);
 
         // load the closest hit shader
-        auto closest_hit_spv = m_shader_compiler.compile_glsl_to_spirv(GLT::util::get_executable_path() / "assets" / "shader" / "hello_triangle.rchit.glsl");
+        auto closest_hit_spv = m_shader_compiler.compile_glsl_to_spirv(GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "hello_triangle.rchit.glsl");
         ASSERT(!closest_hit_spv.empty(), "", "Failed to load shader")
         auto closest_hit_shader_module = m_vr_dev->create_shader_from_spv(closest_hit_spv);
 

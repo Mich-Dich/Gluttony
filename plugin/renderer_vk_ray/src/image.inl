@@ -177,6 +177,12 @@ namespace GLT::renderer_vk_ray {
     }
 
 
+    image::image(const void* data, const u32 width, const u32 height, const bool mipmapped) {
+
+        allocate_memory(data, glm::uvec3{width, height, 1}, GLT::render::image_format::RGBA, mipmapped);
+    }
+
+
 	image::~image()                             { release(); }
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
