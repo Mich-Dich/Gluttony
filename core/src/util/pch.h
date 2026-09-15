@@ -100,6 +100,7 @@
 #include "util/io/logger.h"
 #include "util/io/serializer_data.h"
 #include "util/io/vfs.h"
+#include "util/io/directory_iterator.h"
 #include "util/system.h"
 #include "util/crash_handler.h"
 #include "util/math/math.h"

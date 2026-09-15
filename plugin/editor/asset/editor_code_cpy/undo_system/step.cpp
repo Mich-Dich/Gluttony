@@ -1,20 +1,33 @@
 
 #include "util/pch.h"
-#include "base_window.h"
-
-#include <imgui.h>
-
+#include "step.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::editor {
+namespace GLT::undo_system {
 
     // CONSTANTS =======================================================================================================
 
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
+
+    bool step::is_compact() const noexcept  { return setter != nullptr; }
+
+
+    void step::apply()  const               { is_compact() ? setter(object, after)  : (do_fn   ? do_fn()   : void()); }
+    
+
+    void step::revert() const               { is_compact() ? setter(object, before) : (undo_fn ? undo_fn() : void()); }
+
+
+    void step::merge(const step& newer) {
+
+        VALIDATE(is_compact() && newer.is_compact() && size == newer.size, return, "", "Failed to merge undo steps");
+        std::memcpy(after, newer.after, size);
+        timestamp = newer.timestamp;
+    }
 
     // STATIC VARIABLES ================================================================================================
 
@@ -30,34 +43,29 @@ namespace GLT::editor {
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
+    constexpr undo_id hash_undo_id(const char* s) noexcept {
+
+        undo_id h = 1469598103934665603ull;
+        for (; *s; ++s) { 
+            
+            h ^= (u8)*s; 
+            h *= 1099511628211ull; 
+        }
+        return h;
+    }
+
+
+    constexpr undo_id mix_undo_id(undo_id h, u64 discriminator) noexcept {
+
+        h ^= discriminator + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        return h;
+    }
+
     // CLASS IMPLEMENTATION ============================================================================================
 
     // CLASS PUBLIC ====================================================================================================
 
-    void base_window::focus_window() {
-
-        if (m_window_id.empty()) {
-            LOG(warn, "focus_window() called before make_window_name()");
-            return;
-        }
-
-        ImGui::SetWindowFocus(m_window_id.c_str());
-    }
-
     // CLASS PROTECTED =================================================================================================
-
-    void base_window::make_window_name(const char* base_name) {
-
-        ASSERT(base_name, "", "make_window_name() base_name must not be null");
-
-        m_window_title = base_name;
-
-        // ImGui displays everything before "##" and uses everything after for identity.
-        // Combining the human-readable name with the object's address guarantees a
-        // stable, unique ID per instance and gives ImGui's docking/position persistence
-        // a key that survives the window being closed and reopened.
-        m_window_id = std::string(base_name) + "##" + std::to_string(reinterpret_cast<uintptr_t>(this));
-    }
 
     // CLASS PRIVATE ===================================================================================================
 

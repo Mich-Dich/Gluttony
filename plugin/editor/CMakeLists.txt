@@ -22,6 +22,11 @@ compile_plugin(SHARED                                                   ${PLUGIN
 compile_plugin(STATIC                                                   ${PLUGIN_NAME}_static   glm imgui)
 
 
+target_compile_definitions(${PLUGIN_NAME}                               PRIVATE
+    IMGUI_DEFINE_MATH_OPERATORS
+    USE_IMGUI
+)
+
 set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
 set(IMGUI_DIR                                                           "${VENDOR_DIR}/imgui")
 target_include_directories(${PLUGIN_NAME}                               PRIVATE "${IMGUI_DIR}")

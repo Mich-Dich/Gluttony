@@ -75,7 +75,7 @@ namespace GLT::imgui_config {
 
 	// Enables or disables window borders globally.
 	// @param enable Whether to enable borders.
-	void enable_window_border(bool enable);
+	void enable_window_border(const bool enable);
 
 
 	// Applies the currently selected UI theme.
@@ -84,7 +84,7 @@ namespace GLT::imgui_config {
 
 	// Updates the main UI color and saves the change to config.
 	// @param new_color New main color to apply.
-	void update_ui_colors(ImVec4 new_color);
+	void update_ui_colors(const ImVec4 new_color);
 
 
 	// Retrieves a font by name.

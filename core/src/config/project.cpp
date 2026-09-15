@@ -42,12 +42,8 @@ namespace GLT {
         VALIDATE(project_exists && !error, return false, "", "Project directory does not exist [{}]: [{}]", 
             project_dir_path.generic_string(), error.message())
 
-        auto iterator = GLT::vfs::directory_iterator(project_dir_path, error);
-        VALIDATE(!error, return false, "", "Failed to create directory_iterator for [{}]: [{}]", 
-            project_dir_path.generic_string(), error.message())
-
         bool project_file_found = false;
-        const bool project_file_exists = GLT::vfs::exists(project_dir_path / GLT::config::PROJECT_EXTENTION, error);
+        const bool project_file_exists = GLT::vfs::exists(project_dir_path / (GLT::config::PROJECT_NAME + GLT::config::PROJECT_EXTENTION), error);
         VALIDATE(project_file_exists && !error, return false, "", "Project file does not exist [{}]: [{}]", 
             project_dir_path.generic_string(), error.message())
 

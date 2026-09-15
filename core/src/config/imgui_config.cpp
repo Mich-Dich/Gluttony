@@ -418,10 +418,10 @@ namespace GLT::imgui_config {
 	}
 
 
-	void set_ui_theme_selection(theme_selection theme_selection) { g_ui_theme = theme_selection; }
+	void set_ui_theme_selection(const theme_selection theme_selection) { g_ui_theme = theme_selection; }
 
 
-	void enable_window_border(bool enable) {
+	void enable_window_border(const bool enable) {
 
 		g_window_border = enable;
 		//serialize(serializer::option::save);
@@ -431,7 +431,7 @@ namespace GLT::imgui_config {
 	}
 
 
-	void update_ui_colors(ImVec4 new_color) {
+	void update_ui_colors(const ImVec4 new_color) {
 
 		main_color = new_color;
 		serialize(GLT::serializer::option::save);

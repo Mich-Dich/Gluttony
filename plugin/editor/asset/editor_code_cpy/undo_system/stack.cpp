@@ -1,14 +1,11 @@
 
 #include "util/pch.h"
-#include "base_window.h"
-
-#include <imgui.h>
-
+#include "stack.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::editor {
+namespace GLT::undo_system {
 
     // CONSTANTS =======================================================================================================
 
@@ -34,30 +31,59 @@ namespace GLT::editor {
 
     // CLASS PUBLIC ====================================================================================================
 
-    void base_window::focus_window() {
+    void stack::push(step undo_step, f32 now) {
 
-        if (m_window_id.empty()) {
-            LOG(warn, "focus_window() called before make_window_name()");
-            return;
+        if (undo_step.can_combine && m_cursor > 0) {                 // Try to merge with the top of the stack.
+            step& top = m_steps[m_cursor - 1];
+            if (top.is_compact() && undo_step.is_compact() 
+                && top.id == undo_step.id && top.can_combine) {
+
+                top.merge(undo_step);
+                return;
+            }
         }
 
-        ImGui::SetWindowFocus(m_window_id.c_str());
+        m_size = m_cursor;                                      // Drop the redo tail — the user did something new.
+
+        if (m_size == max_steps) {                              // Ring-buffer behaviour: if full, drop the oldest.
+            std::memmove(m_steps.data(), m_steps.data() + 1, (max_steps - 1) * sizeof(step));
+            m_steps[max_steps - 1] = std::move(undo_step);
+        } else
+            m_steps[m_size++] = std::move(undo_step);
+
+        m_cursor = m_size;
     }
+
+
+    bool stack::undo() { 
+        
+        if (m_cursor == 0)
+            return false; 
+        
+        m_steps[--m_cursor].revert(); 
+        return true; 
+    }
+
+
+    bool stack::redo() {
+
+        if (m_cursor == m_size) 
+            return false; 
+            
+        m_steps[m_cursor++].apply();  
+        return true; 
+    }
+
+
+    bool stack::can_undo() const noexcept       { return m_cursor > 0; }
+
+
+    bool stack::can_redo() const noexcept       { return m_cursor < m_size; }
+
+
+    void stack::clear()        noexcept         { m_size = m_cursor = 0; }
 
     // CLASS PROTECTED =================================================================================================
-
-    void base_window::make_window_name(const char* base_name) {
-
-        ASSERT(base_name, "", "make_window_name() base_name must not be null");
-
-        m_window_title = base_name;
-
-        // ImGui displays everything before "##" and uses everything after for identity.
-        // Combining the human-readable name with the object's address guarantees a
-        // stable, unique ID per instance and gives ImGui's docking/position persistence
-        // a key that survives the window being closed and reopened.
-        m_window_id = std::string(base_name) + "##" + std::to_string(reinterpret_cast<uintptr_t>(this));
-    }
 
     // CLASS PRIVATE ===================================================================================================
 
