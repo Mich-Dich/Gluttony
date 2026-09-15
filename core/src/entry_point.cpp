@@ -47,17 +47,16 @@ const std::vector<GLT::argument_parser::argument_spec> specs = {
 
 // FUNCTION IMPLEMENTATION =========================================================================================
 
-
 int MAIN_FUNC {
 
+    // parse arguments
     std::error_code error{};
     const auto parsed = GLT::argument_parser::parse_arguments(specs, argc, argv, error);
     ASSERT(!error, "", "Argument error [{}]", error.message())
     const auto project_path = GLT::argument_parser::get<std::filesystem::path>(parsed, "project_path");
-    const auto project_config_path = project_path.parent_path() / GLT::config::config_type_to_filepath(GLT::config::type::plugin);
 
     // setup some core systems
-    GLT::plugin_manager::discover_plugins(project_config_path);
+    GLT::plugin_manager::discover_plugins(project_path);
     GLT::plugin_manager::load_plugins(GLT::plugin_manager::phase::earliest_possible);
     GLT::plugin_manager::unload_plugins(GLT::plugin_manager::phase::earliest_possible);
     GLT::config::init();

@@ -116,7 +116,8 @@ namespace GLT::editor {
         : layer("editor_layer") {
 
         m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::render::i_renderer_plugin>(GLT::plugin_manager::interface::renderer);
-        m_logo = GLT::create_unique_ref<GLT::render::image>(std::filesystem::path(GLT::util::get_executable_path() / "assets/image/logo.png"));
+        m_logo = GLT::create_unique_ref<GLT::render::image>(std::filesystem::path(
+            GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "image/logo.png"));
     }
 
 

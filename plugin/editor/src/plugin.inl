@@ -53,6 +53,7 @@ namespace GLT::editor {
 
         GLT::application::get().get_layer_stack_ref().pop_layer();
         mp_editor_layer = {};
+        icon_manager::shutdown();
     }
 
 

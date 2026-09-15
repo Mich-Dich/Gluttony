@@ -45,6 +45,8 @@ namespace GLT {
         GETTER(ref<GLT::platform::i_window_plugin>,     window, mp_window)
         DEFAULT_GETTER_REF(layer_stack,                 layer_stack)
         DEFAULT_GETTER_CC(f32,                          delta_time)
+        DEFAULT_GETTER(project,                         project)
+        GETTER(std::filesystem::path,                   project_path, m_project.project_path)
 
         FORCE_INLINE_R static application& get()	    { return *s_instance; }
 

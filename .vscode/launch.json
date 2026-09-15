@@ -7,7 +7,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/debug/Gluttony",
             "args": [
-                "~/workspace/gluttony_test_project/project.glt_proj",
+                "~/workspace/gluttony_test_project",
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

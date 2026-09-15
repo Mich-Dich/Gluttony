@@ -64,6 +64,9 @@ namespace GLT::platform {
 
     // FUNCTION DECLARATION ============================================================================================
 
+	void serialize_window_attributes(const std::filesystem::path& path, GLT::platform::window_attributes& attributes, 
+        const serializer::option option);
+
     // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================

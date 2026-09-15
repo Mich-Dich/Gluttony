@@ -22,7 +22,7 @@ namespace GLT::plugin_manager {
     // `plugin_descriptor`, filters plugins according to the configuration file,
     // and populates an internal discovery list. Does NOT load the plugins yet.
     // Must be called once before any load_plugins() invocations.
-    void discover_plugins(const std::filesystem::path& project_config_path);
+    void discover_plugins(const std::filesystem::path& project_dir_path);
 
 
     // Loads all discovered plugins that match the given `currentPhase`, respecting

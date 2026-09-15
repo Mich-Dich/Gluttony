@@ -15,7 +15,7 @@ namespace GLT {
 
     struct project {
 
-        std::filesystem::path        project_path{};        // system path to the project file for a gluttony project
+        std::filesystem::path       project_path{};        // system path to the project file for a gluttony project
         // meta_data
 
         std::string                 display_name{};         // this name will be used in the launcher and editor
@@ -40,10 +40,13 @@ namespace GLT {
         std::vector<std::string>    tags{};                 // Tags or categories
 
 
-        [[nodiscard]] bool is_valid_project_path(const std::filesystem::path& project_file);
+        [[nodiscard]] bool is_valid_project_path(const std::filesystem::path& project_dir_path);
 
 
         void serialize_projects_data(const GLT::serializer::option option);
+
+
+        void serialize_projects_data(const std::filesystem::path& project_dir_path, const GLT::serializer::option option);
     };
 
     // STATIC VARIABLES ================================================================================================

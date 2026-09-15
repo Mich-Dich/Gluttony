@@ -30,9 +30,6 @@ namespace GLT::config {
             [](char c) { return c == '\r' || c == '\n' || c == '\t'; }),                                                \
             line.end());
 
-    #define BUILD_CONFIG_PATH(x)                                                                                        \
-        ( CONFIG_DIR / (file_type_to_string(x) + FILE_EXTENSION_CONFIG) )
-
     // TYPES ===========================================================================================================
 
     // STATIC VARIABLES ================================================================================================
@@ -42,25 +39,6 @@ namespace GLT::config {
     void init() {
 
         create_config_files(GLT::util::get_executable_path());
-    }
-
-
-	void serialize_window_attributes(GLT::platform::window_attributes& attributes, const serializer::option option) {
-
-        const auto config_path = GLT::util::get_executable_path() / BUILD_CONFIG_PATH(type::app_settings);
-        std::error_code error{};
-        vfs::create_file(config_path, error);
-        const auto buffer = error.message();
-        ASSERT(!error, "", "Failed to open/create config file: [{}]: [{}]", config_path.generic_string(), error.message())
-
-        serializer::yaml(config_path, "window", option)
-            .entry(KEY_VALUE(attributes.title))
-            .entry(KEY_VALUE(attributes.width))
-            .entry(KEY_VALUE(attributes.height))
-            .entry(KEY_VALUE(attributes.pos_x))
-            .entry(KEY_VALUE(attributes.pos_y))
-            .entry(KEY_VALUE(attributes.vsync))
-            .entry(KEY_VALUE(attributes.size_state));
     }
 
 

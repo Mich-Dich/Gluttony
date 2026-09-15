@@ -38,31 +38,33 @@ namespace GLT {
         ASSERT(!s_instance, "", "Application already exists");
         s_instance = this;
 
-        platform::window_attributes attributes;
-        config::serialize_window_attributes(attributes, serializer::option::load);
+        m_project.serialize_projects_data(project_path, GLT::serializer::option::load);
+        set_target_fps(30);                 // DEBUG-ONLY - TODO: load from config
         imgui_config::init();
 
         plugin_manager::load_plugins(plugin_manager::phase::pre_application);
         plugin_manager::unload_plugins(plugin_manager::phase::pre_application);
+        
         mp_window = plugin_manager::get_plugin_ref<platform::i_window_plugin>(plugin_manager::interface::window);
         ASSERT(mp_window, "", "Failed to load window plugin")
+        platform::window_attributes attributes;
+        platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::load);
         mp_window->create(attributes);
 
         plugin_manager::load_plugins(plugin_manager::phase::post_window);
         plugin_manager::unload_plugins(plugin_manager::phase::post_window);
+        
         mp_renderer = plugin_manager::get_plugin_ref<render::i_renderer_plugin>(plugin_manager::interface::renderer);
         ASSERT(mp_renderer, "", "Failed to load render plugin")
         mp_renderer->create();
-
-        set_target_fps(30);                 // DEBUG-ONLY - TODO: load from config
-
-        m_close_event_sub_handle = event_bus::subscribe<window_close_event>(std::bind_front(&application::on_window_close_event, this));
-
-        mp_game_loop_base = plugin_manager::get_plugin_ref<i_game_loop_base>(plugin_manager::interface::game_loop);
-
-        LOG_INIT
+        
         plugin_manager::load_plugins(plugin_manager::phase::application_ready);
         plugin_manager::unload_plugins(plugin_manager::phase::application_ready);
+        
+        mp_game_loop_base = plugin_manager::get_plugin_ref<i_game_loop_base>(plugin_manager::interface::game_loop);
+        
+        m_close_event_sub_handle = event_bus::subscribe<window_close_event>(std::bind_front(&application::on_window_close_event, this));
+        LOG_INIT
     }
 
 
@@ -76,7 +78,7 @@ namespace GLT {
         mp_renderer->destroy();
 
         platform::window_attributes attributes = mp_window->get_window_attributes();
-        config::serialize_window_attributes(attributes, serializer::option::save);
+        platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::save);
         mp_window->destroy();
         mp_window.reset();
         

@@ -11,8 +11,9 @@ namespace GLT {
 
     namespace config {
 
-        inline constexpr std::string                ASSET_EXTENTION(".gltasset");       // Extension for asset files: ".gltasset"
-        inline constexpr std::string                PROJECT_EXTENTION(".gltproj");      // Extension for project files: ".gltproj"
+        inline constexpr std::string                ASSET_EXTENTION(".glt_asset");      // Extension for asset files: ".gltasset"
+        inline constexpr std::string                PROJECT_NAME("project");
+        inline constexpr std::string                PROJECT_EXTENTION(".glt_proj");     // Extension for project files: ".gltproj"
         inline constexpr std::string                FILE_EXTENSION_CONFIG(".yml");      // Extension for YAML config files: ".yml"
         inline constexpr std::string                FILE_EXTENSION_INI(".ini");         // Extension for INI config files: ".ini"
 

@@ -156,15 +156,8 @@ namespace GLT::editor::icon_manager {
             icons_sorted_by_atlas[{ (u32)width, (u32)height }].push_back({ i, image_path });
         }
         
-        LOG(trace, "Number of atlas to create [{}]", icons_sorted_by_atlas.size())
-        for (const auto& entry : icons_sorted_by_atlas) {
-
-            LOG(trace, "Icon size [{}, {}] number od icons [{}]", entry.first.cols, entry.first.rows, entry.second.size())
-            for (auto& source : entry.second)
-                LOG(trace, "    path [{}]", source.path.generic_string())
-        }
-
         // build one atlas per size group
+        LOG(trace, "Number of atlas to create [{}]", icons_sorted_by_atlas.size())
         for (const auto& [size, sources] : icons_sorted_by_atlas) {
 
             const u32 icon_w = size.cols;
@@ -230,8 +223,8 @@ namespace GLT::editor::icon_manager {
                 };
             }
 
-            LOG(trace, "Atlas built: {}x{} px, {} icons of {}x{}",
-                layout.texture_width, layout.texture_height, count, icon_w, icon_h);
+            LOG(trace, "Atlas built: [{}] icons of size [{}x{}] result in an atlas of size [{}x{}], layout [{}, {}]",
+                count, icon_w, icon_h, layout.texture_width, layout.texture_height, layout.grid.rows, layout.grid.cols);
 
             s_atlases.push_back(std::move(atlas));
         }

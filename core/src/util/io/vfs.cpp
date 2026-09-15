@@ -65,28 +65,28 @@ namespace GLT::vfs {
 
     void default_create_file(const std::filesystem::path& path, std::error_code& error) noexcept {
 
-        if (std::filesystem::exists(path, error))           // Check existence (non‑throwing)
-            return;         // File already exists – success (error is cleared by exists() on success)
+        error.clear();
+        if (std::filesystem::exists(path, error) || error)              // Check existence (non‑throwing)
+            return;                                                     // File already exists – success
 
-        if (error)
-            return;         // An error occurred during the existence check – propagate it
-
-        // File does not exist → create it exclusively.
-        std::FILE* f = std::fopen(path.c_str(), "wx");      // "wx" mode: create for writing, fail if file already exists.
-        if (f) {
-
-            std::fclose(f);
-            error.clear();                                  // success
-
-        } else {
-
-            error.assign(errno, std::generic_category());   // capture failure
-
-            // If someone else created the file between our exists() and fopen(),
-            // that's still a successful outcome – the file now exists.
-            if (error == std::errc::file_exists)
-                error.clear();
+        const auto parent = path.parent_path();                         // Make sure the parent directory chain exists.
+        if (!parent.empty()) {
+            std::filesystem::create_directories(parent, error);
+            if (error)
+                return;
         }
+
+        // File does not exist → create it
+        std::FILE* f = std::fopen(path.c_str(), "wx");
+        if (f) {
+            std::fclose(f);
+            error.clear();
+            return;
+        }
+
+        error.assign(errno, std::generic_category());
+        if (error == std::errc::file_exists)
+            error.clear();
     }
 
 
