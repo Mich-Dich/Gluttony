@@ -15,6 +15,7 @@
 
 #include "resource_manager/icon_manager.h"
 #include "window/content_browser.h"
+#include "util/ui/pannel_collection.h"
 
 
 
@@ -319,8 +320,44 @@ namespace GLT::editor {
 
     void editor_layer::render_details() {
 
-        if (ImGui::Begin("Details"))
-            ImGui::Text("Details");
+        if (ImGui::Begin("Details")) {
+
+            #if defined(DEBUG)
+
+                const auto& s = GLT::render::image::get_debug_stats();
+
+                // load once so the two rows of a table are consistent with each other
+                const u32 peak_count = s.peak_count.load(std::memory_order_relaxed);
+                const u64 peak_bytes = s.peak_bytes.load(std::memory_order_relaxed);
+                const u32 live_count = s.live_count.load(std::memory_order_relaxed);
+                const u64 live_bytes = s.live_bytes.load(std::memory_order_relaxed);
+                const u64 total_created = s.total_created.load(std::memory_order_relaxed);
+                const u64 total_destroyed = s.total_destroyed.load(std::memory_order_relaxed);
+                const u64 total_alloc = s.total_bytes_allocated.load(std::memory_order_relaxed);
+                const u64 total_freed = s.total_bytes_freed.load(std::memory_order_relaxed);
+
+                if (UI::begin_table("Peak")) {
+                    UI::table_row("count", std::to_string(peak_count));
+                    UI::table_row("bytes", GLT::util::format_bytes(peak_bytes));
+                    UI::end_table();
+                }
+
+                if (UI::begin_table("Live")) {
+                    UI::table_row("count", std::to_string(live_count));
+                    UI::table_row("bytes", GLT::util::format_bytes(live_bytes));
+                    UI::end_table();
+                }
+
+                if (UI::begin_table("Total")) {
+                    UI::table_row("created",         std::to_string(total_created));
+                    UI::table_row("destroyed",       std::to_string(total_destroyed));
+                    UI::table_row("bytes allocated", GLT::util::format_bytes(total_alloc));
+                    UI::table_row("bytes freed",     GLT::util::format_bytes(total_freed));
+                    UI::end_table();
+                }
+
+            #endif
+        }
         ImGui::End();
     }
 

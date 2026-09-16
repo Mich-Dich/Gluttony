@@ -11,13 +11,17 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
 
 #include <util/io/vfs.h>
 #include <util/io/directory_iterator.h>
-#include "plugin_system/i_renderer_plugin.h"
+#include <plugin_system/plugin_manager.h>
+#include <plugin_system/i_renderer_plugin.h>
 
 
 
@@ -27,19 +31,19 @@ namespace GLT::editor::icon_manager {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr u32                               PADDING = 0;                    // transparent border around each icon
+    constexpr u32                                           PADDING = 0;                    // transparent border around each icon
 
-    constexpr u32                               THUMBNAIL_CELL_SIZE = 128;      // px, largest side of a thumbnail
+    constexpr u32                                           THUMBNAIL_CELL_SIZE = 128;      // px, largest side of a thumbnail
 
-    constexpr u32                               THUMBNAIL_PAGE_COLS = 8;
+    constexpr u32                                           THUMBNAIL_PAGE_COLS = 8;
 
-    constexpr u32                               THUMBNAIL_PAGE_ROWS = 8;
+    constexpr u32                                           THUMBNAIL_PAGE_ROWS = 8;
 
-    constexpr u32                               THUMBNAIL_PAGE_SLOTS = THUMBNAIL_PAGE_COLS * THUMBNAIL_PAGE_ROWS;
+    constexpr u32                                           THUMBNAIL_PAGE_SLOTS = THUMBNAIL_PAGE_COLS * THUMBNAIL_PAGE_ROWS;
 
-    constexpr u32                               THUMBNAIL_PAGE_WIDTH = THUMBNAIL_PAGE_COLS * THUMBNAIL_CELL_SIZE;   // 1024
+    constexpr u32                                           THUMBNAIL_PAGE_WIDTH = THUMBNAIL_PAGE_COLS * THUMBNAIL_CELL_SIZE;   // 1024
 
-    constexpr u32                               THUMBNAIL_PAGE_HEIGHT = THUMBNAIL_PAGE_ROWS * THUMBNAIL_CELL_SIZE;   // 1024
+    constexpr u32                                           THUMBNAIL_PAGE_HEIGHT = THUMBNAIL_PAGE_ROWS * THUMBNAIL_CELL_SIZE;   // 1024
 
     // MACROS ==========================================================================================================
 
@@ -47,10 +51,10 @@ namespace GLT::editor::icon_manager {
 
     struct grid_dimensions {
 
-        u32                                     cols = 0;
-        u32                                     rows = 0;
+        u32                                                 cols = 0;
+        u32                                                 rows = 0;
 
-        u32 cell_count() const noexcept         { return cols * rows; }
+        u32 cell_count() const noexcept                     { return cols * rows; }
 
         auto operator<=>(const grid_dimensions&) const = default;   // gives ==, <, etc.
 
@@ -59,77 +63,85 @@ namespace GLT::editor::icon_manager {
 
     struct atlas_layout {
 
-        u32                                     texture_width  = 0;
-        u32                                     texture_height = 0;
-        grid_dimensions                         grid{};
-        u32                                     cell_size      = 0;   // icon + padding
-        u32                                     icon_padding   = 0;
+        u32                                                 texture_width = 0;
+        u32                                                 texture_height = 0;
+        grid_dimensions                                     grid{};
+        u32                                                 cell_size = 0;   // icon + padding
+        u32                                                 icon_padding = 0;
     };
 
 
     struct icon_source {
 
-        icon                                    id;
-        std::filesystem::path                   path;
+        icon                                                id{};
+        std::filesystem::path                               path{};
     };
 
     // thumbnail -------------------------------------------------------------------------------------------------------
 
+    struct dirty_rect {
+
+        u32                                                 x = 0;
+        u32                                                 y = 0;
+        u32                                                 width = 0;
+        u32                                                 height = 0;
+    };
+
     struct thumbnail_page {
 
-        GLT::unique_ref<GLT::render::image>     image{};        // GPU texture
-        ImTextureRef                            tex_ref{};      // cached descriptor
-        std::vector<u8>                         cpu_pixels{};   // RGBA8, PAGE_WIDTH * PAGE_HEIGHT * 4
-        u32                                     used_slots = 0;
+        GLT::unique_ref<GLT::render::image>                 image{};        // GPU texture
+        ImTextureRef                                        tex_ref{};      // cached descriptor
+        std::vector<u8>                                     cpu_pixels{};   // RGBA8, PAGE_WIDTH * PAGE_HEIGHT * 4
+        std::vector<dirty_rect>                             dirty_rects{};  // regions written since last GPU upload
+        u32                                                 used_slots = 0;
     };
 
 
     struct thumbnail_slot {
 
-        thumbnail_state                         state = thumbnail_state::pending;
-        u32                                     page  = 0;
-        u32                                     cell  = 0;
-        ImVec2                                  image_size{};
-        ImVec2                                  uv0{};
-        ImVec2                                  uv1{};
+        thumbnail_state                                     state = thumbnail_state::pending;
+        u32                                                 page  = 0;
+        u32                                                 cell  = 0;
+        ImVec2                                              image_size{};
+        ImVec2                                              uv0{};
+        ImVec2                                              uv1{};
     };
 
 
     struct thumbnail_job {
 
-        thumbnail_handle                        handle;
-        std::filesystem::path                   path;
+        thumbnail_handle                                    handle{};
+        std::filesystem::path                               path{};
     };
 
 
     struct thumbnail_result {
 
-        thumbnail_handle                        handle     = invalid_thumbnail_handle;
-        bool                                    success    = false;
-        u32                                     width      = 0;
-        u32                                     height     = 0;
-        std::vector<u8>                         pixels;     // RGBA8, width*height*4
+        thumbnail_handle                                    handle = invalid_thumbnail_handle;
+        bool                                                success = false;
+        u32                                                 width = 0;
+        u32                                                 height = 0;
+        std::vector<u8>                                     pixels{};     // RGBA8, width*height*4
     };
 
 
     struct thumbnail_manager {
 
-        // -- main thread only --
+        // main thread only
         std::vector<thumbnail_page>                         pages{};
         std::vector<thumbnail_slot>                         slots{};          // index = handle - 1
         std::unordered_map<std::string, thumbnail_handle>   path_to_handle{};
-        std::vector<GLT::unique_ref<GLT::render::image>>    retired_images{}; // see note in reupload_page()
 
-        // -- worker → main handoff --
+        // worker -> main handoff
         std::mutex                                          result_mutex{};
         std::vector<thumbnail_result>                       results{};
 
-        // -- main → worker queue --
+        // main -> worker queue
         std::mutex                                          job_mutex{};
         std::condition_variable                             job_cv{};
         std::queue<thumbnail_job>                           jobs{};
 
-        // -- worker thread --
+        // worker thread
         std::thread                                         worker{};
         std::atomic<bool>                                   worker_stop{false};
     };
@@ -256,8 +268,7 @@ namespace GLT::editor::icon_manager {
                 result.height  = nh;
                 result.pixels.resize((size_t)nw * nh * 4);
 
-                // Simple box-filter downsample. Good enough for thumbnails, and
-                // avoids pulling in stb_image_resize.h.
+                // Simple box-filter downsample. Good enough for thumbnails, and avoids pulling in stb_image_resize.h.
                 for (u32 y = 0; y < nh; ++y) {
 
                     const u32 sy0 = (y * (u32)h) / nh;
@@ -289,6 +300,8 @@ namespace GLT::editor::icon_manager {
             if (raw)
                 stbi_image_free(raw);
 
+            // std::this_thread::sleep_for(std::chrono::seconds(2));
+
             {
                 std::lock_guard lock(state.result_mutex);
                 state.results.push_back(std::move(result));
@@ -302,12 +315,11 @@ namespace GLT::editor::icon_manager {
         auto& state = tm();
 
         // Look for a page with a free slot.
-        for (u32 page_idx = 0; page_idx < (u32)state.pages.size(); ++page_idx) {
+        for (u32 page_idx = 0; page_idx < (u32)state.pages.size(); page_idx++) {
 
             if (state.pages[page_idx].used_slots < THUMBNAIL_PAGE_SLOTS) {
 
                 const u32 cell = state.pages[page_idx].used_slots++;
-
                 state.slots[handle - 1].page = page_idx;
                 state.slots[handle - 1].cell = cell;
                 return;
@@ -317,17 +329,14 @@ namespace GLT::editor::icon_manager {
         // No room anywhere — create a new page.
         thumbnail_page page{};
         page.cpu_pixels.assign((size_t)THUMBNAIL_PAGE_WIDTH * THUMBNAIL_PAGE_HEIGHT * 4, 0);
-        page.image   = GLT::create_unique_ref<GLT::render::image>(
-            page.cpu_pixels.data(), THUMBNAIL_PAGE_WIDTH, THUMBNAIL_PAGE_HEIGHT, false);
+        page.image = GLT::create_unique_ref<GLT::render::image>(page.cpu_pixels.data(), THUMBNAIL_PAGE_WIDTH, THUMBNAIL_PAGE_HEIGHT, false);
         page.tex_ref = page.image->get_descriptor_set();
 
         state.pages.push_back(std::move(page));
-
         const u32 page_idx = (u32)state.pages.size() - 1;
-
         state.pages[page_idx].used_slots = 1;
-        state.slots[handle - 1].page     = page_idx;
-        state.slots[handle - 1].cell     = 0;
+        state.slots[handle - 1].page = page_idx;
+        state.slots[handle - 1].cell = 0;
     }
 
 
@@ -336,22 +345,26 @@ namespace GLT::editor::icon_manager {
         auto& state = tm();
         auto& page  = state.pages[page_idx];
 
-        // TODO: render::image has no update_subresource()/update_region() in the
-        //       current API, so we recreate the texture from scratch. This is
-        //       ~4 MB of PCIe traffic per dirty page per frame. Adding a
-        //       sub-rect upload method to GLT::render::image would reduce this
-        //       to ~64 KB per new thumbnail.
-        //
-        //       Until then, the previous texture is moved into retired_images
-        //       rather than destroyed, because ImGui's deferred draw lists
-        //       from the previous frame may still reference its descriptor.
-        //       That memory is reclaimed in shutdown().
+        if (!page.image || page.dirty_rects.empty())
+            return;
 
-        state.retired_images.push_back(std::move(page.image));
+        // update_region() expects tightly-packed rows, but cpu_pixels has
+        // THUMBNAIL_PAGE_WIDTH*4 bytes per row. Copy each dirty rect into a
+        // small scratch buffer before uploading.
+        for (const auto& r : page.dirty_rects) {
 
-        page.image   = GLT::create_unique_ref<GLT::render::image>(
-            page.cpu_pixels.data(), THUMBNAIL_PAGE_WIDTH, THUMBNAIL_PAGE_HEIGHT, false);
-        page.tex_ref = page.image->get_descriptor_set();
+            std::vector<u8> scratch((size_t)r.width * r.height * 4);
+            for (u32 y = 0; y < r.height; ++y) {
+
+                const u8* src = page.cpu_pixels.data() + ((size_t)(r.y + y) * THUMBNAIL_PAGE_WIDTH + r.x) * 4;
+                u8* dst = scratch.data() + (size_t)y * r.width * 4;
+                std::memcpy(dst, src, (size_t)r.width * 4);
+            }
+
+            page.image->update_region(scratch.data(), r.x, r.y, r.width, r.height, 0);
+        }
+
+        page.dirty_rects.clear();
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -485,11 +498,10 @@ namespace GLT::editor::icon_manager {
         if (state.worker.joinable())
             state.worker.join();
 
-        // Tear down thumbnail state. `retired_images` is cleared here so the graveyard doesn't outlive the session.
+        // Tear down thumbnail state.
         state.pages.clear();
         state.slots.clear();
         state.path_to_handle.clear();
-        state.retired_images.clear();
         {
             std::lock_guard lock(state.result_mutex);
             state.results.clear();
@@ -547,10 +559,10 @@ namespace GLT::editor::icon_manager {
 
         const auto& slot = state.slots[handle - 1];
 
-        out.state      = slot.state;
+        out.state = slot.state;
         out.image_size = slot.image_size;
-        out.uv0        = slot.uv0;
-        out.uv1        = slot.uv1;
+        out.uv0 = slot.uv0;
+        out.uv1 = slot.uv1;
 
         if (slot.state == thumbnail_state::ready && slot.page < state.pages.size())
             out.tex_ref = state.pages[slot.page].tex_ref;
@@ -569,7 +581,7 @@ namespace GLT::editor::icon_manager {
 
         auto& state = tm();
 
-        // ---- 1. Drain finished jobs -------------------------------------
+        // Drain finished jobs -----------------------------------------------------------------------------------------
         std::vector<thumbnail_result> results{};
         {
             std::lock_guard lock(state.result_mutex);
@@ -582,7 +594,7 @@ namespace GLT::editor::icon_manager {
         std::vector<u32> dirty_pages{};
         dirty_pages.reserve(state.pages.size());
 
-        // ---- 2. Blit each finished image into its atlas cell ------------
+        // Blit each finished image into its atlas cell ----------------------------------------------------------------
         for (auto& r : results) {
 
             auto& slot = state.slots[r.handle - 1];
@@ -594,20 +606,20 @@ namespace GLT::editor::icon_manager {
 
             auto& page = state.pages[slot.page];
 
-            const u32 cx    = slot.cell % THUMBNAIL_PAGE_COLS;
-            const u32 cy    = slot.cell / THUMBNAIL_PAGE_COLS;
+            const u32 cx = slot.cell % THUMBNAIL_PAGE_COLS;
+            const u32 cy = slot.cell / THUMBNAIL_PAGE_COLS;
             const u32 dst_x = cx * THUMBNAIL_CELL_SIZE + (THUMBNAIL_CELL_SIZE - r.width)  / 2;
             const u32 dst_y = cy * THUMBNAIL_CELL_SIZE + (THUMBNAIL_CELL_SIZE - r.height) / 2;
 
-            for (u32 y = 0; y < r.height; ++y) {
+            for (u32 y = 0; y < r.height; y++) {
 
-                u8* dst_row = page.cpu_pixels.data()
-                            + ((size_t)(dst_y + y) * THUMBNAIL_PAGE_WIDTH + dst_x) * 4;
+                u8* dst_row = page.cpu_pixels.data() + ((size_t)(dst_y + y) * THUMBNAIL_PAGE_WIDTH + dst_x) * 4;
                 const u8* src_row = r.pixels.data() + (size_t)y * r.width * 4;
                 std::memcpy(dst_row, src_row, (size_t)r.width * 4);
             }
+            page.dirty_rects.push_back({ dst_x, dst_y, r.width, r.height });
 
-            // ---- 3. Record UVs & mark the page dirty ---------------------
+            // Record UVs & mark the page dirty ------------------------------------------------------------------------
             const f32 inv_w = 1.0f / (f32)THUMBNAIL_PAGE_WIDTH;
             const f32 inv_h = 1.0f / (f32)THUMBNAIL_PAGE_HEIGHT;
 
@@ -617,17 +629,20 @@ namespace GLT::editor::icon_manager {
             const f32 y1 = y0 + (f32)r.height;
 
             slot.image_size = { (f32)r.width, (f32)r.height };
-            slot.uv0        = { x0 * inv_w,   y0 * inv_h   };
-            slot.uv1        = { x1 * inv_w,   y1 * inv_h   };
-            slot.state      = thumbnail_state::ready;
+            slot.uv0 = { x0 * inv_w,   y0 * inv_h   };
+            slot.uv1 = { x1 * inv_w,   y1 * inv_h   };
+            slot.state = thumbnail_state::ready;
 
             if (std::find(dirty_pages.begin(), dirty_pages.end(), slot.page) == dirty_pages.end())
                 dirty_pages.push_back(slot.page);
         }
 
-        // ---- 4. Re-upload each dirty page exactly once -----------------
+        // Re-upload each dirty page exactly once ----------------------------------------------------------------------
         for (u32 p : dirty_pages)
             reupload_thumbnail_page(p);
+
+        stbi_write_png("/home/mich/Pictures/BUFFER/atlas_dump_CPU.png", THUMBNAIL_PAGE_WIDTH, THUMBNAIL_PAGE_HEIGHT, 4,
+            state.pages[0].cpu_pixels.data(), THUMBNAIL_PAGE_WIDTH * 4);
     }
 
 

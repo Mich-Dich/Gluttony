@@ -18,6 +18,20 @@ namespace GLT::util {
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
+    // FUNCTION IMPLEMENTATION =========================================================================================
+
+    std::string format_bytes(u64 bytes) {
+
+        constexpr const char* units[] = { "B", "KB", "MB", "GB", "TB" };
+        double v = static_cast<double>(bytes);
+        int u = 0;
+        while (v >= 1024.0 && u < 4) { v /= 1024.0; ++u; }
+
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%.2f %s", v, units[u]);
+        return buf;
+    }
+    
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     template <typename E>

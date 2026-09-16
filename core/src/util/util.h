@@ -24,6 +24,8 @@ namespace GLT::util {
 
     // FUNCTION DECLARATION ============================================================================================
 
+    FORCE_INLINE_R std::string format_bytes(u64 bytes);
+
     // TEMPLATE DECLARATION ============================================================================================
 
     template <typename E>

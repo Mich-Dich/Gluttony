@@ -41,10 +41,27 @@ namespace GLT::render {
         virtual ~image();
 
         [[nodiscard]] virtual glm::uvec2 get_size();
+
+
         [[nodiscard]] virtual void* get_descriptor_set();
+
+
         [[nodiscard]] virtual void* load(const std::filesystem::path& path, u32& outWidth, u32& outHeight);
+
+
         virtual void resize(const glm::uvec3& new_size, const GLT::render::image_format format = GLT::render::image_format::RGBA,
             const bool mipmapped = false);
+
+
+        virtual void reupload(const void* data);
+
+
+        // Upload a sub-rectangle of pixel data directly into an existing image.
+        // `data` must be tightly packed (row pitch == width * bytes_per_pixel).
+        // Only level 0 is intended for the common case; if the image is mipmapped
+        // and mip_level == 0, the mip chain is regenerated for you.
+        virtual void update_region(const void* data, const u32 x, const u32 y, const u32 width, const u32 height, const u32 mip_level = 0);
+
 
         static std::unordered_set<std::string> get_supported_file_extensions() {
 
@@ -79,9 +96,41 @@ namespace GLT::render {
         [[nodiscard]] static std::unique_ptr<image> create_instance(const void* data, const u32 width, const u32 height, const bool mipmapped = false);
         [[nodiscard]] static std::unique_ptr<image> create_instance(const std::filesystem::path& path, bool mipmapped = false);
 
+
+        #if defined(DEBUG)
+    
+            struct debug_stats {
+                std::atomic<u32>  live_count{0};
+                std::atomic<u32>  peak_count{0};
+                std::atomic<u64>  live_bytes{0};
+                std::atomic<u64>  peak_bytes{0};
+                std::atomic<u64>  total_created{0};
+                std::atomic<u64>  total_destroyed{0};
+                std::atomic<u64>  total_bytes_allocated{0};
+                std::atomic<u64>  total_bytes_freed{0};
+            };
+
+            [[nodiscard]] static const debug_stats&  get_debug_stats();
+            [[nodiscard]] static u32                 get_live_count();
+            [[nodiscard]] static u64                 get_live_vram_bytes();
+            [[nodiscard]] static std::string         get_debug_report();
+
+            // Backend hook: call AFTER a successful GPU allocation (with the real
+            // byte size of the underlying allocation) and BEFORE destroying it.
+            static void track_allocation(u64 bytes);
+            static void track_deallocation(u64 bytes);
+            
+        #endif
+
     private:
 
         static factory_table                    s_factory;
+
+        #if defined(DEBUG)
+        
+            static debug_stats                  s_debug_stats;
+    
+        #endif
 
     };
 

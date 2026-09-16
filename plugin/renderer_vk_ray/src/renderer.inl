@@ -278,6 +278,8 @@ namespace GLT::renderer_vk_ray {
             .setPCommandBufferInfos(&cmd_submit_info);
 
         m_queues.graphics_queue.submit2(submit_info, m_immediate_submit_fence);
+
+        VK_CHECK_S(m_device.waitForFences(m_immediate_submit_fence, VK_TRUE, UINT64_MAX));
 	}
 
     // CLASS PROTECTED =================================================================================================

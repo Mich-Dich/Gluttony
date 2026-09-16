@@ -86,7 +86,7 @@ namespace GLT::editor {
         void draw_directory_tree();
         void draw_directory_tree_recursive(const std::filesystem::path& dir);
         void draw_file_view();
-        void draw_file_item(const dir_entry& entry, i32 entry_index);
+        void draw_file_item(const dir_entry& entry);
         void draw_background_context_menu();
         void draw_item_context_menu(const dir_entry& entry);
         void draw_popups();
@@ -127,7 +127,6 @@ namespace GLT::editor {
         std::filesystem::path                                       m_selection_anchor{};
 
         char                                                        m_search_buffer[256]{};
-        f32                                                         m_left_panel_width = 200.0f;
 
         std::filesystem::path                                       m_pending_rename_path{};
         std::filesystem::path                                       m_pending_delete_path{};

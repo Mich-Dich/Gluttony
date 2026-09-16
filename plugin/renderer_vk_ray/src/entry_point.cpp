@@ -265,6 +265,12 @@ namespace GLT::renderer_vk_ray {
         void resize(const glm::uvec3& new_size, const GLT::render::image_format format = GLT::render::image_format::RGBA,
             const bool mipmapped = false) override;
 
+
+        void reupload(const void* data) override;
+
+
+        void update_region(const void* data, const u32 x, const u32 y, const u32 width, const u32 height, const u32 mip_level = 0) override;
+
     private:
 
 	    void allocate_memory(const void* data, const glm::uvec3 size, 
@@ -280,7 +286,14 @@ namespace GLT::renderer_vk_ray {
         vr::allocated_image                                     m_allocated_image{};
         vr::accessible_image                                    m_accessible_image{};
         GLT::ref<GLT::renderer_vk_ray::renderer>                m_renderer{};
+        GLT::render::image_format                               m_format = GLT::render::image_format::RGBA;
+        u32                                                     m_mip_levels = 1;
 
+        #if defined(DEBUG)
+
+            u64                                                 m_vram_bytes = 0;      // tracked size, used to decrement on release
+        
+        #endif
     };
 
     // STATIC VARIABLES ================================================================================================

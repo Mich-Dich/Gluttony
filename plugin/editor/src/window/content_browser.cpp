@@ -158,7 +158,7 @@ namespace GLT::editor {
     }
 
 
-    void content_browser_window::window(const f32 delta_time) {
+    void content_browser_window::window(const f32 /*delta_time*/) {
 
         if (!m_show_window)
             return;
@@ -174,10 +174,8 @@ namespace GLT::editor {
             if (m_entries_dirty)
                 refresh_directory_entries();
     
-            ImGui::SetNextWindowSizeConstraints(
-                ImVec2(left_panel_min_width, 0),
-                ImVec2(left_panel_max_width, std::numeric_limits<f32>::max()));
-            UI::custom_frame(m_left_panel_width, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
+            ImGui::SetNextWindowSizeConstraints(ImVec2(left_panel_min_width, 0), ImVec2(left_panel_max_width, std::numeric_limits<f32>::max()));
+            UI::custom_frame(200, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
                 [this]() { 
                     draw_directory_tree();
                 },
@@ -193,7 +191,7 @@ namespace GLT::editor {
     }
 
 
-    void content_browser_window::update(const f32 delta_time) {
+    void content_browser_window::update(const f32 /*delta_time*/) {
 
         // All filesystem work happens on the frame the state becomes dirty;
         // nothing to do per-frame here yet. If you later add async scanning,
@@ -201,13 +199,13 @@ namespace GLT::editor {
     }
 
 
-    bool content_browser_window::serialize(const std::filesystem::path& project_file, const GLT::serializer::option option) { }
+    bool content_browser_window::serialize(const std::filesystem::path& /*project_file*/, const GLT::serializer::option /*option*/) { return false; }
 
     // CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
 
-    // ---- selection --------------------------------------------------------------------------------------------------
+    // selection -------------------------------------------------------------------------------------------------------
 
     bool content_browser_window::is_selected(const std::filesystem::path& p) const {
 
@@ -281,7 +279,7 @@ namespace GLT::editor {
         m_selection_anchor.clear();
     }
 
-    // ---- toolbar & breadcrumbs --------------------------------------------------------------------------------------
+    // toolbar & breadcrumbs -------------------------------------------------------------------------------------------
 
     void content_browser_window::draw_toolbar() {
 
@@ -313,10 +311,6 @@ namespace GLT::editor {
 
         ImGui::SameLine();
         if (ImGui::Button("Refresh")) m_entries_dirty = true;
-
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(120.0f);
-        ImGui::DragFloat("##cb_split", &m_left_panel_width, 1.0f, left_panel_min_width, left_panel_max_width, "%.0f");
     }
 
 
@@ -351,7 +345,7 @@ namespace GLT::editor {
         }
     }
 
-    // ---- directory tree ---------------------------------------------------------------------------------------------
+    // directory tree --------------------------------------------------------------------------------------------------
 
     void content_browser_window::draw_directory_tree() {
 
@@ -395,7 +389,7 @@ namespace GLT::editor {
         ImGui::PopID();
     }
 
-    // ---- file grid --------------------------------------------------------------------------------------------------
+    // file grid -------------------------------------------------------------------------------------------------------
 
     void content_browser_window::draw_file_view() {
 
@@ -405,15 +399,12 @@ namespace GLT::editor {
         i32  col = 0;
         bool any = false;
 
-        // NOTE: we pass the *unfiltered* index into m_entries so Shift+click
-        // can compute a contiguous range without tripping over the search filter.
-        for (i32 i = 0; i < static_cast<i32>(m_entries.size()); ++i) {
+        for (const auto& entry : m_entries) {
 
-            const auto& entry = m_entries[i];
             if (!filter.empty() && entry.name.find(filter) == std::string::npos)
                 continue;
 
-            draw_file_item(entry, i);
+            draw_file_item(entry);
             any = true;
 
             if (++col < columns)
@@ -447,7 +438,7 @@ namespace GLT::editor {
     }
 
 
-    void content_browser_window::draw_file_item(const dir_entry& entry, i32 entry_index) {
+    void content_browser_window::draw_file_item(const dir_entry& entry) {
 
         ImGui::PushID(entry.path.string().c_str());
 
@@ -479,8 +470,10 @@ namespace GLT::editor {
 
             if (shift && !m_selection_anchor.empty())
                 extend_selection_to(entry.path);
+
             else if (ctrl)
                 toggle_selection(entry.path);
+
             else
                 select_single(entry.path);
         }
@@ -490,16 +483,15 @@ namespace GLT::editor {
 
         if (selected)                                                                   // Background highlight.
             draw->AddRectFilled(origin, cell_max, ImGui::GetColorU32(GLT::imgui_config::get_main_color_ref()), 4.0f);
+
         else if (interaction == UI::mouse_interation::hovered)
             draw->AddRectFilled(origin, cell_max, IM_COL32(90, 90, 90, 120), 4.0f);
 
-        // ---- icon / thumbnail ---------------------------------------------
+        // icon / thumbnail --------------------------------------------------------------------------------------------
         bool drew_thumbnail = false;
-
         if (!entry.is_directory && is_image_extension(entry.extension)) {
 
             const auto thumb = icon_manager::get_thumbnail(entry.path);
-
             if (thumb.state == icon_manager::thumbnail_state::ready && thumb.image_size.x > 0.0f) {
 
                 // Fit the thumbnail into the icon render box, preserving aspect ratio.
@@ -520,7 +512,6 @@ namespace GLT::editor {
 
             const icon_manager::icon_data icon = icon_manager::get(
                 entry.is_directory ? icon_manager::icon::folder_big : extension_to_icon(entry.extension));
-
             if (icon.image_size.x > 0.0f) {
 
                 const ImVec2 icon_min(
@@ -534,7 +525,7 @@ namespace GLT::editor {
             }
         }
 
-        // ---- filename, clipped to the cell -------------------------------
+        // filename, clipped to the cell -------------------------------------------------------------------------------
         draw->PushClipRect(origin, cell_max, true);
         const ImVec2 name_size = ImGui::CalcTextSize(entry.name.c_str());
         const f32    name_x    = origin.x + std::max(2.0f, (cell_size.x - name_size.x) * 0.5f);
@@ -542,7 +533,7 @@ namespace GLT::editor {
         draw->AddText(ImVec2(name_x, name_y), IM_COL32_WHITE, entry.name.c_str());
         draw->PopClipRect();
 
-        // ---- drag source --------------------------------------------------
+        // drag source -------------------------------------------------------------------------------------------------
         // If the dragged item is part of the current multi-selection, drag
         // only that item for now — see notes at the bottom of the message.
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
@@ -553,7 +544,7 @@ namespace GLT::editor {
             ImGui::EndDragDropSource();
         }
 
-        // ---- per-item context menu ---------------------------------------
+        // per-item context menu ---------------------------------------------------------------------------------------
         if (ImGui::BeginPopupContextItem("##item_ctx")) {
 
             draw_item_context_menu(entry);
@@ -563,7 +554,7 @@ namespace GLT::editor {
         ImGui::PopID();
     }
 
-    // ---- context menus ----------------------------------------------------------------------------------------------
+    // context menus ---------------------------------------------------------------------------------------------------
 
     void content_browser_window::draw_background_context_menu() {
 
@@ -625,7 +616,7 @@ namespace GLT::editor {
         }
     }
 
-    // ---- modal popups -----------------------------------------------------------------------------------------------
+    // modal popups ----------------------------------------------------------------------------------------------------
 
     void content_browser_window::draw_popups() {
 
@@ -641,7 +632,7 @@ namespace GLT::editor {
             m_open_delete_popup = false;
         }
 
-        // ---- rename modal ------------------------------------------------
+        // rename modal ------------------------------------------------------------------------------------------------
         if (ImGui::BeginPopupModal("Rename##cb", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 
             ImGui::TextUnformatted("New name:");
@@ -675,7 +666,7 @@ namespace GLT::editor {
             ImGui::EndPopup();
         }
 
-        // ---- delete modal ------------------------------------------------
+        // delete modal ------------------------------------------------------------------------------------------------
         if (ImGui::BeginPopupModal("Delete##cb", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 
             const std::string name = m_pending_delete_path.filename().string();
@@ -709,7 +700,7 @@ namespace GLT::editor {
         }
     }
 
-    // ---- navigation -------------------------------------------------------------------------------------------------
+    // navigation ------------------------------------------------------------------------------------------------------
 
     void content_browser_window::history_push(const std::filesystem::path& dir) {
 

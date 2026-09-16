@@ -5,5 +5,4 @@ sudo chown -R mich:mich ~/workspace/Gluttony
 
 
 # TODO
-- create project system
-- launch engine with project parameter
+- application creates a lot a textures -> add some tracking mechanics OR runtime diagnostic

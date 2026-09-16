@@ -230,6 +230,170 @@ namespace GLT::renderer_vk_ray {
         allocate_memory(nullptr, new_size, format, mipmapped);
     }
 
+
+    void image::reupload(const void* data) {
+
+        if (!data || !m_renderer || !m_allocated_image.image)
+            return;
+
+        vr::device* vr_dev = m_renderer->get_vr_dev();
+        const size_t data_size = size_t(m_allocated_image.width) * m_allocated_image.height * bytes_per_pixel(m_format);
+
+        vr::allocated_buffer staging = vr_dev->create_buffer(data_size, vk::BufferUsageFlagBits::eTransferSrc,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        vr_dev->update_buffer(staging, const_cast<void*>(data), data_size);
+
+        m_renderer->immediate_submit([&](vk::CommandBuffer cmd) {
+
+            const vk::ImageSubresourceRange base_range = vk::ImageSubresourceRange()
+                .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                .setBaseMipLevel(0)
+                .setLevelCount(m_mip_levels)
+                .setBaseArrayLayer(0)
+                .setLayerCount(1);
+
+            // note: from eShaderReadOnlyOptimal, not eUndefined — the image is
+            // already in use by ImGui at this point
+            vr_dev->transition_image_layout(cmd, m_allocated_image.image,
+                vk::ImageLayout::eShaderReadOnlyOptimal,
+                vk::ImageLayout::eTransferDstOptimal,
+                base_range,
+                vk::PipelineStageFlagBits::eFragmentShader,
+                vk::PipelineStageFlagBits::eTransfer);
+
+            const vk::BufferImageCopy copy_region = vk::BufferImageCopy()
+                .setImageSubresource(vk::ImageSubresourceLayers()
+                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                    .setMipLevel(0).setBaseArrayLayer(0).setLayerCount(1))
+                .setImageExtent({ m_allocated_image.width, m_allocated_image.height, 1 });
+
+            cmd.copyBufferToImage(staging.buffer, m_allocated_image.image,
+                vk::ImageLayout::eTransferDstOptimal, 1, &copy_region);
+
+            if (m_mip_levels > 1) {
+                const vk::ImageSubresourceRange upper = vk::ImageSubresourceRange()
+                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                    .setBaseMipLevel(1)
+                    .setLevelCount(m_mip_levels - 1)
+                    .setBaseArrayLayer(0).setLayerCount(1);
+
+                vr_dev->transition_image_layout(cmd, m_allocated_image.image,
+                    vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::ImageLayout::eTransferDstOptimal,
+                    upper,
+                    vk::PipelineStageFlagBits::eFragmentShader,
+                    vk::PipelineStageFlagBits::eTransfer);
+
+                generate_mipmaps(cmd, m_allocated_image.image,
+                    m_allocated_image.width, m_allocated_image.height, m_mip_levels);
+            } else {
+                vr_dev->transition_image_layout(cmd, m_allocated_image.image,
+                    vk::ImageLayout::eTransferDstOptimal,
+                    vk::ImageLayout::eShaderReadOnlyOptimal,
+                    base_range,
+                    vk::PipelineStageFlagBits::eTransfer,
+                    vk::PipelineStageFlagBits::eFragmentShader);
+            }
+        });
+
+        vr_dev->destroy_buffer(staging);
+    }
+
+
+    void image::update_region(const void* data, const u32 x, const u32 y, const u32 width, const u32 height, const u32 mip_level) {
+
+        if (!data || !m_renderer || !m_allocated_image.image || width == 0 || height == 0)
+            return;
+
+        const u32 level_width  = std::max(1u, m_allocated_image.width  >> mip_level);
+        const u32 level_height = std::max(1u, m_allocated_image.height >> mip_level);
+
+        if (mip_level >= m_mip_levels || x + width > level_width || y + height > level_height) {
+            LOG(error, "image::update_region out of bounds: region ({},{}) {}x{} on mip {} of {}x{} ({} mips)",
+                x, y, width, height, mip_level, level_width, level_height, m_mip_levels);
+            return;
+        }
+
+        vr::device* vr_dev = m_renderer->get_vr_dev();
+
+        // Tightly-packed source data.
+        const size_t data_size = size_t(width) * size_t(height) * bytes_per_pixel(m_format);
+
+        vr::allocated_buffer staging = vr_dev->create_buffer(data_size, vk::BufferUsageFlagBits::eTransferSrc,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+
+        vr_dev->update_buffer(staging, const_cast<void*>(data), data_size);
+
+        m_renderer->immediate_submit([&](vk::CommandBuffer cmd) {
+
+            const vk::ImageSubresourceRange level_range = vk::ImageSubresourceRange()
+                .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                .setBaseMipLevel(mip_level)
+                .setLevelCount(1)
+                .setBaseArrayLayer(0)
+                .setLayerCount(1);
+
+            // Convention: images live in eShaderReadOnlyOptimal whenever they're
+            // not actively being used by an upload (see allocate_memory/assign_data).
+            // If you ever start keeping long-lived images in a different layout,
+            // you'll need to store the current layout per image instead.
+            vr_dev->transition_image_layout(cmd, m_allocated_image.image,
+                vk::ImageLayout::eShaderReadOnlyOptimal,
+                vk::ImageLayout::eTransferDstOptimal,
+                level_range,
+                vk::PipelineStageFlagBits::eFragmentShader,
+                vk::PipelineStageFlagBits::eTransfer);
+
+            const vk::BufferImageCopy copy_region = vk::BufferImageCopy()
+                .setBufferOffset(0)
+                .setBufferRowLength(0)                                  // 0 == tightly packed
+                .setBufferImageHeight(0)
+                .setImageSubresource(vk::ImageSubresourceLayers()
+                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                    .setMipLevel(mip_level)
+                    .setBaseArrayLayer(0)
+                    .setLayerCount(1))
+                .setImageOffset({ static_cast<i32>(x), static_cast<i32>(y), 0 })
+                .setImageExtent({ width, height, 1 });
+
+            cmd.copyBufferToImage(staging.buffer, m_allocated_image.image,
+                vk::ImageLayout::eTransferDstOptimal, 1, &copy_region);
+
+            if (mip_level == 0 && m_mip_levels > 1) {
+                // Regenerating mips requires each upper level to be in
+                // eTransferDstOptimal before it becomes a blit target. The base
+                // level is already in that layout after the copy above.
+                const vk::ImageSubresourceRange upper_levels = vk::ImageSubresourceRange()
+                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                    .setBaseMipLevel(1)
+                    .setLevelCount(m_mip_levels - 1)
+                    .setBaseArrayLayer(0)
+                    .setLayerCount(1);
+
+                vr_dev->transition_image_layout(cmd, m_allocated_image.image,
+                    vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::ImageLayout::eTransferDstOptimal,
+                    upper_levels,
+                    vk::PipelineStageFlagBits::eFragmentShader,
+                    vk::PipelineStageFlagBits::eTransfer);
+
+                // Leaves every level in eShaderReadOnlyOptimal.
+                generate_mipmaps(cmd, m_allocated_image.image, m_allocated_image.width, m_allocated_image.height, m_mip_levels);
+
+            } else {
+
+                vr_dev->transition_image_layout(cmd, m_allocated_image.image,
+                    vk::ImageLayout::eTransferDstOptimal,
+                    vk::ImageLayout::eShaderReadOnlyOptimal,
+                    level_range,
+                    vk::PipelineStageFlagBits::eTransfer,
+                    vk::PipelineStageFlagBits::eFragmentShader);
+            }
+        });
+
+        vr_dev->destroy_buffer(staging);
+    }
+
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
@@ -258,6 +422,19 @@ namespace GLT::renderer_vk_ray {
 
         // create the image with dedicated memory
         m_allocated_image = vr_dev->create_image(image_create_info, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
+        m_format = format;
+        m_mip_levels = mip_levels;
+
+        #if defined(DEBUG)
+
+            // exact GPU bytes (includes VMA/driver padding). Use this if vr::device exposes its VmaAllocator.
+            VmaAllocationInfo info{};
+            vmaGetAllocationInfo(vr_dev->get_allocator(), m_allocated_image.allocation, &info);
+            m_vram_bytes = info.size;
+
+            GLT::render::image::track_allocation(m_vram_bytes);
+
+        #endif
 
         assign_data(data, size, format, mip_levels);
 
@@ -299,7 +476,11 @@ namespace GLT::renderer_vk_ray {
                     base_range, vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer);
 
                 const vk::BufferImageCopy copy_region = vk::BufferImageCopy()
-                    .setImageSubresource(vk::ImageSubresourceLayers().setAspectMask(vk::ImageAspectFlagBits::eColor).setMipLevel(0).setBaseArrayLayer(0).setLayerCount(1))
+                    .setImageSubresource(vk::ImageSubresourceLayers()
+                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                    .setMipLevel(0)
+                    .setBaseArrayLayer(0)
+                    .setLayerCount(1))
                     .setImageExtent({size.x, size.y, 1});
 
                 cmd.copyBufferToImage(staging.buffer, m_allocated_image.image, vk::ImageLayout::eTransferDstOptimal, 1, &copy_region);
@@ -320,6 +501,15 @@ namespace GLT::renderer_vk_ray {
 
         if (!m_renderer)
             return;                                                     // never allocated, nothing to do
+
+        #if defined(DEBUG)
+
+            if (m_vram_bytes > 0) {
+                GLT::render::image::track_deallocation(m_vram_bytes);
+                m_vram_bytes = 0;
+            }
+
+        #endif
 
         vr::device* vr_dev = m_renderer->get_vr_dev();
         vk::Device vk_device = m_renderer->get_vk_device();
