@@ -33,8 +33,7 @@ namespace GLT::editor {
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
-    // Draws a single top-level menu entry ("File", "Edit", ...) that looks
-    // like plain text but highlights on hover / while its popup is open.
+    // Draws a single top-level menu entry ("File", "Edit", ...) that looks like plain text but highlights on hover / while its popup is open.
     template <typename F>
     void toolbar_menu(const char* label, F&& popup_content);
 
@@ -251,8 +250,8 @@ namespace GLT::editor {
                 ImGui::Text("change main-color");
                 if (saved_palette_init) {
                     for (size_t n = 0; n < ARRAY_SIZE(saved_palette); n++) {
-                        ImGui::ColorConvertHSVtoRGB((n / 34.f), .8f, .8f,
-                            saved_palette[n].x, saved_palette[n].y, saved_palette[n].z);
+
+                        ImGui::ColorConvertHSVtoRGB((n / 34.f), .8f, .8f, saved_palette[n].x, saved_palette[n].y, saved_palette[n].z);
                         saved_palette[n].w = 1.0f; // Alpha
                     }
                     saved_palette_init = false;
@@ -270,10 +269,9 @@ namespace GLT::editor {
                         ImGui::ColorButton("##current", GLT::imgui_config::get_main_color_ref(), ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_AlphaPreviewHalf, ImVec2(60, 40));
                     }
                     ImGui::EndGroup();
-
                     ImGui::SameLine();
+                    ImGui::BeginGroup();
                     {
-                        ImGui::BeginGroup();
                         ImGui::Text("Previous");
                         if (ImGui::ColorButton("##previous", backup_color, ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_AlphaPreviewHalf, ImVec2(60, 40)))
                             GLT::imgui_config::update_ui_colors(backup_color);

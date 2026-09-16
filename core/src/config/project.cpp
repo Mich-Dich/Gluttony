@@ -83,6 +83,42 @@ namespace GLT {
         serialize_projects_data(option);
     }
 
+
+
+    std::filesystem::path project::extract_path_from_project_dir(const std::filesystem::path& full_path) {
+
+        std::string full_path_str = full_path.string();
+        std::string folder_marker = std::string(GLT::config::CONTENT_DIR);
+        size_t pos = full_path_str.find(folder_marker);
+        if (pos != std::string::npos) {
+
+            std::string result_str = full_path_str.substr(pos);
+            return std::filesystem::path(result_str);
+
+        } else {
+
+            LOG(trace, "NOT FOUND");
+            return {};
+        }
+    }
+
+
+    std::filesystem::path project::extract_path_from_project_content_dir(const std::filesystem::path& full_path) {
+
+        std::filesystem::path result;
+        bool start_adding = false;
+
+        for (const auto& part : full_path) {
+
+            if (start_adding)
+                result /= part;  // Add the part to the result path
+
+            if (part == std::string(GLT::config::CONTENT_DIR))
+                start_adding = true;
+        }
+        return result;
+    }
+
     // CLASS IMPLEMENTATION ============================================================================================
 
     // CLASS PUBLIC ====================================================================================================

@@ -47,6 +47,13 @@ namespace GLT {
 
 
         void serialize_projects_data(const std::filesystem::path& project_dir_path, const GLT::serializer::option option);
+
+
+        static std::filesystem::path extract_path_from_project_dir(const std::filesystem::path& full_path);
+
+
+        static std::filesystem::path extract_path_from_project_content_dir(const std::filesystem::path& full_path);
+
     };
 
     // STATIC VARIABLES ================================================================================================

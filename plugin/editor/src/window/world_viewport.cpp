@@ -92,7 +92,7 @@ namespace GLT::editor {
     }
 
 
-    bool world_viewport_window::serialize(const std::filesystem::path& project_file, const GLT::serializer::option option) { }
+    bool world_viewport_window::serialize(const std::filesystem::path& /*project_file*/, const GLT::serializer::option /*option*/) { return false; }
 
     // CLASS PROTECTED =================================================================================================
 
@@ -100,11 +100,12 @@ namespace GLT::editor {
 
     void world_viewport_window::render_inner_dockspace() {
 
-        const ImGuiID inner_id = ImGui::GetID("##world_viewport_dockspace");
+        ImGuiID inner_id = ImGui::GetID("##world_viewport_dockspace");
         const ImVec2  inner_size = ImGui::GetContentRegionAvail();
 
         const bool no_layout_yet = (ImGui::DockBuilderGetNode(inner_id) == nullptr);
         if (m_reset_layout || no_layout_yet) {
+
             m_reset_layout = false;
             build_default_layout(inner_id, inner_size);
         }
@@ -119,8 +120,8 @@ namespace GLT::editor {
         ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
         ImGui::DockBuilderSetNodeSize(dockspace_id, size);
 
-        ImGuiID dock_main    = dockspace_id;
-        ImGuiID dock_right   = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.25f, nullptr, &dock_main);
+        ImGuiID dock_main = dockspace_id;
+        ImGuiID dock_right = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.25f, nullptr, &dock_main);
         ImGuiID dock_right_b = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.50f, nullptr, &dock_right);
         ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.30f, nullptr, &dock_main);
 
@@ -128,7 +129,9 @@ namespace GLT::editor {
         ImGui::DockBuilderDockWindow("Viewport", dock_main);
         ImGui::DockBuilderDockWindow("Details",  dock_right);
         ImGui::DockBuilderDockWindow("Tools",    dock_right_b);
-        ImGui::DockBuilderDockWindow("Content Browser##0", dock_bottom);
+
+        if (m_content_browsers.size() > 0)
+            ImGui::DockBuilderDockWindow(m_content_browsers[0].get_window_id().c_str(), dock_bottom);
 
         ImGui::DockBuilderFinish(dockspace_id);
     }

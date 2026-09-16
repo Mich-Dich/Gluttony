@@ -11,11 +11,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-#define OUTPUT_CPU_SIDE_THUMBNAIL_BUFFER                    0
-#if OUTPUT_CPU_SIDE_THUMBNAIL_BUFFER
-    #define STB_IMAGE_WRITE_IMPLEMENTATION
-    #include "stb_image_write.h"
-#endif
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 
 #if defined(__GNUC__) || defined(__clang__)
     #pragma GCC diagnostic pop
@@ -49,6 +46,8 @@ namespace GLT::editor::icon_manager {
     constexpr u32                                           THUMBNAIL_PAGE_HEIGHT = THUMBNAIL_PAGE_ROWS * THUMBNAIL_CELL_SIZE;   // 1024
 
     // MACROS ==========================================================================================================
+
+    #define OUTPUT_CPU_SIDE_THUMBNAIL_BUFFER                0
 
     // TYPES ===========================================================================================================
 
