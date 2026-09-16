@@ -6,9 +6,11 @@
 
 #include <application.h>
 #include <config/imgui_config.h>
+#include <event/event_bus.h>
 
-#include "resource_manager/icon_manager.h"
+#include "util/event/asset_open_event.h"
 #include "util/ui/pannel_collection.h"
+#include "resource_manager/icon_manager.h"
 
 
 
@@ -18,21 +20,21 @@ namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr f32                               left_panel_min_width = 160.0f;
+    constexpr f32                               LEFT_PANEL_MIN_WIDTH = 160.0f;
 
-    constexpr f32                               left_panel_max_width = 600.0f;
+    constexpr f32                               LEFT_PANEL_MAX_WIDTH = 600.0f;
 
-    constexpr f32                               cell_width = 96.0f;
+    constexpr f32                               ICON_RENDER_SIZE = 56.0f;
 
-    constexpr f32                               cell_height = 96.0f;
+    constexpr f32                               ICON_TOP_MARGIN = 8.0f;
 
-    constexpr f32                               icon_render_size = 48.0f;
+    constexpr f32                               CELL_WIDTH = ICON_RENDER_SIZE + (ICON_TOP_MARGIN * 2);
 
-    constexpr f32                               icon_top_margin = 8.0f;
+    constexpr f32                               CELL_HEIGHT = CELL_WIDTH + (18.f);
 
-    constexpr f32                               label_bottom_margin = 20.0f;
+    constexpr f32                               LABEL_BOTTOM_MARGIN = 20.0f;
 
-    constexpr const char*                       drag_payload_id = "CONTENT_BROWSER_ITEM";
+    constexpr const char*                       DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
 
     // MACROS ==========================================================================================================
 
@@ -51,9 +53,14 @@ namespace GLT::editor {
     // Maps a file extension to the icon that should represent it in the browser.
     icon_manager::icon extension_to_icon(const std::string& ext);
 
-    std::vector<std::filesystem::path> list_subdirectories(const std::filesystem::path& dir);
+    // Categorizes a file by extension for the accent strip.
+    asset_category categorize_extension(const std::string& ext);
 
-    bool is_image_extension(const std::string& ext);
+    // Accent color for a category, chosen to read well against both the
+    // neutral cell background and the selection highlight.
+    ImU32 category_accent_color(asset_category cat);
+
+    std::vector<std::filesystem::path> list_subdirectories(const std::filesystem::path& dir);
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
@@ -74,27 +81,77 @@ namespace GLT::editor {
 
     icon_manager::icon extension_to_icon(const std::string& ext) {
 
-        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-            ext == ".bmp" || ext == ".tga" || ext == ".hdr")
-            return icon_manager::icon::texture_big;
+        switch (categorize_extension(ext)) {
 
-        if (ext == ".gltf" || ext == ".glb" || ext == ".obj" || ext == ".fbx")
-            return icon_manager::icon::mesh_asset_big;
+            case asset_category::image:     return icon_manager::icon::texture_big;
+            case asset_category::world:     return icon_manager::icon::world;
+            case asset_category::source:    return icon_manager::icon::script_big;
+            case asset_category::material:  return icon_manager::icon::material_big;
+            case asset_category::mesh:      return icon_manager::icon::mesh_asset_big;
+            case asset_category::config:    return icon_manager::icon::settings;
+            case asset_category::audio:     return icon_manager::icon::file_big;      // TODO: dedicated icon
+            default:                        return icon_manager::icon::file_big;
+        }
+    }
 
-        if (ext == ".glsl" || ext == ".vert" || ext == ".frag" || ext == ".comp" ||
-            ext == ".cpp"  || ext == ".h"    || ext == ".hpp"  || ext == ".c" || ext == ".inl")
-            return icon_manager::icon::script_big;
 
-        if (ext == ".mat")
-            return icon_manager::icon::material_big;
+    asset_category categorize_extension(const std::string& ext) {
 
-        if (ext == ".json" || ext == ".yaml" || ext == ".yml" || ext == ".toml")
-            return icon_manager::icon::settings;
+        // Images
+        if (ext == ".png"  || ext == ".jpg"  || ext == ".jpeg" ||
+            ext == ".bmp"  || ext == ".tga"  || ext == ".hdr"  ||
+            ext == ".psd"  || ext == ".gif"  || ext == ".pic"  || ext == ".pnm")
+            return asset_category::image;
 
-        if (ext == ".wav" || ext == ".ogg" || ext == ".mp3")
-            return icon_manager::icon::file;               // TODO: add dedicated icon
+        // Worlds / levels
+        if (ext == ".world" || ext == ".scene" || ext == ".level" || ext == ".map")
+            return asset_category::world;
 
-        return icon_manager::icon::file;
+        // Source code, shaders, scripts
+        if (ext == ".glsl" || ext == ".vert"  || ext == ".frag" || ext == ".comp" ||
+            ext == ".cpp"  || ext == ".c"     || ext == ".h"    || ext == ".hpp"  ||
+            ext == ".inl"  || ext == ".py"    || ext == ".cs"   || ext == ".lua")
+            return asset_category::source;
+
+        // Materials
+        if (ext == ".mat" || ext == ".material" || ext == ".matinst")
+            return asset_category::material;
+
+        // Meshes
+        if (ext == ".gltf" || ext == ".glb"  || ext == ".obj" ||
+            ext == ".fbx"  || ext == ".dae"  || ext == ".ply" || ext == ".stl")
+            return asset_category::mesh;
+
+        // Config / data
+        if (ext == ".json" || ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
+            ext == ".xml"  || ext == ".ini"  || ext == ".cfg")
+            return asset_category::config;
+
+        // Audio
+        if (ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac")
+            return asset_category::audio;
+
+        return asset_category::other;
+    }
+
+
+    ImU32 category_accent_color(asset_category cat) {
+
+        // Palette is deliberately desaturated: these hues need to sit
+        // quietly next to a thumbnail or a folder icon without competing
+        // for attention. Alphas are near-opaque so the strip stays legible
+        // on top of the selection highlight.
+        switch (cat) {
+
+            case asset_category::image:    return IM_COL32( 91, 155, 213, 100);  // soft blue
+            case asset_category::world:    return IM_COL32(224, 136,  64, 100);  // warm orange
+            case asset_category::source:   return IM_COL32(103, 194, 106, 100);  // fresh green
+            case asset_category::material: return IM_COL32(176, 107, 216, 100);  // muted violet
+            case asset_category::mesh:     return IM_COL32( 77, 194, 194, 100);  // teal
+            case asset_category::config:   return IM_COL32(224, 192,  70, 100);  // amber
+            case asset_category::audio:    return IM_COL32(224, 122, 138, 100);  // salmon
+            default:                      return IM_COL32(140, 140, 140, 100);  // neutral gray
+        }
     }
 
 
@@ -114,14 +171,6 @@ namespace GLT::editor {
         return out;
     }
 
-
-    bool is_image_extension(const std::string& ext) {
-
-        return ext == ".png"  || ext == ".jpg" || ext == ".jpeg" ||
-               ext == ".bmp"  || ext == ".tga" || ext == ".hdr"  ||
-               ext == ".psd"  || ext == ".gif" || ext == ".pic"  || ext == ".pnm";
-    }
-
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -136,10 +185,8 @@ namespace GLT::editor {
 
         // Make sure the content root actually exists before we try to browse it.
         std::error_code error{};
-        if (!m_content_dir.empty() && !GLT::vfs::exists(m_content_dir, error) && !error) {
-
+        if (!m_content_dir.empty() && !GLT::vfs::exists(m_content_dir, error) && !error)
             GLT::vfs::create_directories(m_content_dir, error);
-        }
 
         // Route through navigate_to() so the history stack starts populated
         // (otherwise back/forward buttons would be permanently dead on launch).
@@ -166,7 +213,7 @@ namespace GLT::editor {
         // Process any thumbnails that finished loading since the last frame.
         icon_manager::flush_thumbnail_uploads();
 
-        if (ImGui::Begin(m_window_title.c_str(), &m_show_window)) {
+        if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
 
             // Any state change marks the entry cache as stale; we rebuild it here
             // rather than inside each draw call so a single frame never scans the
@@ -174,7 +221,7 @@ namespace GLT::editor {
             if (m_entries_dirty)
                 refresh_directory_entries();
     
-            ImGui::SetNextWindowSizeConstraints(ImVec2(left_panel_min_width, 0), ImVec2(left_panel_max_width, std::numeric_limits<f32>::max()));
+            ImGui::SetNextWindowSizeConstraints(ImVec2(LEFT_PANEL_MIN_WIDTH, 0), ImVec2(LEFT_PANEL_MAX_WIDTH, std::numeric_limits<f32>::max()));
             UI::custom_frame(200, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
                 [this]() { 
                     draw_directory_tree();
@@ -352,24 +399,41 @@ namespace GLT::editor {
         if (m_content_dir.empty())
             return;
 
+        // --- Collapse All button, right-aligned on its own row ----------------
+        constexpr const char* COLLAPSE_LABEL = "Collapse All";
+        const f32 collapse_w = ImGui::CalcTextSize(COLLAPSE_LABEL).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        const f32 gap = ImGui::GetContentRegionAvail().x - collapse_w;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(gap, 0.0f));
+        const bool force_collapse = ImGui::Button(COLLAPSE_LABEL);
+
+        // --- Tree, starting on the next row -----------------------------------
         ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 10.0f);
-        draw_directory_tree_recursive(m_content_dir);
+        const auto subdirs = list_subdirectories(m_content_dir);
+        if (subdirs.empty())
+            ImGui::TextDisabled("(empty)");
+        else
+            for (const auto& sub : subdirs)
+                draw_directory_tree_recursive(sub, force_collapse);
         ImGui::PopStyleVar();
     }
 
 
-    void content_browser_window::draw_directory_tree_recursive(const std::filesystem::path& dir) {
+    void content_browser_window::draw_directory_tree_recursive(const std::filesystem::path& dir, const bool collapse_tree) {
 
         // TODO: cache per-node subdirectory lists — right now we re-scan the
         //       filesystem on every frame for every visible tree node.
         const auto subdirs = list_subdirectories(dir);
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow
-            | ImGuiTreeNodeFlags_SpanAvailWidth
-            | ImGuiTreeNodeFlags_DefaultOpen;
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
 
-        if (paths_equal(dir, m_current_dir)) flags |= ImGuiTreeNodeFlags_Selected;
-        if (subdirs.empty())                 flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (paths_equal(dir, m_current_dir))
+            flags |= ImGuiTreeNodeFlags_Selected;
 
+        if (subdirs.empty())
+            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+        if (collapse_tree)                                          // Force this node closed while the collapse flag is live.
+            ImGui::SetNextItemOpen(false, ImGuiCond_Always);
+            
         ImGui::PushID(dir.string().c_str());
 
         const std::string label = dir.filename().empty() ? dir.string() : dir.filename().string();
@@ -381,7 +445,7 @@ namespace GLT::editor {
 
         if (open && !subdirs.empty()) {
             for (const auto& sub : subdirs)
-                draw_directory_tree_recursive(sub);
+                draw_directory_tree_recursive(sub, collapse_tree);
 
             ImGui::TreePop();
         }
@@ -395,7 +459,7 @@ namespace GLT::editor {
 
         const std::string filter = m_search_buffer;
         const f32 avail = ImGui::GetContentRegionAvail().x;
-        const i32 columns = std::max(1, static_cast<i32>(avail / cell_width));
+        const i32 columns = std::max(1, static_cast<i32>(std::floor(avail / CELL_WIDTH) - 1));
         i32  col = 0;
         bool any = false;
 
@@ -442,7 +506,7 @@ namespace GLT::editor {
 
         ImGui::PushID(entry.path.string().c_str());
 
-        const ImVec2 cell_size(cell_width, cell_height);
+        const ImVec2 cell_size(CELL_WIDTH, CELL_HEIGHT);
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const bool selected = is_selected(entry.path);
         const bool button = ImGui::InvisibleButton("##cell", cell_size);
@@ -455,11 +519,11 @@ namespace GLT::editor {
             // a double should not toggle the item back off or extend a range.
             select_single(entry.path);
 
-            if (entry.is_directory) {
+            if (entry.is_directory)
                 navigate_to(entry.path);
-            } else {
-                // TODO: broadcast an "open asset" event to the editor.
-            }
+
+            else
+                GLT::event_bus::post(asset_open_event(categorize_extension(entry.extension), entry.path));
 
         } else if(button) {
 
@@ -481,26 +545,44 @@ namespace GLT::editor {
         ImDrawList* draw = ImGui::GetWindowDrawList();
         const ImVec2 cell_max(origin.x + cell_size.x, origin.y + cell_size.y);
 
-        if (selected)                                                                   // Background highlight.
+        if (selected)
             draw->AddRectFilled(origin, cell_max, ImGui::GetColorU32(GLT::imgui_config::get_main_color_ref()), 4.0f);
 
         else if (interaction == UI::mouse_interation::hovered)
             draw->AddRectFilled(origin, cell_max, IM_COL32(90, 90, 90, 120), 4.0f);
 
+        // file type accent --------------------------------------------------------------------------------------------
+        // A thin colored strip along the bottom edge of the cell identifies the
+        // file's category at a glance. Folders are skipped — their icon already
+        // communicates what they are, and striping them would just add noise.
+        if (!entry.is_directory) {
+
+            const ImU32 accent = category_accent_color(categorize_extension(entry.extension));
+
+            constexpr f32 STRIP_HEIGHT  = 2.5f;
+            constexpr f32 STRIP_INSET_X = 6.0f;
+            constexpr f32 STRIP_OFFSET_Y = 19.0f;
+
+            const ImVec2 strip_min(origin.x + STRIP_INSET_X, cell_max.y - STRIP_OFFSET_Y - STRIP_HEIGHT);
+            const ImVec2 strip_max(cell_max.x - STRIP_INSET_X, cell_max.y - STRIP_OFFSET_Y);
+            draw->AddRectFilled(strip_min, strip_max, accent, STRIP_HEIGHT * 0.5f);
+        }
+
         // icon / thumbnail --------------------------------------------------------------------------------------------
         bool drew_thumbnail = false;
-        if (!entry.is_directory && is_image_extension(entry.extension)) {
+
+        if (!entry.is_directory && GLT::render::is_image_extension(entry.extension)) {
 
             const auto thumb = icon_manager::get_thumbnail(entry.path);
             if (thumb.state == icon_manager::thumbnail_state::ready && thumb.image_size.x > 0.0f) {
 
                 // Fit the thumbnail into the icon render box, preserving aspect ratio.
-                const f32 scale = std::min(icon_render_size / thumb.image_size.x, icon_render_size / thumb.image_size.y);
+                const f32 scale = std::min(ICON_RENDER_SIZE / thumb.image_size.x, ICON_RENDER_SIZE / thumb.image_size.y);
                 const f32 draw_w = thumb.image_size.x * scale;
                 const f32 draw_h = thumb.image_size.y * scale;
                 const ImVec2 t_min(
                     origin.x + (cell_size.x - draw_w) * 0.5f,
-                    origin.y + icon_top_margin + (icon_render_size - draw_h) * 0.5f);
+                    origin.y + ICON_TOP_MARGIN + (ICON_RENDER_SIZE - draw_h) * 0.5f);
                 const ImVec2 t_max(t_min.x + draw_w, t_min.y + draw_h);
 
                 draw->AddImage(thumb.tex_ref, t_min, t_max, thumb.uv0, thumb.uv1);
@@ -515,21 +597,22 @@ namespace GLT::editor {
             if (icon.image_size.x > 0.0f) {
 
                 const ImVec2 icon_min(
-                    origin.x + (cell_size.x - icon_render_size) * 0.5f,
-                    origin.y + icon_top_margin);
+                    origin.x + (cell_size.x - ICON_RENDER_SIZE) * 0.5f,
+                    origin.y + ICON_TOP_MARGIN);
                 const ImVec2 icon_max(
-                    icon_min.x + icon_render_size,
-                    icon_min.y + icon_render_size);
+                    icon_min.x + ICON_RENDER_SIZE,
+                    icon_min.y + ICON_RENDER_SIZE);
 
-                draw->AddImage(icon.tex_ref, icon_min, icon_max, icon.uv0, icon.uv1);
+                draw->AddImage(icon.tex_ref, icon_min, icon_max, icon.uv0, icon.uv1, 
+                    ImGui::GetColorU32(ImVec4(1.f, 1.f, 1.f, .75f)));
             }
         }
 
         // filename, clipped to the cell -------------------------------------------------------------------------------
-        draw->PushClipRect(origin, cell_max, true);
+        draw->PushClipRect(ImVec2(origin.x + 10.f, origin.y), ImVec2(cell_max.x - 10.f, cell_max.y), true);
         const ImVec2 name_size = ImGui::CalcTextSize(entry.name.c_str());
         const f32    name_x    = origin.x + std::max(2.0f, (cell_size.x - name_size.x) * 0.5f);
-        const f32    name_y    = origin.y + cell_size.y - label_bottom_margin;
+        const f32    name_y    = origin.y + cell_size.y - LABEL_BOTTOM_MARGIN;
         draw->AddText(ImVec2(name_x, name_y), IM_COL32_WHITE, entry.name.c_str());
         draw->PopClipRect();
 
@@ -539,7 +622,7 @@ namespace GLT::editor {
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
 
             const std::string path_str = entry.path.string();
-            ImGui::SetDragDropPayload(drag_payload_id, path_str.c_str(), path_str.size() + 1); // include null terminator
+            ImGui::SetDragDropPayload(DRAG_PAYLOAD_ID, path_str.c_str(), path_str.size() + 1); // include null terminator
             ImGui::TextUnformatted(entry.name.c_str());
             ImGui::EndDragDropSource();
         }
@@ -584,11 +667,11 @@ namespace GLT::editor {
     void content_browser_window::draw_item_context_menu(const dir_entry& entry) {
 
         if (ImGui::MenuItem("Open")) {
+
             if (entry.is_directory)
                 navigate_to(entry.path);
-            else {
-                // TODO: open asset.
-            }
+            else 
+                GLT::event_bus::post(asset_open_event(categorize_extension(entry.extension), entry.path));
         }
 
         if (ImGui::MenuItem("Rename")) {

@@ -1,7 +1,10 @@
 
 #pragma once
 
+#include <imgui.h>
+
 #include "undo_system/stack.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -13,6 +16,11 @@ namespace GLT::editor {
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
+
+    struct window_specs {
+
+        bool                            can_be_deleted = true;
+    };
 
     // STATIC VARIABLES ================================================================================================
 
@@ -38,7 +46,7 @@ namespace GLT::editor {
 
 
         DEFAULT_GETTER_C(std::string,           window_id)      // Returns the unique ImGui window ID (used for window identification).
-
+        DEFAULT_GETTER(window_specs,            window_specs)
 
         // Checks whether the window should be closed.
         // @return True if the window is not currently shown (i.e., closed).
@@ -86,7 +94,17 @@ namespace GLT::editor {
         // Uses ImGui::SetWindowFocus with the unique window ID.
         void focus_window();
 
+
+        // Requests that this window dock into `dock_id` the next time it is
+        // rendered. No-op if the window has already been shown once; call
+        // this before the first frame the window is drawn.
+        void dock_to(ImGuiID dock_id);
+    
     protected:
+
+        // Call immediately before ImGui::Begin() to honor a pending dock request.
+        void apply_pending_dock();
+
 
         // Creates a unique ImGui window ID by appending the object's address to the base name.
         // @param base_name The human‑readable part of the window name (e.g., "Device Config Editor").
@@ -104,6 +122,8 @@ namespace GLT::editor {
         // Undo/redo system using a fixed‑size circular buffer of serialized states.
         bool                                m_enable_undo_system = false;   // Enables the undo/redo system (set by derived classes).
         undo_system::stack                  m_undo_stack{};
+        ImGuiID                             m_pending_dock_id = 0;
+        window_specs                        m_window_specs{};
 
 	};
 

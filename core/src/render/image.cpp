@@ -94,6 +94,13 @@ namespace GLT::render {
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
+    bool is_image_extension(const std::string& ext) {
+
+        return ext == ".png"  || ext == ".jpg" || ext == ".jpeg" ||
+               ext == ".bmp"  || ext == ".tga" || ext == ".hdr"  ||
+               ext == ".psd"  || ext == ".gif" || ext == ".pic"  || ext == ".pnm";
+    }
+
     // CLASS IMPLEMENTATION ============================================================================================
 
     image::image() {}

@@ -84,7 +84,7 @@ namespace GLT::editor {
         void draw_toolbar();
         void draw_breadcrumbs();
         void draw_directory_tree();
-        void draw_directory_tree_recursive(const std::filesystem::path& dir);
+        void draw_directory_tree_recursive(const std::filesystem::path& dir, const bool collapse_tree);
         void draw_file_view();
         void draw_file_item(const dir_entry& entry);
         void draw_background_context_menu();

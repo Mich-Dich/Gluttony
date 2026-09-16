@@ -9,13 +9,11 @@
 #include <event/event_bus.h>
 #include <event/application_event.h>
 #include <config/imgui_config.h>
-#include <plugin_system/plugin_manager.h>
-#include <plugin_system/i_renderer_plugin.h>
 #include <render/image.h>
 
-#include "resource_manager/icon_manager.h"
 #include "window/content_browser.h"
-#include "util/ui/pannel_collection.h"
+#include "window/world_viewport.h"
+#include "window/image_viewer.h"
 
 
 
@@ -118,26 +116,55 @@ namespace GLT::editor {
     editor_layer::editor_layer() 
         : layer("editor_layer") {
 
-        m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::render::i_renderer_plugin>(GLT::plugin_manager::interface::renderer);
-        m_logo = GLT::create_unique_ref<GLT::render::image>(std::filesystem::path(
-            GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "image/logo.png"));
+        m_logo = GLT::create_unique_ref<GLT::render::image>(GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "image/logo.png");
+        add_window<world_viewport_window>();
 
-        m_content_browser_window = GLT::create_ref<GLT::editor::content_browser_window>();
+        // =============== DEV-ONLY ===============
+        // add_window<image_viewer_window>("/home/mich/workspace/gluttony_test_project/content/sci-fi/adrian-mihai-marchidan-brush-stroke-studio-ship1v2.jpg");
+        // =============== DEV-ONLY ===============
+
+        m_asset_open_event_sub_handle = GLT::event_bus::subscribe<asset_open_event>(std::bind_front(&editor_layer::on_asset_open_event, this));
     }
 
 
     editor_layer::~editor_layer() {
 
-        m_content_browser_window.reset();
+        GLT::event_bus::unsubscribe(m_asset_open_event_sub_handle);
+        m_windows.clear();
         m_logo.reset();
-        m_renderer.reset();
     }
 
     // CLASS PUBLIC ====================================================================================================
     
-    void editor_layer::update(const f32 /*delta_time*/) {
+    void editor_layer::update(const f32 delta_time) {
 
-        m_renderer->set_render_size({m_content_size.x, m_content_size.y});
+		for (const auto& editor_window : m_windows)
+			editor_window->update(delta_time);
+
+		// First pass to mark items for removal
+		auto it = std::remove_if(m_windows.begin(), m_windows.end(),
+			[](const unique_ref<base_window>& editor_window) {
+				return editor_window->should_close();
+			});
+
+		// Erase the removed items
+		m_windows.erase(it, m_windows.end());
+
+        for (auto& event : m_asset_open_event_buffer) {
+
+            switch (event.get_asset_category()) {
+                case asset_category::image:         add_window<image_viewer_window>( event.get_path() ); break;
+                case asset_category::world:         break;
+                case asset_category::source:        break;
+                case asset_category::material:      break;
+                case asset_category::mesh:          break;
+                case asset_category::config:        break;
+                case asset_category::audio:         break;
+                case asset_category::other:         break;
+            }
+        }
+        m_asset_open_event_buffer.clear();
+
     }
 
 
@@ -146,10 +173,8 @@ namespace GLT::editor {
         render_toolbar();
         render_dockspace();
 
-        render_viewport();
-        m_content_browser_window->window(delta_time);
-        render_details();
-        render_tools();
+        for (auto& window : m_windows)
+            window->window(delta_time);
 
         if (m_show_demo)            ImGui::ShowDemoWindow(&m_show_demo);
         if (m_show_style)           ImGui::ShowStyleEditor();
@@ -215,12 +240,76 @@ namespace GLT::editor {
             ImGui::SameLine();
             ImGui::SetCursorPosY(win_pad + (logo_side - menu_h) * 0.5f);
             toolbar_menu("View", MAIN_MENU_BAR_POPUP, [this]{
+                
                 if (ImGui::MenuItem("Reset Layout"))                    { m_reset_layout = true; }
-                ImGui::Separator();
+                ImGui::SeparatorText("Main color");
 
-                if (ImGui::MenuItem("Viewport"))                        { /* TODO */ }
-                if (ImGui::MenuItem("Logo"))                            { /* TODO */ }
+                static ImVec4 backup_color;
+                static bool saved_palette_init = true;
+                static ImVec4 saved_palette[35] = {};
 
+                ImGui::Text("change main-color");
+                if (saved_palette_init) {
+                    for (size_t n = 0; n < ARRAY_SIZE(saved_palette); n++) {
+                        ImGui::ColorConvertHSVtoRGB((n / 34.f), .8f, .8f,
+                            saved_palette[n].x, saved_palette[n].y, saved_palette[n].z);
+                        saved_palette[n].w = 1.0f; // Alpha
+                    }
+                    saved_palette_init = false;
+                }
+
+                if (ImGui::ColorPicker4("##picker", (float*)&GLT::imgui_config::get_main_color_ref(), ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_NoSmallPreview))
+                    GLT::imgui_config::update_ui_colors(GLT::imgui_config::get_main_color_ref());
+
+                ImGui::SameLine();
+                ImGui::BeginGroup();
+                {
+                    ImGui::BeginGroup();
+                    {
+                        ImGui::Text("Current");
+                        ImGui::ColorButton("##current", GLT::imgui_config::get_main_color_ref(), ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_AlphaPreviewHalf, ImVec2(60, 40));
+                    }
+                    ImGui::EndGroup();
+
+                    ImGui::SameLine();
+                    {
+                        ImGui::BeginGroup();
+                        ImGui::Text("Previous");
+                        if (ImGui::ColorButton("##previous", backup_color, ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_AlphaPreviewHalf, ImVec2(60, 40)))
+                            GLT::imgui_config::update_ui_colors(backup_color);
+                    }
+                    ImGui::EndGroup();
+
+                    ImGui::Separator();
+                    ImGui::Text("Palette");
+                    for (size_t n = 0; n < ARRAY_SIZE(saved_palette); n++) {
+                        ImGui::PushID(n);
+                        if ((n % 5) != 0)
+                            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.y);
+
+                        ImGuiColorEditFlags palette_button_flags = ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoTooltip;
+                        if (ImGui::ColorButton("##palette", saved_palette[n], palette_button_flags, ImVec2(21, 21)))
+                            GLT::imgui_config::update_ui_colors(ImVec4(saved_palette[n].x, saved_palette[n].y, saved_palette[n].z, GLT::imgui_config::get_main_color_ref().w));
+
+                        // Allow user to drop colors into each palette entry. Note that ColorButton() is already a
+                        // drag source by default, unless specifying the ImGuiColorEditFlags_NoDragDrop flag.
+                        if (ImGui::BeginDragDropTarget()) {
+
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(IMGUI_PAYLOAD_TYPE_COLOR_3F))
+                                memcpy((float*)&saved_palette[n], payload->Data, sizeof(float) * 3);
+
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(IMGUI_PAYLOAD_TYPE_COLOR_4F))
+                                memcpy((float*)&saved_palette[n], payload->Data, sizeof(float) * 4);
+
+                            ImGui::EndDragDropTarget();
+                        }
+
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndGroup();
+                
+                    
                 #if defined(DEBUG)
                     ImGui::SeparatorText("Debug");
                     ImGui::MenuItem("Show Demo", "", &m_show_demo);
@@ -253,10 +342,6 @@ namespace GLT::editor {
         ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, vp->WorkSize.y - toolbar_height));
         ImGui::SetNextWindowViewport(vp->ID);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0.0f, 0.0f));
-
         constexpr ImGuiWindowFlags flags =
             ImGuiWindowFlags_NoTitleBar
             | ImGuiWindowFlags_NoCollapse
@@ -267,21 +352,28 @@ namespace GLT::editor {
             | ImGuiWindowFlags_NoDocking
             | ImGuiWindowFlags_NoSavedSettings;
 
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0.0f, 0.0f));
         ImGui::Begin("##editor_dockspace", nullptr, flags);
         ImGui::PopStyleVar(3);
 
-        const ImGuiID dockspace_id = ImGui::GetID("editor_dockspace");
+        m_dockspace_id = ImGui::GetID("editor_dockspace");
         const ImVec2  dockspace_size(vp->WorkSize.x, vp->WorkSize.y - toolbar_height);
 
         // Build the layout on the very first frame, after a manual reset,
         // or if the docking data is missing from the .ini (e.g. deleted file).
-        const bool no_layout_yet = (ImGui::DockBuilderGetNode(dockspace_id) == nullptr);
-        if (m_reset_layout || no_layout_yet) {
+        if (m_reset_layout || (ImGui::DockBuilderGetNode(m_dockspace_id) == nullptr)) {
+
             m_reset_layout = false;
-            build_default_layout(dockspace_id, dockspace_size);
+            build_default_layout(m_dockspace_id, dockspace_size);
+
+            for (auto& w : m_windows)
+                w->dock_to(m_dockspace_id);
         }
 
-        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
+        ImGui::DockSpace(m_dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
+
         ImGui::End();
     }
 
@@ -291,82 +383,14 @@ namespace GLT::editor {
         ImGui::DockBuilderRemoveNode(dockspace_id);
         ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
         ImGui::DockBuilderSetNodeSize(dockspace_id, size);
-
-        ImGuiID dock_main = dockspace_id;
-        ImGuiID dock_right = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.25f, nullptr, &dock_main);
-        ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.30f, nullptr, &dock_main);
-        ImGuiID dock_right_b = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.50f, nullptr, &dock_right);
-
-        ImGui::DockBuilderDockWindow("Viewport",        dock_main);
-        ImGui::DockBuilderDockWindow("Content Browser", dock_bottom);
-        ImGui::DockBuilderDockWindow("Details",         dock_right);
-        ImGui::DockBuilderDockWindow("Tools",           dock_right_b);
-
         ImGui::DockBuilderFinish(dockspace_id);
     }
 
 
-    void editor_layer::render_viewport() {
+    void editor_layer::on_asset_open_event(const asset_open_event& event) {
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        if (ImGui::Begin("Viewport")) {
-            m_content_size = ImGui::GetContentRegionAvail();
-            ImGui::Image(m_renderer->get_rendered_image(), m_content_size);
-        }
-        ImGui::End();
-        ImGui::PopStyleVar();
-    }
-
-
-    void editor_layer::render_details() {
-
-        if (ImGui::Begin("Details")) {
-
-            #if defined(DEBUG)
-
-                const auto& s = GLT::render::image::get_debug_stats();
-
-                // load once so the two rows of a table are consistent with each other
-                const u32 peak_count = s.peak_count.load(std::memory_order_relaxed);
-                const u64 peak_bytes = s.peak_bytes.load(std::memory_order_relaxed);
-                const u32 live_count = s.live_count.load(std::memory_order_relaxed);
-                const u64 live_bytes = s.live_bytes.load(std::memory_order_relaxed);
-                const u64 total_created = s.total_created.load(std::memory_order_relaxed);
-                const u64 total_destroyed = s.total_destroyed.load(std::memory_order_relaxed);
-                const u64 total_alloc = s.total_bytes_allocated.load(std::memory_order_relaxed);
-                const u64 total_freed = s.total_bytes_freed.load(std::memory_order_relaxed);
-
-                if (UI::begin_table("Peak")) {
-                    UI::table_row("count", std::to_string(peak_count));
-                    UI::table_row("bytes", GLT::util::format_bytes(peak_bytes));
-                    UI::end_table();
-                }
-
-                if (UI::begin_table("Live")) {
-                    UI::table_row("count", std::to_string(live_count));
-                    UI::table_row("bytes", GLT::util::format_bytes(live_bytes));
-                    UI::end_table();
-                }
-
-                if (UI::begin_table("Total")) {
-                    UI::table_row("created",         std::to_string(total_created));
-                    UI::table_row("destroyed",       std::to_string(total_destroyed));
-                    UI::table_row("bytes allocated", GLT::util::format_bytes(total_alloc));
-                    UI::table_row("bytes freed",     GLT::util::format_bytes(total_freed));
-                    UI::end_table();
-                }
-
-            #endif
-        }
-        ImGui::End();
-    }
-
-
-    void editor_layer::render_tools() {
-
-        if (ImGui::Begin("Tools"))
-            ImGui::Text("Tools");
-        ImGui::End();
+        VALIDATE(!event.get_path().empty(), return, "", "Can't open a asset editor for an empty path");
+        m_asset_open_event_buffer.push_back(event);
     }
 
 }

@@ -3,10 +3,8 @@
 
 #include <imgui.h>
 
-#include <layer/layer.h>
-
 #include "window/base_window.h"
-#include "util/event/asset_open_event.h"
+#include "window/content_browser.h"
 
 
 
@@ -15,10 +13,6 @@
 namespace GLT::render {
     class i_renderer_plugin;
     class image;
-}
-
-namespace GLT::editor {
-    class content_browser_window;
 }
 
 namespace GLT::editor {
@@ -37,41 +31,34 @@ namespace GLT::editor {
 
     // CLASS DECLARATION ===============================================================================================
 
-    class editor_layer : public GLT::layer {
+    class world_viewport_window : public base_window {
     public:
 
-        editor_layer();
-        ~editor_layer();
+        world_viewport_window();
+        ~world_viewport_window();
 
 
-        void update(const f32 delta_time);
+        void window(const f32 delta_time) override;
 
 
-        void render_imgui(const f32 delta_time);
+        void update(const f32 delta_time) override;
 
 
-        template<typename window_type, typename... args>
-        void add_window(args&&... arguments);
+        bool serialize(const std::filesystem::path& project_file, const GLT::serializer::option option) override;
 
     private:
 
-        void render_toolbar();
-        void render_dockspace();
+        void render_inner_dockspace();
         void build_default_layout(ImGuiID dockspace_id, const ImVec2& size);
-        void on_asset_open_event(const asset_open_event& event);
+        void render_viewport();
+        void render_details();
+        void render_tools();
 
-
-        std::vector<asset_open_event>                   m_asset_open_event_buffer{};
-        GLT::unique_ref<GLT::render::image>             m_logo{};
-        std::vector<GLT::unique_ref<base_window>>       m_windows{};
-        handle                                          m_asset_open_event_sub_handle{};
-        bool                                            m_show_demo  = false;
-        bool                                            m_show_style = false;
+        std::vector<content_browser_window>             m_content_browsers{};
+        GLT::ref<GLT::render::i_renderer_plugin>        m_renderer{};
+        ImVec2                                          m_viewport_size{100, 60};
         bool                                            m_reset_layout = true;
-        ImGuiID                                         m_dockspace_id = 0;
 
     };
 
 }
-
-#include "editor_layer.inl"

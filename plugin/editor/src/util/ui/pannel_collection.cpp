@@ -778,12 +778,13 @@ namespace GLT::editor::UI {
 		auto content_region = ImGui::GetContentRegionAvail();
 		const ImVec2 start_pos = ImGui::GetCursorScreenPos();
 
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+		// ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+		// ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, color_left_side);
 		ImGui::BeginChild("LEFT_SIDE", ImVec2(width_left_side, content_region.y), can_resize ? child_flags | ImGuiChildFlags_ResizeX : child_flags, ImGuiWindowFlags_None);
 		ImGui::PopStyleColor();
+		// ImGui::PopStyleVar(2);
 
-		UI::shift_cursor_pos(2, 4);
 		left_side();
 
 		{
@@ -795,13 +796,12 @@ namespace GLT::editor::UI {
 			const f32 padding = ImGui::GetStyle().WindowPadding.x;
 
 			draw_list->AddRectFilledMultiColor(
-				ImVec2(start_pos.x + width + padding - 40, start_pos.y-20),
-				ImVec2(start_pos.x + width + padding, start_pos.y + content_region.y),
+				ImVec2(start_pos.x + width + (padding * 2) - 40, start_pos.y-20),
+				ImVec2(start_pos.x + width + (padding * 2), start_pos.y + content_region.y),
 				begin_col, end_col, end_col, begin_col);
 		}
 
 		ImGui::EndChild();
-		ImGui::PopStyleVar();
 
 		ImGui::SameLine();
 		content_region = ImGui::GetContentRegionAvail();

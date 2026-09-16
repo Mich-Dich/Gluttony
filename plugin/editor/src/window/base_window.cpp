@@ -44,18 +44,26 @@ namespace GLT::editor {
         ImGui::SetWindowFocus(m_window_id.c_str());
     }
 
+
+    void base_window::dock_to(ImGuiID dock_id) { m_pending_dock_id = dock_id; }
+
     // CLASS PROTECTED =================================================================================================
+
+
+    void base_window::apply_pending_dock() {
+
+        if (m_pending_dock_id != 0) {
+            ImGui::SetNextWindowDockID(m_pending_dock_id, ImGuiCond_Always);
+            m_pending_dock_id = 0;      // one-shot: the user may undock afterwards
+        }
+    }
+
 
     void base_window::make_window_name(const char* base_name) {
 
         ASSERT(base_name, "", "make_window_name() base_name must not be null");
 
         m_window_title = base_name;
-
-        // ImGui displays everything before "##" and uses everything after for identity.
-        // Combining the human-readable name with the object's address guarantees a
-        // stable, unique ID per instance and gives ImGui's docking/position persistence
-        // a key that survives the window being closed and reopened.
         m_window_id = std::string(base_name) + "##" + std::to_string(reinterpret_cast<uintptr_t>(this));
     }
 

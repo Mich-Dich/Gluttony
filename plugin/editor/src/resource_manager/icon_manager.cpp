@@ -3,19 +3,22 @@
 #include "icon_manager.h"
 
 #if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wsign-compare"
-#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wsign-compare"
+    #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
+#define OUTPUT_CPU_SIDE_THUMBNAIL_BUFFER                    0
+#if OUTPUT_CPU_SIDE_THUMBNAIL_BUFFER
+    #define STB_IMAGE_WRITE_IMPLEMENTATION
+    #include "stb_image_write.h"
+#endif
 
 #if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
+    #pragma GCC diagnostic pop
 #endif
 
 #include <util/io/vfs.h>
@@ -86,6 +89,7 @@ namespace GLT::editor::icon_manager {
         u32                                                 width = 0;
         u32                                                 height = 0;
     };
+
 
     struct thumbnail_page {
 
@@ -641,8 +645,16 @@ namespace GLT::editor::icon_manager {
         for (u32 p : dirty_pages)
             reupload_thumbnail_page(p);
 
-        stbi_write_png("/home/mich/Pictures/BUFFER/atlas_dump_CPU.png", THUMBNAIL_PAGE_WIDTH, THUMBNAIL_PAGE_HEIGHT, 4,
-            state.pages[0].cpu_pixels.data(), THUMBNAIL_PAGE_WIDTH * 4);
+        #if OUTPUT_CPU_SIDE_THUMBNAIL_BUFFER
+
+            // Output thumbnail pages (CPU side buffer)
+            for (size_t index = 0; index < state.pages.size(); index++) {
+                const auto file_name = std::string("/home/mich/Pictures/BUFFER/atlas_dump_CPU_") + GLT::util::to_string(index) + std::string(".png");
+                stbi_write_png(file_name.c_str(), THUMBNAIL_PAGE_WIDTH, THUMBNAIL_PAGE_HEIGHT, 4, 
+                state.pages[index].cpu_pixels.data(), THUMBNAIL_PAGE_WIDTH * 4);
+            }
+
+        #endif
     }
 
 
