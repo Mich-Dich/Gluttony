@@ -39,6 +39,17 @@ export VK_LAYER_PATH=$VULKAN_SDK/etc/vulkan/explicit_layer.d
 source ~/.bashrc
 ```
 
+
+**Install GCC 16 and G++ 16**
+
+The repo uses C++26's reflection, so g++-16 is needed
+```bash
+sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+sudo apt update
+sudo apt install gcc-16 g++-16
+```
+
+
 **Clone and Build project**
 ```bash
 git clone https://github.com/your-username/gluttony.git
