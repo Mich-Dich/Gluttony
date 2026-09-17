@@ -4,8 +4,19 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wsign-compare"
+    #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+    #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
+
 #include <stb_image.h>
 #include <stb_image_write.h>
+
+#if defined(__GNUC__) || defined(__clang__)
+    #pragma GCC diagnostic pop
+#endif
 
 #include <config/imgui_config.h>
 
@@ -51,13 +62,13 @@ namespace GLT::editor {
     // All the per-pixel display options packed into one struct so the transform can happen in a single pass.
     struct pixel_transform {
 
-        image_channel           channel_mode = image_channel::Original;
-        channel_swizzle         swizzle = channel_swizzle::RGBA;
-        bool                    grayscale = false;
-        bool                    normalize = false;
-        u8                      min_r = 0, max_r = 255;
-        u8                      min_g = 0, max_g = 255;
-        u8                      min_b = 0, max_b = 255;
+        image_channel                           channel_mode = image_channel::Original;
+        channel_swizzle                         swizzle = channel_swizzle::RGBA;
+        bool                                    grayscale = false;
+        bool                                    normalize = false;
+        u8                                      min_r = 0, max_r = 255;
+        u8                                      min_g = 0, max_g = 255;
+        u8                                      min_b = 0, max_b = 255;
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -66,11 +77,11 @@ namespace GLT::editor {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
-    // Lowercase a copy — used to normalise file extensions.
-    std::string to_lower(std::string s);
-
-    // Convert ".[ext]" to a short human-readable format tag.
-    std::string pretty_format(const std::string& ext);
+    namespace image {
+        
+        // Convert ".[ext]" to a short human-readable format tag.
+        std::string pretty_format(const std::string& ext);
+    }
 
     // Checkerboard painted behind the image so alpha reads correctly.
     void draw_checkerboard(ImDrawList* draw, const ImVec2& min, const ImVec2& max);
@@ -91,28 +102,24 @@ namespace GLT::editor {
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-    std::string to_lower(std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return s;
+    namespace image {
+
+        std::string pretty_format(const std::string& ext) {
+
+            if (ext == ".png")                      return "PNG";
+            if (ext == ".jpg" || ext == ".jpeg")    return "JPEG";
+            if (ext == ".bmp")                      return "BMP";
+            if (ext == ".tga")                      return "TGA";
+            if (ext == ".hdr")                      return "HDR";
+            if (ext == ".psd")                      return "PSD";
+            if (ext == ".gif")                      return "GIF";
+            if (ext == ".pic" || ext == ".pnm")     return "PNM";
+            if (ext.empty())                        return "Unknown";
+
+            return GLT::util::to_lower(ext.substr(1));     // strip the leading dot
+        }
+
     }
-
-
-    std::string pretty_format(const std::string& ext) {
-
-        if (ext == ".png")                      return "PNG";
-        if (ext == ".jpg" || ext == ".jpeg")    return "JPEG";
-        if (ext == ".bmp")                      return "BMP";
-        if (ext == ".tga")                      return "TGA";
-        if (ext == ".hdr")                      return "HDR";
-        if (ext == ".psd")                      return "PSD";
-        if (ext == ".gif")                      return "GIF";
-        if (ext == ".pic" || ext == ".pnm")     return "PNM";
-        if (ext.empty())                        return "Unknown";
-
-        return to_lower(ext.substr(1));     // strip the leading dot
-    }
-
 
     void draw_checkerboard(ImDrawList* draw, const ImVec2& min, const ImVec2& max) {
 
@@ -165,13 +172,13 @@ namespace GLT::editor {
     void apply_pixel_transform(std::vector<u8>& pixels, const pixel_transform& t) {
 
         // Swizzle permutation indices: out.{r,g,b,a} = in[src_idx].
-        int sr_idx = 0, sg_idx = 1, sb_idx = 2, sa_idx = 3;
+        int sr_idx = 0, sg_idx = 1, sb_idx = 2;
         switch (t.swizzle) {
 
             case channel_swizzle::RGBA: break;
             case channel_swizzle::BGRA: sr_idx = 2; sb_idx = 0; break;
-            case channel_swizzle::ARGB: sr_idx = 3; sg_idx = 0; sb_idx = 1; sa_idx = 2; break;
-            case channel_swizzle::ABGR: sr_idx = 3; sg_idx = 2; sb_idx = 1; sa_idx = 0; break;
+            case channel_swizzle::ARGB: sr_idx = 3; sg_idx = 0; sb_idx = 1; break;
+            case channel_swizzle::ABGR: sr_idx = 3; sg_idx = 2; sb_idx = 1; break;
         }
 
         // Normalize scales, computed once.
@@ -189,17 +196,16 @@ namespace GLT::editor {
         const bool keep_b = (mask & CHANNEL_BIT_B) != 0;
         const bool keep_a = (mask & CHANNEL_BIT_A) != 0;
 
-        const bool identity =
-            (t.channel_mode == image_channel::Original) &&
-            (t.swizzle == channel_swizzle::RGBA) &&
-            !t.grayscale && !t.normalize;
-        if (identity)
+        if ((t.channel_mode == image_channel::Original) 
+            && (t.swizzle == channel_swizzle::RGBA) 
+            && !t.grayscale && !t.normalize) {
+
             return;
+        }
 
         for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
 
-            // 1) Normalize on the original channel order so the per-channel
-            //    min/max we measured line up.
+            // Normalize on the original channel order so the per-channel min/max we measured line up
             u8 in[4] = { pixels[i + 0], pixels[i + 1], pixels[i + 2], pixels[i + 3] };
 
             if (t.normalize) {
@@ -208,13 +214,12 @@ namespace GLT::editor {
                 in[2] = static_cast<u8>(std::clamp((in[2] - t.min_b) * scale_b, 0.0f, 255.0f));
             }
 
-            // 2) Swizzle.
+            // Swizzle
             u8 r = in[sr_idx];
             u8 g = in[sg_idx];
             u8 b = in[sb_idx];
-            u8 a = in[sa_idx];
 
-            // 3) Grayscale (Rec. 709 luminance).
+            // Grayscale (Rec. 709 luminance)
             if (t.grayscale) {
                 const u8 l = static_cast<u8>(
                     0.2126f * static_cast<f32>(r) +
@@ -223,7 +228,7 @@ namespace GLT::editor {
                 r = g = b = l;
             }
 
-            // 4) Channel isolation.
+            // Channel isolation
             if (!keep_r) r = 0;
             if (!keep_g) g = 0;
             if (!keep_b) b = 0;
@@ -310,7 +315,6 @@ namespace GLT::editor {
 
     image_viewer_window::image_viewer_window(const std::filesystem::path& path) {
 
-        make_window_name("Image Viewer");
         open(path);
     }
 
@@ -345,8 +349,11 @@ namespace GLT::editor {
 
         m_details.path = GLT::project::extract_path_from_project_content_dir(path);
         m_details.name = path.filename().string();
-        m_details.extension = to_lower(path.extension().string());
-        m_details.format = pretty_format(m_details.extension);
+        m_details.extension = GLT::util::to_lower(path.extension().string());
+        m_details.format = image::pretty_format(m_details.extension);
+
+        cache_window_state(); 
+        make_window_name((std::string("IMG: ") + m_details.name).c_str());
 
         std::error_code error{};
         if (!GLT::vfs::exists(path, error) || error) {
@@ -687,7 +694,7 @@ namespace GLT::editor {
 
                         std::filesystem::path out = m_details.path;
                         out.replace_filename(m_details.path.stem().string() + "_display.png");
-                        save_display_as_png(GLT::application::get().get_project_path() / GLT::config::CONTENT_DIR / out);
+                        save_display_as_png(PROJECT_CONTENT_DIR / out);
                     }
                     ImGui::EndDisabled();
                 });
@@ -1057,7 +1064,7 @@ namespace GLT::editor {
             if (raw && raw[0] != '\0') {
 
                 const std::filesystem::path dropped(raw);
-                if (GLT::render::is_image_extension(to_lower(dropped.extension().string())))
+                if (GLT::render::is_image_extension(GLT::util::to_lower(dropped.extension().string())))
                     open(dropped);
             }
         }
@@ -1114,7 +1121,7 @@ namespace GLT::editor {
         // the original.
         u32 width  = 0;
         u32 height = 0;
-        void* raw = m_image->load(GLT::application::get().get_project_path() / GLT::config::CONTENT_DIR / m_details.path, width, height);
+        void* raw = m_image->load(PROJECT_CONTENT_DIR / m_details.path, width, height);
 
         if (!raw || width == 0 || height == 0) {
             if (raw) stbi_image_free(raw);

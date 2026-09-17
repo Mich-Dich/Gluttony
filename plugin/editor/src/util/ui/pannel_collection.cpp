@@ -650,12 +650,18 @@ namespace GLT::editor::UI {
 
 					else if (p == 38) {                                         // Extended foreground
 						if (i < params.size()) {
+
 							const int type = params[i++];
 							if (type == 5 && i < params.size())
 								color = get_256_color(params[i++]);
 
-							else if (type == 2 && i + 2 < params.size())
-								color = ImVec4(params[i++] / 255.0f, params[i++] / 255.0f, params[i++] / 255.0f, 1.0f);
+							else if (type == 2 && i + 2 < params.size()) {
+
+								const f32 r = params[i++] / 255.0f;
+								const f32 g = params[i++] / 255.0f;
+								const f32 b = params[i++] / 255.0f;
+								color = ImVec4(r, g, b, 1.0f);
+							}
 						}
 					}
 
@@ -668,12 +674,17 @@ namespace GLT::editor::UI {
 
 					else if (p == 48) {                                         // Extended background
 						if (i < params.size()) {
+
 							const int type = params[i++];
 							if (type == 5 && i < params.size())
 								bg_color = get_256_color(params[i++]);
 
-							else if (type == 2 && i + 2 < params.size())
-								bg_color = ImVec4(params[i++] / 255.0f, params[i++] / 255.0f, params[i++] / 255.0f, 1.0f);
+							else if (type == 2 && i + 2 < params.size()) {
+								const f32 r = params[i++] / 255.0f;
+								const f32 g = params[i++] / 255.0f;
+								const f32 b = params[i++] / 255.0f;
+								bg_color = ImVec4(r, g, b, 1.0f);
+							}
 						}
 					}
 					else if (p == 49)                                           // Reset background

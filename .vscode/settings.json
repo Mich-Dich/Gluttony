@@ -8,6 +8,7 @@
     "*.glt_plugin": "yaml"
   },
   "cSpell.words": [
+    "ABGR",
     "Blit",
     "blitted",
     "cmpeq",
@@ -15,7 +16,10 @@
     "glfw",
     "hlsl",
     "imgui",
+    "implot",
     "instrumentor",
+    "rolloff",
+    "soloud",
     "spirv",
     "swapchain",
     "tlas",

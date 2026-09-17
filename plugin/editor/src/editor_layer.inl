@@ -33,10 +33,11 @@ namespace GLT::editor {
     void editor_layer::add_window(args&&... arguments) {
 
         static_assert(std::is_base_of<base_window, window_type>::value, "[window_type] must derive from editor_window");
-        auto win = GLT::create_unique_ref<window_type>(std::forward<args>(arguments)...);
+        auto window = GLT::create_unique_ref<window_type>(std::forward<args>(arguments)...);
+        LOG(trace, "Created new window [{}]", window->get_window_title())
         if (m_dockspace_id != 0)
-            win->dock_to(m_dockspace_id);
-        m_windows.emplace_back(std::move(win));
+            window->dock_to(m_dockspace_id);
+        m_windows.emplace_back(std::move(window));
     }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================

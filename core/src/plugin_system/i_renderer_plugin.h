@@ -9,6 +9,7 @@
 
 #include "i_plugin.h"
 #include "render/image.h"
+#include "debug/profiler.h"
 
 
 
@@ -245,6 +246,9 @@ namespace GLT::render {
         //
         // @return Opaque pointer to the native context, or nullptr if unavailable.
         [[nodiscard]] virtual void* get_native_context_handle() const = 0;
+
+
+        [[nodiscard]] virtual debug::render_stats get_render_stats() const = 0;
 
     };
 

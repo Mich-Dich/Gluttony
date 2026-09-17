@@ -37,7 +37,7 @@ namespace GLT::util
     // @param [input] The input string from which the part is to be extracted.
     // @param [delimiter] The character delimiter used to identify the part to extract.
     // @return None
-    void extract_part_after_delimiter(std::string& dest, const std::string& input, const char *delimiter);
+    void extract_part_after_delimiter(std::string& dest, const std::string& input, const char* delimiter);
 
 
     // @brief Searches for the last occurrence of the specified delimiter in the input string,
@@ -47,7 +47,7 @@ namespace GLT::util
     // @param [input] The input string from which the part is to be extracted.
     // @param [delimiter] The character delimiter used to identify the part to extract.
     // @return None
-    void extract_part_befor_delimiter(std::string& dest, const std::string& input, const char *delimiter);
+    void extract_part_befor_delimiter(std::string& dest, const std::string& input, const char* delimiter);
 
 
     // @brief Given a string representing a variable access chain (e.g., "object1->object2.variable"),
@@ -62,14 +62,18 @@ namespace GLT::util
     //        Returns true if the string equals "true" (case-sensitive), false otherwise.
     // @param [string] The string to convert.
     // @return true if the string is "true", false otherwise.
-    FORCE_INLINE constexpr bool str_to_bool(const std::string& string) { return (string == "true") ? true : false; }
+    constexpr bool str_to_bool(const std::string& string) { return (string == "true") ? true : false; }
 
 
     // @brief Converts a boolean value to a string.
     //        Returns "true" for true values and "false" for false values.
     // @param [boolean] The boolean value to convert.
     // @return [const char*] "true" if the boolean value is true, "false" otherwise.
-    FORCE_INLINE constexpr const char *bool_to_str(bool boolean) { return boolean ? "true" : "false"; }
+    constexpr const char* bool_to_str(bool boolean) { return boolean ? "true" : "false"; }
+
+
+    // Lowercase a copy — used to normalize file extensions.
+    std::string to_lower(std::string s);
 
 
     // @brief Creates a string consisting of multiple indentation levels of spaces.
@@ -94,7 +98,7 @@ namespace GLT::util
     //        It counts newline characters and includes the last line even if it doesn't end with a newline.
     // @param [text] A null-terminated character array containing the text to analyze.
     // @return The number of lines in the text. Returns 1 for an empty string.
-    int count_lines(const char *text);
+    int count_lines(const char* text);
 
     // TEMPLATE DECLARATION ============================================================================================
 

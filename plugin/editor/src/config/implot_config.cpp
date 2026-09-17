@@ -1,20 +1,12 @@
-#pragma once
 
-#include <util/pch.h>
-#include <layer/layer.h>
-#include <layer/layer_stack.h>
-#include <application.h>
-
-#include "editor_layer.h"
-
-#include "resource_manager/icon_manager.h"
-#include "config/implot_config.h"
+#include "util/pch.h"
+#include "implot_config.h"
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::editor {
+namespace GLT::implot_config {
 
     // CONSTANTS =======================================================================================================
 
@@ -23,6 +15,8 @@ namespace GLT::editor {
     // TYPES ===========================================================================================================
 
     // STATIC VARIABLES ================================================================================================
+
+	ImPlotContext* 								    	s_context_implot{}; 	    // Pointer to the ImPlot context.
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
@@ -34,38 +28,30 @@ namespace GLT::editor {
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
-    // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
+    // FUNCTION IMPLEMENTATION =========================================================================================
 
-    plugin::plugin() {}
-    
-    
-    plugin::~plugin() {}
+	ImPlotContext* get_context_implot()                 { return s_context_implot; }
 
-    // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    void plugin::on_load() {
+	void init() {
 
-        implot_config::init();
-        icon_manager::init();
-        mp_editor_layer = GLT::application::get().get_layer_stack_ref().push_layer<editor_layer>();
+		s_context_implot = ImPlot::CreateContext();
+		LOG_INIT
     }
 
 
-    void plugin::on_unload() {
+	void shutdown() {
 
-        GLT::application::get().get_layer_stack_ref().pop_layer();
-        mp_editor_layer = {};
-        icon_manager::shutdown();
-        implot_config::shutdown();
-    }
+		ImPlot::DestroyContext(s_context_implot);
+		LOG_SHUTDOWN
+	}
 
+    // CLASS IMPLEMENTATION ============================================================================================
 
-    void plugin::update(const GLT::update_event&) {
+    // CLASS PUBLIC ====================================================================================================
 
-    }
+    // CLASS PROTECTED =================================================================================================
 
-    // TEMPLATE CLASS PROTECTED ========================================================================================
-
-    // TEMPLATE CLASS PRIVATE ==========================================================================================
+    // CLASS PRIVATE ===================================================================================================
 
 }

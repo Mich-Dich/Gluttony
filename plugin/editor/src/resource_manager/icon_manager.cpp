@@ -6,6 +6,7 @@
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wsign-compare"
     #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+    #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
 
 #define STB_IMAGE_IMPLEMENTATION

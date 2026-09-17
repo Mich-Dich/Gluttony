@@ -29,7 +29,7 @@ namespace GLT::undo_system {
 
         static constexpr size_t                 max_steps = 256;
 
-        void push(step undo_step, f32 now);
+        void push(step undo_step);
 
         bool undo();
         bool redo();

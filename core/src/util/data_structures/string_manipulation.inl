@@ -13,9 +13,11 @@
 #endif
 
 #include "string_manipulation.h"
+#include "util/macros.h"
+
+
 
 // FORWARD DECLARATIONS ================================================================================================
-
 
 namespace GLT::util {
 

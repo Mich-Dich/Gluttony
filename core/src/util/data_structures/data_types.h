@@ -22,7 +22,7 @@ typedef long double 				f128;	// 128-bit floating point (platform dependent)
 // Platform-specific types
 typedef u64 						handle; // Generic handle type for OS resources
 
-constexpr handle invalid_handle = 0U;
+constexpr handle 					INVALID_HANDLE = 0U;
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -427,23 +427,23 @@ namespace GLT {
 
     constexpr bool is_mouse_event(key_code key) {
 
-        return  key == key_code::mouse_bu_1 ||
-                key == key_code::mouse_bu_2 ||
-                key == key_code::mouse_bu_3 ||
-                key == key_code::mouse_bu_4 ||
-                key == key_code::mouse_bu_5 ||
-                key == key_code::mouse_bu_6 ||
-                key == key_code::mouse_bu_7 ||
-                key == key_code::mouse_bu_8 ||
-                key == key_code::mouse_bu_last ||
-                key == key_code::mouse_bu_left ||
-                key == key_code::mouse_bu_right ||
-                key == key_code::mouse_bu_middle ||
-                key == key_code::mouse_move ||
-                key == key_code::mouse_move_x ||
-                key == key_code::mouse_move_y ||
-                key == key_code::mouse_scroll_x ||
-                key == key_code::mouse_scroll_y;
+        return  key == key_code::mouse_bu_1
+        	|| key == key_code::mouse_bu_2
+        	|| key == key_code::mouse_bu_3
+        	|| key == key_code::mouse_bu_4
+        	|| key == key_code::mouse_bu_5
+        	|| key == key_code::mouse_bu_6
+        	|| key == key_code::mouse_bu_7
+        	|| key == key_code::mouse_bu_8
+        	|| key == key_code::mouse_bu_last
+        	|| key == key_code::mouse_bu_left
+        	|| key == key_code::mouse_bu_right
+        	|| key == key_code::mouse_bu_middle
+        	|| key == key_code::mouse_move
+        	|| key == key_code::mouse_move_x
+        	|| key == key_code::mouse_move_y
+        	|| key == key_code::mouse_scroll_x
+        	|| key == key_code::mouse_scroll_y;
     }
 
 	// STATIC VARIABLES ================================================================================================

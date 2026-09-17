@@ -52,6 +52,14 @@ namespace GLT::util {
     }
 
 
+    std::string to_lower(std::string s) {
+
+        std::transform(s.begin(), s.end(), s.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    }
+
+
     std::string add_spaces(const u32 multiple_of_indenting_spaces, u32 num_of_indenting_spaces) {
 
         if (multiple_of_indenting_spaces == 0)

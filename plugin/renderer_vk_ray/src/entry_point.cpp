@@ -105,6 +105,9 @@ namespace GLT::renderer_vk_ray {
         FORCE_INLINE_R void* get_native_context_handle() const override { return {}; }
 
 
+        [[nodiscard]] debug::render_stats get_render_stats() const;
+
+
         void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
     private:
@@ -224,11 +227,28 @@ namespace GLT::renderer_vk_ray {
         glm::vec4                                               m_clear_color{0.09f, 0.09f, 0.09f, 1.f};
         ref<GLT::world::camera>                                 m_active_camera{};
 
-        // ---------------------------- immediate-submit ---------------------------- 
 		vk::Fence										        m_immediate_submit_fence{};
 		vk::CommandBuffer								        m_immediate_submit_command_buffer{};
 		vk::CommandPool								            m_immediate_submit_command_pool{};
     
+        // render stats (populated during the frame) -------------------------------------------------------------------
+        u32                                                     m_frame_draw_calls      = 0;
+        u32                                                     m_frame_render_passes   = 0;
+
+        // Scene geometry totals (set when acceleration structures are built).
+        u32                                                     m_scene_triangles       = 0;
+        u32                                                     m_scene_vertices        = 0;
+
+        // --- GPU timing (timestamp queries) --------------------------------------------------------------------------
+        vk::QueryPool                                           m_timestamp_pool        = nullptr;
+        f32                                                     m_timestamp_period_ns   = 1.0f;
+        std::array<f32, MAX_CONCURRENT_FRAMES>                  m_gpu_frame_time_ms{};
+        f32                                                     m_last_gpu_time_ms      = 0.0f;
+
+        // --- live resource counters (absolute) -----------------------------------------------------------------------
+        u32                                                     m_live_buffer_count         = 0;
+        u32                                                     m_live_pipeline_count       = 0;
+        u32                                                     m_live_descriptor_set_count = 0;
     };
 
 

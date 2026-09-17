@@ -181,7 +181,7 @@ namespace GLT::editor {
 
         make_window_name("Content Browser");
 
-        m_content_dir = GLT::application::get().get_project_path() / GLT::config::CONTENT_DIR;
+        m_content_dir = PROJECT_CONTENT_DIR;
 
         // Make sure the content root actually exists before we try to browse it.
         std::error_code error{};
@@ -228,7 +228,9 @@ namespace GLT::editor {
                 },
                 [this]() {
                     draw_toolbar();
+                    ImGui::BeginChild("##view_of_dir", ImVec2(0, 0));
                     draw_file_view();
+                    ImGui::EndChild();
                 });
     
             draw_popups();

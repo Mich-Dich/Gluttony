@@ -54,6 +54,8 @@ namespace GLT {
     // #define ENGINE_SHADER_PATH			        GLT::util::get_executable_path() / "shaders_compiled"
     // #define ENGINE_RAW_SHADER_PATH		        GLT::util::get_executable_path() / "shaders"
 
+    #define PROJECT_CONTENT_DIR                     ( GLT::application::get().get_project_path() / GLT::config::CONTENT_DIR )
+
     // TYPES ===========================================================================================================
 
     // STATIC VARIABLES ================================================================================================

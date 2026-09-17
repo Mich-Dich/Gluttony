@@ -31,11 +31,11 @@ namespace GLT::undo_system {
 
     // CLASS PUBLIC ====================================================================================================
 
-    void stack::push(step undo_step, f32 now) {
+    void stack::push(step undo_step) {
 
-        if (undo_step.can_combine && m_cursor > 0) {                 // Try to merge with the top of the stack.
+        if (undo_step.can_combine && m_cursor > 0) {
             step& top = m_steps[m_cursor - 1];
-            if (top.is_compact() && undo_step.is_compact() 
+            if (top.is_compact() && undo_step.is_compact()
                 && top.id == undo_step.id && top.can_combine) {
 
                 top.merge(undo_step);
@@ -43,10 +43,9 @@ namespace GLT::undo_system {
             }
         }
 
-        m_size = m_cursor;                                      // Drop the redo tail — the user did something new.
-
-        if (m_size == max_steps) {                              // Ring-buffer behaviour: if full, drop the oldest.
-            std::memmove(m_steps.data(), m_steps.data() + 1, (max_steps - 1) * sizeof(step));
+        m_size = m_cursor;
+        if (m_size == max_steps) {
+            std::move(m_steps.begin() + 1, m_steps.end(), m_steps.begin());
             m_steps[max_steps - 1] = std::move(undo_step);
         } else
             m_steps[m_size++] = std::move(undo_step);

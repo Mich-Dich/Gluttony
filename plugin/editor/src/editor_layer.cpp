@@ -14,6 +14,9 @@
 #include "window/content_browser.h"
 #include "window/world_viewport.h"
 #include "window/image_viewer.h"
+#include "window/log_viewer.h"
+#include "window/stats.h"
+#include "window/audio_viewer.h"
 
 
 
@@ -158,7 +161,7 @@ namespace GLT::editor {
                 case asset_category::material:      break;
                 case asset_category::mesh:          break;
                 case asset_category::config:        break;
-                case asset_category::audio:         break;
+                case asset_category::audio:         add_window<audio_viewer_window>( event.get_path() ); break;
                 case asset_category::other:         break;
             }
         }
@@ -182,6 +185,23 @@ namespace GLT::editor {
     // CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
+
+    base_window* editor_layer::find_window_by_name(const std::string& name) {
+
+        for (auto& window : m_windows) {
+
+            VALIDATE(window, continue, "", "Null pointer detected in [m_windows]")
+
+            if (window->should_close())                 // Ignore windows the user has closed — they're about to be pruned
+                continue;
+
+            if (window->get_window_title() == name)
+                return window.get();
+        }
+
+        return nullptr;
+    }
+
 
     void editor_layer::render_toolbar() {
 
@@ -238,11 +258,29 @@ namespace GLT::editor {
 
             ImGui::SameLine();
             ImGui::SetCursorPosY(win_pad + (logo_side - menu_h) * 0.5f);
+            toolbar_menu("Window", MAIN_MENU_BAR_POPUP, [this]{
+
+                if (ImGui::MenuItem("Log View"))
+                    add_window<log_viewer_window>();
+
+                if (ImGui::MenuItem("Debug Statistics", "", m_show_stats_window)) {
+
+                    if (auto* window = find_window_by_name("Debug Statistics"))
+                        window->close_window();
+                    else
+                        add_window<stats_window>();
+                }
+            });
+
+            ImGui::SameLine();
+            ImGui::SetCursorPosY(win_pad + (logo_side - menu_h) * 0.5f);
             toolbar_menu("View", MAIN_MENU_BAR_POPUP, [this]{
                 
-                if (ImGui::MenuItem("Reset Layout"))                    { m_reset_layout = true; }
+                ImGui::SeparatorText("Layout");
+                if (ImGui::MenuItem("Reset Layout"))
+                    m_reset_layout = true;
+                                
                 ImGui::SeparatorText("Main color");
-
                 static ImVec4 backup_color;
                 static bool saved_palette_init = true;
                 static ImVec4 saved_palette[35] = {};
@@ -306,8 +344,7 @@ namespace GLT::editor {
                     }
                 }
                 ImGui::EndGroup();
-                
-                    
+
                 #if defined(DEBUG)
                     ImGui::SeparatorText("Debug");
                     ImGui::MenuItem("Show Demo", "", &m_show_demo);

@@ -38,6 +38,39 @@ namespace GLT::renderer_vk_ray {
 
     // STATIC VARIABLES ================================================================================================
     
+    // INTERNAL TEMPLATE DECLARATION ===================================================================================
+
+    // INTERNAL FUNCTION DECLARATION ===================================================================================
+
+    // Counts primitive draws ImGui will issue — i.e. every cmd buffer entry
+    // that isn't a user callback. This matches the Vulkan backend's actual
+    // vkCmdDraw* count.
+    u32 count_imgui_draw_calls(const ImDrawData* draw_data);
+
+    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
+
+    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
+    u32 count_imgui_draw_calls(const ImDrawData* draw_data) {
+
+        if (!draw_data)
+            return 0;
+
+        u32 count = 0;
+        for (int i = 0; i < draw_data->CmdListsCount; ++i) {
+
+            const ImDrawList* cmd_list = draw_data->CmdLists[i];
+            for (int j = 0; j < cmd_list->CmdBuffer.Size; ++j) {
+
+                if (cmd_list->CmdBuffer[j].UserCallback == nullptr)
+                    ++count;
+            }
+        }
+        return count;
+    }
+
+    // TEMPLATE IMPLEMENTATION =========================================================================================
+
     // FUNCTION IMPLEMENTATION =========================================================================================
 
     // CLASS IMPLEMENTATION ============================================================================================
@@ -121,6 +154,28 @@ namespace GLT::renderer_vk_ray {
         VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[m_current_frame], VK_TRUE, UINT64_MAX));
         m_device.resetFences(m_in_flight_fences[m_current_frame]);
 
+        // ---- GPU timing: read the previous use of this command buffer slot -----------------
+        // The fence above guarantees the timestamps we wrote last time this slot was submitted have completed, so the result is available without waiting.
+        if (m_timestamp_pool) {
+
+            u64 timestamps[2] = {0, 0};
+            const vk::Result r = m_device.getQueryPoolResults(m_timestamp_pool,
+                m_current_frame * 2, static_cast<u32>(2),
+                sizeof(timestamps), timestamps, sizeof(u64),
+                vk::QueryResultFlagBits::e64);
+
+            if (r == vk::Result::eSuccess && timestamps[1] > timestamps[0]) {
+
+                const f32 elapsed_ms = static_cast<f32>(timestamps[1] - timestamps[0]) * m_timestamp_period_ns * 1e-6f;
+                m_gpu_frame_time_ms[m_current_frame] = elapsed_ms;
+                m_last_gpu_time_ms                   = elapsed_ms;
+            }
+        }
+
+        // ---- reset per-frame counters ------------------------------------------------------
+        m_frame_draw_calls    = 0;
+        m_frame_render_passes = 0;
+
         try {
 
             auto acquire_result = m_device.acquireNextImageKHR(m_swapchain.swapchain_handle, UINT64_MAX, m_present_semaphores[m_current_frame], nullptr);
@@ -139,6 +194,14 @@ namespace GLT::renderer_vk_ray {
         vk::CommandBufferBeginInfo begin_info{};
         begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
         current_cmd.begin(begin_info);
+
+        // Start the GPU timer for this frame.
+        if (m_timestamp_pool) {
+
+            current_cmd.resetQueryPool(m_timestamp_pool, m_current_frame * 2, 2);
+            current_cmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe,
+                m_timestamp_pool, m_current_frame * 2);
+        }
 
         // Update camera matrices
         {
@@ -164,6 +227,9 @@ namespace GLT::renderer_vk_ray {
         current_cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, m_rt_pipeline);
         m_vr_dev->dispatch_rays(m_rt_pipeline, m_sbt_buffer, m_render_size.x, m_render_size.y, 1, current_cmd);
 
+        m_frame_draw_calls    += 1;     // one RT dispatch
+        m_frame_render_passes += 1;     // the RT dispatch is the scene's only "pass"
+
         // // Blit from output image to swapchain image
         // transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eTransferDstOptimal);       // to TRANSFER_DST_OPTIMAL
         // transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eTransferSrcOptimal);          // to TRANSFER_SRC_OPTIMAL
@@ -188,6 +254,11 @@ namespace GLT::renderer_vk_ray {
         
         vk::CommandBuffer& current_cmd = m_rt_render_cmd[m_current_frame];              // Record ImGui rendering into the command buffer
         end_imgui_frame(current_cmd);
+
+        // close the GPU timer for this frame --------------------------------------------------------------------------
+        if (m_timestamp_pool)
+            current_cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, m_timestamp_pool, m_current_frame * 2 + 1);
+    
         current_cmd.end();                                                              // End command buffer
 
         vk::SubmitInfo submit_info{};                                                   // Submit to graphics queue
@@ -255,6 +326,35 @@ namespace GLT::renderer_vk_ray {
 
 
     glm::uvec2 renderer::get_rendered_image_size() { return m_output_image->get_size(); }
+
+
+    [[nodiscard]] debug::render_stats renderer::get_render_stats() const {
+
+        return debug::render_stats{
+
+            // GPU time: most recent completed measurement (updated in begin_frame from the previous use of the current command buffer slot). 
+            // Zero until the first slot has wrapped at least once.
+            .gpu_time_ms = m_last_gpu_time_ms,
+
+            // rendering -----------------------------------------------------------------------------------------------
+            // These are per-frame totals; the HUD reads them after draw_frame(). draw_calls includes both the scene RT dispatch 
+            // and every ImGui primitive draw. render_passes is the RT dispatch plus the ImGui render pass.
+            .draw_calls    = m_frame_draw_calls,
+            .triangles     = m_scene_triangles,
+            .vertices      = m_scene_vertices,
+            .render_passes = m_frame_render_passes,
+
+            // memory (absolute, not per-frame) ------------------------------------------------------------------------
+            .vram_bytes = GLT::render::image::get_live_vram_bytes(),
+            .ram_bytes  = 0,                    // not tracked yet; would need a heap hook
+
+            // resources (absolute counts) -----------------------------------------------------------------------------
+            .texture_count        = GLT::render::image::get_live_count(),
+            .buffer_count         = m_live_buffer_count,
+            .descriptor_set_count = m_live_descriptor_set_count,
+            .pipeline_count       = m_live_pipeline_count,
+        };
+    }
 
 
 	void renderer::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
@@ -373,6 +473,18 @@ namespace GLT::renderer_vk_ray {
         // sampler_info.minFilter = vk::Filter::eLinear;
         // m_default_sampler_linear = m_device.createSampler(sampler_info);
 
+        // two timestamps per concurrent frame, so we can measure the GPU time of the frame that used each command buffer.
+        {
+            const vk::PhysicalDeviceProperties props = m_physical_device.getProperties();
+            m_timestamp_period_ns = (props.limits.timestampPeriod > 0.0f) ? props.limits.timestampPeriod : 1.0f;
+
+            vk::QueryPoolCreateInfo qp_info = vk::QueryPoolCreateInfo()
+                .setQueryType(vk::QueryType::eTimestamp)
+                .setQueryCount(MAX_CONCURRENT_FRAMES * 2);
+
+            m_timestamp_pool = m_device.createQueryPool(qp_info);
+            ASSERT(m_timestamp_pool, "", "Failed to create timestamp query pool");
+        }
 
         m_deletion_queue.push_func([&]() {
 
@@ -393,6 +505,13 @@ namespace GLT::renderer_vk_ray {
             if (m_graphics_pool)
                 m_device.destroyCommandPool(m_graphics_pool);
 
+            if (m_timestamp_pool) {
+                m_device.destroyQueryPool(m_timestamp_pool);
+            }
+
+            m_timestamp_pool = nullptr;
+            m_graphics_pool = nullptr;
+
             if (m_vr_dev)
                 delete m_vr_dev;
         });
@@ -408,6 +527,10 @@ namespace GLT::renderer_vk_ray {
             0.0f, 1.0f, 0.0f};
         u32 indices[] = {0, 1, 2};
 
+        // The hello-triangle scene: 1 triangle / 3 vertices.
+        m_scene_triangles = 1;
+        m_scene_vertices  = 3;
+
         // create a buffer for the vertices and copy the data to it
         m_vertex_buffer = m_vr_dev->create_buffer(
             sizeof(f32) * 3 * 3,                                                  // 3 vertices, 3 floats per vertex
@@ -417,6 +540,8 @@ namespace GLT::renderer_vk_ray {
             sizeof(u32) * 3, // 3 vertices, 3 floats per vertex
             vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT); // same as above
+
+        m_live_buffer_count += 2;
 
         // upload the vertex data to the buffer, UpdateBuffer(...) will use mapping the buffer and memcpy
         m_vr_dev->update_buffer(m_vertex_buffer, vertices, sizeof(f32) * 3 * 3);
@@ -610,6 +735,10 @@ namespace GLT::renderer_vk_ray {
         // create a descriptor buffer for the ray tracing pipeline
         m_resource_desc_buffer = m_vr_dev->create_descriptor_buffer(m_resource_descriptor_layout, m_resource_bindings, vr::descriptor_buffer_type::resource);
 
+        m_live_buffer_count += 1;           // m_resource_desc_buffer.buffer
+        m_live_pipeline_count += 1;         // m_rt_pipeline
+        m_live_descriptor_set_count += 1;   // one set inside m_resource_desc_buffer
+
         // cleanup
         m_device.destroyShaderModule(ray_gen_shader_module.module);
         m_device.destroyShaderModule(ray_miss_shader_module.module);
@@ -749,6 +878,7 @@ namespace GLT::renderer_vk_ray {
 
         // we will be writing to this buffer on the CPU
         m_uniform_buffer = m_vr_dev->create_buffer(uniform_buffer_size, vk::BufferUsageFlagBits::eUniformBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        m_live_buffer_count += 1;
 
         m_deletion_queue.push_func([&]() {
 
@@ -883,7 +1013,11 @@ namespace GLT::renderer_vk_ray {
 
         ImGui::EndFrame();
         ImGui::Render();                                                                // Finalize ImGui draw data
-        
+
+        // ---- stats ------------------------------------------------------------------------
+        m_frame_draw_calls    += count_imgui_draw_calls(ImGui::GetDrawData());
+        m_frame_render_passes += 1;     // ImGui uses one render pass
+
         vk::RenderPassBeginInfo rp_info{};                                              // Begin render pass (clears background to dark blue)
         rp_info.renderPass = m_imgui_render_pass;
         rp_info.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];

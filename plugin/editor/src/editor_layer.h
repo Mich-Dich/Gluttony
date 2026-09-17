@@ -55,19 +55,26 @@ namespace GLT::editor {
 
     private:
 
+	    base_window* find_window_by_name(const std::string& name);
+
         void render_toolbar();
+
         void render_dockspace();
+
         void build_default_layout(ImGuiID dockspace_id, const ImVec2& size);
+
         void on_asset_open_event(const asset_open_event& event);
 
 
         std::vector<asset_open_event>                   m_asset_open_event_buffer{};
         GLT::unique_ref<GLT::render::image>             m_logo{};
         std::vector<GLT::unique_ref<base_window>>       m_windows{};
-        handle                                          m_asset_open_event_sub_handle{};
+
+        bool                                            m_show_stats_window = false;
         bool                                            m_show_demo  = false;
         bool                                            m_show_style = false;
         bool                                            m_reset_layout = true;
+        handle                                          m_asset_open_event_sub_handle{};
         ImGuiID                                         m_dockspace_id = 0;
 
     };

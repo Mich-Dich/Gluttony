@@ -46,6 +46,7 @@ namespace GLT::editor {
 
 
         DEFAULT_GETTER_C(std::string,           window_id)      // Returns the unique ImGui window ID (used for window identification).
+        DEFAULT_GETTER_C(std::string,           window_title)
         DEFAULT_GETTER(window_specs,            window_specs)
 
         // Checks whether the window should be closed.
@@ -90,29 +91,51 @@ namespace GLT::editor {
 
 
         // Sets input focus to this ImGui window.
-        //
         // Uses ImGui::SetWindowFocus with the unique window ID.
         void focus_window();
+
+
+        void close_window();
 
 
         // Requests that this window dock into `dock_id` the next time it is
         // rendered. No-op if the window has already been shown once; call
         // this before the first frame the window is drawn.
         void dock_to(ImGuiID dock_id);
-    
+
     protected:
 
         // Call immediately before ImGui::Begin() to honor a pending dock request.
         void apply_pending_dock();
 
 
-        // Creates a unique ImGui window ID by appending the object's address to the base name.
-        // @param base_name The human‑readable part of the window name (e.g., "Device Config Editor").
+        // Snapshot the current ImGui window state (position, size, dock id,
+        // collapsed flag). Call this BEFORE renaming the window via
+        // make_window_name() so the state can survive the ID change.
         //
-        // The generated ID is stored in mWindowId. This function should be called once
-        // during construction to ensure persistent window position/docking settings.
+        // No-op if the window hasn't been shown yet (first frame).
+        void cache_window_state();
+
+
+        // Creates a unique ImGui window ID by appending the object's address
+        // to the base name. The generated ID is stored in m_window_id.
         void make_window_name(const char* base_name);
 
+
+        // One-shot state restored by the next apply_pending_dock() call.
+        // Used to carry position/size/dock across window renames, since
+        // ImGui keys its state by the full Begin() string (including the
+        // visible part before '##').
+        struct window_state_cache {
+
+            bool                            valid = false;
+            ImVec2                          pos = ImVec2(0.0f, 0.0f);
+            ImVec2                          size = ImVec2(0.0f, 0.0f);
+            ImGuiID                         dock_id = 0;
+            bool                            collapsed = false;
+        };
+
+        window_state_cache                  m_window_state_cache{};
 
         std::string                         m_window_id{};                  // Unique ImGui window identifier (e.g., "Editor##0x7FF...")
         std::string                         m_window_title{};               // Display title shown in the window title bar.

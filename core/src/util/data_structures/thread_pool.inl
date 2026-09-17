@@ -1,20 +1,9 @@
 #pragma once
 
-#include <util/pch.h>
-#include <layer/layer.h>
-#include <layer/layer_stack.h>
-#include <application.h>
-
-#include "editor_layer.h"
-
-#include "resource_manager/icon_manager.h"
-#include "config/implot_config.h"
-
-
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::editor {
+namespace GLT::thread_pool {
 
     // CONSTANTS =======================================================================================================
 
@@ -32,37 +21,31 @@ namespace GLT::editor {
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
+    // FUNCTION IMPLEMENTATION =========================================================================================
+
     // TEMPLATE IMPLEMENTATION =========================================================================================
+
+    template<typename F, typename... Args>
+    auto submit(F&& f, Args&&... args) -> std::future<std::invoke_result_t<F, Args...>> {
+
+        using return_type = std::invoke_result_t<F, Args...>;
+
+        // Wrap the callable in a packaged_task so we get a future for free.
+        // shared_ptr because std::function requires a copyable target, and
+        // packaged_task is move-only.
+        auto bound = std::make_shared<std::packaged_task<return_type()>>(
+            std::bind(std::forward<F>(f), std::forward<Args>(args)...));
+
+        std::future<return_type> result = bound->get_future();
+
+        push([bound]() { (*bound)(); });
+
+        return result;
+    }
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 
-    plugin::plugin() {}
-    
-    
-    plugin::~plugin() {}
-
     // TEMPLATE CLASS PUBLIC ===========================================================================================
-
-    void plugin::on_load() {
-
-        implot_config::init();
-        icon_manager::init();
-        mp_editor_layer = GLT::application::get().get_layer_stack_ref().push_layer<editor_layer>();
-    }
-
-
-    void plugin::on_unload() {
-
-        GLT::application::get().get_layer_stack_ref().pop_layer();
-        mp_editor_layer = {};
-        icon_manager::shutdown();
-        implot_config::shutdown();
-    }
-
-
-    void plugin::update(const GLT::update_event&) {
-
-    }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

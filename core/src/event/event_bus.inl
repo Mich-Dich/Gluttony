@@ -52,7 +52,7 @@ namespace GLT::event_bus {
 
     FORCE_INLINE void unsubscribe(handle& id) {
 
-        if (id == invalid_handle)   return;             // cant invalidate an invalid handle
+        if (id == INVALID_HANDLE)   return;             // cant invalidate an invalid handle
 
         for (auto& [type_idx, vec] : s_subscribers) {
             auto it = std::find_if(vec.begin(), vec.end(),
@@ -60,12 +60,12 @@ namespace GLT::event_bus {
             if (it != vec.end()) {
                 it->active = false;
                 it->callback = nullptr;                 // release captured state early
-                id = invalid_handle;
+                id = INVALID_HANDLE;
                 return;
             }
         }
         
-        id = invalid_handle;                            // couldn't find it so invalidate handle
+        id = INVALID_HANDLE;                            // couldn't find it so invalidate handle
     }
 
 

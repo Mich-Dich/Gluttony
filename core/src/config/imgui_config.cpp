@@ -44,8 +44,6 @@ namespace GLT::imgui_config {
 
 	ImGuiContext* 								    	s_context_imgui{}; 		// Pointer to the ImGui context.
 
-	// ImPlotContext* 								    	s_context_implot{}; 	    // Pointer to the ImPlot context.
-
 	// Path to the ImGui .ini file.
 	static std::filesystem::path                    	g_ini_file_location = GLT::util::get_executable_path() /
 		GLT::config::get_filepath_from_config_type_ini(GLT::config::type::imgui);
@@ -105,7 +103,6 @@ namespace GLT::imgui_config {
 	void load_fonts() {
 
 		ImGui::SetCurrentContext(s_context_imgui);
-		// ImPlot::SetCurrentContext(s_context_implot);
 
 		auto& io = ImGui::GetIO();
 		io.Fonts->Clear();			// Clear the font atlas before adding new fonts
@@ -341,7 +338,6 @@ namespace GLT::imgui_config {
 	}
 
 	// FUNCTION IMPLEMENTATION =========================================================================================
-
 	
 	ImVec4& get_main_color_ref()                        { return main_color; }
 	
@@ -369,13 +365,10 @@ namespace GLT::imgui_config {
 
 	ImGuiContext* get_context_imgui()                   { return s_context_imgui; }
 	
-	// ImPlotContext* get_context_implot()                 { return s_context_implot; }
-
 	void init() {
 
 		IMGUI_CHECKVERSION();
 		s_context_imgui = ImGui::CreateContext();
-		// s_context_implot = ImPlot::CreateContext();
 
 		std::filesystem::path ini_path = GLT::util::get_executable_path() /
 			GLT::config::get_filepath_from_config_type_ini(GLT::config::type::imgui);
@@ -411,8 +404,6 @@ namespace GLT::imgui_config {
 	void shutdown() {
 
 		ImGui::DestroyContext(s_context_imgui);
-		// ImPlot::DestroyContext(s_context_implot);
-
 		serialize(GLT::serializer::option::save);
 		LOG_SHUTDOWN
 	}

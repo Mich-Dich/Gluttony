@@ -151,7 +151,7 @@ namespace GLT::editor::UI {
 	void text_italic(const char* text, bool wrapped = false);
 
 
-	// @brief Displays text with a specific style (e.g., aent text style).
+	// @brief Displays text with a specific style
 	// @param [text] The text to display.
 	void ansi_text(std::string_view text);
 

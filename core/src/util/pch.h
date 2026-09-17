@@ -96,6 +96,8 @@
 // ------------------------- independent files (single includes)-------------------------
 #include "util/core_config.h"
 #include "util/data_structures/data_types.h"
+#include "util/data_structures/thread_pool.h"
+#include "util/data_structures/string_manipulation.h"
 #include "util/macros.h"
 #include "util/io/logger.h"
 #include "util/io/serializer_data.h"

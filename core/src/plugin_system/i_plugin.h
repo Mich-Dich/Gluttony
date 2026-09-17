@@ -1,9 +1,8 @@
 
 #pragma once
 
-// #include <event/application_event.h>
-
 #include "util/io/logger.h"         // expose logger for all plugins
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -133,6 +132,7 @@ namespace GLT::plugin_manager {
     // The plugin manager uses this to enforce that only one plugin per interface is active
     // (the one selected in the configuration file). Plugins with `custom` are free‑form.
     enum class interface : u16 {
+
         none = 0,
         logger,
         window,
