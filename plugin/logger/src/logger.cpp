@@ -203,16 +203,13 @@ namespace GLT::logger_plugin {
             s_worker_thread.join();
 
         // Process any remaining messages in the queue after worker thread has stopped
-        std::queue<GLT::logger::message_data> remaining_messages;
         {
             std::lock_guard<std::mutex> lock(s_queue_mutex);
-            remaining_messages = std::move(s_log_queue); // Take all remaining messages
-        }
-
-        while (!remaining_messages.empty()) {
-            GLT::logger::message_data msg = std::move(remaining_messages.front());
-            remaining_messages.pop();
-            process_log_message(std::move(msg)); // Process each message
+            while (!s_log_queue.empty()) {
+                GLT::logger::message_data msg = std::move(s_log_queue.front());
+                s_log_queue.pop();
+                process_log_message(std::move(msg)); // Process each message
+            }
         }
 
         OPEN_FILE
@@ -426,7 +423,7 @@ namespace GLT::logger_plugin {
 
     // handle message --------------------------------------------------------------------------------------------------
 
-    void log_msg_internal(const GLT::logger::severity msg_sev, const std::source_location location, const char* module_name, 
+    void log_msg_internal(const GLT::logger::severity msg_sev, const GLT::logger::owned_source_location location, const std::string module_name, 
         std::thread::id thread_id, std::string message) {
 
         if (message.empty())
@@ -453,7 +450,7 @@ namespace GLT::logger_plugin {
 
     void process_log_message(const GLT::logger::message_data&& message) {
 
-    #define SHORTEN_FUNC_NAME(text)                                 (strstr(text, "::") ? strstr(text, "::") + 2 : text)
+        #define SHORTEN_FUNC_NAME(text)                 (strstr(text, "::") ? strstr(text, "::") + 2 : text)
 
         // create helper vars
         std::string formatted_message;

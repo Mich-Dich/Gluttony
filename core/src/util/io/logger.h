@@ -71,18 +71,71 @@ namespace GLT::logger {
     };
 
     
+    // put this next to message_data in logger.h
+    struct owned_source_location {
+
+        std::string file_name_str;
+        std::string function_name_str;
+        u32         line_n   = 0;
+        u32         column_n = 0;
+
+        owned_source_location() = default;
+
+        // implicit conversion from a (transient) std::source_location
+        owned_source_location(const std::source_location& loc)
+            : file_name_str (loc.file_name() ? loc.file_name() : "")
+            , function_name_str(loc.function_name() ? loc.function_name() : "")
+            , line_n   (static_cast<u32>(loc.line()))
+            , column_n (static_cast<u32>(loc.column()))
+        {}
+
+        const char* file_name() const noexcept      { return file_name_str.c_str(); }
+        const char* function_name() const noexcept  { return function_name_str.c_str(); }
+        u32         line() const noexcept           { return line_n;   }
+        u32         column() const noexcept         { return column_n; }
+    };
+
+
     struct message_data {
 
-        const GLT::logger::severity                             msg_sev;
-        const std::source_location                              location;
-        const char*                                             module_name;
-        const std::thread::id                                   thread_id;
-        const std::string                                       message;
-        const int                                               command;
-        
-        message_data(const GLT::logger::severity msg_sev, const std::source_location location, const char* module_name, 
-            const std::thread::id thread_id, const std::string& message, const int cmd = 0)
-        : msg_sev(msg_sev), location(location), module_name(module_name), thread_id(thread_id), message(std::move(message)), command(cmd) {};
+        const GLT::logger::severity msg_sev;
+        const owned_source_location location;
+        const std::string           module_name;   // owned
+        const std::thread::id       thread_id;
+        const std::string           message;
+        const int                   command;
+
+        // Owns copies of everything that lives in a (possibly transient) source_location
+        // and of module_name. There is deliberately no const char* overload: callers
+        // of log_msg_internal now pass std::string, and std::source_location converts
+        // implicitly to owned_source_location.
+        message_data(const GLT::logger::severity msg_sev,
+                    const std::source_location    location,      // implicit → owned_source_location
+                    std::string                   module_name,
+                    const std::thread::id         thread_id,
+                    std::string                   message,
+                    const int                     cmd = 0)
+            : msg_sev    (msg_sev)
+            , location   (location)
+            , module_name(std::move(module_name))
+            , thread_id  (thread_id)
+            , message    (std::move(message))
+            , command    (cmd)
+        {}
+
+        message_data(const GLT::logger::severity msg_sev,
+                    const owned_source_location   location,
+                    std::string                   module_name,
+                    const std::thread::id         thread_id,
+                    std::string                   message,
+                    const int                     cmd = 0)
+            : msg_sev    (msg_sev)
+            , location   (location)
+            , module_name(std::move(module_name))
+            , thread_id  (thread_id)
+            , message    (std::move(message))
+            , command    (cmd)
+        {}
     };
 
 
@@ -91,7 +144,7 @@ namespace GLT::logger {
 
     using shutdown_func = void (*)();
 
-    using log_msg_internal_func = void (*)(severity msg_sev, const std::source_location location, const char* module_name,
+    using log_msg_internal_func = void (*)(severity msg_sev, const owned_source_location location, const std::string module_name,
         std::thread::id thread_id, std::string message);
     
     using get_log_file_location_func = std::filesystem::path (*)();
@@ -113,18 +166,18 @@ namespace GLT::logger {
     using unregister_label_func = void (*)(std::thread::id thread_id);
     
     struct logger_functions {
-        init_func                       init;
-        shutdown_func                   shutdown;
-        log_msg_internal_func           log_msg_internal;
-        get_log_file_location_func      get_log_file_location;
-        set_format_func                 set_format;
-        use_previous_format_func        use_previous_format;
-        get_format_func                 get_format;
-        set_buffer_threshold_func       set_buffer_threshold;
-        set_buffer_size_func            set_buffer_size;
-        flush_buffer_func               flush_buffer;
-        register_label_func             register_label_for_thread;
-        unregister_label_func           unregister_label_for_thread;
+        init_func                                               init;
+        shutdown_func                                           shutdown;
+        log_msg_internal_func                                   log_msg_internal;
+        get_log_file_location_func                              get_log_file_location;
+        set_format_func                                         set_format;
+        use_previous_format_func                                use_previous_format;
+        get_format_func                                         get_format;
+        set_buffer_threshold_func                               set_buffer_threshold;
+        set_buffer_size_func                                    set_buffer_size;
+        flush_buffer_func                                       flush_buffer;
+        register_label_func                                     register_label_for_thread;
+        unregister_label_func                                   unregister_label_for_thread;
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -176,8 +229,8 @@ namespace GLT::logger {
     void unregister_label_for_thread(std::thread::id thread_id = std::this_thread::get_id());
     
     
-    void log_msg_internal(severity msg_sev, const std::source_location location, const char* module_name, 
-        std::thread::id thread_id, std::string message);
+    void log_msg_internal(severity msg_sev, const owned_source_location location, const std::string module_name, std::thread::id thread_id, 
+        std::string message);
 
     // TEMPLATE DECLARATION ============================================================================================
 
@@ -187,32 +240,12 @@ namespace GLT::logger {
     // Template version that uses std::format for format strings with arguments
     template<typename... Args>
     FORCE_INLINE void log_msg(const severity msg_sev, const std::source_location location, const char* module_name,
-        std::thread::id thread_id, std::format_string<Args...> fmt, Args&&... args) {
-
-        // // Early exit for empty format string with no arguments (common case)
-        // if constexpr (sizeof...(Args) == 0)
-        //     return;
-
-        // if (fmt.get()[0] == '\0')
-        //     return;   // empty message, skip formatting entirely
-
-        std::string message = std::format(fmt, std::forward<Args>(args)...);
-        if (message.empty())             // still check for other sources of emptiness
-            return;
-
-        log_msg_internal(msg_sev, location, module_name, thread_id, std::move(message));
-    }
+        std::thread::id thread_id, std::format_string<Args...> fmt, Args&&... args);
 
 
     // Overload for plain strings
     FORCE_INLINE void log_msg(const severity msg_sev, const std::source_location location, const char* module_name,
-        std::thread::id thread_id, std::string_view message) {
-            
-        if (message.empty())
-            return;
-
-        log_msg_internal(msg_sev, location, module_name, thread_id, std::string(message));
-    }
+        std::thread::id thread_id, std::string_view message);
 
     // CLASS DECLARATION ===============================================================================================
 
@@ -225,21 +258,21 @@ namespace GLT::logger {
 
             // Constructs a logged_exception from source location, thread id and a string message.
             template<typename... Args>
-			explicit logged_exception(const std::source_location location, const char* module_name, std::thread::id thread_id, 
+			explicit logged_exception(const owned_source_location location, const char* module_name, std::thread::id thread_id, 
                 std::format_string<Args...> fmt, Args&&... args)
             : m_msg(std::format(fmt, std::forward<Args>(args)...)) {
                 logger::log_msg_internal(logger::severity::error, location, module_name, thread_id, m_msg);
             }
 
             // Overload for plain string
-            explicit logged_exception(const std::source_location location, const char* module_name, std::thread::id thread_id, 
+            explicit logged_exception(const owned_source_location location, const char* module_name, std::thread::id thread_id, 
                 const std::string& message)
             : m_msg(message) {
                 logger::log_msg_internal(logger::severity::error, location, module_name, thread_id, m_msg);
             }
 
             // Overload for C-string
-            explicit logged_exception(const std::source_location location, const char* module_name, std::thread::id thread_id, 
+            explicit logged_exception(const owned_source_location location, const char* module_name, std::thread::id thread_id, 
                 const char* message)
             : m_msg(message) {
                 logger::log_msg_internal(logger::severity::error, location, module_name, thread_id, m_msg);
@@ -259,6 +292,8 @@ namespace GLT::logger {
 }
 
 // MACROS ==============================================================================================================
+
+#include "logger.inl"
 
 // Logger support macros -----------------------------------------------------------------------------------------------
 //      split macros into severity specific macros that use all the same master to enable severity level specific logging,

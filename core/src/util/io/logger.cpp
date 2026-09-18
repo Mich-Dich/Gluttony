@@ -53,22 +53,19 @@ namespace GLT::logger {
     }
 
 
-    static void default_log_msg_internal(severity msg_sev, const std::source_location location, const char* module_name, 
+    static void default_log_msg_internal(severity msg_sev, const owned_source_location location, const std::string module_name, 
         std::thread::id thread_id, std::string message) {
-        
+
         if (message.empty())
             return;
 
         if (s_use_buffer) {
 
             std::lock_guard lock(s_buffer_mutex);
-            s_log_buffer.emplace_back(msg_sev, location, module_name, thread_id, message);
+            s_log_buffer.emplace_back(msg_sev, location, module_name, thread_id, std::move(message));
 
-        } else {
-
-            static const char* sev_names[] = {"TRACE","DEBUG","INFO","WARN","ERROR","FATAL"};
+        } else
             fprintf(stdout, "[%s] %s\n", sev_names[static_cast<int>(msg_sev)], message.c_str());
-        }
     }
 
 
@@ -188,7 +185,7 @@ namespace GLT::logger {
     }
 
 
-    void log_msg_internal(severity msg_sev, const std::source_location location, const char* module_name,
+    void log_msg_internal(severity msg_sev, const owned_source_location location, const std::string module_name,
         std::thread::id thread_id, std::string message) {
 
         g_logger.log_msg_internal(msg_sev, location, module_name, thread_id, std::move(message));
