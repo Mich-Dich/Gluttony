@@ -38,7 +38,7 @@ namespace GLT::util {
     requires std::is_enum_v<E>
     constexpr std::optional<E> string_to_enum(std::string_view str);
 
-    
+
     template <typename E>
     requires std::is_enum_v<E>
     inline constexpr auto enum_enumerators = std::define_static_array(std::meta::enumerators_of(^^E));

@@ -1006,41 +1006,109 @@ namespace GLT::editor::UI {
 	}
 
 
-	void table_row(std::string_view label, std::string& text, bool& enable_input) {
-
+	bool table_row(std::string_view label, std::string& text, bool& enable_input, const bool allow_space_as_input, const char* desc) {
+		
+		bool confirmed = false;
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
 		ImGui::Text("%s", label.data());
 
+		if (desc) {
+
+			ImGui::SameLine();
+			UI::shift_cursor_pos(ImGui::GetContentRegionAvail().x - 12.f, 0.f);
+			help_marker(desc);
+		}
+
 		ImGui::TableSetColumnIndex(1);
 
+		ImGui::PushID(label.data());							// Push a unique ID scope based on the label and text pointer
+		ImGui::PushID(&text);
+
+		f32 column_width = ImGui::GetColumnWidth();				// Get the available width for the column
 		if (enable_input) {
 
-			std::string loc_label = "##";
-			loc_label.reserve(label.size() + 2);
-			std::remove_copy_if(label.begin(), label.end(), std::back_inserter(loc_label), [](char c) { return std::isspace(static_cast<unsigned char>(c)); });
-
+			std::string loc_label = "##Input";
 			std::string buffer = text;
 			buffer.resize(256);
 
-			ImGui::SetNextItemWidth(ImGui::GetColumnWidth());
-			if (ImGui::InputText(loc_label.c_str(), buffer.data(), 256, ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_EnterReturnsTrue)) {
+			ImGui::SetNextItemWidth(column_width);
+			ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_EscapeClearsAll
+				| ImGuiInputTextFlags_CtrlEnterForNewLine | ImGuiInputTextFlags_AutoSelectAll;
 
+			if (!allow_space_as_input)
+				flags |= ImGuiInputTextFlags_CharsNoBlank;
+
+			// Store if the input text was active last frame
+			static bool was_text_active = false;
+			bool is_text_active = ImGui::InputText(loc_label.c_str(), buffer.data(), 256, flags);
+
+			if (is_text_active) {
 				buffer.resize(strlen(buffer.c_str()));
 				if (!buffer.empty()) {
-
 					text = buffer;
 					enable_input = false;
+					confirmed = true;
 				}
 			}
 
-		} else {
+			// Handle focus loss
+			if (enable_input) {
+				bool current_active = ImGui::IsItemActive();
 
-			UI::gray_button(text.c_str());
-			if (get_mouse_interation_on_item() == mouse_interation::left_double_clicked) 
+				// If we were active last frame but not this frame, we lost focus
+				if (was_text_active && !current_active) {
+					enable_input = false;
+				}
+
+				// Also check for mouse clicks outside the item
+				if (current_active && ImGui::IsMouseClicked(0) && !ImGui::IsItemHovered()) {
+					enable_input = false;
+				}
+
+				// Escape key to cancel
+				if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+					enable_input = false;
+				}
+
+				was_text_active = current_active;
+			} else {
+				was_text_active = false;
+			}
+		}
+		else
+		{
+			// Create a button that fills the entire column width
+			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgHovered));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgActive));
+
+			// Create a button with the full column width
+			ImVec2 button_size = ImVec2(column_width, 0);
+
+			// Use a dummy label that won't conflict
+			std::string button_label = text.empty() ? " " : text;
+
+			if (ImGui::Button(button_label.c_str(), button_size)) {
+				// Button clicked - we'll handle double click below
+			}
+
+			ImGui::PopStyleColor(3);
+
+			// Check for double click on the button
+			if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
 				enable_input = true;
+			}
+
+			// Alternative: Use your existing double click function if you prefer
+			// if (getMouseInterationOnItem() == mouseInteration::leftDoubleClicked)
+			//     enable_input = true;
 		}
 
+		ImGui::PopID();
+		ImGui::PopID();
+
+		return confirmed;
 	}
 
 

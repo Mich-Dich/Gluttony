@@ -22,7 +22,7 @@ namespace GLT::audio {
 
 namespace GLT {
     class window_close_event;
-    class i_game_loop_base;
+    class i_game_loop_plugin;
 }
 
 namespace GLT {
@@ -47,11 +47,17 @@ namespace GLT {
         application(const std::filesystem::path& project_path);
         ~application();
 
-        GETTER(ref<GLT::platform::i_window_plugin>,     window, mp_window)
+        GETTER(ref<GLT::platform::i_window_plugin>,     window,         mp_window)
+        GETTER(ref<GLT::render::i_renderer_plugin>,     renderer,       mp_renderer)
+        GETTER(ref<GLT::audio::i_audio_plugin>,         audio,          mp_audio)
+        GETTER(ref<GLT::i_game_loop_plugin>,            game_loop,      mp_game_loop_base)
+        
         DEFAULT_GETTER_REF(layer_stack,                 layer_stack)
         DEFAULT_GETTER_CC(f32,                          delta_time)
+        DEFAULT_GETTER_CC(util::interval_controller,    fps_controller)
+        DEFAULT_SETTER(f32,                             delta_time)
         DEFAULT_GETTER(project,                         project)
-        GETTER(std::filesystem::path,                   project_path, m_project.project_path)
+        GETTER(std::filesystem::path,                   project_path,   m_project.project_path)
 
         FORCE_INLINE_R static application& get()	    { return *s_instance; }
 
@@ -68,10 +74,9 @@ namespace GLT {
         static application*			                    s_instance;
         version                                         m_version{};
         ref<GLT::platform::i_window_plugin>             mp_window{};
-        ref<GLT::audio::i_audio_plugin>                 mp_audio{};
         ref<GLT::render::i_renderer_plugin>             mp_renderer{};
-        ref<GLT::i_game_loop_base>                      mp_game_loop_base{};
-        bool                                            m_running = true;
+        ref<GLT::audio::i_audio_plugin>                 mp_audio{};
+        ref<GLT::i_game_loop_plugin>                    mp_game_loop_base{};
         util::interval_controller                       m_fps_controller{};
         handle                                          m_close_event_sub_handle{};
         layer_stack                                     m_layer_stack{};

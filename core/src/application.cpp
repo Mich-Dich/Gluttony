@@ -6,7 +6,7 @@
 #include "plugin_system/plugin_manager.h"
 #include "plugin_system/i_window_plugin.h"
 #include "plugin_system/i_renderer_plugin.h"
-#include "plugin_system/i_game_loop_base.h"
+#include "plugin_system/i_game_loop_plugin.h"
 #include "plugin_system/i_audio_plugin.h"
 #include "config/imgui_config.h"
 
@@ -68,7 +68,8 @@ namespace GLT {
         plugin_manager::load_plugins(plugin_manager::phase::application_ready);
         plugin_manager::unload_plugins(plugin_manager::phase::application_ready);
 
-        mp_game_loop_base = plugin_manager::get_plugin_ref<i_game_loop_base>(plugin_manager::interface::game_loop);
+        mp_game_loop_base = plugin_manager::get_plugin_ref<i_game_loop_plugin>(plugin_manager::interface::game_loop);
+        ASSERT(mp_game_loop_base, "", "Failed to load game_loop plugin")
 
         m_close_event_sub_handle = event_bus::subscribe<window_close_event>(std::bind_front(&application::on_window_close_event, this));
         LOG_INIT
@@ -82,15 +83,13 @@ namespace GLT {
         plugin_manager::load_plugins(plugin_manager::phase::pre_application_shutdown);
         plugin_manager::unload_plugins(plugin_manager::phase::pre_application_shutdown);
 
+        mp_game_loop_base->request_stop();
         mp_renderer->destroy();
-        mp_renderer.reset();
         mp_audio->destroy();
-        mp_audio.reset();
 
         platform::window_attributes attributes = mp_window->get_window_attributes();
         platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::save);
         mp_window->destroy();
-        mp_window.reset();
 
         imgui_config::shutdown();
         plugin_manager::load_plugins(plugin_manager::phase::post_application_shutdown);
@@ -110,32 +109,19 @@ namespace GLT {
 
         plugin_manager::load_plugins(plugin_manager::phase::pre_application_run);
         plugin_manager::unload_plugins(plugin_manager::phase::pre_application_run);
-        mp_window->show(true);                                              // show window now
 
-        while (m_running) {
-
-            // update --------------------------------------------------------------------------------------------------
-            mp_window->poll_events();                                       // update internal state
-            thread_pool::pump_main_thread();                                // run deferred UI updates
-            for (auto layer = m_layer_stack.end(); layer != m_layer_stack.begin(); )
-                (*--layer)->update(m_delta_time);
-            GLT::event_bus::post<update_event>(m_delta_time);               // all systems can subscribe to this (eg: plugins)            
-            mp_audio->update_3d_audio();
-
-            // draw ----------------------------------------------------------------------------------------------------
-            mp_renderer->begin_frame();                                     // start frame + start imgui frame
-            for (auto layer = m_layer_stack.begin(); layer != m_layer_stack.end(); )
-                (*layer++)->render_imgui(m_delta_time);
-            mp_renderer->draw_frame();                                      // finish imgui stuff and render world
-
-            // stats ---------------------------------------------------------------------------------------------------
-            m_delta_time = m_fps_controller.limit();
-            m_application_stats.frame_time_ms = m_delta_time;
-            m_application_stats.cpu_time_ms = 0.f;                          // TODO: set value
-            m_application_stats.fps = (m_delta_time > 0.0f) ? (1000.0f / m_delta_time) : 0.0f;
-            m_application_stats.render = mp_renderer->get_render_stats();
-            debug::update_app_stats(m_application_stats);
-        }
+        game_loop_context ctx{
+            m_delta_time,
+            m_layer_stack,
+            mp_window,
+            mp_renderer,
+            mp_audio,
+            m_fps_controller,
+            m_application_stats,
+        };
+        mp_game_loop_base->init(ctx);
+        mp_game_loop_base->run(ctx);
+        mp_game_loop_base->shutdown(ctx);
 
         plugin_manager::load_plugins(plugin_manager::phase::post_application_run);
         plugin_manager::unload_plugins(plugin_manager::phase::post_application_run);
@@ -151,7 +137,8 @@ namespace GLT {
 
     void application::on_window_close_event(const window_close_event& event) {
 
-        m_running = false;
+        if (mp_game_loop_base)
+            mp_game_loop_base->request_stop();
     }
 
     // CLASS PROTECTED =================================================================================================

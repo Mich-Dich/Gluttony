@@ -239,7 +239,8 @@ namespace GLT::editor::UI {
 	// @param [label] The label for the row.
 	// @param [text] A reference to the string that holds the text.
 	// @param [enable_input] A reference to a boolean that controls whether the text field is editable.
-	void table_row(std::string_view label, std::string& text, bool& enable_input);
+	bool table_row(std::string_view label, std::string& text, bool& enable_input, const bool allow_space_as_input = true, 
+		const char* desc = nullptr);
 
 
 	// @brief Renders a table row with a label and formatted text.
@@ -290,6 +291,35 @@ namespace GLT::editor::UI {
 
 	// TEMPLATE DECLARATION ============================================================================================
 
+	// @brief Renders a table row with a label and a combo box for enum selection.
+	// @param [label] The label for the row.
+	// @param [current_value] A reference to the current enum value (will be used to find the current index).
+	// @param [options] A vector of string options for the enum values.
+	// @param [on_changed] Optional callback function that gets called when the selection changes.
+	// @return true if the value was changed, false otherwise.
+	template<typename T>
+	bool table_row(std::string_view label, T& current_value, const std::vector<std::string>& options, const char* desc = nullptr, 
+		std::function<void(T)> on_changed = nullptr);
+
+
+	// @brief Renders a table row with a label and a combo box for enum selection with custom value mapping.
+	// @param [label] The label for the row.
+	// @param [current_value] A reference to the current enum value.
+	// @param [options] A vector of string options for the enum values.
+	// @param [value_getter] Function to convert enum value to index.
+	// @param [value_setter] Function to convert index to enum value.
+	// @param [on_changed] Optional callback function that gets called when the selection changes.
+	// @return true if the value was changed, false otherwise.
+	template<typename T, typename Container>
+	bool table_row(std::string_view label, T& current_value, const Container& options, const char* desc = nullptr, 
+		std::function<void(T)> on_changed = nullptr);
+
+
+    template<typename T, typename Container>
+    bool table_row(std::string_view label, T& current_value, const Container& options, bool* p_removed, const char* desc = nullptr, 
+		std::function<void(T)> on_changed = nullptr);
+
+
 	// @brief Adds a row to an ImGui table with a label and corresponding value input field.
 	// @tparam [T] The type of the value.
 	// @param [label] The label for the row.
@@ -335,4 +365,4 @@ namespace GLT::editor::UI {
 
 }
 
-#include "pannel_collection.h"
+#include "pannel_collection.inl"

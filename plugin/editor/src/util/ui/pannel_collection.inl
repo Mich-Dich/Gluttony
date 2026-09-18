@@ -29,7 +29,6 @@ namespace GLT::editor::UI {
 	bool table_row(std::string_view label, T& value, f32 drag_speed, T min_value, T max_value, ImGuiInputTextFlags flags) {
 
 		ImGuiStyle& style = ImGui::GetStyle();
-		ImVec2 current_item_spacing = style.ItemSpacing;
 		flags |= ImGuiInputTextFlags_AllowTabInput;
 
 		ImGui::TableNextRow();
@@ -105,20 +104,237 @@ namespace GLT::editor::UI {
 		return false;
 	}
 
-	/*
-		else if constexpr (std::is_same_v<T, int32> || std::is_same_v<T, u32> || std::is_same_v<T, int64> || std::is_same_v<T, u64>) {
 
-			ImGui::SetNextItemWidth(ImGui::GetColumnWidth());
-			return ImGui::DragInt(loc_label.c_str(), &value, drag_speed, min_value, max_value, "%.2f", flags);
+	template<typename T>
+	bool table_row(std::string_view label, T& current_value, const std::vector<std::string>& options, const char* desc, 
+		std::function<void(T)> on_changed) {
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::Text("%s", label.data());
+
+		if (desc) {
+
+			ImGui::SameLine();
+			UI::shift_cursor_pos(ImGui::GetContentRegionAvail().x - 12.f, 0.f);
+			help_marker(desc);
 		}
-	*/
+
+		ImGui::TableSetColumnIndex(1);
+		std::string loc_label = "##";
+		loc_label += label.data();
+
+		// Convert options to C strings for ImGui
+		std::vector<const char*> option_cstrings;
+		option_cstrings.reserve(options.size());
+		for (const auto& option : options)
+			option_cstrings.push_back(option.c_str());
+
+		// Find current index
+		int current_index = static_cast<int>(current_value);
+
+		// Ensure the index is within bounds
+		if (current_index < 0 || current_index >= static_cast<int>(options.size())) {
+
+			current_index = 0;
+			current_value = static_cast<T>(0);
+		}
+
+		bool changed = false;
+		ImGui::SetNextItemWidth(ImGui::GetColumnWidth());
+		if (ImGui::Combo(loc_label.c_str(), &current_index, option_cstrings.data(), static_cast<int>(option_cstrings.size()))) {
+
+			T new_value = static_cast<T>(current_index);
+			if (new_value != current_value) {
+
+				current_value = new_value;
+				changed = true;
+
+				// Call callback if provided
+				if (on_changed)
+					on_changed(current_value);
+			}
+		}
+
+		return changed;
+	}
+
+
+    template<typename T, typename Container>
+	bool table_row(std::string_view label, T& current_value, const Container& options, const char* desc, std::function<void(T)> on_changed) {
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::Text("%s", label.data());
+
+		if (desc) {
+
+			ImGui::SameLine();
+			UI::shift_cursor_pos(ImGui::GetContentRegionAvail().x - 12.f, 0.f);
+			help_marker(desc);
+		}
+
+		ImGui::TableSetColumnIndex(1);
+		std::string loc_label = "##";
+		loc_label += label.data();
+
+		// Helper lambda to get size and convert elements to const char*
+		auto prepare_options = [&]() -> std::pair<std::vector<const char*>, size_t> {
+
+			std::vector<const char*> option_cstrings;
+			if constexpr (requires { options.size(); }) {
+
+				// For containers with size() method (std::vector, std::array)
+				option_cstrings.reserve(options.size());
+				for (const auto& option : options) {
+
+					if constexpr (std::is_same_v<std::decay_t<decltype(option)>, std::string>)
+						option_cstrings.push_back(option.c_str());
+                    else
+						option_cstrings.push_back(option);
+				}
+				return {std::move(option_cstrings), options.size()};
+			
+			} else {
+
+				// For C-style arrays
+				constexpr size_t array_size = std::size(options);
+				option_cstrings.reserve(array_size);
+				for (size_t i = 0; i < array_size; ++i)
+					option_cstrings.push_back(options[i]);
+				
+				return {std::move(option_cstrings), array_size};
+			}
+		};
+
+		auto [option_cstrings, options_size] = prepare_options();
+		int current_index = static_cast<int>(current_value);                        // Find current index
+		if (current_index < 0 || current_index >= static_cast<int>(options_size)) { // Ensure the index is within bounds
+			
+			current_index = 0;
+			current_value = static_cast<T>(0);
+		}
+
+		bool changed = false;
+		ImGui::SetNextItemWidth(ImGui::GetColumnWidth() - 10);
+		if (ImGui::Combo(loc_label.c_str(), &current_index, option_cstrings.data(), static_cast<int>(options_size))) {
+
+			T new_value = static_cast<T>(current_index);
+			if (new_value != current_value) {
+
+				current_value = new_value;
+				changed = true;
+
+				if (on_changed)                                                     // Call callback if provided
+					on_changed(current_value);
+			}
+		}
+
+		return changed;
+	}
+
+
+    template<typename T, typename Container>
+    bool table_row(std::string_view label, T& current_value, const Container& options, const char* desc, bool* p_removed, 
+		std::function<void(T)> on_changed) {
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text("%s", label.data());
+
+		if (desc) {
+
+			ImGui::SameLine();
+			UI::shift_cursor_pos(ImGui::GetContentRegionAvail().x - 12.f, 0.f);
+			help_marker(desc);
+		}
+
+        ImGui::TableSetColumnIndex(1);
+        std::string loc_label = "##";
+        loc_label += label.data();
+
+        // Prepare option strings (same as before)
+        auto prepare_options = [&]() -> std::pair<std::vector<const char*>, size_t> {
+
+            std::vector<const char*> option_cstrings;
+            if constexpr (requires { options.size(); }) {
+
+                option_cstrings.reserve(options.size());
+                for (const auto& option : options) {
+
+                    if constexpr (std::is_same_v<std::decay_t<decltype(option)>, std::string>)
+                        option_cstrings.push_back(option.c_str());
+                    else
+                        option_cstrings.push_back(option);
+                }
+                return {std::move(option_cstrings), options.size()};
+            
+			} else {
+
+				constexpr size_t array_size = std::size(options);
+                option_cstrings.reserve(array_size);
+                for (size_t i = 0; i < array_size; ++i)
+                    option_cstrings.push_back(options[i]);
+                
+				return {std::move(option_cstrings), array_size};
+            }
+        };
+
+        auto [option_cstrings, options_size] = prepare_options();
+
+        // Current index
+        int current_index = static_cast<int>(current_value);
+        if (current_index < 0 || current_index >= static_cast<int>(options_size)) {
+
+            current_index = 0;
+            current_value = static_cast<T>(0);
+        }
+
+        bool changed = false;
+
+        // --- Layout: combo + optional remove button ---
+        f32 column_width = ImGui::GetColumnWidth();
+        f32 combo_width = column_width;
+        if (p_removed) {
+
+            // Reserve space for button (≈ 30px) and ImGui::SameLine spacing
+            combo_width -= 30.0f;
+            if (combo_width < 50.0f) combo_width = 50.0f;
+        }
+
+        ImGui::SetNextItemWidth(combo_width);
+        if (ImGui::Combo(loc_label.c_str(), &current_index, option_cstrings.data(), static_cast<int>(options_size))) {
+
+            T new_value = static_cast<T>(current_index);
+            if (new_value != current_value) {
+
+                current_value = new_value;
+                changed = true;
+                if (on_changed) on_changed(current_value);
+            }
+        }
+
+        // Remove button (if requested)
+        if (p_removed) {
+
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.6f, 0.1f, 0.1f, 0.6f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.2f, 0.2f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+            if (ImGui::Button(("X##" + loc_label).c_str()))
+                *p_removed = true;   // signal removal
+            
+			ImGui::PopStyleColor(3);
+        }
+
+        return changed;
+    }
 
 
 	template<typename T>
 	bool table_row_slider(std::string_view label, T& value, f32 min_value, f32 max_value, f32 draw_speed, ImGuiInputTextFlags flags) {
 
 		ImGuiStyle& style = ImGui::GetStyle();
-		ImVec2 current_item_spacing = style.ItemSpacing;
 		flags |= ImGuiInputTextFlags_AllowTabInput;
 
 		ImGui::TableNextRow();
@@ -160,7 +376,6 @@ namespace GLT::editor::UI {
         ImGuiInputTextFlags flags) {
 
 		ImGuiStyle& style = ImGui::GetStyle();
-		ImVec2 current_item_spacing = style.ItemSpacing;
 		flags |= ImGuiInputTextFlags_AllowTabInput;
 
 		ImGui::TableNextRow();

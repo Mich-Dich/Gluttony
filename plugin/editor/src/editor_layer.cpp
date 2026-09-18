@@ -17,6 +17,7 @@
 #include "window/log_viewer.h"
 #include "window/stats.h"
 #include "window/audio_viewer.h"
+#include "window/plugin_wizard.h"
 
 
 
@@ -260,8 +261,11 @@ namespace GLT::editor {
             ImGui::SetCursorPosY(win_pad + (logo_side - menu_h) * 0.5f);
             toolbar_menu("Window", MAIN_MENU_BAR_POPUP, [this]{
 
-                if (ImGui::MenuItem("Log View"))
+                if (ImGui::MenuItem("New Log View"))
                     add_window<log_viewer_window>();
+
+                if (ImGui::MenuItem("New Plugin Wizard"))
+                    add_window<plugin_wizard_window>();
 
                 if (ImGui::MenuItem("Debug Statistics", "", m_show_stats_window)) {
 
