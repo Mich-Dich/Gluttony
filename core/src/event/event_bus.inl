@@ -16,19 +16,26 @@ namespace GLT::event_bus {
 
     struct subscription_entry {
         
-        handle                                                                          id;
-        std::function<void(const GLT::event&)>                                          callback;
+        handle                                                                          id{};
+        std::function<void(const GLT::event&)>                                          callback{};
         bool                                                                            active = true;
     };
 
     // STATIC VARIABLES ================================================================================================
 
     // Per‑type lists of subscribers.
-    inline std::unordered_map<std::type_index, std::vector<subscription_entry>>         s_subscribers;
+    inline std::unordered_map<std::type_index, std::vector<subscription_entry>>         s_subscribers{};
 
     inline std::atomic<handle>                                                          s_next_handle{1};
 
-    // TEMPLATE IMPLEMENTATION =========================================================================================
+    // INTERNAL TEMPLATE DECLARATION ===================================================================================
+
+    template<event_class T>
+    FORCE_INLINE std::function<void(const event&)> make_wrapper(event_handler_fn<T> handler);
+
+    // INTERNAL FUNCTION DECLARATION ===================================================================================
+
+    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     template<event_class T>
     FORCE_INLINE std::function<void(const event&)> make_wrapper(event_handler_fn<T> handler) {
@@ -38,17 +45,9 @@ namespace GLT::event_bus {
         };
     }
 
+    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-    template<event_class T>
-    FORCE_INLINE_R handle subscribe(event_handler_fn<T> handler) {
-
-        auto id = s_next_handle.fetch_add(1, std::memory_order_relaxed);
-        auto wrapper = make_wrapper<T>(std::move(handler));
-        auto& vec = s_subscribers[std::type_index(typeid(T))];
-        vec.emplace_back(id, std::move(wrapper));       // amortized O(1)
-        return id;
-    }
-
+    // FUNCTION IMPLEMENTATION =========================================================================================
 
     FORCE_INLINE void unsubscribe(handle& id) {
 
@@ -69,6 +68,32 @@ namespace GLT::event_bus {
     }
 
 
+    FORCE_INLINE void purge_dead_subscribers() {
+
+        for (auto& [type_idx, vec] : s_subscribers) {
+            vec.erase(
+                std::remove_if(vec.begin(), vec.end(),
+                    [](const subscription_entry& entry) { return !entry.active; }),
+                vec.end()
+            );
+            // If vector becomes empty, optionally erase the type slot, but not necessary
+        }
+    }
+
+    // TEMPLATE IMPLEMENTATION =========================================================================================
+
+
+    template<event_class T>
+    FORCE_INLINE_R handle subscribe(event_handler_fn<T> handler) {
+
+        auto id = s_next_handle.fetch_add(1, std::memory_order_relaxed);
+        auto wrapper = make_wrapper<T>(std::move(handler));
+        auto& vec = s_subscribers[std::type_index(typeid(T))];
+        vec.emplace_back(id, std::move(wrapper));       // amortized O(1)
+        return id;
+    }
+
+
     template<event_class T>
     FORCE_INLINE void post(const T event) {
 
@@ -82,16 +107,13 @@ namespace GLT::event_bus {
     }
 
 
-    FORCE_INLINE void purge_dead_subscribers() {
+    template<event_class T>
+    FORCE_INLINE_R subscription_guard subscribe_scoped(event_handler_fn<T> handler) {
 
-        for (auto& [type_idx, vec] : s_subscribers) {
-            vec.erase(
-                std::remove_if(vec.begin(), vec.end(),
-                    [](const subscription_entry& entry) { return !entry.active; }),
-                vec.end()
-            );
-            // If vector becomes empty, optionally erase the type slot, but not necessary
-        }
+        return subscription_guard{ 
+
+            subscribe<T>(std::move(handler)), detail::unsubscribe_fn{}
+        };
     }
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================

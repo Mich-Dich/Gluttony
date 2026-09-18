@@ -13,16 +13,17 @@
 namespace GLT::platform {
     class i_window_plugin;
 }
+
 namespace GLT::render {
     class i_renderer_plugin;
 }
+
 namespace GLT::audio {
     class i_audio_plugin;
 }
 
 namespace GLT {
     class window_close_event;
-    class i_game_loop_plugin;
 }
 
 namespace GLT {
@@ -50,7 +51,6 @@ namespace GLT {
         GETTER(ref<GLT::platform::i_window_plugin>,     window,         mp_window)
         GETTER(ref<GLT::render::i_renderer_plugin>,     renderer,       mp_renderer)
         GETTER(ref<GLT::audio::i_audio_plugin>,         audio,          mp_audio)
-        GETTER(ref<GLT::i_game_loop_plugin>,            game_loop,      mp_game_loop_base)
         
         DEFAULT_GETTER_REF(layer_stack,                 layer_stack)
         DEFAULT_GETTER_CC(f32,                          delta_time)
@@ -69,22 +69,19 @@ namespace GLT {
 
     private:
         
-        void on_window_close_event(const window_close_event& event);
-
         static application*			                    s_instance;
         version                                         m_version{};
         ref<GLT::platform::i_window_plugin>             mp_window{};
         ref<GLT::render::i_renderer_plugin>             mp_renderer{};
         ref<GLT::audio::i_audio_plugin>                 mp_audio{};
-        ref<GLT::i_game_loop_plugin>                    mp_game_loop_base{};
         util::interval_controller                       m_fps_controller{};
-        handle                                          m_close_event_sub_handle{};
         layer_stack                                     m_layer_stack{};
         u32                                             m_focus_fps = 60;
         u32                                             m_none_focus_fps = 30;
         f32                                             m_delta_time = 0.f;
         project                                         m_project{};
         debug::application_stats                        m_application_stats{};
+
     };
 
 }

@@ -13,6 +13,7 @@
     "blitted",
     "cmpeq",
     "denoising",
+    "Dockable",
     "glfw",
     "hlsl",
     "imgui",

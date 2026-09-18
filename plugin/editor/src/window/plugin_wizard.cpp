@@ -22,6 +22,10 @@ namespace GLT::editor {
 
     constexpr const char*                   ADD_VENDOR_POPUP_ID     = "##pw_add_vendor_popup";
 
+    const std::string                       BUILD_FILE_NAME("CMakeLists.txt");
+
+    const std::string                       ENTRY_FILE_NAME("entry_point.cpp");
+
     constexpr static TextEditor::Palette    dark_style = {{
 		IM_COL32(224, 224, 224, 255),	// text
 		IM_COL32(197, 134, 192, 255),	// keyword
@@ -367,7 +371,8 @@ namespace GLT::editor {
         if (m_cmake_editor.GetText() != cmake_src)
             m_cmake_editor.SetText(cmake_src);
 
-        if (UI::begin_collapsing_header_section("src/entry_point.cpp")) {
+        const std::string entry_file_loc = "src/" + ENTRY_FILE_NAME;
+        if (UI::begin_collapsing_header_section(entry_file_loc.c_str())) {
 
             ImGui::BeginChild("##pw_preview_entry");
             ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::monospace_regular));
@@ -377,7 +382,7 @@ namespace GLT::editor {
             UI::end_collapsing_header_section();
         }
 
-        if (UI::begin_collapsing_header_section("CMakeLists.txt")) {
+        if (UI::begin_collapsing_header_section(BUILD_FILE_NAME.c_str())) {
 
             ImGui::BeginChild("##pw_preview_cmake");
             ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::monospace_regular));
@@ -796,8 +801,8 @@ namespace GLT::editor {
         }
 
         std::error_code error;
-        const auto cmake_path = m_plugin_path / "CMakeLists.txt";
-        if (std::filesystem::exists(cmake_path, error) && !error) {
+        const auto cmake_path = m_plugin_path / BUILD_FILE_NAME;
+        if (GLT::vfs::exists(cmake_path, error) && !error) {
 
             out_error = "A plugin already exists at " + m_plugin_path.generic_string();
             return false;
@@ -906,7 +911,7 @@ namespace GLT::editor {
         s << "# Specific Plugin CMake Configuration\n";
         s << "# ===========================================================================================\n";
         s << "# Project:      plugin for Gluttony\n";
-        s << "# Location:     ${PROJECT_SOURCE_DIR}/plugin/" << name << "/CMakeLists.txt\n";
+        s << "# Location:     ${PROJECT_SOURCE_DIR}/plugin/" << name << "/" << BUILD_FILE_NAME << "\n";
         s << "# Purpose:      compile the plugin in this dir as a shared lib\n";
         s << "# ===========================================================================================\n\n";
 
@@ -1015,32 +1020,31 @@ namespace GLT::editor {
     void plugin_wizard_window::write_files(const std::filesystem::path& plugin_root) {
 
         std::error_code error{};
+
+        // create src/
         const auto src_dir = plugin_root / "src";
-        std::filesystem::create_directories(src_dir, error);
-        if (error)
-            throw std::runtime_error("create_directories failed: " + error.message());
+        GLT::vfs::create_directories(src_dir, error);
+        VALIDATE(!error, return, "", "Failed to create directories [{}]", error.message())
 
         {
-            std::ofstream out(src_dir / "entry_point.cpp", std::ios::binary | std::ios::trunc);
-            if (!out)
-                throw std::runtime_error("could not open entry_point.cpp for writing");
-            out << build_entry_point_cpp();
+            const std::string data = build_entry_point_cpp();
+            VALIDATE(GLT::vfs::write_text_file(src_dir / ENTRY_FILE_NAME, data), return, 
+                "", "Failed to write [src/{}]", ENTRY_FILE_NAME)
         }
 
         {
-            std::ofstream out(plugin_root / "CMakeLists.txt", std::ios::binary | std::ios::trunc);
-            if (!out)
-                throw std::runtime_error("could not open CMakeLists.txt for writing");
-            out << build_cmake_lists();
+            const std::string data = build_cmake_lists();
+            VALIDATE(GLT::vfs::write_text_file(plugin_root / BUILD_FILE_NAME, data), return, 
+                "", "Failed to write [{}]", BUILD_FILE_NAME)
         }
 
+        // optional asset/
         if (m_create_asset_dir) {
-
             const auto asset_dir = plugin_root / "asset";
-            std::filesystem::create_directories(asset_dir, error);
-            if (error)
-                throw std::runtime_error("could not create asset dir: " + error.message());
+            GLT::vfs::create_directories(asset_dir, error);
+            VALIDATE(!error, return, "", "Failed to create directories [{}]", error.message())
         }
+    
     }
 
 }

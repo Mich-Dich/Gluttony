@@ -13,7 +13,7 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 
-namespace GLT::glfw_window {
+namespace GLT::platform::glfw_backend {
 
     // CONSTANTS =======================================================================================================
 
@@ -37,7 +37,7 @@ namespace GLT::glfw_window {
 
         .name                                                   = GLT_MODULE_NAME,
         .load_phase                                             = GLT::plugin_manager::phase::pre_application,
-        .unload_phase                                           = GLT::plugin_manager::phase::post_setup,
+        .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
         .target                                                 = GLT::plugin_manager::interface::window,
         .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
         .dependency_names                                       = dependencies_names,
@@ -199,4 +199,4 @@ namespace GLT::glfw_window {
 
 #include "window.inl"
 
-EXPORT_PLUGIN_CLASS(GLT::glfw_window::plugin, GLT::glfw_window::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::platform::glfw_backend::plugin, GLT::platform::glfw_backend::descriptor)

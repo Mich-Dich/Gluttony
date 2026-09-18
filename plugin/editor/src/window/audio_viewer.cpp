@@ -161,23 +161,22 @@ namespace GLT::editor {
     // Populate everything that can be derived without decoding.
     static audio_details populate_details_from_disk(const std::filesystem::path& path, const std::string& name, const std::string& ext) {
 
-        audio_details d{};
-        d.path = GLT::project::extract_path_from_project_content_dir(path);
-        d.name = name;
-        d.extension = ext;
-        d.format = audio::pretty_format(ext);
+        audio_details details{};
+        details.path = GLT::project::extract_path_from_project_content_dir(path);
+        details.name = name;
+        details.extension = ext;
+        details.format = audio::pretty_format(ext);
 
         std::error_code error{};
-        const auto size = std::filesystem::file_size(path, error);
+        const auto size = GLT::vfs::file_size(path, error);
         if (!error) 
-            d.file_size = static_cast<u64>(size);
+            details.file_size = static_cast<u64>(size);
 
-        error.clear();
-        const auto ftime = std::filesystem::last_write_time(path, error);
-        if (!error) 
-            d.last_modified = ftime;
+        const GLT::system_time time = GLT::vfs::last_write_time(path, error);
+        if (!error)
+            details.last_modified = time;
 
-        return d;
+        return details;
     }
 
 
@@ -924,24 +923,21 @@ namespace GLT::editor {
     void audio_viewer_window::populate_details() {
 
         std::error_code error{};
-
-        const auto size = std::filesystem::file_size(PROJECT_CONTENT_DIR / m_details.path, error);
+        const auto size = GLT::vfs::file_size(PROJECT_CONTENT_DIR / m_details.path, error);;
         if (!error)
             m_details.file_size = static_cast<u64>(size);
 
-        error.clear();
-        const auto ftime = std::filesystem::last_write_time(PROJECT_CONTENT_DIR / m_details.path, error);
+        const GLT::system_time time = GLT::vfs::last_write_time(PROJECT_CONTENT_DIR / m_details.path, error);
         if (!error)
-            m_details.last_modified = ftime;
+            m_details.last_modified = time;
 
-        // Duration, sample rate, channels and bit depth come from the decoder
-        // in decode_file(); the fields we can fill from the extension alone
-        // are set here for the failure case.
-        m_details.duration_sec  = 0.0f;
-        m_details.sample_rate   = 0;
-        m_details.channels      = 0;
-        m_details.bit_depth     = 0;
-        m_details.bitrate_kbps  = 0;
+        // Duration, sample rate, channels and bit depth come from the decoder in decode_file(); 
+        // the fields we can fill from the extension alone are set here for the failure case.
+        m_details.duration_sec = 0.0f;
+        m_details.sample_rate = 0;
+        m_details.channels = 0;
+        m_details.bit_depth = 0;
+        m_details.bitrate_kbps = 0;
     }
 
 

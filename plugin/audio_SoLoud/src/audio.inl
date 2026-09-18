@@ -36,13 +36,9 @@ namespace GLT::audio::soloud_backend {
 
     bool audio::create() {
 
-        m_soloud = std::make_unique<SoLoud::Soloud>();
-        if (m_soloud->init() != SoLoud::SO_NO_ERROR) {
-            LOG(error, "SoLoud initialization failed");
-            m_soloud.reset();
-            return false;
-        }
-        LOG(info, "SoLoud audio backend initialized");
+        m_soloud = GLT::create_unique_ref<SoLoud::Soloud>();
+        VALIDATE(m_soloud->init() == SoLoud::SO_NO_ERROR, m_soloud.reset(); return false, 
+            "SoLoud audio backend initialized", "SoLoud initialization failed");
         return true;
     }
 
@@ -69,21 +65,17 @@ namespace GLT::audio::soloud_backend {
 
         if (is_stream) {
 
-            auto stream = std::make_unique<SoLoud::WavStream>();
-            if (stream->load(file_path.c_str()) != SoLoud::SO_NO_ERROR) {
-                LOG(error, "Failed to load streamed sound: {}", file_path);
-                return INVALID_HANDLE;
-            }
+            auto stream = GLT::create_unique_ref<SoLoud::WavStream>();
+            VALIDATE(stream->load(file_path.c_str()) == SoLoud::SO_NO_ERROR, return INVALID_HANDLE, 
+                "", "Failed to load streamed sound: {}", file_path);
             entry.stream = std::move(stream);
             entry.is_stream = true;
 
         } else {
 
-            auto wav = std::make_unique<SoLoud::Wav>();
-            if (wav->load(file_path.c_str()) != SoLoud::SO_NO_ERROR) {
-                LOG(error, "Failed to load sound: {}", file_path);
-                return INVALID_HANDLE;
-            }
+            auto wav = GLT::create_unique_ref<SoLoud::Wav>();
+            VALIDATE(wav->load(file_path.c_str()) == SoLoud::SO_NO_ERROR, return INVALID_HANDLE, 
+                "", "Failed to load sound: {}", file_path);
             entry.wav = std::move(wav);
             entry.is_stream = false;
 

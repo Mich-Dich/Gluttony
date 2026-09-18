@@ -17,12 +17,13 @@ namespace GLT {
         inline constexpr std::string                FILE_EXTENSION_CONFIG(".yml");      // Extension for YAML config files: ".yml"
         inline constexpr std::string                FILE_EXTENSION_INI(".ini");         // Extension for INI config files: ".ini"
 
-        inline const std::filesystem::path          METADATA_DIR("metadata");           // relative to executable dir
-        inline const std::filesystem::path          ASSET_DIR("asset");                 // relative to executable dir
-        inline const std::filesystem::path          CONFIG_DIR("config");               // relative to executable dir
-        inline const std::filesystem::path          CONTENT_DIR("content");             // relative to executable dir
-        inline const std::filesystem::path          SOURCE_DIR("source");               // relative to executable dir
-        inline const std::filesystem::path          PLUGIN_DIR("plugin");               // relative to executable dir
+        inline const std::filesystem::path          METADATA_DIR("metadata");
+        inline const std::filesystem::path          ASSET_DIR("asset");
+        inline const std::filesystem::path          CONFIG_DIR("config");
+        inline const std::filesystem::path          CONTENT_DIR("content");
+        inline const std::filesystem::path          LOG_DIR("log");
+        inline const std::filesystem::path          SOURCE_DIR("source");
+        inline const std::filesystem::path          PLUGIN_DIR("plugin");
 
         #if defined(PLATFORM_LINUX)
 

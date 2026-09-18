@@ -144,23 +144,28 @@ namespace GLT::editor {
 
         } else {
 
-            search_dir = GLT::util::get_executable_path() / "logs";
+            search_dir = GLT::util::get_executable_path() / GLT::config::LOG_DIR;
         }
 
         // Secondary candidates: any other .log files in the same directory.
-        std::error_code ec;
-        if (std::filesystem::is_directory(search_dir, ec)) {
+        std::error_code error;
+        if (GLT::vfs::is_directory(search_dir, error)) {
 
-            for (const auto& entry : std::filesystem::directory_iterator(search_dir, ec)) {
+            auto iterator = GLT::vfs::directory_iterator(search_dir, error);
+            if (!error) {
+                for (const auto& entry : iterator) {
 
-                std::error_code entry_ec;
-                if (!entry.is_regular_file(entry_ec) || entry_ec) continue;
-                if (entry.path().extension() != ".log") continue;
-                if (std::find(m_available_log_files.begin(), m_available_log_files.end(), entry.path())
-                    != m_available_log_files.end())
-                    continue;
+                    if (!entry.is_regular_file(error) || error)
+                        continue;
 
-                m_available_log_files.push_back(entry.path());
+                    if (entry.path().extension() != ".log")
+                        continue;
+
+                    if (std::contains(m_available_log_files, entry.path()))
+                        continue;
+
+                    m_available_log_files.push_back(entry.path());
+                }
             }
         }
 
@@ -203,9 +208,9 @@ namespace GLT::editor {
         if (m_log_file_path.empty())
             return;
 
-        std::error_code ec;
-        const auto size = std::filesystem::file_size(m_log_file_path, ec);
-        if (ec)
+        std::error_code error{};
+        const auto size = GLT::vfs::file_size(m_log_file_path, error);
+        if (error)
             return;
 
         // Skip to near the end of very large files so opening the window is
@@ -223,9 +228,9 @@ namespace GLT::editor {
         if (m_log_file_path.empty())
             return;
 
-        std::error_code ec;
-        const auto size = std::filesystem::file_size(m_log_file_path, ec);
-        if (ec)
+        std::error_code error{};
+        const auto size = GLT::vfs::file_size(m_log_file_path, error);
+        if (error)
             return;     // may not exist yet
 
         const auto size_off = static_cast<std::streamoff>(size);
@@ -252,9 +257,9 @@ namespace GLT::editor {
         if (m_log_file_path.empty())
             return;
 
-        std::error_code ec;
-        const auto size = std::filesystem::file_size(m_log_file_path, ec);
-        if (ec)
+        std::error_code error{};
+        const auto size = GLT::vfs::file_size(m_log_file_path, error);
+        if (error)
             return;
 
         const auto size_off = static_cast<std::streamoff>(size);

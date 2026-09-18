@@ -7,7 +7,7 @@
 # ===========================================================================================
 
 include(${CMAKE_SOURCE_DIR}/helper.cmake)
-set(PLUGIN_NAME                                                         "glfw_window")
+set(PLUGIN_NAME                                                         "window_glfw")
 
 file(GLOB_RECURSE PLUGIN_SOURCES
     CONFIGURE_DEPENDS

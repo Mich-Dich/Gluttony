@@ -296,19 +296,18 @@ namespace GLT::plugin_manager {
     void serialize(const std::filesystem::path& config_path, serializer::option option) {
         
         GLT::serializer::yaml plugin_serializer(config_path, "plugin_settings", option);
-        for (underlying index = 0; index < static_cast<underlying>(interface::custom); index++) {
-            auto targeted = static_cast<interface>(index);
+        for (GLT::plugin_manager::interface target : GLT::util::enum_values<GLT::plugin_manager::interface>) {
+            
             std::string buffer = "unknown";
-
             if (option == serializer::option::save)
-                buffer = s_plugin_names_per_target_interface[targeted];
+                buffer = s_plugin_names_per_target_interface[target];
 
-            plugin_serializer.entry(to_string(targeted), buffer);
+            plugin_serializer.entry(to_string(target), buffer);
 
             if (option == serializer::option::load)
-                s_plugin_names_per_target_interface[targeted] = buffer;
+                s_plugin_names_per_target_interface[target] = buffer;
         }
-    }           // serializer dies here
+    }
 
     // CLASS/FUNCTION IMPLEMENTATION ==================================================================================
 
@@ -318,12 +317,10 @@ namespace GLT::plugin_manager {
 
         const auto plugin_dir = GLT::util::get_executable_path() / config::PLUGIN_DIR;
         std::error_code error{};
-        vfs::exists(plugin_dir, error);
-        VALIDATE(!error, return, "", "Plugin dir is invalid [{}]", plugin_dir)
+        VALIDATE(GLT::vfs::exists(plugin_dir, error) && !error, return, "", "Plugin dir is invalid [{}]", plugin_dir)
 
         s_config_path = project_dir_path / (GLT::config::PROJECT_NAME + GLT::config::PROJECT_EXTENTION);
-        const bool exits = vfs::exists(s_config_path, error);
-        if (!error && exits)
+        if (GLT::vfs::exists(s_config_path, error) && !error)
             serialize(s_config_path, serializer::option::load);
         else
             LOG(error, "Project file does not exist [{}]: [{}]", project_dir_path.generic_string(), error.message())

@@ -82,16 +82,17 @@ namespace GLT::editor {
 
 
     std::vector<std::filesystem::path> list_subdirectories(const std::filesystem::path& dir) {
-        std::vector<std::filesystem::path> out;
-        std::error_code ec;
-        for (auto it = std::filesystem::directory_iterator(dir, ec);
-                !ec && it != std::filesystem::directory_iterator();
-                it.increment(ec))
-        {
-            if (it->is_directory(ec) && !is_hidden_entry(it->path())) {
-                out.push_back(it->path());
-            }
+
+        std::vector<std::filesystem::path> out{};
+        std::error_code error{};
+
+        auto iterator = GLT::vfs::directory_iterator(dir, error);
+        if (!error) {
+            for (auto& entry : iterator)
+                if ((entry.is_directory(error) && !error) && !is_hidden_entry(entry.path()))
+                    out.push_back(entry.path());
         }
+
         std::sort(out.begin(), out.end());
         return out;
     }
@@ -123,9 +124,9 @@ namespace GLT::editor {
         if (m_content_dir.empty()) {
 
             std::error_code error{};
-            m_content_dir = std::filesystem::current_path(error) / "content";
-            if (!std::filesystem::exists(m_content_dir, error))
-                std::filesystem::create_directories(m_content_dir, error);
+            m_content_dir = GLT::util::get_executable_path() / GLT::config::CONTENT_DIR;
+            if (!GLT::vfs::exists(m_content_dir, error))
+                GLT::vfs::create_directories(m_content_dir, error);
 
             navigate_to(m_content_dir);
         }
@@ -399,10 +400,10 @@ namespace GLT::editor {
             std::error_code error{};
             std::filesystem::path candidate = m_current_dir / "New Folder";
             int suffix = 1;
-            while (std::filesystem::exists(candidate, error))
+            while (GLT::vfs::exists(candidate, error))
                 candidate = m_current_dir / ("New Folder " + std::to_string(suffix++));
 
-            std::filesystem::create_directory(candidate, error);
+            GLT::vfs::create_directory(candidate, error);
             m_entries_dirty = true;
         }
 
@@ -483,9 +484,9 @@ namespace GLT::editor {
 
                 std::error_code error{};
                 const auto target = m_pending_rename_path.parent_path() / m_rename_buffer;
-                if (!std::filesystem::exists(target, error)) {
-                    std::filesystem::rename(m_pending_rename_path, target, error);
-                }
+                if (!GLT::vfs::exists(target, error) && !error)
+                    GLT::vfs::rename(m_pending_rename_path, target, error);
+
                 m_pending_rename_path.clear();
                 m_entries_dirty = true;
                 ImGui::CloseCurrentPopup();
@@ -505,14 +506,16 @@ namespace GLT::editor {
             ImGui::TextDisabled("This cannot be undone.");
 
             if (ImGui::Button("Delete", ImVec2(80, 0))) {
-                std::error_code ec;
-                std::filesystem::remove_all(m_pending_delete_path, ec);
+
+                std::error_code error{};
+                GLT::vfs::remove_all(m_pending_delete_path, error);
                 m_pending_delete_path.clear();
                 m_entries_dirty = true;
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
             if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+
                 m_pending_delete_path.clear();
                 ImGui::CloseCurrentPopup();
             }
@@ -525,7 +528,7 @@ namespace GLT::editor {
     void content_browser_window::navigate_to(const std::filesystem::path& dir) {
 
         std::error_code error;
-        if (!std::filesystem::is_directory(dir, error))
+        if (!GLT::vfs::is_directory(dir, error))
             return;
 
         if (!m_current_dir.empty() && paths_equal(dir, m_current_dir))
@@ -585,33 +588,31 @@ namespace GLT::editor {
             return;
 
         std::error_code error{};
-        for (auto it = std::filesystem::directory_iterator(m_current_dir, error);
-             !error && it != std::filesystem::directory_iterator();
-             it.increment(error)) {
+        auto iterator = GLT::vfs::directory_iterator(m_current_dir, error);
+        if (!error) {
 
-            const auto& p = it->path();
-            if (is_hidden_entry(p)) continue;
+            for (auto& entry : iterator) {
 
-            dir_entry e{};
-            e.path = p;
-            e.name = p.filename().string();
-            e.is_directory = it->is_directory(error);
+                const auto& p = it->path();
+                if (is_hidden_entry(p))
+                    continue;
 
-            if (!e.is_directory) {
+                if (!entry.is_directory()) {
 
-                std::string ext = p.extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), 
-                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                e.extension = std::move(ext);
+                    std::string ext = p.extension().string();
+                    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    entry.extension = std::move(ext);
+                }
+                m_entries.push_back(entry);
             }
-
-            m_entries.push_back(std::move(e));
         }
 
         // Directories before files, then alphabetical within each group.
         std::sort(m_entries.begin(), m_entries.end(),
             [](const dir_entry& a, const dir_entry& b) {
-                if (a.is_directory != b.is_directory) return a.is_directory;
+                if (a.is_directory != b.is_directory) 
+                    return a.is_directory;
+
                 return a.name < b.name;
             });
     }

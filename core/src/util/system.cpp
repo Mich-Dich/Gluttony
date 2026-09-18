@@ -2,6 +2,7 @@
 #include "util/pch.h"
 
 #if defined(PLATFORM_LINUX)
+
     #include <sys/types.h>          // For pid_t
     #include <sys/wait.h>           // For waitpid
     #include <unistd.h>             // For fork, execv, etc.
@@ -10,15 +11,19 @@
     #include <limits.h>
     #include <fcntl.h>
     #include <cstring>
-    #include <unistd.h>
     #include <sys/types.h>
     #include <sys/wait.h>
     #include <fcntl.h>
+    #include <sys/resource.h>
+    #include <cstdio>
+
 #elif defined(PLATFORM_WINDOWS)
+
     #include <Windows.h>
     #include <commdlg.h>
     #include <iostream>
     #include <tchar.h>              // For _T() macros
+
 #endif
 
 #include "system.h"
@@ -243,6 +248,50 @@ namespace GLT::util {
 
         std::cerr << "Error retrieving the executable path." << std::endl;
         return std::filesystem::path();
+    }
+
+
+    u64 get_process_ram_bytes() {
+
+        // /proc/self/statm is a single line of space-separated numbers:
+        //
+        //   size   resident   shared   text   lib   data   dt
+        //
+        //   size     = total program size (virtual memory) in pages
+        //   resident = resident set size (RSS) in pages   <-- what we want
+        //
+        // We skip the first field and read the second.
+        std::FILE* f = std::fopen("/proc/self/statm", "r");
+        if (!f)
+            return 0;
+
+        unsigned long vm_size_pages = 0;
+        unsigned long rss_pages = 0;
+        const int read = std::fscanf(f, "%lu %lu", &vm_size_pages, &rss_pages);
+        std::fclose(f);
+
+        if (read != 2)
+            return 0;
+
+        const long page_size = sysconf(_SC_PAGESIZE);
+        if (page_size <= 0)
+            return 0;
+
+        return static_cast<u64>(rss_pages) * static_cast<u64>(page_size);
+    }
+
+
+    u64 get_process_peak_ram_bytes() {
+
+        // getrusage(RUSAGE_SELF, ...) gives the high-water mark of the
+        // resident set size since the process started. On Linux, ru_maxrss
+        // is in kilobytes (this differs from some other Unixes, where it's
+        // in pages — see the getrusage(2) man page).
+        struct rusage usage{};
+        if (getrusage(RUSAGE_SELF, &usage) != 0)
+            return 0;
+
+        return static_cast<u64>(usage.ru_maxrss) * 1024u;
     }
 
     // CLASS IMPLEMENTATION ============================================================================================

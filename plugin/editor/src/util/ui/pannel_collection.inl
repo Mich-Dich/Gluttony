@@ -28,7 +28,6 @@ namespace GLT::editor::UI {
     template<typename T>
 	bool table_row(std::string_view label, T& value, f32 drag_speed, T min_value, T max_value, ImGuiInputTextFlags flags) {
 
-		ImGuiStyle& style = ImGui::GetStyle();
 		flags |= ImGuiInputTextFlags_AllowTabInput;
 
 		ImGui::TableNextRow();

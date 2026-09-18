@@ -13,7 +13,6 @@ namespace GLT::vfs {
 
     // TYPES ===========================================================================================================
 
-    
     #if defined(BUILD_GAME)
 
         static filesystem_type      s_filesystem_type = filesystem_type::zip;
@@ -26,11 +25,17 @@ namespace GLT::vfs {
 
     // STATIC VARIABLES ================================================================================================
 
+    // INTERNAL TEMPLATE DECLARATION ===================================================================================
+
     // INTERNAL FUNCTION DECLARATION ===================================================================================
+
+    // Convert file_open_mode flags to fopen mode string
+    static const char* mode_string_from_flags(file_open_mode mode);
+
+    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-    // Convert file_open_mode flags to fopen mode string
     static const char* mode_string_from_flags(file_open_mode mode) {
 
         if ((mode & file_open_mode::read) && (mode & file_open_mode::write)) {
@@ -120,6 +125,12 @@ namespace GLT::vfs {
     }
 
 
+    void default_remove_all(const std::filesystem::path& path, std::error_code& error) {
+
+        std::filesystem::remove_all(path, error);
+    }
+
+
     void default_rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error) {
 
         std::filesystem::rename(old_path, new_path, error);
@@ -141,6 +152,46 @@ namespace GLT::vfs {
 
         auto size = std::filesystem::file_size(path);
         return error ? 0 : static_cast<u64>(size);
+    }
+
+
+    [[nodiscard]] system_time default_last_write_time(const std::filesystem::path& path, std::error_code& error) {
+
+        error.clear();
+        system_time result{};
+
+        auto ftime = std::filesystem::last_write_time(path, error);
+        if (error)
+            return result;                          // zero-init on failure
+
+        // file_time_type's epoch is implementation-defined, so rebase it onto
+        // system_clock by measuring the offset between the two clocks *now*.
+        const auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+            ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now()
+        );
+
+        // Millisecond component (handle negative epochs correctly).
+        const auto ms_signed = std::chrono::duration_cast<std::chrono::milliseconds>(sctp.time_since_epoch()).count() % 1000;
+        const auto ms = (ms_signed < 0) ? (ms_signed + 1000) : ms_signed;
+        const std::time_t tt = std::chrono::system_clock::to_time_t(sctp);
+
+        std::tm tm_buf{};
+        #if defined(PLATFORM_WINDOWS)
+            localtime_s(&tm_buf, &tt);
+        #else
+            localtime_r(&tt, &tm_buf);
+        #endif
+
+        result.year         = static_cast<u16>(tm_buf.tm_year + 1900);
+        result.month        = static_cast<u8>(tm_buf.tm_mon + 1);
+        result.day          = static_cast<u8>(tm_buf.tm_mday);
+        result.day_of_week  = static_cast<u8>(tm_buf.tm_wday);     // 0 = Sunday, matches your struct
+        result.hour         = static_cast<u8>(tm_buf.tm_hour);
+        result.minute       = static_cast<u8>(tm_buf.tm_min);
+        result.secund       = static_cast<u8>(tm_buf.tm_sec);
+        result.millisecond  = static_cast<u16>(ms);
+
+        return result;
     }
 
 
@@ -172,7 +223,7 @@ namespace GLT::vfs {
     }
 
 
-    [[nodiscard]] file_handle default_open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept {
+    [[nodiscard]] handle default_open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept {
 
         const char* mode_str = mode_string_from_flags(mode);                // Obtain the correct fopen mode string
         if (!mode_str)
@@ -219,9 +270,9 @@ namespace GLT::vfs {
     }
 
 
-    size_t default_read_file(file_handle handle, void* buffer, size_t size, size_t offset) {
+    size_t default_read_file(handle handle, void* buffer, size_t size, size_t offset) {
 
-        if (handle == invalid_file_handle || !buffer || size == 0) {
+        if (handle == INVALID_HANDLE || !buffer || size == 0) {
             return 0;
         }
         FILE* f = reinterpret_cast<FILE*>(handle);
@@ -234,9 +285,9 @@ namespace GLT::vfs {
     }
 
 
-    size_t default_write_file(file_handle handle, const void* data, size_t size, size_t offset) {
+    size_t default_write_file(handle handle, const void* data, size_t size, size_t offset) {
         
-        if (handle == invalid_file_handle || !data || size == 0) {
+        if (handle == INVALID_HANDLE || !data || size == 0) {
             return 0;
         }
         FILE* f = reinterpret_cast<FILE*>(handle);
@@ -249,9 +300,9 @@ namespace GLT::vfs {
     }
 
 
-    bool default_seek_file(file_handle handle, i64 offset, int origin) {
+    bool default_seek_file(handle handle, i64 offset, int origin) {
 
-        if (handle == invalid_file_handle) {
+        if (handle == INVALID_HANDLE) {
             return false;
         }
         FILE* f = reinterpret_cast<FILE*>(handle);
@@ -266,8 +317,8 @@ namespace GLT::vfs {
     }
 
 
-    [[nodiscard]] u64 default_tell_file(file_handle handle) {
-        if (handle == invalid_file_handle) {
+    [[nodiscard]] u64 default_tell_file(handle handle) {
+        if (handle == INVALID_HANDLE) {
             return 0;
         }
         FILE* f = reinterpret_cast<FILE*>(handle);
@@ -276,8 +327,8 @@ namespace GLT::vfs {
     }
 
 
-    void default_close_file(file_handle handle) {
-        if (handle != invalid_file_handle) {
+    void default_close_file(handle handle) {
+        if (handle != INVALID_HANDLE) {
             std::fclose(reinterpret_cast<FILE*>(handle));
         }
     }
@@ -291,9 +342,11 @@ namespace GLT::vfs {
         default_create_directory,
         default_create_directories,
         default_remove,
+        default_remove_all,
         default_rename,
         default_copy_file,
         default_file_size,
+        default_last_write_time,
         default_read_text_file,
         default_write_text_file,
         default_open_file,
@@ -303,6 +356,8 @@ namespace GLT::vfs {
         default_tell_file,
         default_close_file,
     };
+
+    // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
@@ -366,6 +421,13 @@ namespace GLT::vfs {
     }
 
 
+    void remove_all(const std::filesystem::path& path, std::error_code& error) {
+
+        error.clear();
+        g_vfs.remove_all(path, error);
+    }
+
+
     void rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path, std::error_code& error) {
 
         error.clear();
@@ -387,6 +449,13 @@ namespace GLT::vfs {
     }
 
 
+    system_time last_write_time(const std::filesystem::path& path, std::error_code& error) {
+
+        error.clear();
+        return g_vfs.last_write_time(path, error);
+    }
+
+
     [[nodiscard]] std::string read_text_file(const std::filesystem::path& path, std::error_code& error) {
 
         error.clear();
@@ -400,38 +469,38 @@ namespace GLT::vfs {
     }
 
 
-    [[nodiscard]] file_handle open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept {
+    [[nodiscard]] handle open_file(const std::filesystem::path& path, GLT::vfs::file_open_mode mode, std::error_code& error) noexcept {
 
         error.clear();
         return g_vfs.open_file(path, mode, error);
     }
 
 
-    size_t read_file(file_handle handle, void* buffer, size_t size, size_t offset) {
+    size_t read_file(handle handle, void* buffer, size_t size, size_t offset) {
 
         return g_vfs.read_file(handle, buffer, size, offset);
     }
 
 
-    size_t write_file(file_handle handle, const void* data, size_t size, size_t offset) {
+    size_t write_file(handle handle, const void* data, size_t size, size_t offset) {
 
         return g_vfs.write_file(handle, data, size, offset);
     }
 
 
-    bool seek_file(file_handle handle, i64 offset, int origin) {
+    bool seek_file(handle handle, i64 offset, int origin) {
 
         return g_vfs.seek_file(handle, offset, origin);
     }
 
 
-    u64 tell_file(file_handle handle) {
+    u64 tell_file(handle handle) {
 
         return g_vfs.tell_file(handle);
     }
 
 
-    void close_file(file_handle handle) {
+    void close_file(handle handle) {
 
         g_vfs.close_file(handle);
     }

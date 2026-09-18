@@ -20,7 +20,7 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 
-namespace GLT::logger_plugin {
+namespace GLT::logger_default {
 
     // CONSTANTS =======================================================================================================
 
@@ -184,7 +184,7 @@ namespace GLT::logger_plugin {
         // take over messages from before logger attachment
         std::vector<GLT::logger::message_data> previous_messages = GLT::logger::drain_log_buffer(true);
         for (const auto& msg : previous_messages)
-            GLT::logger_plugin::log_msg_internal(msg.msg_sev, msg.location, msg.module_name, msg.thread_id, msg.message);
+            GLT::logger_default::log_msg_internal(msg.msg_sev, msg.location, msg.module_name, msg.thread_id, msg.message);
 
         return true;
     }

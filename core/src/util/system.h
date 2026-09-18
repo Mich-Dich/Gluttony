@@ -56,6 +56,19 @@ namespace GLT::util {
     // @return Returns the path to the directory containing the executable, or an empty path on error.
 	std::filesystem::path get_executable_path();
 
+
+    // Returns the current resident set size (RSS) of this process in bytes.
+    // This is the amount of physical RAM the process is actually using right
+    // now, not its virtual address space.
+    //
+    // Linux only. Returns 0 if the value could not be read.
+    [[nodiscard]] u64 get_process_ram_bytes();
+
+
+    // Returns the peak RSS this process has reached since it started, in bytes.
+    // Useful for a "max RAM" indicator alongside the live value.
+    [[nodiscard]] u64 get_process_peak_ram_bytes();
+
     // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================

@@ -37,14 +37,14 @@ namespace GLT::audio::soloud_backend {
 
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
-        .name                       = GLT_MODULE_NAME,
-        .load_phase                 = GLT::plugin_manager::phase::post_window,
-        .unload_phase               = GLT::plugin_manager::phase::post_window_destroy,
-        .target                     = plugin_manager::interface::audio,
-        .dependency_names_count     = ARRAY_SIZE(dependencies_names),
-        .dependency_names           = dependencies_names,
-        .dependency_interface_count = ARRAY_SIZE(dependencies_interfaces),
-        .dependency_interfaces      = dependencies_interfaces,
+        .name                                                   = GLT_MODULE_NAME,
+        .load_phase                                             = GLT::plugin_manager::phase::pre_application,
+        .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
+        .target                                                 = plugin_manager::interface::audio,
+        .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
+        .dependency_names                                       = dependencies_names,
+        .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
+        .dependency_interfaces                                  = dependencies_interfaces,
     };
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -147,16 +147,16 @@ namespace GLT::audio::soloud_backend {
 
         struct sound_entry {
 
-            std::unique_ptr<SoLoud::Wav>                    wav;
-            std::unique_ptr<SoLoud::WavStream>              stream;
-            bool                                            is_stream = false;
+            GLT::unique_ref<SoLoud::Wav>                        wav{};
+            GLT::unique_ref<SoLoud::WavStream>                  stream{};
+            bool                                                is_stream = false;
         };
 
-        std::unique_ptr<SoLoud::Soloud>                     m_soloud{};
-        std::unordered_map<handle, sound_entry>             m_sounds{};
-        std::unordered_map<std::string, handle>             m_sound_name_map{};
-        handle                                              m_next_sound_handle = 1;
-        listener_config                                     m_listener{};
+        GLT::unique_ref<SoLoud::Soloud>                         m_soloud{};
+        std::unordered_map<handle, sound_entry>                 m_sounds{};
+        std::unordered_map<std::string, handle>                 m_sound_name_map{};
+        handle                                                  m_next_sound_handle = 1;
+        listener_config                                         m_listener{};
     };
 
 }

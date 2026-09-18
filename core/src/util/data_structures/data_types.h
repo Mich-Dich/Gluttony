@@ -1,7 +1,10 @@
 
 #pragma once
 
+#include <utility>
 #include <inttypes.h>
+
+
 
 // TYPES ===========================================================================================================
 
@@ -247,6 +250,73 @@ namespace GLT {
 			return is_older_than(other, minutes * 60);
 		}
 	};
+
+	namespace util {
+
+		// RAII wrapper that pairs a handle/value with a deleter.
+		// Move-only. Calls deleter(handle) exactly once on destruction, unless you moved-from or reset() it first.
+		//
+		// Use it for anything with a "create -> use -> destroy" lifecycle:
+		//   - event_bus subscriptions
+		//   - textures / buffers / VAOs
+		//   - FILE* / OS handles
+		//   - temporary directory mounts
+		template<typename Handle, typename Deleter>
+		class scoped_resource {
+		public:
+
+			scoped_resource() = default;
+
+			scoped_resource(Handle handle, Deleter deleter)
+				: m_handle(std::move(handle))
+				, m_deleter(std::move(deleter))
+				, m_active(true) {}
+
+			scoped_resource(scoped_resource&& other) noexcept
+				: m_handle (std::move(other.m_handle))
+				, m_deleter(std::move(other.m_deleter))
+				, m_active (std::exchange(other.m_active, false)) {}
+
+			scoped_resource& operator=(scoped_resource&& other) noexcept {
+				if (this != &other) {
+					reset();
+					m_handle  = std::move(other.m_handle);
+					m_deleter = std::move(other.m_deleter);
+					m_active  = std::exchange(other.m_active, false);
+				}
+				return *this;
+			}
+
+			scoped_resource(const scoped_resource&)            = delete;
+			scoped_resource& operator=(const scoped_resource&) = delete;
+
+			~scoped_resource() { reset(); }
+
+			// Invoke the deleter now. Safe to call repeatedly.
+			void reset() noexcept {
+				if (m_active) {
+					m_active = false;               // set first: deleter may throw / recurse
+					m_deleter(m_handle);
+				}
+			}
+
+			[[nodiscard]] Handle get()       const noexcept { return m_handle; }
+			[[nodiscard]] bool   is_active() const noexcept { return m_active; }
+			explicit operator bool()         const noexcept { return m_active; }
+
+		private:
+
+			Handle                               m_handle{};
+			[[no_unique_address]] Deleter        m_deleter{};
+			bool                                 m_active = false;
+		};
+
+
+		// Deduction guide: `scoped_resource r{ handle, deleter };`
+		template<typename Handle, typename Deleter>
+		scoped_resource(Handle, Deleter) -> scoped_resource<Handle, Deleter>;
+
+	}
 
 	// enums -----------------------------------------------------------------------------------------------------------
 

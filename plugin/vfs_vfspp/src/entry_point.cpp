@@ -4,7 +4,7 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 
-namespace GLT::vfs_plugin {
+namespace GLT::vfs::vfspp_backend {
 
     // CONSTANTS =======================================================================================================
 
@@ -69,4 +69,4 @@ namespace GLT::vfs_plugin {
 
 }
 
-EXPORT_PLUGIN_CLASS(GLT::vfs_plugin::plugin, GLT::vfs_plugin::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::vfs::vfspp_backend::plugin, GLT::vfs::vfspp_backend::descriptor)

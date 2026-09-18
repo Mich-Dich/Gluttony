@@ -1078,12 +1078,12 @@ namespace GLT::editor {
 
         std::error_code error{};
 
-        const auto size = std::filesystem::file_size(m_details.path, error);
+        const auto size = GLT::vfs::file_size(m_details.path, error);
         if (!error)
             m_details.file_size = static_cast<u64>(size);
 
         error.clear();
-        const auto ftime = std::filesystem::last_write_time(m_details.path, error);
+        const auto ftime = GLT::vfs::last_write_time(m_details.path, error);
         if (!error)
             m_details.last_modified = ftime;
 

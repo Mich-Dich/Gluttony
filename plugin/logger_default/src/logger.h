@@ -8,7 +8,7 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 
-namespace GLT::logger_plugin {
+namespace GLT::logger_default {
 
     // CONSTANTS =======================================================================================================
 
@@ -59,7 +59,7 @@ namespace GLT::logger_plugin {
     //
     // @param $Q thread                  Thread_id: 137575225550656 or a label if provided
     // @param $F function name           application::main, math::foo
-    // @param $R module name             core, logger_plugin
+    // @param $R module name             core, logger_default
     // @param $P only function name      main, foo
     // @param $A file name               /home/workspace/test_cpp/src/main.cpp  /home/workspace/test_cpp/src/project.cpp
     // @param $I only file name          main.cpp

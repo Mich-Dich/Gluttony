@@ -9,23 +9,23 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 
-namespace GLT::logger_plugin {
+namespace GLT::logger_default {
 
     // CONSTANTS =======================================================================================================
 
     static constexpr GLT::logger::logger_functions plugin_functions = {
-        .init                                               = &GLT::logger_plugin::init,
-        .shutdown                                           = &GLT::logger_plugin::shutdown,
-        .log_msg_internal                                   = &GLT::logger_plugin::log_msg_internal,
-        .get_log_file_location                              = &GLT::logger_plugin::get_log_file_location,
-        .set_format                                         = &GLT::logger_plugin::set_format,
-        .use_previous_format                                = &GLT::logger_plugin::use_previous_format,
-        .get_format                                         = &GLT::logger_plugin::get_format,
-        .set_buffer_threshold                               = &GLT::logger_plugin::set_buffer_threshold,
-        .set_buffer_size                                    = &GLT::logger_plugin::set_buffer_size,
-        .flush_buffer                                       = &GLT::logger_plugin::flush_buffer,
-        .register_label_for_thread                          = &GLT::logger_plugin::register_label_for_thread,
-        .unregister_label_for_thread                        = &GLT::logger_plugin::unregister_label_for_thread,
+        .init                                               = &GLT::logger_default::init,
+        .shutdown                                           = &GLT::logger_default::shutdown,
+        .log_msg_internal                                   = &GLT::logger_default::log_msg_internal,
+        .get_log_file_location                              = &GLT::logger_default::get_log_file_location,
+        .set_format                                         = &GLT::logger_default::set_format,
+        .use_previous_format                                = &GLT::logger_default::use_previous_format,
+        .get_format                                         = &GLT::logger_default::get_format,
+        .set_buffer_threshold                               = &GLT::logger_default::set_buffer_threshold,
+        .set_buffer_size                                    = &GLT::logger_default::set_buffer_size,
+        .flush_buffer                                       = &GLT::logger_default::flush_buffer,
+        .register_label_for_thread                          = &GLT::logger_default::register_label_for_thread,
+        .unregister_label_for_thread                        = &GLT::logger_default::unregister_label_for_thread,
     };
     
     // MACROS ==========================================================================================================
@@ -87,4 +87,4 @@ namespace GLT::logger_plugin {
 
 }
 
-EXPORT_PLUGIN_CLASS(GLT::logger_plugin::plugin, GLT::logger_plugin::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::logger_default::plugin, GLT::logger_default::descriptor)

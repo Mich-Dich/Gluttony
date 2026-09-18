@@ -62,6 +62,7 @@ namespace GLT::debug {
         f32                                     frame_time_ms = 0.0f;   // CPU wall-clock for the frame
         f32                                     cpu_time_ms = 0.0f;     // time spent in CPU work
         f32                                     fps = 0.0f;
+        u64                                     ram_bytes = 0;
 
         render_stats                            render{};
     };

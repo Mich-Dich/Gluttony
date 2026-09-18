@@ -7,7 +7,7 @@
 # ===========================================================================================
 
 include(${CMAKE_SOURCE_DIR}/helper.cmake)
-set(PLUGIN_NAME                                                         "logger")
+set(PLUGIN_NAME                                                         "logger_default")
 
 file(GLOB_RECURSE PLUGIN_SOURCES
     CONFIGURE_DEPENDS

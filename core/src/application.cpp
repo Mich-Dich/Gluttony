@@ -39,8 +39,6 @@ namespace GLT {
         ASSERT(!s_instance, "", "Application already exists");
         s_instance = this;
 
-        thread_pool::init();
-
         m_project.serialize_projects_data(project_path, GLT::serializer::option::load);
         set_target_fps(30);                 // DEBUG-ONLY - TODO: load from config
         imgui_config::init();
@@ -54,9 +52,6 @@ namespace GLT {
         platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::load);
         mp_window->create(attributes);
 
-        plugin_manager::load_plugins(plugin_manager::phase::post_window);
-        plugin_manager::unload_plugins(plugin_manager::phase::post_window);
-
         mp_audio = plugin_manager::get_plugin_ref<GLT::audio::i_audio_plugin>(plugin_manager::interface::audio);
         ASSERT(mp_audio, "", "Failed to load audio plugin")
         mp_audio->create();
@@ -68,22 +63,15 @@ namespace GLT {
         plugin_manager::load_plugins(plugin_manager::phase::application_ready);
         plugin_manager::unload_plugins(plugin_manager::phase::application_ready);
 
-        mp_game_loop_base = plugin_manager::get_plugin_ref<i_game_loop_plugin>(plugin_manager::interface::game_loop);
-        ASSERT(mp_game_loop_base, "", "Failed to load game_loop plugin")
-
-        m_close_event_sub_handle = event_bus::subscribe<window_close_event>(std::bind_front(&application::on_window_close_event, this));
         LOG_INIT
     }
 
 
     application::~application() {
 
-        event_bus::unsubscribe(m_close_event_sub_handle);
-
         plugin_manager::load_plugins(plugin_manager::phase::pre_application_shutdown);
         plugin_manager::unload_plugins(plugin_manager::phase::pre_application_shutdown);
 
-        mp_game_loop_base->request_stop();
         mp_renderer->destroy();
         mp_audio->destroy();
 
@@ -94,10 +82,6 @@ namespace GLT {
         imgui_config::shutdown();
         plugin_manager::load_plugins(plugin_manager::phase::post_application_shutdown);
         plugin_manager::unload_plugins(plugin_manager::phase::post_application_shutdown);
-
-        thread_pool::wait_for_all();                 // drain any stragglers
-        thread_pool::pump_main_thread();             // drain callbacks posted during the wait
-        thread_pool::shutdown();                     // join workers
 
         s_instance = nullptr;
         LOG_SHUTDOWN
@@ -110,6 +94,12 @@ namespace GLT {
         plugin_manager::load_plugins(plugin_manager::phase::pre_application_run);
         plugin_manager::unload_plugins(plugin_manager::phase::pre_application_run);
 
+        auto game_loop = plugin_manager::get_plugin_ref<i_game_loop_plugin>(plugin_manager::interface::game_loop);
+        ASSERT(game_loop, "", "Failed to load game_loop plugin");
+        auto close_sub = event_bus::subscribe_scoped<window_close_event>(           // unsubscribes automatically, even on exception
+            [game_loop](const window_close_event&) { game_loop->request_stop(); }
+        );
+
         game_loop_context ctx{
             m_delta_time,
             m_layer_stack,
@@ -119,9 +109,9 @@ namespace GLT {
             m_fps_controller,
             m_application_stats,
         };
-        mp_game_loop_base->init(ctx);
-        mp_game_loop_base->run(ctx);
-        mp_game_loop_base->shutdown(ctx);
+        game_loop->init(ctx);
+        game_loop->run(ctx);
+        game_loop->shutdown(ctx);
 
         plugin_manager::load_plugins(plugin_manager::phase::post_application_run);
         plugin_manager::unload_plugins(plugin_manager::phase::post_application_run);
@@ -132,13 +122,6 @@ namespace GLT {
 
         const u64 time = (1 / fps) * 1000000;
         m_fps_controller.set_target_interval_duration(std::chrono::microseconds(time));
-    }
-
-
-    void application::on_window_close_event(const window_close_event& event) {
-
-        if (mp_game_loop_base)
-            mp_game_loop_base->request_stop();
     }
 
     // CLASS PROTECTED =================================================================================================

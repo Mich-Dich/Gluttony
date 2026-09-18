@@ -68,6 +68,4 @@ vcpkg_installed/
 Testing/
 .cache/
 
-
 vendor/
-plugin/glfw_window/vender/

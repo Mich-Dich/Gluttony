@@ -46,7 +46,7 @@ namespace GLT::editor {
         bool                                    is_hdr = false;
         bool                                    has_alpha = false;
         bool                                    is_srgb = true;
-        std::filesystem::file_time_type         last_modified{};
+        GLT::system_time                        last_modified{};
     };
 
 

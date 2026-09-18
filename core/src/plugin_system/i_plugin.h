@@ -64,13 +64,6 @@ namespace GLT::plugin_manager {
         // Constraints: No window handle, no graphics context, no event loop.
         pre_application,
 
-        // After native window creation, before event subscriptions are added.
-        // Guaranteed: Native window handle exists (HWND, X11 Window, etc.).
-        // Plugin actions: attach low-level window hooks, initialize graphics API (Vulkan/GL),
-        // or set up platform‑specific resources tied to the window.
-        // Constraints: Event bus not yet subscribed to window close events; application main loop not running.
-        post_window,
-
         // End of application constructor – all core systems are ready.
         // Guaranteed: Event bus operational, window shown (or ready to show), FPS controller configured.
         // Plugin actions: start background threads, register deferred work, or allocate resources

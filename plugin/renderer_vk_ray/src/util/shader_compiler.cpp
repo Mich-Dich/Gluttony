@@ -83,7 +83,7 @@ namespace GLT::renderer_vk_ray::utils {
         // Read the GLSL source file
         std::string source_code;
         std::error_code error{};
-        GLT::vfs::file_handle opend_file = GLT::vfs::open_file(source_path, GLT::vfs::file_open_mode::read, error);
+        handle opend_file = GLT::vfs::open_file(source_path, GLT::vfs::file_open_mode::read, error);
         VALIDATE(!error && opend_file != 0, return {}, "", "Failed to open file [{}]", source_path.generic_string())
 
         error.clear();
@@ -116,18 +116,18 @@ namespace GLT::renderer_vk_ray::utils {
         }
 
         // Map file extensions to shader stages
-        if (extention == "vert") shader_stage = EShLangVertex;
-        else if (extention == "frag") shader_stage = EShLangFragment;
-        else if (extention == "comp") shader_stage = EShLangCompute;
-        else if (extention == "geom") shader_stage = EShLangGeometry;
-        else if (extention == "tesc") shader_stage = EShLangTessControl;
-        else if (extention == "tese") shader_stage = EShLangTessEvaluation;
-        else if (extention == "rgen") shader_stage = EShLangRayGen;
-        else if (extention == "rahit") shader_stage = EShLangAnyHit;
-        else if (extention == "rchit") shader_stage = EShLangClosestHit;
-        else if (extention == "rmiss") shader_stage = EShLangMiss;
-        else if (extention == "rint") shader_stage = EShLangIntersect;
-        else if (extention == "rcall") shader_stage = EShLangCallable;
+        if (extention == "vert")            shader_stage = EShLangVertex;
+        else if (extention == "frag")       shader_stage = EShLangFragment;
+        else if (extention == "comp")       shader_stage = EShLangCompute;
+        else if (extention == "geom")       shader_stage = EShLangGeometry;
+        else if (extention == "tesc")       shader_stage = EShLangTessControl;
+        else if (extention == "tese")       shader_stage = EShLangTessEvaluation;
+        else if (extention == "rgen")       shader_stage = EShLangRayGen;
+        else if (extention == "rahit")      shader_stage = EShLangAnyHit;
+        else if (extention == "rchit")      shader_stage = EShLangClosestHit;
+        else if (extention == "rmiss")      shader_stage = EShLangMiss;
+        else if (extention == "rint")       shader_stage = EShLangIntersect;
+        else if (extention == "rcall")      shader_stage = EShLangCallable;
         else {
             // Try to detect from source content
             if (source_code.find("layout(rgba32f") != std::string::npos) shader_stage = EShLangCompute;

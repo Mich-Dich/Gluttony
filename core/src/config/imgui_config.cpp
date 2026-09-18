@@ -114,7 +114,8 @@ namespace GLT::imgui_config {
 
 		io.FontAllowUserScaling = true;
 
-		const bool font_exists = std::filesystem::exists(font_path / "OpenSans-Regular.ttf");
+		std::error_code error{};
+		const bool font_exists = GLT::vfs::exists(font_path / "OpenSans-Regular.ttf", error) && !error;
 		ASSERT(font_exists, "", "FONT does not exist [{}]", (font_path / "OpenSans-Regular.ttf").generic_string())
 
 		#define ADD_FONT(font_type, font_path, font_size) \

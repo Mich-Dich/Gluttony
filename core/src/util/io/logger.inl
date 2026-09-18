@@ -31,7 +31,7 @@ namespace GLT::logger {
         std::thread::id thread_id, std::format_string<Args...> fmt, Args&&... args) {
 
         std::string message = std::format(fmt, std::forward<Args>(args)...);
-        if (message.empty())             // still check for other sources of emptiness
+        if (message.empty())
             return;
 
         log_msg_internal(msg_sev, location, module_name, thread_id, std::move(message));

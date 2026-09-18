@@ -42,7 +42,7 @@ namespace GLT::editor {
         u32                                             channels = 0;
         u32                                             bit_depth = 0;
         u32                                             bitrate_kbps = 0;
-        std::filesystem::file_time_type                 last_modified{};
+        GLT::system_time                                last_modified{};
     };
 
 
@@ -66,10 +66,10 @@ namespace GLT::editor {
     // Contains only POD-ish data — nothing tied to ImGui, the GPU, or `this`.
     struct decode_result {
 
-        bool                                        ok = false;
-        audio_details                               details{};
-        std::vector<std::vector<audio_peak_pair>>   peaks{};
-        u32                                         peak_count = 0;
+        bool                                            ok = false;
+        audio_details                                   details{};
+        std::vector<std::vector<audio_peak_pair>>       peaks{};
+        u32                                             peak_count = 0;
     };
 
     // STATIC VARIABLES ================================================================================================
