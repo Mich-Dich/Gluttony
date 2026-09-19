@@ -9,6 +9,7 @@
   },
   "cSpell.words": [
     "ABGR",
+    "assimp",
     "Blit",
     "blitted",
     "cmpeq",
@@ -22,6 +23,8 @@
     "rolloff",
     "soloud",
     "spirv",
+    "submesh",
+    "submeshes",
     "swapchain",
     "tlas",
     "undoable",

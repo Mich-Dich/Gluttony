@@ -14,7 +14,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT {
+namespace GLT::game_loop {
 
     // CONSTANTS =======================================================================================================
 
@@ -62,7 +62,7 @@ namespace GLT {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    class game_loop_default final : public GLT::i_game_loop_plugin {
+    class plugin final : public GLT::game_loop::i_game_loop_plugin {
     public:
 
         void on_load() { }
@@ -71,13 +71,13 @@ namespace GLT {
         void on_unload() { }
 
 
-        void init(GLT::game_loop_context& ctx) override { ctx.window->show(true); }
+        void init(context& ctx) override { ctx.window->show(true); }
 
 
-        void shutdown(GLT::game_loop_context& /*ctx*/) override { }
+        void shutdown(context& /*ctx*/) override { }
 
 
-        void run(GLT::game_loop_context& ctx) override {
+        void run(context& ctx) override {
 
             // writes the elapsed ms directly to [ctx.stats.cpu_time_ms]
             util::stopwatch cpu_timer(&ctx.stats.cpu_time_ms, GLT::time_unit::milliseconds);
@@ -122,4 +122,4 @@ namespace GLT {
 
 }
 
-EXPORT_PLUGIN_CLASS(GLT::game_loop_default, GLT::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::game_loop::plugin, GLT::game_loop::descriptor)

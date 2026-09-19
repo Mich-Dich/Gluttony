@@ -4,10 +4,15 @@
 #include <glm/glm.hpp>
 
 #include "audio/types.h"
+#include "plugin_system/plugin_manager.h"
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
+
+namespace GLT::audio {
+    class i_audio_plugin;
+}
 
 namespace GLT::audio {
 
@@ -21,15 +26,23 @@ namespace GLT::audio {
 
     // FUNCTION DECLARATION ============================================================================================
 
+    namespace manager {
+
+        FORCE_INLINE_R ref<GLT::audio::i_audio_plugin> get_ref() {
+
+            return GLT::plugin_manager::get_plugin_ref<GLT::audio::i_audio_plugin>(plugin_manager::interface::audio);
+        }
+
+    }
+
     // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================
 
     // Core audio plugin interface.
     //
-    // This interface abstracts the low‑level audio engine, sound source management,
-    // 3D spatialization, and listener updates. Concrete backends (SoLoud, FMOD, etc.)
-    // implement this interface so the engine core can drive audio without depending
+    // This interface abstracts the low‑level audio engine, sound source management, 3D spatialization, and listener updates. 
+    // Concrete backends (SoLoud, FMOD, etc.) implement this interface so the engine core can drive audio without depending
     // on a specific audio library.
     //
     // Typical lifecycle:

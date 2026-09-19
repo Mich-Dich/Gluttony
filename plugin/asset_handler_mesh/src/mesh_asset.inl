@@ -1,11 +1,9 @@
-
 #pragma once
-
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::audio::soloud_backend {
+namespace GLT::asset::handler::mesh {
 
     // CONSTANTS =======================================================================================================
 
@@ -29,17 +27,18 @@ namespace GLT::audio::soloud_backend {
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 
-    audio::audio() = default;
-
-
-    audio::~audio() = default;
-
     // TEMPLATE CLASS PUBLIC ===========================================================================================
+    
+    [[nodiscard]] GLT::asset::type mesh_asset::type() const noexcept { return asset_type; }
 
-    void audio::on_load()             { LOG_LOADED }
 
-
-    void audio::on_unload()           { LOG_UNLOADED }
+    [[nodiscard]] u64 mesh_asset::memory_usage() const noexcept {
+        return sizeof(*this)
+            + vertices.capacity()  * sizeof(GLT::asset::mesh::vertex)
+            + indices.capacity()   * sizeof(u32)
+            + submeshes.capacity() * sizeof(GLT::asset::mesh::submesh)
+            + material_handles.capacity() * sizeof(GLT::asset::handle);
+    }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

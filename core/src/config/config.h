@@ -22,6 +22,7 @@ namespace GLT::config {
 
 	// Represents different configuration file types used by the system (underlying type: u8).
 	enum class type : u8 {
+
 		ui = 0,			// UI related configuration.
 		imgui,			// ImGui specific configuration.
 		input,			// Input bindings / input-related configuration.
@@ -34,6 +35,7 @@ namespace GLT::config {
 
 	// Represents operations that can be performed on configuration files (underlying type: u8).
 	enum class operation : u8 {
+
 		save,			// Save/write operation.
 		load,			// Load/read operation.
 	};

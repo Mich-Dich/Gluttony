@@ -303,7 +303,7 @@ namespace GLT::editor {
 
         // Best-effort: stop any playing voice so the audio plugin isn't
         // left with a dangling voice after we die.
-        if (auto plugin = m_audio_plugin.lock()) {
+        if (auto plugin = m_audio_manager.lock()) {
             if (m_voice_handle) plugin->stop(m_voice_handle);
             if (m_sound_handle) plugin->unload_sound(m_sound_handle);
         }
@@ -314,7 +314,7 @@ namespace GLT::editor {
     void audio_viewer_window::open(const std::filesystem::path& path) {
 
         // Stop any previous playback immediately (main-thread only).
-        if (auto plugin = m_audio_plugin.lock()) {
+        if (auto plugin = m_audio_manager.lock()) {
             if (m_voice_handle) plugin->stop(m_voice_handle);
             if (m_sound_handle) plugin->unload_sound(m_sound_handle);
         }
@@ -376,7 +376,7 @@ namespace GLT::editor {
 
     void audio_viewer_window::close_audio() {
 
-        if (auto plugin = m_audio_plugin.lock()) {
+        if (auto plugin = m_audio_manager.lock()) {
             if (m_voice_handle) plugin->stop(m_voice_handle);
             if (m_sound_handle) plugin->unload_sound(m_sound_handle);
         }
@@ -540,7 +540,7 @@ namespace GLT::editor {
                 if (v != m_volume) {
 
                     m_volume = v;
-                    if (auto plugin = m_audio_plugin.lock(); plugin && m_voice_handle)
+                    if (auto plugin = m_audio_manager.lock(); plugin && m_voice_handle)
                         plugin->set_volume(m_voice_handle, m_volume);
                 }
             }
@@ -557,7 +557,7 @@ namespace GLT::editor {
                 if (p != m_pan) {
 
                     m_pan = p;
-                    if (auto plugin = m_audio_plugin.lock(); plugin && m_voice_handle)
+                    if (auto plugin = m_audio_manager.lock(); plugin && m_voice_handle)
                         plugin->set_pan(m_voice_handle, m_pan);
                 }
             }
@@ -574,7 +574,7 @@ namespace GLT::editor {
                 if (s != m_playback_speed) {
 
                     m_playback_speed = s;
-                    if (auto plugin = m_audio_plugin.lock(); plugin && m_voice_handle)
+                    if (auto plugin = m_audio_manager.lock(); plugin && m_voice_handle)
                         plugin->set_play_speed(m_voice_handle, m_playback_speed);
                 }
             }
@@ -586,7 +586,7 @@ namespace GLT::editor {
                 if (l != m_looping) {
 
                     m_looping = l;
-                    if (auto plugin = m_audio_plugin.lock(); plugin && m_voice_handle)
+                    if (auto plugin = m_audio_manager.lock(); plugin && m_voice_handle)
                         plugin->set_looping(m_voice_handle, m_looping);
                 }
             }
@@ -612,7 +612,7 @@ namespace GLT::editor {
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
         ImGui::SameLine();
 
-        const bool can_transport = m_has_audio && !m_loading && m_audio_plugin.lock();
+        const bool can_transport = m_has_audio && !m_loading && m_audio_manager.lock();
         ImGui::BeginDisabled(!can_transport);
         {
             if (ImGui::Button(m_playing ? "Pause" : "Play", ImVec2(64.0f, 0.0f)))
@@ -1069,7 +1069,7 @@ namespace GLT::editor {
 
     void audio_viewer_window::update_playhead() {
 
-        auto plugin = m_audio_plugin.lock();
+        auto plugin = m_audio_manager.lock();
         if (!plugin || !m_voice_handle) return;
 
         // Voice may have finished (or been stopped elsewhere).
@@ -1088,7 +1088,7 @@ namespace GLT::editor {
 
     void audio_viewer_window::register_with_audio_plugin() {
 
-        auto plugin = m_audio_plugin.lock();
+        auto plugin = m_audio_manager.lock();
         if (!plugin)
             return;
 
@@ -1108,7 +1108,7 @@ namespace GLT::editor {
 
         // Register with the audio plugin (main-thread only - SoLoud's public API is not thread-safe).
         // This is what actually loads the sound for playback; the waveform display above came from dr_libs.
-        m_audio_plugin = plugin_manager::get_plugin<GLT::audio::i_audio_plugin>(plugin_manager::interface::audio);
+        m_audio_manager = GLT::audio::manager::get_ref();
         register_with_audio_plugin();
 
         m_has_audio   = true;
@@ -1118,7 +1118,7 @@ namespace GLT::editor {
 
     void audio_viewer_window::transport_play() {
 
-        auto plugin = m_audio_plugin.lock();
+        auto plugin = m_audio_manager.lock();
         if (!plugin) return;
 
         if (m_voice_handle && plugin->is_valid(m_voice_handle)) {
@@ -1147,7 +1147,7 @@ namespace GLT::editor {
 
     void audio_viewer_window::transport_pause() {
 
-        auto plugin = m_audio_plugin.lock();
+        auto plugin = m_audio_manager.lock();
         if (!plugin || !m_voice_handle) return;
 
         plugin->pause(m_voice_handle);
@@ -1157,7 +1157,7 @@ namespace GLT::editor {
 
     void audio_viewer_window::transport_stop() {
 
-        auto plugin = m_audio_plugin.lock();
+        auto plugin = m_audio_manager.lock();
         if (!plugin) return;
 
         if (m_voice_handle) {
@@ -1174,7 +1174,7 @@ namespace GLT::editor {
         seconds = std::clamp(seconds, 0.0f, m_details.duration_sec);
         m_playhead_sec = seconds;
 
-        auto plugin = m_audio_plugin.lock();
+        auto plugin = m_audio_manager.lock();
         if (plugin && m_voice_handle)
             plugin->seek(m_voice_handle, seconds);
     }

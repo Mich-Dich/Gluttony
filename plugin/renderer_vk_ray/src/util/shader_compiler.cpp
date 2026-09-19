@@ -93,7 +93,7 @@ namespace GLT::renderer_vk_ray::utils {
         const u64 read_size = GLT::vfs::read_file(opend_file, source_code.data(), file_size, 0);
         VALIDATE(read_size > 0, return {}, "", "Failed to read file content")
 
-        LOG(trace, "Compiling shader [{}] ({} bytes):\n{}", source_path.generic_string(), source_code.size(), source_code);
+        // LOG(trace, "Compiling shader [{}] ({} bytes):\n{}", source_path.generic_string(), source_code.size(), source_code);
             
         // Determine shader stage based on file extension or content
         EShLanguage shader_stage = EShLangVertex;

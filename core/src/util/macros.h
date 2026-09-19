@@ -204,7 +204,7 @@ namespace GLT {
 
     // util ------------------------------------------------------------------------------------------------------------
 
-    #define BIT(x)											(1 << x)
+    #define BIT(x)											(1u << x)
 
     #define BIND_FUNCTION(x)								std::bind(&x, this, std::placeholders::_1)
 

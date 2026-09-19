@@ -15,6 +15,7 @@
 #include <meta>
 #include <source_location>
 #include <cstddef>
+#include <expected>
 
 // Strings and Text Manipulation
 #include <string>
@@ -103,6 +104,7 @@
 #include "util/io/serializer_data.h"
 #include "util/io/vfs.h"
 #include "util/io/directory_iterator.h"
+#include "util/io/file_dialog.h"
 #include "util/system.h"
 #include "util/crash_handler.h"
 #include "util/math/math.h"

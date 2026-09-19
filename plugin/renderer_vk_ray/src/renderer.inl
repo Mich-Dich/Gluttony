@@ -522,39 +522,74 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::create_acceleration_structures() {
 
-        // ---------------------------------------------------------------------------------------
-        // A single axis-aligned box, centered on the origin with half-extent 1 in each direction.
-        // AABB is stored as min(vec3) / max(vec3) => 6 floats.
-        // ---------------------------------------------------------------------------------------
-        auto box = vk::AabbPositionsKHR(-1.0f, -1.0f, -1.0f,
-                                        1.0f,  1.0f,  1.0f);
+        // Two triangles, sharing vertex/index data, offset from each other by
+        // a per-geometry transform inside the BLAS.
+        f32 vertices[] = {
+            1.0f, -1.0f, 0.0f,
+            -1.0f, -1.0f, 0.0f,
+            0.0f,  1.0f, 0.0f
+        };
+        u32 indices[] = {0, 1, 2};
 
-        m_aabb_buffer = m_vr_dev->create_buffer(
-            sizeof(vk::AabbPositionsKHR),
-            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
+        // Per-geometry transform (VkTransformMatrixKHR = 3x4 row-major)
+        vk::TransformMatrixKHR transforms[2];
+        transforms[0] = {
+            1.0f, 0.0f, 0.0f, -1.0f,      // translate -1 in X
+            0.0f, 1.0f, 0.0f,  0.0f,
+            0.0f, 0.0f, 1.0f,  0.0f
+        };
+        transforms[1] = {
+            1.0f, 0.0f, 0.0f,  1.0f,      // translate +1 in X
+            0.0f, 1.0f, 0.0f,  0.0f,
+            0.0f, 0.0f, 1.0f,  0.0f
+        };
+
+        // Buffer usage for BLAS inputs
+        const auto as_input_usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+
+        m_vertex_buffer = m_vr_dev->create_buffer(
+            sizeof(f32) * 3 * 3, as_input_usage,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        m_live_buffer_count += 1;
 
-        m_vr_dev->update_buffer(m_aabb_buffer, &box, sizeof(vk::AabbPositionsKHR));
+        m_index_buffer = m_vr_dev->create_buffer(
+            sizeof(u32) * 3, as_input_usage,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
-        // Scene stats: one box. (We'll count it as triangles = 12 just so the HUD isn't 0.)
-        m_scene_triangles = 12;
-        m_scene_vertices  = 24;
+        m_transform_buffer = m_vr_dev->create_buffer(
+            sizeof(vk::TransformMatrixKHR) * 2, as_input_usage,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+
+        m_live_buffer_count += 3;
+
+        m_vr_dev->update_buffer(m_vertex_buffer,    vertices,   sizeof(vertices));
+        m_vr_dev->update_buffer(m_index_buffer,     indices,    sizeof(indices));
+        m_vr_dev->update_buffer(m_transform_buffer, transforms, sizeof(transforms));
+
+        // Scene stats: 2 triangles, 6 vertices (the C++ sample reuses the same 3 verts)
+        m_scene_triangles = 2;
+        m_scene_vertices  = 6;
 
         // ---------------------------------------------------------------------------------------
-        // BLAS with AABB geometry
+        // BLAS with TWO geometries (sharing vertex/index buffers, offset via per-geometry transforms)
         // ---------------------------------------------------------------------------------------
         vr::blas_create_info blas_create_info = {};
         blas_create_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
 
-        vr::geometry_data geom_data = {};
-        geom_data.type                 = vk::GeometryTypeKHR::eAabbs;
-        geom_data.primitive_count      = 1;
-        geom_data.stride               = sizeof(f32) * 6;      // vec3 min + vec3 max
-        geom_data.data_addresses.aabb_dev_address = m_aabb_buffer.dev_address;
-        // NOTE: vertex/index formats and addresses are unused for AABB geometry.
+        for (u32 i = 0; i < 2; ++i) {
 
-        blas_create_info.geometries.push_back(geom_data);
+            vr::geometry_data geom_data = {};
+            geom_data.vertex_format = vk::Format::eR32G32B32Sfloat;
+            geom_data.stride        = sizeof(f32) * 3;
+            geom_data.index_format  = vk::IndexType::eUint32;
+            geom_data.primitive_count = 1;
+            geom_data.data_addresses.vertex_dev_address = m_vertex_buffer.dev_address;
+            geom_data.data_addresses.index_dev_address  = m_index_buffer.dev_address;
+            // Point at the i-th matrix within the transform buffer
+            geom_data.data_addresses.transform_dev_address =
+                m_transform_buffer.dev_address + sizeof(vk::TransformMatrixKHR) * i;
+
+            blas_create_info.geometries.push_back(geom_data);
+        }
 
         auto [blas_handle, blas_build_info] = m_vr_dev->create_blas(blas_create_info);
         auto blas_scratch_buffer = m_vr_dev->create_scratch_buffer_from_build_info(blas_build_info);
@@ -562,20 +597,18 @@ namespace GLT::renderer_vk_ray {
         m_blas_handle = blas_handle;
 
         // ---------------------------------------------------------------------------------------
-        // Static TLAS: 1 instance, identity transform
+        // Static TLAS (single instance, identity transform). The per-frame rotation is
+        // applied in update_tlas() further below.
         // ---------------------------------------------------------------------------------------
         vr::tlas_create_info tlas_create_info = {};
         tlas_create_info.flags              = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
         tlas_create_info.max_instance_count = 1;
 
-        vr::tlas_build_info tlas_build_info{};
         std::tie(m_tlas_handle, m_tlas_build_info) = m_vr_dev->create_tlas(tlas_create_info);
 
-        // TLAS scratch buffer is kept around and reused across frames
         m_tlas_scratch_buffer = m_vr_dev->create_scratch_buffer_from_build_info(m_tlas_build_info);
         m_live_buffer_count += 1;
 
-        // Instance data (single instance) lives on the host and is re-uploaded each frame
         m_instance_data.resize(1);
         m_instance_data[0] = vk::AccelerationStructureInstanceKHR()
             .setTransform(VkTransformMatrixKHR{
@@ -584,7 +617,9 @@ namespace GLT::renderer_vk_ray {
                 0.0f, 0.0f, 1.0f, 0.0f})
             .setInstanceCustomIndex(0)
             .setAccelerationStructureReference(m_blas_handle.buffer.dev_address)
-            .setFlags(vk::GeometryInstanceFlagBitsKHR::eForceOpaque)
+            // NOTE: sample uses eTriangleFacingCullDisable here (not eForceOpaque);
+            // both work for our purposes, use whichever your library prefers.
+            .setFlags(vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable)
             .setMask(0xFF)
             .setInstanceShaderBindingTableRecordOffset(0);
 
@@ -592,20 +627,6 @@ namespace GLT::renderer_vk_ray {
         m_live_buffer_count += 1;
         m_vr_dev->update_buffer(m_instance_buffer, m_instance_data.data(),
             sizeof(vk::AccelerationStructureInstanceKHR));
-
-        auto inst = vk::AccelerationStructureInstanceKHR()
-            .setInstanceCustomIndex(0)
-            .setAccelerationStructureReference(m_blas_handle.buffer.dev_address)
-            .setFlags(vk::GeometryInstanceFlagBitsKHR::eForceOpaque)
-            .setMask(0xFF)
-            .setInstanceShaderBindingTableRecordOffset(0);
-
-        inst.transform = {
-            1.0f, 0.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f, 0.0f,
-            0.0f, 0.0f, 1.0f, 0.0f};
-
-        m_vr_dev->update_buffer(m_instance_buffer, &inst, sizeof(vk::AccelerationStructureInstanceKHR), 0);
 
         // Build once
         auto build_cmd = m_device.allocateCommandBuffers(
@@ -631,12 +652,14 @@ namespace GLT::renderer_vk_ray {
         m_device.freeCommandBuffers(m_graphics_pool, build_cmd);
 
         m_deletion_queue.push_func([&]() {
-            m_vr_dev->destroy_buffer(m_aabb_buffer);
+            m_vr_dev->destroy_buffer(m_vertex_buffer);
+            m_vr_dev->destroy_buffer(m_index_buffer);
+            m_vr_dev->destroy_buffer(m_transform_buffer);
             m_vr_dev->destroy_blas(m_blas_handle);
             m_vr_dev->destroy_tlas(m_tlas_handle);
-            m_vr_dev->destroy_buffer(m_instance_buffer);          // NEW
-            if (m_tlas_scratch_buffer.size > 0)                   // NEW
-                m_vr_dev->destroy_buffer(m_tlas_scratch_buffer);  // NEW
+            m_vr_dev->destroy_buffer(m_instance_buffer);
+            if (m_tlas_scratch_buffer.size > 0)
+                m_vr_dev->destroy_buffer(m_tlas_scratch_buffer);
         });
     }
 
@@ -669,24 +692,28 @@ namespace GLT::renderer_vk_ray {
         const auto shader_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader";
 
         // load the ray gen shader
-        auto ray_gen_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "box_intersection.rgen.glsl");
+        auto ray_gen_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "callable.rgen.glsl");
         ASSERT(!ray_gen_spv.empty(), "", "Failed to load shader")
         auto ray_gen_shader_module = m_vr_dev->create_shader_from_spv(ray_gen_spv);
 
         // load the miss shader
-        auto ray_miss_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "box_intersection.rmiss.glsl");
+        auto ray_miss_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "callable.rmiss.glsl");
         ASSERT(!ray_miss_spv.empty(), "", "Failed to load shader")
         auto ray_miss_shader_module = m_vr_dev->create_shader_from_spv(ray_miss_spv);
 
         // load the closest hit shader
-        auto closest_hit_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "box_intersection.rchit.glsl");
+        auto closest_hit_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "callable.rchit.glsl");
         ASSERT(!closest_hit_spv.empty(), "", "Failed to load shader")
         auto closest_hit_shader_module = m_vr_dev->create_shader_from_spv(closest_hit_spv);
 
-        // load the intersection shader
-        auto intersection_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "box_intersection.rint.glsl");
-        ASSERT(!intersection_spv.empty(), "", "Failed to load shader")
-        auto intersection_shader_module = m_vr_dev->create_shader_from_spv(intersection_spv);
+        // load the callable shader stages
+        auto call0_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "callable.call0.rcall.glsl");
+        ASSERT(!call0_spv.empty(), "", "Failed to load shader")
+        auto call0_shader_module = m_vr_dev->create_shader_from_spv(call0_spv);
+
+        auto call1_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "callable.call1.rcall.glsl");
+        ASSERT(!call1_spv.empty(), "", "Failed to load shader")
+        auto call1_shader_module = m_vr_dev->create_shader_from_spv(call1_spv);
 
         // [POI]
         // Pipeline settings for the ray tracing pipeline
@@ -699,7 +726,7 @@ namespace GLT::renderer_vk_ray {
         pipeline_settings.pipeline_layout = m_pipeline_layout;
         pipeline_settings.max_recursion_depth = 1;
         pipeline_settings.max_payload_size = sizeof(glm::vec3);
-        pipeline_settings.max_hit_attribute_size = sizeof(glm::vec3);
+        pipeline_settings.max_hit_attribute_size = sizeof(glm::vec2);
 
         // Collection of shaders for the pipeline
         vr::ray_tracing_shader_collection shader_collection = {};
@@ -712,8 +739,11 @@ namespace GLT::renderer_vk_ray {
         // hit groups can contain multiple shaders, so there is another special struct for it
         vr::hit_group hit_group = {};
         hit_group.closest_hit_shader = closest_hit_shader_module;
-        hit_group.intersection_shader = intersection_shader_module;
         shader_collection.hit_groups.push_back(hit_group);
+
+        // [POI] Callables — order matters, they get sequential SBT indices 0, 1, ...
+        shader_collection.callable_shaders.push_back(call0_shader_module);   // SBT index 0
+        shader_collection.callable_shaders.push_back(call1_shader_module);   // SBT index 1
 
         // create the ray tracing pipeline
 
@@ -736,7 +766,8 @@ namespace GLT::renderer_vk_ray {
         m_device.destroyShaderModule(ray_gen_shader_module.module);
         m_device.destroyShaderModule(ray_miss_shader_module.module);
         m_device.destroyShaderModule(closest_hit_shader_module.module);
-        m_device.destroyShaderModule(intersection_shader_module.module);
+        m_device.destroyShaderModule(call0_shader_module.module);
+        m_device.destroyShaderModule(call1_shader_module.module);
         m_deletion_queue.push_func([&]() {
 
             m_vr_dev->destroy_sbt_buffer(m_sbt_buffer);

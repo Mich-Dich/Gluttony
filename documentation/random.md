@@ -161,3 +161,44 @@ Wizard that scaffolds a new plugin: `.h`, `.cpp`, `descriptor`, CMake entries. M
 
 **Command palette**
 Ctrl+P style fuzzy search over every registered editor action ("open image viewer", "reload renderer", "toggle checkerboard"). This is what makes the whole editor feel cohesive once you have 15+ windows.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

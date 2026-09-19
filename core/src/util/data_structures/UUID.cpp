@@ -51,16 +51,6 @@ namespace GLT {
 	UUID::UUID(u64 uuid)
 		: m_UUID(uuid) { }
 
-
-	UUID::~UUID() {
-
-		#ifdef USE_EXPERIMENTAL_COLLISION_AVOIDANCE
-
-			s_generated_UUIDs.erase(m_UUID);
-
-		#endif
-	}
-
 	// CLASS PUBLIC ====================================================================================================
 
 	// CLASS PROTECTED =================================================================================================

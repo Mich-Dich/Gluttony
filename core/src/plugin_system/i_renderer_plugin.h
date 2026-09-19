@@ -10,11 +10,15 @@
 #include "i_plugin.h"
 #include "render/image.h"
 #include "debug/profiler.h"
+#include "plugin_system/plugin_manager.h"
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
+namespace GLT::render {
+    class i_renderer_plugin;
+}
 
 namespace GLT::render {
 
@@ -46,6 +50,15 @@ namespace GLT::render {
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
+
+    namespace renderer {
+
+        FORCE_INLINE_R ref<GLT::render::i_renderer_plugin> get_ref() {
+
+            return plugin_manager::get_plugin_ref<render::i_renderer_plugin>(plugin_manager::interface::renderer);
+        }
+
+    }
 
     // TEMPLATE DECLARATION ============================================================================================
 

@@ -201,7 +201,9 @@ namespace GLT::renderer_vk_ray {
         vr::device*                                             m_vr_dev = nullptr;
         GLT::ref<image>                                         m_output_image = nullptr;
         vr::allocated_buffer                                    m_uniform_buffer = {};
-        vr::allocated_buffer                                    m_aabb_buffer;
+        vr::allocated_buffer                                    m_vertex_buffer{};
+        vr::allocated_buffer                                    m_index_buffer{};
+        vr::allocated_buffer                                    m_transform_buffer{};
         vr::blas_handle                                         m_blas_handle;
         vr::tlas_handle                                         m_tlas_handle;
         std::vector<vr::descriptor_item>                        m_resource_bindings;
@@ -211,8 +213,6 @@ namespace GLT::renderer_vk_ray {
         utils::shader_compiler                                  m_shader_compiler{};
         vk::Pipeline                                            m_rt_pipeline = nullptr;
         vr::sbt_buffer                                          m_sbt_buffer; // contains the shader records for the SBT
-        // vk::Sampler											    m_default_sampler_linear{};
-        // vk::Sampler											    m_default_sampler_nearest{};
 
         // ImGui resources
         vk::DescriptorPool                                      m_imgui_descriptor_pool = nullptr;

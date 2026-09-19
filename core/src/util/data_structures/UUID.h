@@ -41,7 +41,7 @@ namespace GLT {
 		DEFAULT_COPY_CONSTRUCTOR(UUID);
 
 		// @brief Destroys the UUID object. When experimental collision avoidance is enabled, removes the UUID from the tracking set.
-		~UUID();
+		~UUID() = default;
 
 		// @brief Conversion operator that allows UUID to be used as a 64-bit unsigned integer.
 		//        Enables implicit conversion in arithmetic operations and comparisons.

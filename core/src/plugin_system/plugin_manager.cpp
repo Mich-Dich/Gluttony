@@ -350,22 +350,26 @@ namespace GLT::plugin_manager {
             VALIDATE(desc, continue; free_library(handle), "", "Failed to load descriptor function");
 
             // Filter based on user configuration 
-            const interface iface = desc->target;                                // Retrieve the interface this plugin targets.
-            const auto it = s_plugin_names_per_target_interface.find(iface);        // Look up what the user configured for this interface.
-            const bool has_config = (it != s_plugin_names_per_target_interface.end());
+            const interface iface = desc->target;                               // Retrieve the interface this plugin targets.
             const std::string plugin_name = desc->name ? std::string(desc->name) : path.stem().string();
-            std::string preferred_plugin_name = has_config ? it->second : "";
 
-            // Reject the plugin if [configured name] != [this plugin’s name]
-            if (!has_config || preferred_plugin_name.empty() || preferred_plugin_name == "unknown") {
+            if (iface != interface::custom) {           // target not custom -> dedicated interface, only one needed
 
-                LOG(trace, "No preferred plugin found for interface [{}], setting to first found [{}]", to_string(iface), plugin_name)
-                s_plugin_names_per_target_interface[iface] = plugin_name;
-            
-            } else if (plugin_name != preferred_plugin_name) {                             // Not the user’s chosen plugin – skip.
-
-                free_library(handle);
-                continue;
+                const auto it = s_plugin_names_per_target_interface.find(iface);        // Look up what the user configured for this interface.
+                const bool has_config = (it != s_plugin_names_per_target_interface.end());
+                std::string preferred_plugin_name = has_config ? it->second : "";
+    
+                // Reject the plugin if [configured name] != [this plugin’s name]
+                if (!has_config || preferred_plugin_name.empty() || preferred_plugin_name == "unknown") {
+    
+                    LOG(trace, "No preferred plugin found for interface [{}], setting to first found [{}]", to_string(iface), plugin_name)
+                    s_plugin_names_per_target_interface[iface] = plugin_name;
+                
+                } else if (plugin_name != preferred_plugin_name) {                             // Not the user’s chosen plugin – skip.
+    
+                    free_library(handle);
+                    continue;
+                }
             }
 
             // Plugin passes the filter

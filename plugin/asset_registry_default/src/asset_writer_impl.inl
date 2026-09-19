@@ -1,11 +1,9 @@
-
 #pragma once
-
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::audio::soloud_backend {
+namespace GLT::asset::registry_default {
 
     // CONSTANTS =======================================================================================================
 
@@ -29,17 +27,47 @@ namespace GLT::audio::soloud_backend {
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 
-    audio::audio() = default;
-
-
-    audio::~audio() = default;
-
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    void audio::on_load()             { LOG_LOADED }
+    void asset_writer_impl::write_chunk(GLT::asset::chunk_id id, std::span<const std::byte> data, u32 compression) {
+
+        record_chunk c{};
+        c.id          = id;
+        c.compression = compression;
+        c.bytes.assign(data.begin(), data.end());
+        m_chunks.push_back(std::move(c));
+    }
 
 
-    void audio::on_unload()           { LOG_UNLOADED }
+    void asset_writer_impl::declare_dependency(const UUID id) {
+
+        record_dep d{};
+        d.id       = id;
+        d.by_path  = false;
+        m_deps.push_back(std::move(d));
+    }
+
+
+    void asset_writer_impl::declare_dependency(std::string_view virtual_path, GLT::asset::type target_type) {
+
+        record_dep d{};
+        d.virtual_path = std::string(virtual_path);
+        d.target_type  = target_type;
+        d.by_path      = true;
+        m_deps.push_back(std::move(d));
+    }
+
+
+    void asset_writer_impl::set_name(std::string_view name) { m_name.assign(name.begin(), name.end()); }
+
+
+    [[nodiscard]] const std::string& asset_writer_impl::name() const noexcept { return m_name; }
+
+
+    [[nodiscard]] const std::vector<asset_writer_impl::record_chunk>& asset_writer_impl::chunks() const noexcept { return m_chunks; }
+
+
+    [[nodiscard]] const std::vector<asset_writer_impl::record_dep>& asset_writer_impl::deps() const noexcept { return m_deps; }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

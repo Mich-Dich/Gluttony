@@ -170,7 +170,7 @@ EXPORT_PLUGIN_CLASS(GLT::audio::soloud_backend::audio, GLT::audio::soloud_backen
 /*
 
 // In the engine's application class, during application_ready phase:
-auto audio_plugin = plugin_manager::get_plugin_ref<GLT::audio::i_audio_plugin>(plugin_manager::interface::audio);
+auto audio_plugin = GLT::audio::manager::get_ref();
 
 if (audio_plugin) {
     audio_plugin->create();

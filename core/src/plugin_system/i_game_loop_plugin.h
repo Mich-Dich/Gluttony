@@ -4,6 +4,7 @@
 #include "layer/layer.h"
 #include "layer/layer_stack.h"
 #include "debug/profiler.h"
+#include "plugin_system/plugin_manager.h"
 
 
 
@@ -21,11 +22,15 @@ namespace GLT::audio {
     class i_audio_plugin; 
 }
 
+namespace GLT::game_loop {
+    class i_game_loop_plugin;
+}
+
 namespace GLT {
     class update_event;
 }
 
-namespace GLT {
+namespace GLT::game_loop {
 
     // CONSTANTS =======================================================================================================
 
@@ -35,7 +40,7 @@ namespace GLT {
 
     // Everything a game loop is allowed to touch, bundled. The application fills this in
     // once per frame before calling run(). Plugins must NOT keep a reference to it.
-    struct game_loop_context {
+    struct context {
 
         f32&                                delta_time;
         layer_stack&                        layers;
@@ -50,6 +55,11 @@ namespace GLT {
 
     // FUNCTION DECLARATION ============================================================================================
 
+    FORCE_INLINE_R ref<GLT::game_loop::i_game_loop_plugin> get_ref() {
+
+        return GLT::plugin_manager::get_plugin_ref<GLT::game_loop::i_game_loop_plugin>(plugin_manager::interface::game_loop);
+    }
+
     // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================
@@ -61,16 +71,16 @@ namespace GLT {
 
 
         // Called once, before run(). Allocate per-loop state, build your schedule / DAG here.
-        virtual void init(game_loop_context& /*ctx*/) {}
+        virtual void init(context& /*ctx*/) {}
 
 
         // Called once, after run() returns. Join worker threads, free resources.
-        virtual void shutdown(game_loop_context& /*ctx*/) {}
+        virtual void shutdown(context& /*ctx*/) {}
 
 
         // The loop itself. Blocking. Return when is_stop_requested() is true.
         // The plugin decides order, threading and dependencies.
-        virtual void run(game_loop_context& ctx) = 0;
+        virtual void run(context& ctx) = 0;
 
 
         // Called from any thread (e.g. window close event). Must be thread-safe.

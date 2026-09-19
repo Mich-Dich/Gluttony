@@ -46,17 +46,17 @@ namespace GLT {
         plugin_manager::load_plugins(plugin_manager::phase::pre_application);
         plugin_manager::unload_plugins(plugin_manager::phase::pre_application);
 
-        mp_window = plugin_manager::get_plugin_ref<platform::i_window_plugin>(plugin_manager::interface::window);
+        mp_window = GLT::platform::get_window_ref();
         ASSERT(mp_window, "", "Failed to load window plugin")
         platform::window_attributes attributes;
         platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::load);
         mp_window->create(attributes);
 
-        mp_audio = plugin_manager::get_plugin_ref<GLT::audio::i_audio_plugin>(plugin_manager::interface::audio);
+        mp_audio = GLT::audio::manager::get_ref();
         ASSERT(mp_audio, "", "Failed to load audio plugin")
         mp_audio->create();
 
-        mp_renderer = plugin_manager::get_plugin_ref<render::i_renderer_plugin>(plugin_manager::interface::renderer);
+        mp_renderer = GLT::render::renderer::get_ref();
         ASSERT(mp_renderer, "", "Failed to load render plugin")
         mp_renderer->create();
 
@@ -94,13 +94,13 @@ namespace GLT {
         plugin_manager::load_plugins(plugin_manager::phase::pre_application_run);
         plugin_manager::unload_plugins(plugin_manager::phase::pre_application_run);
 
-        auto game_loop = plugin_manager::get_plugin_ref<i_game_loop_plugin>(plugin_manager::interface::game_loop);
+        auto game_loop = GLT::game_loop::get_ref();
         ASSERT(game_loop, "", "Failed to load game_loop plugin");
         auto close_sub = event_bus::subscribe_scoped<window_close_event>(           // unsubscribes automatically, even on exception
             [game_loop](const window_close_event&) { game_loop->request_stop(); }
         );
 
-        game_loop_context ctx{
+        game_loop::context ctx{
             m_delta_time,
             m_layer_stack,
             mp_window,

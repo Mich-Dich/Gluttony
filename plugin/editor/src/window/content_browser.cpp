@@ -7,6 +7,7 @@
 #include <application.h>
 #include <config/imgui_config.h>
 #include <event/event_bus.h>
+#include <plugin_system/i_asset_registry_plugin.h>
 
 #include "util/event/asset_open_event.h"
 #include "util/ui/pannel_collection.h"
@@ -35,6 +36,34 @@ namespace GLT::editor {
     constexpr f32                               LABEL_BOTTOM_MARGIN = 20.0f;
 
     constexpr const char*                       DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
+
+	const std::vector<std::pair<std::string, std::string>> POSSIBLE_IMPORT_TILE_TYPES = {
+
+		//									mesh																 image
+		{"All supported file types",    	"*.fbx;*.gltf;*.glb;*.obj;*.stl;*.3mf;*.dae;*.xml;*.ply;*.plyb;*.3ds;*.png;*.jpg;*.jpeg;*.jpe;*.tga;*.bmp;*.psd;*.gif;*.hdr;*.pic;*.ppm;*.pgm"},
+
+		// Common 3D meshes
+		{"Meshes", 							"*.fbx;*.gltf;*.glb;*.obj;*.stl;*.3mf;*.dae;*.xml;*.ply;*.plyb;*.3ds;"},
+		{"FBX files",         				"*.fbx" },
+		{"glTF 2.0 files",					"*.gltf;*.glb" },
+		{"Wavefront OBJ",					"*.obj" },
+		{"STL (Stereolithography)",			"*.stl" },
+		{"3MF (3D Manufacturing Format)",	"*.3mf" },
+		{"Collada",							"*.dae;*.xml" },
+		{"PLY (Stanford Polygon Library)",	"*.ply;*.plyb" },
+		{"3DS (3D Studio)",					"*.3ds" },
+
+		{"Images",                 			"*.png;*.jpg;*.jpeg;*.jpe;*.tga;*.bmp;*.psd;*.gif;*.hdr;*.pic;*.ppm;*.pgm"},					// all images
+		{"JPEG images",                 	"*.jpg;*.jpeg;*.jpe"},
+		{"PNG images",                  	"*.png"},
+		{"TGA images",                  	"*.tga"},
+		{"BMP images",                  	"*.bmp"},
+		{"PSD images",                  	"*.psd"},
+		{"GIF images",                  	"*.gif"},
+		{"HDR (Radiance .hdr)",         	"*.hdr"},
+		{"Softimage PIC",               	"*.pic"},
+		{"PNM (PPM/PGM)",               	"*.ppm;*.pgm"},
+	};
 
     // MACROS ==========================================================================================================
 
@@ -350,6 +379,12 @@ namespace GLT::editor {
         ImGui::BeginDisabled(!can_up);
         if (UI::gray_button("^##cb_up"))        navigate_up();
         ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (ImGui::Button("Import##content_browser_import")) {
+
+            import_files(GLT::io::file_dialog_multi("Import asset", POSSIBLE_IMPORT_TILE_TYPES));
+        }
 
         ImGui::SameLine();
         draw_breadcrumbs();
@@ -895,6 +930,58 @@ namespace GLT::editor {
                 if (a.is_directory != b.is_directory) return a.is_directory;
                 return a.name < b.name;
             });
+    }
+
+
+    void content_browser_window::import_files(const std::vector<std::filesystem::path>& paths) {
+            
+        if (paths.empty())
+            return;
+
+        auto registry = GLT::asset::registry::get_ref();
+        VALIDATE(registry, return, "", "asset registry not available");
+
+        for (const auto& src : paths) {
+
+            // Ask the registry which factories can handle this file.
+            auto bindings = registry->candidate_imports(src);
+            VALIDATE(!bindings.empty(), continue, "", "content_browser: no factory for [{}]", src.generic_string());
+
+            // Pick a target type. If multiple candidates, prompt (deferred to a
+            // modal — for now take the first one).
+            GLT::asset::type target = bindings.front().target_type;
+            if (bindings.size() > 1) {
+                // TODO: open a modal with one radio button per binding.
+            }
+
+            // TODO: create actual import wizard, currently just checking if file exits and the exiting -> need user input for the target location
+            const std::filesystem::path target_path = m_current_dir / src.filename()
+                .replace_extension(std::string(".") + std::string(GLT::asset::extension_for_type(target)));
+            std::error_code error{};
+            VALIDATE(!GLT::vfs::exists(target_path, error) && !error, continue, 
+                "", "Asset under that name already exists [{}]", target_path.generic_string())
+
+            // Fire and forget on the thread pool.
+            // The Assimp parse and vertex processing happen on the worker thread.
+            // The registry's load() mutex only serializes the final insertion,
+            // which is microseconds of work.
+            GLT::thread_pool::push([registry, src, target, target_path]() {
+
+                auto result = registry->import(src, target, target_path);
+                VALIDATE(result, return, "", "import '{}' → type {} failed", src.generic_string(), target.value);
+                const GLT::asset::handle h = *result;
+                LOG(info, "imported '{}' → '{}'", src.generic_string(), registry->info(h).virtual_path.generic_string());
+
+                // Hop back to the main thread to touch ImGui / content browser state.
+                GLT::thread_pool::push_main([registry, h, src]() {
+
+                    // Example: navigate to / reveal the imported file.
+                    if (const auto& info = registry->info(h); !info.virtual_path.empty()) {
+                        // content_browser.reveal(info.virtual_path);
+                    }
+                });
+            });
+        }
     }
 
 }

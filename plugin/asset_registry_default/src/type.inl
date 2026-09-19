@@ -1,11 +1,9 @@
-
 #pragma once
-
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::audio::soloud_backend {
+namespace GLT::asset::registry_default {
 
     // CONSTANTS =======================================================================================================
 
@@ -25,21 +23,19 @@ namespace GLT::audio::soloud_backend {
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
+    // Handle packing: low 32 bits = slot index, high 32 = generation.
+    // Bumping generation on free makes stale handles detectable.
+    FORCE_INLINE_R constexpr u64 make_handle(u32 idx, u32 gen) noexcept { return (static_cast<u64>(gen) << 32) | static_cast<u64>(idx); }
+
+    FORCE_INLINE_R constexpr u32 handle_index(u64 h) noexcept { return static_cast<u32>(h); }
+
+    FORCE_INLINE_R constexpr u32 handle_generation(u64 h) noexcept { return static_cast<u32>(h >> 32); }
+
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 
-    audio::audio() = default;
-
-
-    audio::~audio() = default;
-
     // TEMPLATE CLASS PUBLIC ===========================================================================================
-
-    void audio::on_load()             { LOG_LOADED }
-
-
-    void audio::on_unload()           { LOG_UNLOADED }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

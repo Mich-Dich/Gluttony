@@ -209,7 +209,7 @@ namespace GLT::editor {
         bool                                            m_fit_pending = true;
 
         // Playback state.
-        GLT::weak_ref<GLT::audio::i_audio_plugin>       m_audio_plugin{};
+        GLT::weak_ref<GLT::audio::i_audio_plugin>       m_audio_manager{};
         handle                                          m_sound_handle = 0;
         handle                                          m_voice_handle = 0;
         bool                                            m_playing = false;

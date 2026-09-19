@@ -53,7 +53,7 @@ namespace GLT::serializer {
                 else
                     util::to_string<T>(value, buffer);
                 
-                    m_file_content << util::add_spaces(m_level_of_indention) << m_prefix << key_name << ": " << buffer << "\n";
+                m_file_content << util::add_spaces(m_level_of_indention) << m_prefix << key_name << ": " << buffer << "\n";
             }
 
         } else {   // load from file

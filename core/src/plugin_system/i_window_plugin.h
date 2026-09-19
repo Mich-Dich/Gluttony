@@ -5,16 +5,21 @@
 #include "event/event.h"               // core event base class
 #include <glm/vec2.hpp>
 
-#include <plugin_system/i_renderer_plugin.h>
+#include "plugin_system/plugin_manager.h"
+#include "plugin_system/i_renderer_plugin.h"
+
+
 
 // FORWARD DECLARATIONS ================================================================================================
 
 namespace vk {
-
     class SurfaceKHR;
     struct Instance;
 }
 
+namespace GLT::platform {
+    class i_window_plugin;
+}
 
 namespace GLT::platform {
 
@@ -66,6 +71,12 @@ namespace GLT::platform {
 
 	void serialize_window_attributes(const std::filesystem::path& path, GLT::platform::window_attributes& attributes, 
         const serializer::option option);
+
+
+    FORCE_INLINE_R ref<GLT::platform::i_window_plugin> get_window_ref() {
+
+        return GLT::plugin_manager::get_plugin_ref<platform::i_window_plugin>(plugin_manager::interface::window);
+    }
 
     // TEMPLATE DECLARATION ============================================================================================
 
