@@ -82,7 +82,7 @@ namespace GLT::renderer_vk_ray {
 
         // TODO: remove
         m_active_camera = create_ref<GLT::world::camera>();
-        m_active_camera->set_position({0.0f, 0.0f, 2.5f});
+        m_active_camera->set_position({0.0f, 0.0f, 5.f});
 
         init_vulkan();
         create_base_resources();
@@ -214,6 +214,8 @@ namespace GLT::renderer_vk_ray {
             memcpy(data, mats, sizeof(mats));
             m_vr_dev->unmap_buffer(m_uniform_buffer);
         }
+        
+        update_tlas();
 
         // Bind descriptor buffer
         m_vr_dev->bind_descriptor_buffer({m_resource_desc_buffer}, current_cmd);
@@ -520,139 +522,122 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::create_acceleration_structures() {
 
-        // vertex and index data for the triangle
-        f32 vertices[] = {
-            1.0f, -1.0f, 0.0f,
-            -1.0f, -1.0f, 0.0f,
-            0.0f, 1.0f, 0.0f};
-        u32 indices[] = {0, 1, 2};
+        // ---------------------------------------------------------------------------------------
+        // A single axis-aligned box, centered on the origin with half-extent 1 in each direction.
+        // AABB is stored as min(vec3) / max(vec3) => 6 floats.
+        // ---------------------------------------------------------------------------------------
+        auto box = vk::AabbPositionsKHR(-1.0f, -1.0f, -1.0f,
+                                        1.0f,  1.0f,  1.0f);
 
-        // The hello-triangle scene: 1 triangle / 3 vertices.
-        m_scene_triangles = 1;
-        m_scene_vertices  = 3;
-
-        // create a buffer for the vertices and copy the data to it
-        m_vertex_buffer = m_vr_dev->create_buffer(
-            sizeof(f32) * 3 * 3,                                                  // 3 vertices, 3 floats per vertex
-            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR, // this buffer will be used as a source for the BLAS
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);              // we will be writing to this buffer on the CPU, so we need to set this flag, the buffer is also host visible so it is not fast GPU memory
-        m_index_buffer = m_vr_dev->create_buffer(
-            sizeof(u32) * 3, // 3 vertices, 3 floats per vertex
+        m_aabb_buffer = m_vr_dev->create_buffer(
+            sizeof(vk::AabbPositionsKHR),
             vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT); // same as above
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        m_live_buffer_count += 1;
 
-        m_live_buffer_count += 2;
+        m_vr_dev->update_buffer(m_aabb_buffer, &box, sizeof(vk::AabbPositionsKHR));
 
-        // upload the vertex data to the buffer, UpdateBuffer(...) will use mapping the buffer and memcpy
-        m_vr_dev->update_buffer(m_vertex_buffer, vertices, sizeof(f32) * 3 * 3);
-        m_vr_dev->update_buffer(m_index_buffer, indices, sizeof(u32) * 3);
+        // Scene stats: one box. (We'll count it as triangles = 12 just so the HUD isn't 0.)
+        m_scene_triangles = 12;
+        m_scene_vertices  = 24;
 
-        // Create info struct for the BLAS
+        // ---------------------------------------------------------------------------------------
+        // BLAS with AABB geometry
+        // ---------------------------------------------------------------------------------------
         vr::blas_create_info blas_create_info = {};
         blas_create_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
 
-        // [POI]
-        // triangle geometry data, blas_create_info can have multiple geometries
         vr::geometry_data geom_data = {};
-        geom_data.vertex_format = vk::Format::eR32G32B32Sfloat;
-        geom_data.stride = sizeof(f32) * 3; // 3 floats per vertex: x, y, z
-        geom_data.index_format = vk::IndexType::eUint32;
-        geom_data.primitive_count = 1;
-        geom_data.data_addresses.vertex_dev_address = m_vertex_buffer.dev_address;
-        geom_data.data_addresses.index_dev_address = m_index_buffer.dev_address;
+        geom_data.type                 = vk::GeometryTypeKHR::eAabbs;
+        geom_data.primitive_count      = 1;
+        geom_data.stride               = sizeof(f32) * 6;      // vec3 min + vec3 max
+        geom_data.data_addresses.aabb_dev_address = m_aabb_buffer.dev_address;
+        // NOTE: vertex/index formats and addresses are unused for AABB geometry.
 
-        // add triangle geometry to the BLAS create info
-        // NOTE: blas_create_info can have multiple geometries and they are of type VkAccelerationStructureGeometryKHR
         blas_create_info.geometries.push_back(geom_data);
 
-        // [POI]
-        // this only creates the BLAS, it does not build it
-        // it creates acceleration structure and allocates memory for it and scratch memory
         auto [blas_handle, blas_build_info] = m_vr_dev->create_blas(blas_create_info);
-
-        // Create a scratch buffer for the BLAS build
         auto blas_scratch_buffer = m_vr_dev->create_scratch_buffer_from_build_info(blas_build_info);
-        // To have avoid allocating scratch memory, every build you can create a big scratch buffer and reuse it for all BLAS builds
-        // You can create a big buffer with minimum scratch alignment properties from VulrayDevice::GetAccelerationStructureProperties()
-        // and divide it into smaller buffers for each BLAS build according to how much scratch memory each BLAS needs
-        // Set the scratch buffer address for a BLAS by setting blas_build_info.BuildGeometryInfo.scratchData
-        // or just call VulrayDevice::BindScratchBufferToBuildInfo() to do the same thing
 
         m_blas_handle = blas_handle;
 
-        // [POI]
-        // create a TLAS
+        // ---------------------------------------------------------------------------------------
+        // Static TLAS: 1 instance, identity transform
+        // ---------------------------------------------------------------------------------------
         vr::tlas_create_info tlas_create_info = {};
-        tlas_create_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
-        tlas_create_info.max_instance_count = 1; // Max number of instances in the TLAS, when building the TLAS num of instances may be lower
+        tlas_create_info.flags              = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+        tlas_create_info.max_instance_count = 1;
 
-        auto [tlas_handle, tlas_build_info] = m_vr_dev->create_tlas(tlas_create_info);
+        vr::tlas_build_info tlas_build_info{};
+        std::tie(m_tlas_handle, m_tlas_build_info) = m_vr_dev->create_tlas(tlas_create_info);
 
-        m_tlas_handle = tlas_handle;
+        // TLAS scratch buffer is kept around and reused across frames
+        m_tlas_scratch_buffer = m_vr_dev->create_scratch_buffer_from_build_info(m_tlas_build_info);
+        m_live_buffer_count += 1;
 
-        // Create the scratch buffer for TLAS build
-        auto tlas_scratch_buffer = m_vr_dev->create_scratch_buffer_from_build_info(tlas_build_info);
-        auto instance_buffer = m_vr_dev->create_instance_buffer(1);         // create a buffer for the instance data
-        auto inst = vk::AccelerationStructureInstanceKHR()                  // Specify the instance data
+        // Instance data (single instance) lives on the host and is re-uploaded each frame
+        m_instance_data.resize(1);
+        m_instance_data[0] = vk::AccelerationStructureInstanceKHR()
+            .setTransform(VkTransformMatrixKHR{
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f})
             .setInstanceCustomIndex(0)
             .setAccelerationStructureReference(m_blas_handle.buffer.dev_address)
-            .setFlags(vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable)
+            .setFlags(vk::GeometryInstanceFlagBitsKHR::eForceOpaque)
             .setMask(0xFF)
             .setInstanceShaderBindingTableRecordOffset(0);
 
-        // set the transform matrix to identity
+        m_instance_buffer = m_vr_dev->create_instance_buffer(1);
+        m_live_buffer_count += 1;
+        m_vr_dev->update_buffer(m_instance_buffer, m_instance_data.data(),
+            sizeof(vk::AccelerationStructureInstanceKHR));
+
+        auto inst = vk::AccelerationStructureInstanceKHR()
+            .setInstanceCustomIndex(0)
+            .setAccelerationStructureReference(m_blas_handle.buffer.dev_address)
+            .setFlags(vk::GeometryInstanceFlagBitsKHR::eForceOpaque)
+            .setMask(0xFF)
+            .setInstanceShaderBindingTableRecordOffset(0);
+
         inst.transform = {
             1.0f, 0.0f, 0.0f, 0.0f,
             0.0f, 1.0f, 0.0f, 0.0f,
             0.0f, 0.0f, 1.0f, 0.0f};
 
-        // [POI]
-        // upload the instance data to the buffer
-        m_vr_dev->update_buffer(instance_buffer, &inst, sizeof(vk::AccelerationStructureInstanceKHR), 0);
+        m_vr_dev->update_buffer(m_instance_buffer, &inst, sizeof(vk::AccelerationStructureInstanceKHR), 0);
 
-        // create a command buffer to build the BLAS and TLAS, m_graphics_pool is a command pool that is created in the Base Application class
-        auto build_cmd = m_device.allocateCommandBuffers(vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
+        // Build once
+        auto build_cmd = m_device.allocateCommandBuffers(
+            vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
 
         build_cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
 
-        // [POI]
-
-        // build the AS
-        std::vector<vr::blas_build_info> buildInfos = {blas_build_info};    // We can have multiple BLAS builds at once, but we only have one for now
-        m_vr_dev->build_blas(buildInfos, build_cmd);                        // Add build commands to command buffer and retrieve scratch buffer for the build
-        m_vr_dev->add_acceleration_build_barrier(build_cmd);                // Add a barrier to the command buffer to make sure the BLAS build is finished before the TLAS build starts
-
-        // Add build commands to command buffer and retrieve scratch buffer for the build
-        // We can reuse the scratch buffer from here to update the TLAS, but for now we don't update
-
-        m_vr_dev->build_tlas(tlas_build_info, instance_buffer, 1, build_cmd);
+        std::vector<vr::blas_build_info> build_infos = {blas_build_info};
+        m_vr_dev->build_blas(build_infos, build_cmd);
+        m_vr_dev->add_acceleration_build_barrier(build_cmd);
+        m_vr_dev->build_tlas(m_tlas_build_info, m_instance_buffer, 1, build_cmd);
 
         build_cmd.end();
 
-        // submit the command buffer and wait for it to finish
-        auto submitInfo = vk::SubmitInfo()
+        auto submit_info = vk::SubmitInfo()
             .setCommandBufferCount(1)
             .setPCommandBuffers(&build_cmd);
 
-        m_queues.graphics_queue.submit(submitInfo, nullptr);
-
+        m_queues.graphics_queue.submit(submit_info, nullptr);
         m_device.waitIdle();
 
-        // Destroy the scratch buffers, because the build is finished
-        // NOTE: We know the build is finished because we waited for the device to be idle, but in a real application we would use a fence or something else
         m_vr_dev->destroy_buffer(blas_scratch_buffer);
-        m_vr_dev->destroy_buffer(tlas_scratch_buffer);
-        m_vr_dev->destroy_buffer(instance_buffer);                  // We don't need the instance buffer anymore, because the TLAS is built and we don't plan on updating it
-        m_device.freeCommandBuffers(m_graphics_pool, build_cmd);    // free the command buffer
+        m_device.freeCommandBuffers(m_graphics_pool, build_cmd);
 
         m_deletion_queue.push_func([&]() {
-
-            m_vr_dev->destroy_buffer(m_vertex_buffer);
-            m_vr_dev->destroy_buffer(m_index_buffer);
+            m_vr_dev->destroy_buffer(m_aabb_buffer);
             m_vr_dev->destroy_blas(m_blas_handle);
             m_vr_dev->destroy_tlas(m_tlas_handle);
+            m_vr_dev->destroy_buffer(m_instance_buffer);          // NEW
+            if (m_tlas_scratch_buffer.size > 0)                   // NEW
+                m_vr_dev->destroy_buffer(m_tlas_scratch_buffer);  // NEW
         });
-
     }
 
 
@@ -681,20 +666,27 @@ namespace GLT::renderer_vk_ray {
         // create shaders for the ray tracing pipeline
         // Spir-V bytecode is required
 
+        const auto shader_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader";
+
         // load the ray gen shader
-        auto ray_gen_spv = m_shader_compiler.compile_glsl_to_spirv(GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "hello_triangle.rgen.glsl");
+        auto ray_gen_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "box_intersection.rgen.glsl");
         ASSERT(!ray_gen_spv.empty(), "", "Failed to load shader")
         auto ray_gen_shader_module = m_vr_dev->create_shader_from_spv(ray_gen_spv);
 
         // load the miss shader
-        auto ray_miss_spv = m_shader_compiler.compile_glsl_to_spirv(GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "hello_triangle.rmiss.glsl");
+        auto ray_miss_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "box_intersection.rmiss.glsl");
         ASSERT(!ray_miss_spv.empty(), "", "Failed to load shader")
         auto ray_miss_shader_module = m_vr_dev->create_shader_from_spv(ray_miss_spv);
 
         // load the closest hit shader
-        auto closest_hit_spv = m_shader_compiler.compile_glsl_to_spirv(GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "hello_triangle.rchit.glsl");
+        auto closest_hit_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "box_intersection.rchit.glsl");
         ASSERT(!closest_hit_spv.empty(), "", "Failed to load shader")
         auto closest_hit_shader_module = m_vr_dev->create_shader_from_spv(closest_hit_spv);
+
+        // load the intersection shader
+        auto intersection_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "box_intersection.rint.glsl");
+        ASSERT(!intersection_spv.empty(), "", "Failed to load shader")
+        auto intersection_shader_module = m_vr_dev->create_shader_from_spv(intersection_spv);
 
         // [POI]
         // Pipeline settings for the ray tracing pipeline
@@ -707,7 +699,7 @@ namespace GLT::renderer_vk_ray {
         pipeline_settings.pipeline_layout = m_pipeline_layout;
         pipeline_settings.max_recursion_depth = 1;
         pipeline_settings.max_payload_size = sizeof(glm::vec3);
-        pipeline_settings.max_hit_attribute_size = sizeof(glm::vec2);
+        pipeline_settings.max_hit_attribute_size = sizeof(glm::vec3);
 
         // Collection of shaders for the pipeline
         vr::ray_tracing_shader_collection shader_collection = {};
@@ -720,6 +712,7 @@ namespace GLT::renderer_vk_ray {
         // hit groups can contain multiple shaders, so there is another special struct for it
         vr::hit_group hit_group = {};
         hit_group.closest_hit_shader = closest_hit_shader_module;
+        hit_group.intersection_shader = intersection_shader_module;
         shader_collection.hit_groups.push_back(hit_group);
 
         // create the ray tracing pipeline
@@ -743,6 +736,7 @@ namespace GLT::renderer_vk_ray {
         m_device.destroyShaderModule(ray_gen_shader_module.module);
         m_device.destroyShaderModule(ray_miss_shader_module.module);
         m_device.destroyShaderModule(closest_hit_shader_module.module);
+        m_device.destroyShaderModule(intersection_shader_module.module);
         m_deletion_queue.push_func([&]() {
 
             m_vr_dev->destroy_sbt_buffer(m_sbt_buffer);
@@ -778,6 +772,81 @@ namespace GLT::renderer_vk_ray {
             clear_color,
             vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)
         );
+    }
+
+
+    void renderer::update_tlas() {
+
+        // ---- Rotate the instance around the Y axis ----
+        static auto start_time = std::chrono::high_resolution_clock::now();
+        const auto  now = std::chrono::high_resolution_clock::now();
+        const f32   t   = std::chrono::duration<f32>(now - start_time).count();
+
+        const f32 angle = t;              // ~1 rad/sec — tweak to taste
+        const f32 c = cosf(angle);
+        const f32 s = sinf(angle);
+
+        // VkTransformMatrixKHR is a 3x4 row-major matrix (implicit last row = 0,0,0,1)
+        // Rotation about Y:
+        //   [ c  0  s  0 ]
+        //   [ 0  1  0  0 ]
+        //   [-s  0  c  0 ]
+        VkTransformMatrixKHR xform = {
+            c,   0.0f, s,   0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            -s,   0.0f, c,   0.0f
+        };
+
+        m_instance_data[0].transform = xform;
+
+        // Upload the new transform to the instance buffer
+        m_vr_dev->update_buffer(m_instance_buffer, m_instance_data.data(),
+            sizeof(vk::AccelerationStructureInstanceKHR));
+
+        // ---- Rebuild the TLAS ----
+        // Pass 'true' to have Vulray destroy the previous TLAS.
+        // We waitIdle() below before the rebuild, so no GPU work is still referencing it.
+        std::tie(m_tlas_handle, m_tlas_build_info) =
+            m_vr_dev->update_tlas(m_tlas_handle, m_tlas_build_info, true);
+
+        // Grow the scratch buffer if the rebuild needs more space
+        if (m_tlas_build_info.build_sizes.buildScratchSize > m_tlas_scratch_buffer.size) {
+
+            if (m_tlas_scratch_buffer.size > 0) {
+                m_vr_dev->destroy_buffer(m_tlas_scratch_buffer);
+                m_live_buffer_count -= 1;
+            }
+
+            m_tlas_scratch_buffer = m_vr_dev->create_scratch_buffer_from_build_info(m_tlas_build_info);
+            m_live_buffer_count += 1;
+        }
+
+        // Record and submit the TLAS build
+        auto build_cmd = m_device.allocateCommandBuffers(
+            vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
+
+        build_cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+        m_vr_dev->build_tlas(m_tlas_build_info, m_instance_buffer, 1, build_cmd);
+        m_vr_dev->add_acceleration_build_barrier(build_cmd);
+        build_cmd.end();
+
+        auto submit_info = vk::SubmitInfo()
+            .setCommandBufferCount(1)
+            .setPCommandBuffers(&build_cmd);
+
+        m_queues.graphics_queue.submit(submit_info, nullptr);
+        m_device.waitIdle();
+        m_device.freeCommandBuffers(m_graphics_pool, build_cmd);
+
+        // ---- Point the descriptor at the freshly-built TLAS ----
+        // m_resource_bindings[0] holds a stable pointer to m_tlas_handle.buffer.dev_address,
+        // so we only need to re-upload the descriptor's contents.
+        m_vr_dev->update_descriptor_buffer(
+            m_resource_desc_buffer,
+            m_resource_bindings[0],
+            0,
+            vr::descriptor_buffer_type::resource,
+            0);
     }
 
     // ----- SWAPCHAIN -------------------------------------------------------------------------------------------------

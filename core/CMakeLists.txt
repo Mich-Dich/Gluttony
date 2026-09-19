@@ -61,13 +61,15 @@ target_compile_options(${CORE_NAME}                                     PRIVATE
 
 # ------------- Copy assets directory to output ---------------------------------------------------
 if(EXISTS ${CMAKE_SOURCE_DIR}/asset)
-    # For single-config generators (make, ninja)
-    add_custom_command(TARGET                                           ${CORE_NAME}
-        POST_BUILD COMMAND                                              ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/asset
-            ${COMPILE_OUTPUT_DIR}/asset
+    add_custom_target(${CORE_NAME}_copy_assets ALL
+        COMMAND                                                         ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_SOURCE_DIR}/asset
+                ${COMPILE_OUTPUT_DIR}/asset
         COMMENT "Copying assets to build directory: ${COMPILE_OUTPUT_DIR}/asset"
+        VERBATIM
     )
+    # Make sure assets are only copied after the executable is linked
+    add_dependencies(${CORE_NAME}_copy_assets ${CORE_NAME})
 else()
     message(WARNING "Assets directory not found at ${CMAKE_SOURCE_DIR}/asset")
 endif()

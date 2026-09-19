@@ -72,15 +72,18 @@ target_include_directories(${PLUGIN_NAME}_static                        PRIVATE 
 
 # ------------- Copy assets directory to output ---------------------------------------------------
 set(COMPILE_OUTPUT_DIR                                                  "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/asset)
-    add_custom_command(TARGET                                           ${PLUGIN_NAME}
-        POST_BUILD COMMAND                                              ${CMAKE_COMMAND} -E copy_directory
+if(EXISTS ${CMAKE_SOURCE_DIR}/asset)
+    add_custom_target(${PLUGIN_NAME}_copy_assets                          ALL
+        COMMAND                                                         ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/asset
             ${COMPILE_OUTPUT_DIR}/asset
         COMMENT "Copying assets to build directory: ${COMPILE_OUTPUT_DIR}/asset"
+        VERBATIM
     )
+    # Make sure assets are only copied after the executable is linked
+    add_dependencies(${PLUGIN_NAME}_copy_assets ${PLUGIN_NAME})
 else()
-    message(WARNING "Assets directory not found at ${CMAKE_CURRENT_SOURCE_DIR}/asset")
+    message(WARNING "Assets directory not found at ${CMAKE_SOURCE_DIR}/asset")
 endif()
 
 

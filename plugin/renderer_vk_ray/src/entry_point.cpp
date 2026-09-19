@@ -151,6 +151,9 @@ namespace GLT::renderer_vk_ray {
 
         vk::DescriptorSet create_imgui_texture(vr::accessible_image& img);
 
+
+        void update_tlas();
+
         // --- IMGUI ---------------------------------------------------------------------------------------------------
 
         void imgui_init();
@@ -198,8 +201,7 @@ namespace GLT::renderer_vk_ray {
         vr::device*                                             m_vr_dev = nullptr;
         GLT::ref<image>                                         m_output_image = nullptr;
         vr::allocated_buffer                                    m_uniform_buffer = {};
-        vr::allocated_buffer                                    m_vertex_buffer;
-        vr::allocated_buffer                                    m_index_buffer;
+        vr::allocated_buffer                                    m_aabb_buffer;
         vr::blas_handle                                         m_blas_handle;
         vr::tlas_handle                                         m_tlas_handle;
         std::vector<vr::descriptor_item>                        m_resource_bindings;
@@ -232,23 +234,30 @@ namespace GLT::renderer_vk_ray {
 		vk::CommandPool								            m_immediate_submit_command_pool{};
     
         // render stats (populated during the frame) -------------------------------------------------------------------
-        u32                                                     m_frame_draw_calls      = 0;
-        u32                                                     m_frame_render_passes   = 0;
+        u32                                                     m_frame_draw_calls = 0;
+        u32                                                     m_frame_render_passes = 0;
 
         // Scene geometry totals (set when acceleration structures are built).
-        u32                                                     m_scene_triangles       = 0;
-        u32                                                     m_scene_vertices        = 0;
+        u32                                                     m_scene_triangles = 0;
+        u32                                                     m_scene_vertices = 0;
 
         // --- GPU timing (timestamp queries) --------------------------------------------------------------------------
-        vk::QueryPool                                           m_timestamp_pool        = nullptr;
-        f32                                                     m_timestamp_period_ns   = 1.0f;
+        vk::QueryPool                                           m_timestamp_pool = nullptr;
+        f32                                                     m_timestamp_period_ns = 1.0f;
         std::array<f32, MAX_CONCURRENT_FRAMES>                  m_gpu_frame_time_ms{};
-        f32                                                     m_last_gpu_time_ms      = 0.0f;
+        f32                                                     m_last_gpu_time_ms = 0.0f;
 
         // --- live resource counters (absolute) -----------------------------------------------------------------------
-        u32                                                     m_live_buffer_count         = 0;
-        u32                                                     m_live_pipeline_count       = 0;
+        u32                                                     m_live_buffer_count = 0;
+        u32                                                     m_live_pipeline_count = 0;
         u32                                                     m_live_descriptor_set_count = 0;
+
+        // --- rotating TLAS -------------------------------------------------------------------------------
+        vr::tlas_build_info                                     m_tlas_build_info{};
+        std::vector<vk::AccelerationStructureInstanceKHR>       m_instance_data{};
+        vr::allocated_buffer                                    m_instance_buffer{};
+        vr::allocated_buffer                                    m_tlas_scratch_buffer{};
+
     };
 
 
@@ -331,7 +340,7 @@ namespace GLT::renderer_vk_ray {
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
         .name                                                   = GLT_MODULE_NAME,
-        .load_phase                                             = GLT::plugin_manager::phase::post_window,
+        .load_phase                                             = GLT::plugin_manager::phase::pre_application,
         .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
         .target                                                 = GLT::plugin_manager::interface::renderer,
         .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
