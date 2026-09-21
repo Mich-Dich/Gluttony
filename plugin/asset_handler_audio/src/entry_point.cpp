@@ -2,7 +2,7 @@
 #include "util/pch.h"
 
 #include <asset/type.h>
-#include <asset/mesh.h>
+#include <asset/audio.h>
 #include <plugin_system/i_project_manager.h>
 #include <plugin_system/i_asset_handler_plugin.h>
 #include <plugin_system/i_asset_registry_plugin.h>
@@ -11,7 +11,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::asset::handler::mesh {
+namespace GLT::asset::handler::audio {
 
     // CONSTANTS =======================================================================================================
 
@@ -19,40 +19,11 @@ namespace GLT::asset::handler::mesh {
 
     // TYPES ===========================================================================================================
 
-    // The runtime representation of a loaded mesh asset. Handlers own this
-    // type; the registry only ever sees it as `i_runtime_asset*`.
-    //
-    // IMPORTANT: this struct OWNS the decoded geometry. The chunk_reader
-    // hands out spans into a buffer that dies when the registry's load
-    // function returns, so every handler must copy what it wants to keep.
-    class mesh_asset final : public GLT::asset::i_runtime_asset {
-    public:
-
-        GLT::asset::type                                asset_type{ GLT::asset::core_types::static_mesh };
-
-        std::vector<GLT::asset::mesh::vertex>           vertices;
-        std::vector<u32>                                indices;
-        std::vector<GLT::asset::mesh::submesh>          submeshes;
-        GLT::asset::mesh::bounds                        bounds{};
-
-        // Positional. material_handles[i] corresponds to submesh.material_slot == i.
-        // Entries may be INVALID_HANDLE when a material reference couldn't be
-        // resolved - the renderer is expected to substitute a fallback.
-        std::vector<GLT::asset::handle>                 material_handles;
-
-
-        [[nodiscard]] GLT::asset::type type() const noexcept override;
-
-
-        [[nodiscard]] u64 memory_usage() const noexcept override;
-
-    };
-
     // STATIC VARIABLES ================================================================================================
 
     static constexpr const char*                                dependencies_names[] = {
-        
-        nullptr 
+
+        nullptr
     };
 
     static constexpr GLT::plugin_manager::interface             dependencies_interfaces[] = {
@@ -73,6 +44,8 @@ namespace GLT::asset::handler::mesh {
         .dependency_interfaces                                  = dependencies_interfaces,
     };
 
+    // STATIC VARIABLES ================================================================================================
+
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
@@ -86,8 +59,6 @@ namespace GLT::asset::handler::mesh {
     // FUNCTION IMPLEMENTATION =========================================================================================
 
     // CLASS IMPLEMENTATION ============================================================================================
-
-    // CLASS PUBLIC ====================================================================================================
 
     class plugin final : public GLT::asset::i_asset_handler {
     public:
@@ -110,13 +81,14 @@ namespace GLT::asset::handler::mesh {
         GLT::ref<GLT::asset::i_asset_registry_plugin>           m_registry{};
     };
 
+    // CLASS PUBLIC ====================================================================================================
+
     // CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
 
 }
 
-#include "mesh_asset.inl"
 #include "plugin.inl"
 
-EXPORT_PLUGIN_CLASS(GLT::asset::handler::mesh::plugin, GLT::asset::handler::mesh::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::asset::handler::audio::plugin, GLT::asset::handler::audio::descriptor)

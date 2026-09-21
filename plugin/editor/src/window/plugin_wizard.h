@@ -45,7 +45,7 @@ namespace GLT::editor {
     //     src/entry_point.cpp
     //     [asset/]
     //
-    // The wizard writes directly to disk — nothing is buffered in the project
+    // The wizard writes directly to disk - nothing is buffered in the project
     // file. Generated files are intentionally close to the existing plugin
     // templates so they can be hand-edited afterwards.
     class plugin_wizard_window : public base_window {

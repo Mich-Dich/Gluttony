@@ -13,7 +13,7 @@ namespace GLT::debug {
     // TYPES ===========================================================================================================
 
     // Arbitrary values a *specific* system contributes to the HUD. The HUD
-    // does not know what any of these mean — it renders them as a name/value
+    // does not know what any of these mean - it renders them as a name/value
     // list under a section header matching the provider's `name`.
     struct system_stats {
 

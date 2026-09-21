@@ -37,13 +37,13 @@ sudo chown -R mich:mich ~/workspace/Gluttony
 
 categorized list of editors:
 
-## Tier 1 — Zero prerequisites (pure engine/editor tooling)
+## Tier 1 - Zero prerequisites (pure engine/editor tooling)
 
 **Settings / Preferences editor**
 Every engine has one. Sections: Editor (theme, fonts, keybindings, docking layout), Rendering (default backend, vsync, MSAA, resolution scale), Audio, Input, Network, Paths (project dir, cache dir, plugin dir). Since you already have ImGui and a `pannel_collection`, this is a natural next window. Persist via your serializer.
 
 **Plugin manager UI**
-You have a plugin system with descriptors and dependency interfaces. A window that lists loaded plugins, their phase, target interface, dependencies, load status, and a "reload" button is high-value and near-zero risk. It also makes developing further plugins easier — which pays back immediately.
+You have a plugin system with descriptors and dependency interfaces. A window that lists loaded plugins, their phase, target interface, dependencies, load status, and a "reload" button is high-value and near-zero risk. It also makes developing further plugins easier - which pays back immediately.
 
 **Dependency graph viewer**
 Visualize the plugin dependency graph (`i_window_plugin` → `i_renderer_plugin` etc.) as a node graph. Helpful once your plugin count grows past ~5.
@@ -56,7 +56,7 @@ Edit ImGui colors, spacing, rounding, font sizes, and save named themes. `ImGui:
 
 
 
-## Tier 2 — Simple file formats
+## Tier 2 - Simple file formats
 
 These only need a file loader, not an asset pipeline.
 
@@ -73,11 +73,11 @@ Action → key table with an interactive "press a key to bind" mode. If your eng
 A two-column view (key → localized text) with per-locale tabs, search, and missing-entry highlighting. Even before you have an asset system, a CSV or JSON-backed string table is trivial.
 
 **Data table editor**
-Generic CSV/JSON-backed tabular editor. Useful for gameplay constants, item definitions, dialogue lines, etc. Completely asset-system-free — it's just a spreadsheet over a text file.
+Generic CSV/JSON-backed tabular editor. Useful for gameplay constants, item definitions, dialogue lines, etc. Completely asset-system-free - it's just a spreadsheet over a text file.
 
 
 
-## Tier 3 — Procedural / parameter-driven
+## Tier 3 - Procedural / parameter-driven
 
 These generate content from parameters rather than loading it.
 
@@ -94,14 +94,14 @@ Perlin/simplex/worley noise with frequency, octaves, persistence, lacunarity, do
 Load a `.cube` file or generate an identity LUT, edit its 3D LUT via a slider grid, and preview the effect on a test image (your image viewer already has the preview pipeline). Extremely high value for a ray-traced renderer.
 
 **Particle system editor**
-Even a simple one: emitter parameters, spawn rate, lifetime, velocity curves, color-over-lifetime gradient, size-over-lifetime curve, and a viewport preview using ImGui's `DrawList` (or a real GPU particle pass later). No assets — it's all parameters, and the "particle" can be a simple quad.
+Even a simple one: emitter parameters, spawn rate, lifetime, velocity curves, color-over-lifetime gradient, size-over-lifetime curve, and a viewport preview using ImGui's `DrawList` (or a real GPU particle pass later). No assets - it's all parameters, and the "particle" can be a simple quad.
 
 **Camera / Cinematic editor**
 Keyframed camera paths with easing, FOV, focal length, DOF, and a scrub bar. Works against your existing `world::camera`. Useful for demos, trailers, and cutscenes even before you have a scene format.
 
 
 
-## Tier 4 — Minimal asset support
+## Tier 4 - Minimal asset support
 
 These need *some* asset concept, but the minimal version is small.
 
@@ -122,7 +122,7 @@ Scrub bar, keyframe tracks, play/pause, loop, speed. Even a single-track version
 
 
 
-## Tier 5 — Debugging tools
+## Tier 5 - Debugging tools
 
 These make the *other* editors and the engine itself easier to develop.
 

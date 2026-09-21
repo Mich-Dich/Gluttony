@@ -43,7 +43,7 @@ namespace GLT::asset {
 
     // One-stop shop the engine core talks to. Owns: file format, chunk table,
     // dependency graph, hot-reload watching, string table, caching. Knows nothing
-    // about meshes, textures, or audio — that is the handlers' job.
+    // about meshes, textures, or audio - that is the handlers' job.
     class i_asset_registry_plugin : public plugin_manager::i_plugin {
     public:
 
@@ -96,7 +96,7 @@ namespace GLT::asset {
 
         // Routes to whichever factory binds (source_extension, target_type).
         // If out_path is empty, the registry derives one next to the source (or under a configured import root). 
-        // On success the imported asset is loaded and its handle returned — the editor basically always wants a preview right away.
+        // On success the imported asset is loaded and its handle returned - the editor basically always wants a preview right away.
         [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::import_error> import(const std::filesystem::path& source, 
             GLT::asset::type target_type, const std::filesystem::path& out_path = {}, const GLT::asset::import_options& opts = {}) = 0;
 

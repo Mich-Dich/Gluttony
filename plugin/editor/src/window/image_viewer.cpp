@@ -448,7 +448,7 @@ namespace GLT::editor {
 
 
     void image_viewer_window::update(const f32 /*delta_time*/) {
-        // Nothing to update per frame — decoding is driven by the icon
+        // Nothing to update per frame - decoding is driven by the icon
         // manager's async queue and consumed inside draw_canvas().
     }
 
@@ -490,7 +490,7 @@ namespace GLT::editor {
             return;
         }
 
-        // Sections (order matters — Display first, then info, then the two
+        // Sections (order matters - Display first, then info, then the two
         // "hot" sections that update per-frame from the canvas.)
         draw_display_section();
         draw_histogram_section();
@@ -953,7 +953,7 @@ namespace GLT::editor {
 
         const f32 tiles = static_cast<f32>(m_tile_count);
 
-        // Fit-to-window on demand — fits the entire tile grid, not a single tile.
+        // Fit-to-window on demand - fits the entire tile grid, not a single tile.
         if (m_fit_pending) {
 
             const f32 sx = avail.x / (m_image->get_size().x * tiles);
@@ -975,7 +975,7 @@ namespace GLT::editor {
         const ImVec2 grid_min(center.x - grid_w * 0.5f, center.y - grid_h * 0.5f);
         const ImVec2 grid_max(center.x + grid_w * 0.5f, center.y + grid_h * 0.5f);
 
-        // Pixel inspection — uses the same geometry as the paint below.
+        // Pixel inspection - uses the same geometry as the paint below.
         update_pixel_inspection(canvas_min, canvas_max, grid_min, grid_max, tile_w, tile_h);
 
         // Paint -------------------------------------------------------------------------------------
@@ -1094,7 +1094,7 @@ namespace GLT::editor {
         m_details.is_srgb = !m_details.is_hdr;
 
         // Best-effort defaults. A format-aware decoder can refine these once
-        // the header has been parsed — for now we infer from the extension
+        // the header has been parsed - for now we infer from the extension
         // so the details panel has something useful to show.
         if      (ext == ".png")                     { m_details.channels = 4; m_details.bit_depth =  8; }
         else if (ext == ".jpg" || ext == ".jpeg")   { m_details.channels = 3; m_details.bit_depth =  8; }

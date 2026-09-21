@@ -169,7 +169,7 @@ namespace GLT::editor {
             UI::end_table();
         }
 
-        // Summary of the sliding window — mirrors exactly what the plots
+        // Summary of the sliding window - mirrors exactly what the plots
         // are showing, so the numbers always agree with the visuals.
         if (!m_frame_time_history.empty()) {
 
@@ -290,7 +290,7 @@ namespace GLT::editor {
         //   top band    = GPU  →  fills [cpu        .. cpu + gpu]
         //
         // The total (cpu + gpu) is also kept as its own array so we can draw a
-        // crisp line on top of the stack — the shaded bands alone make the
+        // crisp line on top of the stack - the shaded bands alone make the
         // boundary visible, but a line makes the total instantly readable.
         std::vector<f32> zero_line(count, 0.0f);
         std::vector<f32> cpu_plus_gpu(count);
@@ -341,7 +341,7 @@ namespace GLT::editor {
             }
 
             // ---- Measured wall-clock frame time ---------------------------------
-            // This is the line the user actually "feels" — when it crosses above
+            // This is the line the user actually "feels" - when it crosses above
             // the budget line, the frame is over-budget.
             ImPlot::PlotLine("Frame time", m_time_axis.data(), m_frame_time_history.data(), count, 
                 ImPlotSpec(ImPlotProp_LineColor, ImVec4(0.40f, 0.85f, 0.40f, 1.0f), ImPlotProp_LineWeight, 1.5f));

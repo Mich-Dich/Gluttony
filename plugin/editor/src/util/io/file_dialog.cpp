@@ -14,7 +14,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::io {
+namespace GLT::editor::io {
 
     // CONSTANTS =======================================================================================================
 
@@ -183,7 +183,7 @@ namespace GLT::io {
 
     std::vector<std::filesystem::path> zenity_multi(const std::string& title, const std::vector<std::pair<std::string, std::string>>& filters) {
 
-        // zenity default separator is '|'  — paths with '|' are pathological, ignore that.
+        // zenity default separator is '|'  - paths with '|' are pathological, ignore that.
         std::string cmd = "zenity --file-selection --multiple --title=" + shell_quote(title) + zenity_filters(filters);
 
         auto [code, out] = run_capture(cmd);

@@ -5,27 +5,13 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
-#include <algorithm>
-#include <cmath>
-#include <cstdio>
-#include <cstring>
-
-// dr_libs - one implementation per binary. These give us WAV / MP3 / FLAC
-// decoding without any external dependency. OGG is intentionally not
-// handled here; see the notes at the bottom of the file.
-#define DR_WAV_IMPLEMENTATION
-#include <dr_wav.h>
-
-#define DR_MP3_IMPLEMENTATION
-#include <dr_mp3.h>
-
-#define DR_FLAC_IMPLEMENTATION
-#include <dr_flac.h>
-
 #include <config/imgui_config.h>
+#include <asset/audio.h>
+#include <plugin_system/i_asset_registry_plugin.h>
 #include <plugin_system/plugin_manager.h>
 #include <plugin_system/i_audio_plugin.h>
 #include <resource_manager/icon_manager.h>
+
 #include "util/ui/pannel_collection.h"
 
 
@@ -39,14 +25,12 @@ namespace GLT::editor {
     constexpr f32                                   DETAILS_PANEL_WIDTH = 400.0f;
 
     constexpr u32                                   RULER_TARGET_TICKS = 8;
-        
+
     static constexpr const char*                    DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
 
-    // Peaks are stored at this resolution per channel. 2 kHz is a good balance between memory and zoom-out quality: 
-    // 10 minutes of stereo audio costs ~10 MB at 8 bytes per peak.
     static constexpr u32                            PEAKS_PER_SECOND = 2048;
 
-    static constexpr f32                            MIN_VISIBLE_SEC = 0.002f;           // Appearance / interaction constants.
+    static constexpr f32                            MIN_VISIBLE_SEC = 0.002f;
 
     static constexpr f32                            ZOOM_STEP = 1.25f;
 
@@ -58,40 +42,29 @@ namespace GLT::editor {
 
     static constexpr f32                            WAVEFORM_PADDING = 6.0f;
 
-    // MACROS ==========================================================================================================
-
     // TYPES ===========================================================================================================
 
     // STATIC VARIABLES ================================================================================================
-
-    // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
     namespace audio {
 
-        // Convert ".[ext]" to a short human-readable format tag.
         std::string pretty_format(const std::string& ext);
 
     }
 
-    // True if `ext` (lowercase, includes dot) is an audio format we support.
     bool is_audio_extension(const std::string& ext);
 
-    // Render `seconds` as "m:ss.mmm" or "h:mm:ss.mmm".
     std::string format_time(f32 seconds);
 
-    // Pick a nice ruler interval (0.001, 0.005, 0.01, ..., 60, 300, ...).
     f32  nice_time_interval(f32 visible_duration, int target_ticks);
 
-    // Populate everything that can be derived without decoding.
     static audio_details populate_details_from_disk(const std::filesystem::path& path, const std::string& name, const std::string& ext);
 
-    // Decode `path` and fill `out.details`, `out.peaks`, `out.peak_count`.
-    // Returns false if the file couldn't be decoded. Runs entirely on the worker thread; no window state is touched.
-    static bool decode_audio_file(const std::filesystem::path& path, const std::string& ext, decode_result& out);
-
-    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
+    // Interleaved -> per-channel min/max peaks at PEAKS_PER_SECOND resolution.
+    static void compute_peaks_from_asset(const GLT::asset::audio::audio_asset& asset, 
+        std::vector<std::vector<audio_peak_pair>>& out_peaks, u32& out_peak_count);
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
@@ -134,7 +107,7 @@ namespace GLT::editor {
             std::snprintf(buf, sizeof(buf), "%d:%02d:%02d.%03d", h, m, s, ms);
         else
             std::snprintf(buf, sizeof(buf), "%d:%02d.%03d", m, s, ms);
-            
+
         return std::string(buf);
     }
 
@@ -158,7 +131,6 @@ namespace GLT::editor {
     }
 
 
-    // Populate everything that can be derived without decoding.
     static audio_details populate_details_from_disk(const std::filesystem::path& path, const std::string& name, const std::string& ext) {
 
         audio_details details{};
@@ -169,7 +141,7 @@ namespace GLT::editor {
 
         std::error_code error{};
         const auto size = GLT::vfs::file_size(path, error);
-        if (!error) 
+        if (!error)
             details.file_size = static_cast<u64>(size);
 
         const GLT::system_time time = GLT::vfs::last_write_time(path, error);
@@ -180,116 +152,42 @@ namespace GLT::editor {
     }
 
 
-    // Decode `path` and fill `out.details`, `out.peaks`, `out.peak_count`.
-    // Returns false if the file couldn't be decoded. Runs entirely on the worker thread; no window state is touched.
-    static bool decode_audio_file(const std::filesystem::path& path, const std::string& ext, decode_result& out) {
+    static void compute_peaks_from_asset(const GLT::asset::audio::audio_asset& asset,
+        std::vector<std::vector<audio_peak_pair>>& out_peaks, u32& out_peak_count) {
 
-        std::vector<f32> samples;
-        u32 channels = 0, sample_rate = 0, bit_depth = 0;
-        const std::string path_str = path.generic_string();
-        if (ext == ".wav") {
+        out_peaks.clear();
+        out_peak_count = 0;
 
-            drwav wav{};
-            if (!drwav_init_file(&wav, path_str.c_str(), nullptr)) 
-                return false;
+        const u32 channels    = asset.format.channels;
+        const u32 sample_rate = asset.format.sample_rate;
+        if (channels == 0 || sample_rate == 0 || asset.samples.empty())
+            return;
 
-            channels    = wav.channels;
-            sample_rate = wav.sampleRate;
-            bit_depth   = wav.bitsPerSample;
+        const u64 total_frames     = asset.samples.size() / channels;
+        const u64 samples_per_peak = std::max<u64>(1, sample_rate / PEAKS_PER_SECOND);
+        const u64 peak_count       = (total_frames + samples_per_peak - 1) / samples_per_peak;
 
-            const drwav_uint64 frames = wav.totalPCMFrameCount;
-            samples.resize(static_cast<size_t>(frames) * channels);
-            const drwav_uint64 read = drwav_read_pcm_frames_f32(&wav, frames, samples.data());
-            drwav_uninit(&wav);
-
-            if (read == 0) return false;
-
-        } else if (ext == ".mp3") {
-
-            drmp3 mp3{};
-            if (!drmp3_init_file(&mp3, path_str.c_str(), nullptr)) 
-                return false;
-
-            channels    = mp3.channels;
-            sample_rate = mp3.sampleRate;
-            bit_depth   = 16;
-
-            const drmp3_uint64 frames = drmp3_get_pcm_frame_count(&mp3);
-            samples.resize(static_cast<size_t>(frames) * channels);
-            const drmp3_uint64 read = drmp3_read_pcm_frames_f32(&mp3, frames, samples.data());
-            drmp3_uninit(&mp3);
-
-            if (read == 0) 
-                return false;
-
-        } else if (ext == ".flac") {
-
-            drflac* flac = drflac_open_file(path_str.c_str(), nullptr);
-            if (!flac) 
-                return false;
-
-            channels    = flac->channels;
-            sample_rate = flac->sampleRate;
-            bit_depth   = flac->bitsPerSample;
-
-            const drflac_uint64 frames = flac->totalPCMFrameCount;
-            samples.resize(static_cast<size_t>(frames) * channels);
-            const drflac_uint64 read = drflac_read_pcm_frames_f32(flac, frames, samples.data());
-            drflac_close(flac);
-
-            if (read == 0) return false;
-
-        } else {
-            LOG(warn, "audio_viewer_window: unsupported format [{}]", ext);
-            return false;
-        }
-
-        // --- fill details ---
-        out.details.sample_rate = sample_rate;
-        out.details.channels = channels;
-        out.details.bit_depth = bit_depth;
-        out.details.duration_sec =
-            static_cast<f32>(samples.size() / std::max<u32>(1, channels)) /
-            static_cast<f32>(std::max<u32>(1, sample_rate));
-
-        if (out.details.duration_sec > 0.0f) {
-            out.details.bitrate_kbps = static_cast<u32>(
-                (static_cast<f64>(out.details.file_size) * 8.0) /
-                (static_cast<f64>(out.details.duration_sec) * 1000.0) + 0.5);
-        }
-
-        // --- compute peaks ---
-        const u64 total_frames      = samples.size() / channels;
-        const u64 samples_per_peak  = std::max<u64>(1, sample_rate / PEAKS_PER_SECOND);
-        const u64 peak_count        = (total_frames + samples_per_peak - 1) / samples_per_peak;
-
-        out.peak_count = static_cast<u32>(peak_count);
-        out.peaks.resize(channels);
-        for (auto& v : out.peaks) v.resize(peak_count);
+        out_peak_count = static_cast<u32>(peak_count);
+        out_peaks.resize(channels);
+        for (auto& v : out_peaks) v.resize(peak_count);
 
         for (u64 p = 0; p < peak_count; ++p) {
-            
+
             const u64 start = p * samples_per_peak;
             const u64 end   = std::min(start + samples_per_peak, total_frames);
+
             for (u32 ch = 0; ch < channels; ++ch) {
 
                 f32 mn = 0.0f, mx = 0.0f;
                 for (u64 i = start; i < end; ++i) {
-
-                    const f32 s = samples[static_cast<size_t>(i) * channels + ch];
-                    if (s < mn)     mn = s;
-                    if (s > mx)     mx = s;
+                    const f32 s = asset.samples[static_cast<size_t>(i) * channels + ch];
+                    if (s < mn) mn = s;
+                    if (s > mx) mx = s;
                 }
-                out.peaks[ch][static_cast<size_t>(p)] = { mn, mx };
+                out_peaks[ch][static_cast<size_t>(p)] = { mn, mx };
             }
         }
-
-        return true;
     }
-
-    // TEMPLATE IMPLEMENTATION =========================================================================================
-
-    // FUNCTION IMPLEMENTATION =========================================================================================
 
     // CLASS IMPLEMENTATION ============================================================================================
 
@@ -301,73 +199,106 @@ namespace GLT::editor {
 
     audio_viewer_window::~audio_viewer_window() {
 
-        // Best-effort: stop any playing voice so the audio plugin isn't
-        // left with a dangling voice after we die.
-        if (auto plugin = m_audio_manager.lock()) {
-            if (m_voice_handle) plugin->stop(m_voice_handle);
-            if (m_sound_handle) plugin->unload_sound(m_sound_handle);
-        }
+        teardown_playback();
     }
 
     // CLASS PUBLIC ====================================================================================================
 
     void audio_viewer_window::open(const std::filesystem::path& path) {
 
-        // Stop any previous playback immediately (main-thread only).
-        if (auto plugin = m_audio_manager.lock()) {
-            if (m_voice_handle) plugin->stop(m_voice_handle);
-            if (m_sound_handle) plugin->unload_sound(m_sound_handle);
-        }
-        m_voice_handle = 0;
-        m_sound_handle = 0;
-        m_playing = false;
+        // Invalidate any in-flight worker for a previous file.
+        ++m_load_generation;
 
-        // Reset state synchronously so the UI immediately reflects the new
-        // file, even before the decode finishes.
-        m_details = {};
-        m_has_audio = false;
-        m_load_failed = false;
-        m_show_window = true;
+        // Stop playback and release the previous asset (main-thread only).
+        teardown_playback();
+
+        m_loading      = false;
+        m_details      = {};
+        m_has_audio    = false;
+        m_load_failed  = false;
 
         m_peaks.clear();
         m_peak_count = 0;
         m_visible_start_sec = 0.0f;
-        m_visible_end_sec = 0.0f;
-        m_playhead_sec = 0.0f;
-        m_fit_pending = true;
+        m_visible_end_sec   = 0.0f;
+        m_playhead_sec      = 0.0f;
+        m_fit_pending       = true;
+        m_show_window       = true;
 
         m_details.path = GLT::project::extract_path_from_project_content_dir(path);
         m_details.name = path.filename().string();
         m_details.extension = GLT::util::to_lower(path.extension().string());
         m_details.format = audio::pretty_format(m_details.extension);
 
-        cache_window_state(); 
+        cache_window_state();
         make_window_name((std::string("AUD: ") + m_details.name).c_str());
 
         std::error_code error{};
-        VALIDATE(GLT::vfs::exists(path, error) && !error, m_load_failed = true; return, "", "file not found [{}]", path.generic_string())
-        VALIDATE(!GLT::vfs::is_directory(path, error) && !error, m_load_failed = true; return, "", "path is a directory [{}]", path.generic_string())
+        VALIDATE(GLT::vfs::exists(path, error) && !error, m_load_failed = true; return, "",
+            "file not found [{}]", path.generic_string())
+        VALIDATE(!GLT::vfs::is_directory(path, error) && !error, m_load_failed = true; return, "",
+            "path is a directory [{}]", path.generic_string())
 
-        // --- kick off the background decode --------------------------------------
+        // --- background load through the asset registry -------------------------
         m_loading = true;
 
         const std::filesystem::path abs_path = path;
         const std::string name = m_details.name;
-        const std::string ext = m_details.extension;
+        const std::string ext  = m_details.extension;
+        const u64 generation   = m_load_generation;
         std::weak_ptr<int> lifetime = m_lifetime_token;
 
-        GLT::thread_pool::push([this, lifetime, abs_path, name, ext]() {
+        GLT::thread_pool::push([this, lifetime, abs_path, name, ext, generation]() {
 
             // worker thread -------------------------------------------------------------------------------------------
             auto result = std::make_shared<decode_result>();
             result->details = populate_details_from_disk(abs_path, name, ext);
-            result->ok = decode_audio_file(abs_path, ext, *result);
 
-            GLT::thread_pool::push_main([this, lifetime, result]() {
+            auto registry = GLT::asset::registry::get_ref();
+            if (!registry) {
+                result->ok = false;
+            } else if (auto loaded = registry->load(abs_path); loaded) {
+
+                result->asset_handle = *loaded;
+
+                const auto* runtime = registry->data(result->asset_handle);
+                const auto* asset   = dynamic_cast<const GLT::asset::audio::audio_asset*>(runtime);
+
+                if (asset) {
+
+                    result->details.sample_rate = asset->format.sample_rate;
+                    result->details.channels    = asset->format.channels;
+                    result->details.bit_depth   = asset->format.bit_depth;
+                    result->details.duration_sec =
+                        static_cast<f32>(asset->format.frame_count) /
+                        static_cast<f32>(std::max<u32>(1, asset->format.sample_rate));
+
+                    if (result->details.duration_sec > 0.0f) {
+                        result->details.bitrate_kbps = static_cast<u32>(
+                            (static_cast<f64>(result->details.file_size) * 8.0) /
+                            (static_cast<f64>(result->details.duration_sec) * 1000.0) + 0.5);
+                    }
+
+                    compute_peaks_from_asset(*asset, result->peaks, result->peak_count);
+                    result->ok = true;
+                }
+            }
+
+            GLT::thread_pool::push_main([this, lifetime, result, generation]() {
 
                 // main thread -----------------------------------------------------------------------------------------
                 if (lifetime.expired())
                     return;                          // window was destroyed while loading
+
+                if (generation != m_load_generation) {
+                    // A newer open() superseded us - release whatever we loaded.
+                    if (result->asset_handle != INVALID_HANDLE) {
+                        if (auto registry = GLT::asset::registry::get_ref())
+                            registry->unload(result->asset_handle);
+                    }
+                    return;
+                }
+
                 apply_decode_result(std::move(*result));
             });
         });
@@ -376,18 +307,12 @@ namespace GLT::editor {
 
     void audio_viewer_window::close_audio() {
 
-        if (auto plugin = m_audio_manager.lock()) {
-            if (m_voice_handle) plugin->stop(m_voice_handle);
-            if (m_sound_handle) plugin->unload_sound(m_sound_handle);
-        }
-        m_voice_handle = 0;
-        m_sound_handle = 0;
-        m_playing = false;
+        ++m_load_generation;                // invalidate in-flight workers
+        teardown_playback();
 
         m_details = {};
         m_has_audio = false;
         m_load_failed = false;
-        m_raw_samples.clear();
         m_peaks.clear();
         m_peak_count = 0;
         m_visible_start_sec = 0.0f;
@@ -402,34 +327,46 @@ namespace GLT::editor {
             return;
 
         apply_pending_dock();
-        ImGui::SetNextWindowSizeConstraints(ImVec2(720.0f, 420.0f), ImVec2(std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max()));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(720.0f, 420.0f), ImVec2(std::numeric_limits<f32>::max(), 
+            std::numeric_limits<f32>::max()));
 
         if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
 
             handle_drag_drop();
             UI::custom_frame(DETAILS_PANEL_WIDTH, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
                 [this]() {
-                    draw_details_panel(); 
+                    draw_details_panel();
                 },
                 [this]() {
-                    draw_audio_panel();  
+                    draw_audio_panel();
                 });
         }
         ImGui::End();
     }
 
 
-    void audio_viewer_window::update(const f32 /*delta_time*/) {
-
-        update_playhead();
-    }
+    void audio_viewer_window::update(const f32 /*delta_time*/) { update_playhead(); }
 
 
     bool audio_viewer_window::serialize(const std::filesystem::path& /*project_file*/, const GLT::serializer::option /*option*/) { return false; }
 
-    // CLASS PROTECTED =================================================================================================
-
     // CLASS PRIVATE ===================================================================================================
+
+    void audio_viewer_window::teardown_playback() {
+
+        if (auto plugin = m_audio_manager.lock()) {
+            if (m_voice_handle)
+                plugin->stop(m_voice_handle);
+        }
+        m_voice_handle = 0;
+        m_playing = false;
+
+        if (m_asset_handle != INVALID_HANDLE) {
+            if (auto registry = GLT::asset::registry::get_ref())
+                registry->unload(m_asset_handle);
+            m_asset_handle = INVALID_HANDLE;
+        }
+    }
 
     // details panel ---------------------------------------------------------------------------------------------------
 
@@ -491,7 +428,9 @@ namespace GLT::editor {
 
             UI::table_row("duration",    format_time(m_details.duration_sec).c_str());
             UI::table_row("sample rate", std::to_string(m_details.sample_rate) + " Hz");
-            UI::table_row("channels",    m_details.channels == 1 ? "mono" : m_details.channels == 2 ? "stereo" : std::to_string(m_details.channels));
+            UI::table_row("channels",    m_details.channels == 1 ? "mono"
+                                       : m_details.channels == 2 ? "stereo"
+                                       : std::to_string(m_details.channels));
             UI::table_row("bit depth",   m_details.bit_depth ? std::to_string(m_details.bit_depth) + " bit" : std::string("--"));
             UI::table_row("bitrate",     m_details.bitrate_kbps ? std::to_string(m_details.bitrate_kbps) + " kbps" : std::string("--"));
             UI::table_row("peaks",       std::to_string(m_peak_count));
@@ -506,16 +445,16 @@ namespace GLT::editor {
             return;
 
         std::string codec = "Unknown";
-        if      (m_details.extension == ".wav")                                     codec = "PCM / uncompressed";
-        else if (m_details.extension == ".mp3")                                     codec = "MPEG-1 Audio Layer III";
-        else if (m_details.extension == ".flac")                                    codec = "FLAC (lossless)";
-        else if (m_details.extension == ".ogg" || m_details.extension == ".oga")    codec = "Vorbis";
-        else if (m_details.extension == ".opus")                                    codec = "Opus";
+        if      (m_details.extension == ".wav")                                  codec = "PCM / uncompressed";
+        else if (m_details.extension == ".mp3")                                  codec = "MPEG-1 Audio Layer III";
+        else if (m_details.extension == ".flac")                                 codec = "FLAC (lossless)";
+        else if (m_details.extension == ".ogg" || m_details.extension == ".oga") codec = "Vorbis";
+        else if (m_details.extension == ".opus")                                 codec = "Opus";
 
         if (UI::begin_table("audio_detail_and_edit", false)) {
 
-            UI::table_row("codec",       codec.c_str());
-            UI::table_row("compressed",  std::string_view(GLT::util::to_string(m_details.extension == ".wav")));
+            UI::table_row("codec",      codec.c_str());
+            UI::table_row("compressed", std::string_view(GLT::util::to_string(m_details.extension == ".wav")));
             UI::end_table();
         }
     }
@@ -538,7 +477,6 @@ namespace GLT::editor {
                         ImGui::SliderFloat("##av_volume", &v, 0.0f, 1.5f, "%.2f");
                     });
                 if (v != m_volume) {
-
                     m_volume = v;
                     if (auto plugin = m_audio_manager.lock(); plugin && m_voice_handle)
                         plugin->set_volume(m_voice_handle, m_volume);
@@ -555,7 +493,6 @@ namespace GLT::editor {
                         ImGui::SliderFloat("##av_pan", &p, -1.0f, 1.0f, "%.2f");
                     });
                 if (p != m_pan) {
-
                     m_pan = p;
                     if (auto plugin = m_audio_manager.lock(); plugin && m_voice_handle)
                         plugin->set_pan(m_voice_handle, m_pan);
@@ -572,7 +509,6 @@ namespace GLT::editor {
                         ImGui::SliderFloat("##av_speed", &s, 0.25f, 4.0f, "%.2fx");
                     });
                 if (s != m_playback_speed) {
-
                     m_playback_speed = s;
                     if (auto plugin = m_audio_manager.lock(); plugin && m_voice_handle)
                         plugin->set_play_speed(m_voice_handle, m_playback_speed);
@@ -584,7 +520,6 @@ namespace GLT::editor {
                 bool l = m_looping;
                 UI::table_row("loop", l);
                 if (l != m_looping) {
-
                     m_looping = l;
                     if (auto plugin = m_audio_manager.lock(); plugin && m_voice_handle)
                         plugin->set_looping(m_voice_handle, m_looping);
@@ -616,23 +551,23 @@ namespace GLT::editor {
         ImGui::BeginDisabled(!can_transport);
         {
             if (ImGui::Button(m_playing ? "Pause" : "Play", ImVec2(64.0f, 0.0f)))
-            transport_toggle();
-            
+                transport_toggle();
+
             ImGui::SameLine();
             if (ImGui::Button("Stop", ImVec2(64.0f, 0.0f)))
-            transport_stop();            
+                transport_stop();
         }
         ImGui::EndDisabled();
 
         ImGui::SameLine();
         ImGui::TextDisabled("|");
-        
+
         ImGui::SameLine();
         ImGui::Text("%s / %s", format_time(m_playhead_sec).c_str(), format_time(m_details.duration_sec).c_str());
 
         ImGui::SameLine();
         ImGui::TextDisabled("|");
-        
+
         ImGui::SameLine();
         if (ImGui::Button("Fit"))
             m_fit_pending = true;
@@ -683,22 +618,18 @@ namespace GLT::editor {
         const bool hovered = ImGui::IsItemHovered();
         const bool active  = ImGui::IsItemActive();
 
-        // Fit on demand
         if (m_fit_pending) {
-
             m_visible_start_sec = 0.0f;
             m_visible_end_sec   = std::max(MIN_VISIBLE_SEC, m_details.duration_sec);
             m_fit_pending = false;
         }
 
-        // Clamp the view
         m_visible_start_sec = std::clamp(m_visible_start_sec, 0.0f, std::max(0.0f, m_details.duration_sec - MIN_VISIBLE_SEC));
-        m_visible_end_sec = std::clamp(m_visible_end_sec, m_visible_start_sec + MIN_VISIBLE_SEC, m_details.duration_sec);
+        m_visible_end_sec   = std::clamp(m_visible_end_sec, m_visible_start_sec + MIN_VISIBLE_SEC, m_details.duration_sec);
 
         const f32 visible_duration = m_visible_end_sec - m_visible_start_sec;
         const f32 width = avail.x;
 
-        // Wheel zoom (anchored at the cursor)
         if (hovered) {
 
             const f32 wheel = ImGui::GetIO().MouseWheel;
@@ -708,17 +639,16 @@ namespace GLT::editor {
                 const f32 cursor_sec = m_visible_start_sec + cursor_t * visible_duration;
 
                 const f32 scale = (wheel > 0.0f) ? (1.0f / ZOOM_STEP) : ZOOM_STEP;
-                f32 new_duration = std::clamp(visible_duration * scale, MIN_VISIBLE_SEC, m_details.duration_sec);
+                const f32 new_duration = std::clamp(visible_duration * scale, MIN_VISIBLE_SEC, m_details.duration_sec);
 
                 m_visible_start_sec = cursor_sec - cursor_t * new_duration;
                 m_visible_end_sec   = m_visible_start_sec + new_duration;
 
                 m_visible_start_sec = std::clamp(m_visible_start_sec, 0.0f, std::max(0.0f, m_details.duration_sec - new_duration));
-                m_visible_end_sec = m_visible_start_sec + new_duration;
+                m_visible_end_sec   = m_visible_start_sec + new_duration;
             }
         }
 
-        // Middle-drag pan, or left-drag on the ruler to seek
         if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
 
             const f32 dx_sec = ImGui::GetIO().MouseDelta.x / width * visible_duration;
@@ -727,17 +657,15 @@ namespace GLT::editor {
 
             const f32 new_dur = m_visible_end_sec - m_visible_start_sec;
             m_visible_start_sec = std::clamp(m_visible_start_sec, 0.0f, std::max(0.0f, m_details.duration_sec - new_dur));
-            m_visible_end_sec = m_visible_start_sec + new_dur;
+            m_visible_end_sec   = m_visible_start_sec + new_dur;
         }
 
-        // Seek on left-click anywhere on the waveform
         if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
 
             const f32 t = std::clamp((ImGui::GetIO().MousePos.x - canvas_min.x) / width, 0.0f, 1.0f);
             transport_seek(m_visible_start_sec + t * visible_duration);
         }
 
-        // Layout: ruler on top, channels below
         const f32 ruler_top    = canvas_min.y;
         const f32 ruler_bottom = ruler_top + RULER_HEIGHT;
         const f32 wave_top     = ruler_bottom + 4.0f;
@@ -747,7 +675,6 @@ namespace GLT::editor {
 
         draw_time_ruler(draw, ruler_min, ruler_max, m_visible_start_sec, m_visible_end_sec);
 
-        // Channels stacked vertically
         const int n_channels = static_cast<int>(m_peaks.size());
         const f32 ch_total = wave_bottom - wave_top;
         const f32 ch_each  = (ch_total - CHANNEL_GAP * (n_channels - 1)) / std::max(1, n_channels);
@@ -757,11 +684,9 @@ namespace GLT::editor {
             const f32 y1 = y0 + ch_each;
             const ImVec2 cmin(canvas_min.x, y0);
             const ImVec2 cmax(canvas_max.x, y1);
-            // draw->AddRectFilled(cmin, cmax, IM_COL32(28, 28, 34, 255));
             draw_waveform_channel(draw, m_peaks[ch], cmin, cmax, m_visible_start_sec, m_visible_end_sec);
         }
 
-        // Playhead marker
         if (m_details.duration_sec > 0.0f) {
 
             const f32 t = (m_playhead_sec - m_visible_start_sec) / visible_duration;
@@ -776,9 +701,6 @@ namespace GLT::editor {
                     main_color_u32);
             }
         }
-
-        // // Outline
-        // draw->AddRect(canvas_min, canvas_max, IM_COL32(70, 70, 80, 255));
     }
 
 
@@ -788,10 +710,10 @@ namespace GLT::editor {
         if (peaks.empty())
             return;
 
-        const f32 width = ch_max.x - ch_min.x;
-        const f32 height = ch_max.y - ch_min.y;
+        const f32 width    = ch_max.x - ch_min.x;
+        const f32 height   = ch_max.y - ch_min.y;
         const f32 center_y = ch_min.y + height * 0.5f;
-        const f32 half_h = std::max(1.0f, height * 0.5f - WAVEFORM_PADDING);
+        const f32 half_h   = std::max(1.0f, height * 0.5f - WAVEFORM_PADDING);
         const ImU32 line_color   = IM_COL32(160, 160, 160, 220);
         const ImU32 center_color = IM_COL32(255, 255, 255, 255);
         draw->AddLine(ImVec2(ch_min.x, center_y), ImVec2(ch_max.x, center_y), center_color, 1.0f);
@@ -801,12 +723,12 @@ namespace GLT::editor {
             return;
 
         const f32 sec_per_peak = 1.0f / static_cast<f32>(PEAKS_PER_SECOND);
-        const i64 peak_count = static_cast<i64>(peaks.size());
-        const i32 pixel_count = static_cast<i32>(width);
+        const i64 peak_count   = static_cast<i64>(peaks.size());
+        const i32 pixel_count  = static_cast<i32>(width);
         for (i32 px = 0; px < pixel_count; ++px) {
 
-            const f32 t0 = static_cast<f32>(px)     / static_cast<f32>(pixel_count);
-            const f32 t1 = static_cast<f32>(px + 1) / static_cast<f32>(pixel_count);
+            const f32 t0   = static_cast<f32>(px)     / static_cast<f32>(pixel_count);
+            const f32 t1   = static_cast<f32>(px + 1) / static_cast<f32>(pixel_count);
             const f32 sec0 = visible_start_sec + t0 * visible_duration;
             const f32 sec1 = visible_start_sec + t1 * visible_duration;
 
@@ -823,7 +745,7 @@ namespace GLT::editor {
 
             const f32 y_top = center_y - mx * half_h;
             const f32 y_bot = center_y - mn * half_h;
-            const f32 x = ch_min.x + static_cast<f32>(px);
+            const f32 x     = ch_min.x + static_cast<f32>(px);
             draw->AddLine(ImVec2(x, y_top), ImVec2(x, y_bot), line_color, 1.0f);
         }
     }
@@ -838,7 +760,7 @@ namespace GLT::editor {
         if (visible_duration <= 0.0f) return;
 
         const f32 interval = nice_time_interval(visible_duration, RULER_TARGET_TICKS);
-        const f32 width = max.x - min.x;
+        const f32 width    = max.x - min.x;
 
         const f32 first = std::ceil(visible_start_sec / interval) * interval;
 
@@ -918,161 +840,14 @@ namespace GLT::editor {
         ImGui::EndDragDropTarget();
     }
 
-    // helpers ---------------------------------------------------------------------------------------------------------
-
-    void audio_viewer_window::populate_details() {
-
-        std::error_code error{};
-        const auto size = GLT::vfs::file_size(PROJECT_CONTENT_DIR / m_details.path, error);;
-        if (!error)
-            m_details.file_size = static_cast<u64>(size);
-
-        const GLT::system_time time = GLT::vfs::last_write_time(PROJECT_CONTENT_DIR / m_details.path, error);
-        if (!error)
-            m_details.last_modified = time;
-
-        // Duration, sample rate, channels and bit depth come from the decoder in decode_file(); 
-        // the fields we can fill from the extension alone are set here for the failure case.
-        m_details.duration_sec = 0.0f;
-        m_details.sample_rate = 0;
-        m_details.channels = 0;
-        m_details.bit_depth = 0;
-        m_details.bitrate_kbps = 0;
-    }
-
-
-    bool audio_viewer_window::decode_file() {
-
-        m_raw_samples.clear();
-        m_raw_channels = 0;
-        m_raw_sample_rate = 0;
-
-        const std::string& ext = m_details.extension;
-        const std::string path_str = PROJECT_CONTENT_DIR / m_details.path.generic_string();
-
-        // Dispatch on the file extension. Only WAV / MP3 / FLAC are wired
-        // up here; see the notes below for OGG.
-        if (ext == ".wav") {
-
-            drwav wav;
-            if (!drwav_init_file(&wav, path_str.c_str(), nullptr)) return false;
-
-            m_raw_channels     = wav.channels;
-            m_raw_sample_rate  = wav.sampleRate;
-            m_details.bit_depth = wav.bitsPerSample;
-
-            const drwav_uint64 frames = wav.totalPCMFrameCount;
-            m_raw_samples.resize(static_cast<size_t>(frames) * wav.channels);
-
-            const drwav_uint64 read = drwav_read_pcm_frames_f32(&wav, frames, m_raw_samples.data());
-            drwav_uninit(&wav);
-
-            if (read == 0) return false;
-
-        } else if (ext == ".mp3") {
-
-            drmp3 mp3;
-            if (!drmp3_init_file(&mp3, path_str.c_str(), nullptr)) return false;
-
-            m_raw_channels     = mp3.channels;
-            m_raw_sample_rate  = mp3.sampleRate;
-            m_details.bit_depth = 16;   // decoded to 16-bit PCM by dr_mp3
-
-            const drmp3_uint64 frames = drmp3_get_pcm_frame_count(&mp3);
-            m_raw_samples.resize(static_cast<size_t>(frames) * mp3.channels);
-
-            const drmp3_uint64 read = drmp3_read_pcm_frames_f32(&mp3, frames, m_raw_samples.data());
-            drmp3_uninit(&mp3);
-
-            if (read == 0) return false;
-
-        } else if (ext == ".flac") {
-
-            drflac* flac = drflac_open_file(path_str.c_str(), nullptr);
-            if (!flac) return false;
-
-            m_raw_channels     = flac->channels;
-            m_raw_sample_rate  = flac->sampleRate;
-            m_details.bit_depth = flac->bitsPerSample;
-
-            const drflac_uint64 frames = flac->totalPCMFrameCount;
-            m_raw_samples.resize(static_cast<size_t>(frames) * flac->channels);
-
-            const drflac_uint64 read = drflac_read_pcm_frames_f32(flac, frames, m_raw_samples.data());
-            drflac_close(flac);
-
-            if (read == 0) return false;
-
-        } else {
-
-            // OGG / Opus are not handled here - see the notes at the bottom.
-            LOG(warn, "audio_viewer_window: unsupported format [{}]", ext);
-            return false;
-        }
-
-        m_details.sample_rate  = m_raw_sample_rate;
-        m_details.channels     = m_raw_channels;
-        m_details.duration_sec = static_cast<f32>(m_raw_samples.size() /
-                                  std::max<u32>(1, m_raw_channels)) /
-                                  static_cast<f32>(std::max<u32>(1, m_raw_sample_rate));
-
-        if (m_details.duration_sec > 0.0f) {
-            m_details.bitrate_kbps = static_cast<u32>(
-                (static_cast<f64>(m_details.file_size) * 8.0) /
-                (static_cast<f64>(m_details.duration_sec) * 1000.0) + 0.5);
-        }
-
-        return true;
-    }
-
-
-    void audio_viewer_window::compute_peaks() {
-
-        m_peaks.clear();
-        m_peak_count = 0;
-
-        const u32 channels = m_raw_channels;
-        const u32 sample_rate = m_raw_sample_rate;
-        if (channels == 0 || sample_rate == 0 || m_raw_samples.empty())
-            return;
-
-        const u64 total_frames = m_raw_samples.size() / channels;
-        const u64 samples_per_peak = std::max<u64>(1, sample_rate / PEAKS_PER_SECOND);
-        const u64 peak_count = (total_frames + samples_per_peak - 1) / samples_per_peak;
-
-        m_peak_count = static_cast<u32>(peak_count);
-        m_peaks.resize(channels);
-        for (auto& v : m_peaks) v.resize(peak_count);
-
-        for (u64 p = 0; p < peak_count; ++p) {
-
-            const u64 start = p * samples_per_peak;
-            const u64 end   = std::min(start + samples_per_peak, total_frames);
-
-            for (u32 ch = 0; ch < channels; ++ch) {
-
-                f32 mn = 0.0f, mx = 0.0f;
-                for (u64 i = start; i < end; ++i) {
-                    const f32 s = m_raw_samples[static_cast<size_t>(i) * channels + ch];
-                    if (s < mn) mn = s;
-                    if (s > mx) mx = s;
-                }
-                m_peaks[ch][static_cast<size_t>(p)] = { mn, mx };
-            }
-        }
-
-        // Raw samples are no longer needed - free the (potentially large)
-        // buffer so we don't hold ~100 MB per 5 minutes of stereo audio.
-        std::vector<f32>().swap(m_raw_samples);
-    }
-
+    // -----------------------------------------------------------------------------------------------------------------
 
     void audio_viewer_window::update_playhead() {
 
         auto plugin = m_audio_manager.lock();
-        if (!plugin || !m_voice_handle) return;
+        if (!plugin || !m_voice_handle)
+            return;
 
-        // Voice may have finished (or been stopped elsewhere).
         if (!plugin->is_valid(m_voice_handle)) {
 
             m_playing = false;
@@ -1082,34 +857,31 @@ namespace GLT::editor {
         }
 
         m_playhead_sec = plugin->get_playback_position(m_voice_handle);
-        m_playing = (plugin->get_state(m_voice_handle) == GLT::audio::audio_state::playing);
-    }
-
-
-    void audio_viewer_window::register_with_audio_plugin() {
-
-        auto plugin = m_audio_manager.lock();
-        if (!plugin)
-            return;
-
-        m_sound_handle = plugin->load_sound(m_details.name, PROJECT_CONTENT_DIR / m_details.path.generic_string(), false);
+        m_playing = (plugin->get_state(m_voice_handle) == GLT::asset::audio::state::playing);
     }
 
 
     void audio_viewer_window::apply_decode_result(decode_result&& result) {
 
         m_loading = false;
-        VALIDATE(result.ok, m_load_failed = true; return, "", 
-            "audio_viewer_window: failed to decode [{}]", result.details.path.generic_string())
+
+        if (!result.ok) {
+            // If the registry did produce a handle but our post-processing failed,
+            // don't leak it.
+            if (result.asset_handle != INVALID_HANDLE) {
+                if (auto registry = GLT::asset::registry::get_ref())
+                    registry->unload(result.asset_handle);
+            }
+            m_load_failed = true;
+            return;
+        }
 
         m_details = std::move(result.details);
         m_peaks = std::move(result.peaks);
         m_peak_count = result.peak_count;
 
-        // Register with the audio plugin (main-thread only - SoLoud's public API is not thread-safe).
-        // This is what actually loads the sound for playback; the waveform display above came from dr_libs.
         m_audio_manager = GLT::audio::manager::get_ref();
-        register_with_audio_plugin();
+        m_asset_handle = result.asset_handle;
 
         m_has_audio   = true;
         m_fit_pending = true;
@@ -1119,7 +891,8 @@ namespace GLT::editor {
     void audio_viewer_window::transport_play() {
 
         auto plugin = m_audio_manager.lock();
-        if (!plugin) return;
+        if (!plugin || m_asset_handle == INVALID_HANDLE)
+            return;
 
         if (m_voice_handle && plugin->is_valid(m_voice_handle)) {
             plugin->resume(m_voice_handle);
@@ -1127,20 +900,14 @@ namespace GLT::editor {
             return;
         }
 
-        if (!m_sound_handle) {
-            // Plugin wasn't available at load time; try again now.
-            register_with_audio_plugin();
-            if (!m_sound_handle) return;
-        }
+        GLT::asset::audio::source_config cfg;
+        cfg.volume     = m_volume;
+        cfg.pan        = m_pan;
+        cfg.loop       = m_looping;
+        cfg.play_speed = m_playback_speed;
+        cfg.is_3d      = false;
 
-        GLT::audio::audio_source_config cfg;
-        cfg.volume       = m_volume;
-        cfg.pan          = m_pan;
-        cfg.loop         = m_looping;
-        cfg.play_speed   = m_playback_speed;
-        cfg.is_3d        = false;
-
-        m_voice_handle = plugin->play(m_sound_handle, cfg);
+        m_voice_handle = plugin->play(m_asset_handle, cfg);
         m_playing = (m_voice_handle != 0);
     }
 
@@ -1148,7 +915,8 @@ namespace GLT::editor {
     void audio_viewer_window::transport_pause() {
 
         auto plugin = m_audio_manager.lock();
-        if (!plugin || !m_voice_handle) return;
+        if (!plugin || !m_voice_handle)
+            return;
 
         plugin->pause(m_voice_handle);
         m_playing = false;
@@ -1158,7 +926,8 @@ namespace GLT::editor {
     void audio_viewer_window::transport_stop() {
 
         auto plugin = m_audio_manager.lock();
-        if (!plugin) return;
+        if (!plugin)
+            return;
 
         if (m_voice_handle) {
             plugin->stop(m_voice_handle);
@@ -1182,8 +951,10 @@ namespace GLT::editor {
 
     void audio_viewer_window::transport_toggle() {
 
-        if (m_playing) transport_pause();
-        else           transport_play();
+        if (m_playing)
+            transport_pause();
+        else
+            transport_play();
     }
 
 }

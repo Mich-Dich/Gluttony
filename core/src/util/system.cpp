@@ -286,7 +286,7 @@ namespace GLT::util {
         // getrusage(RUSAGE_SELF, ...) gives the high-water mark of the
         // resident set size since the process started. On Linux, ru_maxrss
         // is in kilobytes (this differs from some other Unixes, where it's
-        // in pages — see the getrusage(2) man page).
+        // in pages - see the getrusage(2) man page).
         struct rusage usage{};
         if (getrusage(RUSAGE_SELF, &usage) != 0)
             return 0;

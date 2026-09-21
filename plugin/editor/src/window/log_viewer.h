@@ -43,7 +43,7 @@ namespace GLT::editor {
     // logger plugin writes to. Every frame the file's size is polled; if
     // anything changed, the new bytes are read and split into lines. This
     // keeps the view live while remaining completely decoupled from the
-    // logger implementation — any future logger plugin that writes to the
+    // logger implementation - any future logger plugin that writes to the
     // same path works unchanged.
     //
     // Parsing of severity tags is best-effort: it looks for the canonical

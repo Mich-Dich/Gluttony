@@ -62,7 +62,7 @@ namespace GLT::editor {
         }
 
         // Restore state cached before a rename. Order doesn't matter for these
-        // SetNext* calls — ImGui consumes them all inside Begin() — but dock
+        // SetNext* calls - ImGui consumes them all inside Begin() - but dock
         // and collapsed are applied after pos/size so that a docked+collapsed
         // window doesn't briefly pop to a free-floating position first.
         if (m_window_state_cache.valid) {
@@ -85,7 +85,7 @@ namespace GLT::editor {
 
         ImGuiWindow* win = ImGui::FindWindowByName(m_window_id.c_str());
         if (!win)
-            return;     // not shown yet — nothing to cache
+            return;     // not shown yet - nothing to cache
 
         m_window_state_cache.valid = true;
         m_window_state_cache.pos = win->Pos;

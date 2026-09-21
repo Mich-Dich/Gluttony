@@ -9,9 +9,10 @@
 #include <event/event_bus.h>
 #include <plugin_system/i_asset_registry_plugin.h>
 
-#include "util/event/asset_open_event.h"
+#include "util/event/asset_event.h"
 #include "util/ui/pannel_collection.h"
 #include "resource_manager/icon_manager.h"
+#include "util/io/file_dialog.h"
 
 
 
@@ -40,30 +41,13 @@ namespace GLT::editor {
 	const std::vector<std::pair<std::string, std::string>> POSSIBLE_IMPORT_TILE_TYPES = {
 
 		//									mesh																 image
-		{"All supported file types",    	"*.fbx;*.gltf;*.glb;*.obj;*.stl;*.3mf;*.dae;*.xml;*.ply;*.plyb;*.3ds;*.png;*.jpg;*.jpeg;*.jpe;*.tga;*.bmp;*.psd;*.gif;*.hdr;*.pic;*.ppm;*.pgm"},
+		{"All supported file types",    	"*.fbx;*.gltf;*.glb;*.obj;*.stl;*.3mf;*.dae;*.xml;*.ply;*.plyb;*.3ds;*.png;*.jpg;*.jpeg;*.jpe;*.tga;*.bmp;*.psd;*.gif;*.hdr;*.pic;*.ppm;*.pgm*.wav;*.ogg;*.mp3;*.flac"},
 
 		// Common 3D meshes
-		{"Meshes", 							"*.fbx;*.gltf;*.glb;*.obj;*.stl;*.3mf;*.dae;*.xml;*.ply;*.plyb;*.3ds;"},
-		{"FBX files",         				"*.fbx" },
-		{"glTF 2.0 files",					"*.gltf;*.glb" },
-		{"Wavefront OBJ",					"*.obj" },
-		{"STL (Stereolithography)",			"*.stl" },
-		{"3MF (3D Manufacturing Format)",	"*.3mf" },
-		{"Collada",							"*.dae;*.xml" },
-		{"PLY (Stanford Polygon Library)",	"*.ply;*.plyb" },
-		{"3DS (3D Studio)",					"*.3ds" },
-
-		{"Images",                 			"*.png;*.jpg;*.jpeg;*.jpe;*.tga;*.bmp;*.psd;*.gif;*.hdr;*.pic;*.ppm;*.pgm"},					// all images
-		{"JPEG images",                 	"*.jpg;*.jpeg;*.jpe"},
-		{"PNG images",                  	"*.png"},
-		{"TGA images",                  	"*.tga"},
-		{"BMP images",                  	"*.bmp"},
-		{"PSD images",                  	"*.psd"},
-		{"GIF images",                  	"*.gif"},
-		{"HDR (Radiance .hdr)",         	"*.hdr"},
-		{"Softimage PIC",               	"*.pic"},
-		{"PNM (PPM/PGM)",               	"*.ppm;*.pgm"},
-	};
+		{"Mesh", 							"*.fbx;*.gltf;*.glb;*.obj;*.stl;*.3mf;*.dae;*.xml;*.ply;*.plyb;*.3ds;"},
+		{"Image",                 			"*.png;*.jpg;*.jpeg;*.jpe;*.tga;*.bmp;*.psd;*.gif;*.hdr;*.pic;*.ppm;*.pgm"},					// all images
+		{"Audio",                 			"*.wav;*.ogg;*.mp3;*.flac"},
+    };
 
     // MACROS ==========================================================================================================
 
@@ -85,8 +69,7 @@ namespace GLT::editor {
     // Categorizes a file by extension for the accent strip.
     asset_category categorize_extension(const std::string& ext);
 
-    // Accent color for a category, chosen to read well against both the
-    // neutral cell background and the selection highlight.
+    // Accent color for a category, chosen to read well against both the neutral cell background and the selection highlight.
     ImU32 category_accent_color(asset_category cat);
 
     std::vector<std::filesystem::path> list_subdirectories(const std::filesystem::path& dir);
@@ -211,6 +194,7 @@ namespace GLT::editor {
         make_window_name("Content Browser");
 
         m_content_dir = PROJECT_CONTENT_DIR;
+        m_file_event_sub_handle = GLT::event_bus::subscribe<file_event>(std::bind_front(&content_browser_window::on_file_event, this));
 
         // Make sure the content root actually exists before we try to browse it.
         std::error_code error{};
@@ -224,7 +208,10 @@ namespace GLT::editor {
     }
 
 
-    content_browser_window::~content_browser_window() { }
+    content_browser_window::~content_browser_window() {
+
+        // GLT::event_bus::unsubscribe(m_file_event_sub_handle);
+    }
 
     // CLASS PUBLIC ====================================================================================================
 
@@ -242,13 +229,11 @@ namespace GLT::editor {
         // Process any thumbnails that finished loading since the last frame.
         icon_manager::flush_thumbnail_uploads();
 
-        if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
+        // Any state change marks the entry cache as stale
+        if (m_entries_dirty)
+            refresh_directory_entries();
 
-            // Any state change marks the entry cache as stale; we rebuild it here
-            // rather than inside each draw call so a single frame never scans the
-            // filesystem more than once.
-            if (m_entries_dirty)
-                refresh_directory_entries();
+        if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
     
             ImGui::SetNextWindowSizeConstraints(ImVec2(LEFT_PANEL_MIN_WIDTH, 0), ImVec2(LEFT_PANEL_MAX_WIDTH, std::numeric_limits<f32>::max()));
             UI::custom_frame(200, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
@@ -271,9 +256,12 @@ namespace GLT::editor {
 
     void content_browser_window::update(const f32 /*delta_time*/) {
 
-        // All filesystem work happens on the frame the state becomes dirty;
-        // nothing to do per-frame here yet. If you later add async scanning,
-        // this is where the completion callback would land.
+        static u8 count = 0;
+        if (count++ >= 9) {
+
+            refresh_directory_entries();        // refresh every 10 frames
+            count = 0;
+        }
     }
 
 
@@ -346,7 +334,7 @@ namespace GLT::editor {
         for (i32 i = lo; i <= hi; ++i)
             m_selected_paths.push_back(m_entries[i].path);
 
-        // Deliberately do NOT update m_selection_anchor — repeated Shift+click
+        // Deliberately do NOT update m_selection_anchor - repeated Shift+click
         // should keep extending from the original anchor.
     }
 
@@ -383,7 +371,11 @@ namespace GLT::editor {
         ImGui::SameLine();
         if (ImGui::Button("Import##content_browser_import")) {
 
-            import_files(GLT::io::file_dialog_multi("Import asset", POSSIBLE_IMPORT_TILE_TYPES));
+            const auto import_paths = GLT::editor::io::file_dialog_multi("Import asset", POSSIBLE_IMPORT_TILE_TYPES);
+            if (!import_paths.empty()) {
+
+                GLT::event_bus::post(GLT::editor::asset_import_request_event(import_paths, m_current_dir));
+            }
         }
 
         ImGui::SameLine();
@@ -394,7 +386,8 @@ namespace GLT::editor {
         ImGui::InputTextWithHint("##cb_search", "Search...", m_search_buffer, sizeof(m_search_buffer));
 
         ImGui::SameLine();
-        if (ImGui::Button("Refresh")) m_entries_dirty = true;
+        if (ImGui::Button("Refresh")) 
+            m_entries_dirty = true;
     }
 
 
@@ -410,6 +403,11 @@ namespace GLT::editor {
             if (paths_equal(p, m_content_dir)) break;
         }
         std::reverse(crumbs.begin(), crumbs.end());
+
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.f, 0.f, 0.f, 0.f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.f, 0.f, 0.f, 0.f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.f, 0.f, 0.f, 0.f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.f, 0.f));
 
         for (size_t i = 0; i < crumbs.size(); ++i) {
             if (i > 0) {
@@ -427,6 +425,8 @@ namespace GLT::editor {
             }
             ImGui::PopID();
         }
+		ImGui::PopStyleVar();
+		ImGui::PopStyleColor(3);
     }
 
     // directory tree --------------------------------------------------------------------------------------------------
@@ -457,7 +457,7 @@ namespace GLT::editor {
 
     void content_browser_window::draw_directory_tree_recursive(const std::filesystem::path& dir, const bool collapse_tree) {
 
-        // TODO: cache per-node subdirectory lists — right now we re-scan the
+        // TODO: cache per-node subdirectory lists - right now we re-scan the
         //       filesystem on every frame for every visible tree node.
         const auto subdirs = list_subdirectories(dir);
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -552,15 +552,27 @@ namespace GLT::editor {
         if (interaction == UI::mouse_interation::left_double_clicked) {
 
             // Double-click: reduce to a single selection, then act on it.
-            // We deliberately ignore Ctrl/Shift here — the second click of
+            // We deliberately ignore Ctrl/Shift here - the second click of
             // a double should not toggle the item back off or extend a range.
             select_single(entry.path);
 
             if (entry.is_directory)
                 navigate_to(entry.path);
 
-            else
-                GLT::event_bus::post(asset_open_event(categorize_extension(entry.extension), entry.path));
+            else {
+
+                // Ask the registry what a file with this extension actually maps to. If nothing does, fall back to 
+                // the informational category - the editor will log "no editor registered" rather than silently open the wrong thing.
+                GLT::asset::type resolved = GLT::asset::core_types::invalid;
+                if (auto registry = GLT::asset::registry::get_ref()) {
+
+                    if (auto loaded = registry->load(entry.path))
+                        resolved = registry->info(*loaded).asset_type;
+                    else
+                        LOG(warn, "Failed to load [{}]", entry.path)
+                }
+                GLT::event_bus::post(asset_open_event{ resolved, entry.path });
+            }
 
         } else if(button) {
 
@@ -590,7 +602,7 @@ namespace GLT::editor {
 
         // file type accent --------------------------------------------------------------------------------------------
         // A thin colored strip along the bottom edge of the cell identifies the
-        // file's category at a glance. Folders are skipped — their icon already
+        // file's category at a glance. Folders are skipped - their icon already
         // communicates what they are, and striping them would just add noise.
         if (!entry.is_directory) {
 
@@ -655,7 +667,7 @@ namespace GLT::editor {
 
         // drag source -------------------------------------------------------------------------------------------------
         // If the dragged item is part of the current multi-selection, drag
-        // only that item for now — see notes at the bottom of the message.
+        // only that item for now - see notes at the bottom of the message.
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
 
             const std::string path_str = entry.path.string();
@@ -707,8 +719,20 @@ namespace GLT::editor {
 
             if (entry.is_directory)
                 navigate_to(entry.path);
-            else 
-                GLT::event_bus::post(asset_open_event(categorize_extension(entry.extension), entry.path));
+            else {
+
+                // Ask the registry what a file with this extension actually maps to. If nothing does, fall back to 
+                // the informational category - the editor will log "no editor registered" rather than silently open the wrong thing.
+                GLT::asset::type resolved = GLT::asset::core_types::invalid;
+                if (auto registry = GLT::asset::registry::get_ref()) {
+
+                    if (auto loaded = registry->load(entry.path))
+                        resolved = registry->info(*loaded).asset_type;
+                    else
+                        LOG(warn, "Failed to load [{}]", entry.path)
+                }
+                GLT::event_bus::post(asset_open_event{ resolved, entry.path });
+            }
         }
 
         if (ImGui::MenuItem("Rename")) {
@@ -771,7 +795,7 @@ namespace GLT::editor {
                     GLT::vfs::rename(m_pending_rename_path, target, error);
                 }
 
-                // If the renamed path was in the selection, drop it — the old
+                // If the renamed path was in the selection, drop it - the old
                 // path no longer refers to anything.
                 clear_selection();
 
@@ -901,12 +925,12 @@ namespace GLT::editor {
             return;
 
         std::error_code error{};
-
         auto iterator = GLT::vfs::directory_iterator(m_current_dir, error);
         for (auto& entry : iterator) {
 
             const auto& p = entry.path();
-            if (is_hidden_entry(p)) continue;
+            if (is_hidden_entry(p))
+                continue;
 
             dir_entry loc_dir_entry{};
             loc_dir_entry.path = p;
@@ -916,18 +940,17 @@ namespace GLT::editor {
             if (!loc_dir_entry.is_directory) {
 
                 std::string ext = p.extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(),
-                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                 loc_dir_entry.extension = std::move(ext);
             }
-
             m_entries.push_back(std::move(loc_dir_entry));
         }
 
         // Directories before files, then alphabetical within each group.
         std::sort(m_entries.begin(), m_entries.end(),
             [](const dir_entry& a, const dir_entry& b) {
-                if (a.is_directory != b.is_directory) return a.is_directory;
+                if (a.is_directory != b.is_directory)
+                    return a.is_directory;
                 return a.name < b.name;
             });
     }
@@ -948,7 +971,7 @@ namespace GLT::editor {
             VALIDATE(!bindings.empty(), continue, "", "content_browser: no factory for [{}]", src.generic_string());
 
             // Pick a target type. If multiple candidates, prompt (deferred to a
-            // modal — for now take the first one).
+            // modal - for now take the first one).
             GLT::asset::type target = bindings.front().target_type;
             if (bindings.size() > 1) {
                 // TODO: open a modal with one radio button per binding.
@@ -968,9 +991,9 @@ namespace GLT::editor {
             GLT::thread_pool::push([registry, src, target, target_path]() {
 
                 auto result = registry->import(src, target, target_path);
-                VALIDATE(result, return, "", "import '{}' → type {} failed", src.generic_string(), target.value);
+                VALIDATE(result, return, "", "import [{}] → type {} failed", src.generic_string(), target.value);
                 const GLT::asset::handle h = *result;
-                LOG(info, "imported '{}' → '{}'", src.generic_string(), registry->info(h).virtual_path.generic_string());
+                LOG(info, "imported [{}] → [{}]", src.generic_string(), registry->info(h).virtual_path.generic_string());
 
                 // Hop back to the main thread to touch ImGui / content browser state.
                 GLT::thread_pool::push_main([registry, h, src]() {
@@ -982,6 +1005,13 @@ namespace GLT::editor {
                 });
             });
         }
+    }
+
+
+    void content_browser_window::on_file_event(const file_event& event) {
+
+        LOG(info, "{}", event.to_string());
+        m_entries_dirty = true;
     }
 
 }

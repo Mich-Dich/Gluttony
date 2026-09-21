@@ -46,7 +46,7 @@ namespace GLT::asset {
     };
 
     // Writer handed to import(). Lets the importer emit chunks without
-    // ever knowing about the on-disk layout — the registry writes the header.
+    // ever knowing about the on-disk layout - the registry writes the header.
     class asset_writer {
     public:
 
@@ -54,10 +54,10 @@ namespace GLT::asset {
 
         virtual void write_chunk(chunk_id id, std::span<const std::byte> data, u32 compression = 0) = 0;
 
-        // ID form — caller already knows the target asset.
+        // ID form - caller already knows the target asset.
         virtual void declare_dependency(const UUID id) = 0;
 
-        // Path form — the registry resolves (and imports if needed) on finalize.
+        // Path form - the registry resolves (and imports if needed) on finalize.
         // `virtual_path` is relative to the source being imported.
         virtual void declare_dependency(std::string_view virtual_path, GLT::asset::type target_type) = 0;
 

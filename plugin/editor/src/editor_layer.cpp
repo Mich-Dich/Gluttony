@@ -18,6 +18,9 @@
 #include "window/stats.h"
 #include "window/audio_viewer.h"
 #include "window/plugin_wizard.h"
+#include "window/asset_import.h"
+#include "util/asset_editor_registry.h"
+#include "util/file_watcher.h"
 
 
 
@@ -122,22 +125,24 @@ namespace GLT::editor {
         m_logo = GLT::create_unique_ref<GLT::render::image>(GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "image/logo.png");
         add_window<world_viewport_window>();
 
-        // =============== DEV-ONLY ===============
-        // add_window<image_viewer_window>("/home/mich/workspace/gluttony_test_project/content/sci-fi/adrian-mihai-marchidan-brush-stroke-studio-ship1v2.jpg");
-        // =============== DEV-ONLY ===============
-
+        register_core_editors();
+        file_watcher::init();
+        file_watcher::watch(PROJECT_CONTENT_DIR, true);
         m_asset_open_event_sub_handle = GLT::event_bus::subscribe<asset_open_event>(std::bind_front(&editor_layer::on_asset_open_event, this));
+        m_asset_import_request_event_sub_handle = GLT::event_bus::subscribe<asset_import_request_event>(std::bind_front(&editor_layer::on_asset_import_request_event, this));
     }
 
 
     editor_layer::~editor_layer() {
 
         GLT::event_bus::unsubscribe(m_asset_open_event_sub_handle);
+        file_watcher::unwatch_all();
+        file_watcher::shutdown();
         m_windows.clear();
         m_logo.reset();
     }
 
-    // CLASS PUBLIC ====================================================================================================
+    // CLASS PUBLIC ====================================================================================================Fugaxe
     
     void editor_layer::update(const f32 delta_time) {
 
@@ -153,21 +158,14 @@ namespace GLT::editor {
 		// Erase the removed items
 		m_windows.erase(it, m_windows.end());
 
-        for (auto& event : m_asset_open_event_buffer) {
+        for (auto& event : m_asset_open_event_buffer)
+            open_asset_editor(event);
 
-            switch (event.get_asset_category()) {
-                case asset_category::image:         add_window<image_viewer_window>( event.get_path() ); break;
-                case asset_category::world:         break;
-                case asset_category::source:        break;
-                case asset_category::material:      break;
-                case asset_category::mesh:          break;
-                case asset_category::config:        break;
-                case asset_category::audio:         add_window<audio_viewer_window>( event.get_path() ); break;
-                case asset_category::other:         break;
-            }
-        }
+        for (auto& event : m_asset_import_request_event_buffer)
+            add_window<asset_import_window>(event.get_sources(), event.get_target_dir());
+            
         m_asset_open_event_buffer.clear();
-
+        m_asset_import_request_event_buffer.clear();
     }
 
 
@@ -193,7 +191,7 @@ namespace GLT::editor {
 
             VALIDATE(window, continue, "", "Null pointer detected in [m_windows]")
 
-            if (window->should_close())                 // Ignore windows the user has closed — they're about to be pruned
+            if (window->should_close())                 // Ignore windows the user has closed - they're about to be pruned
                 continue;
 
             if (window->get_window_title() == name)
@@ -370,7 +368,7 @@ namespace GLT::editor {
 
     void editor_layer::render_dockspace() {
 
-        // Same math as render_toolbar() — keep these in sync if you tweak the toolbar.
+        // Same math as render_toolbar() - keep these in sync if you tweak the toolbar.
         constexpr f32 logo_side      = 50.0f;
         constexpr f32 win_pad        =  4.0f;
         constexpr f32 toolbar_height = logo_side + win_pad * 2.0f;
@@ -430,6 +428,47 @@ namespace GLT::editor {
 
         VALIDATE(!event.get_path().empty(), return, "", "Can't open a asset editor for an empty path");
         m_asset_open_event_buffer.push_back(event);
+    }
+
+
+    void editor_layer::on_asset_import_request_event(const asset_import_request_event& event) {
+
+        VALIDATE(!event.get_sources().empty(), return, "", "No assets to import provided");
+        m_asset_import_request_event_buffer.push_back(event);
+    }
+
+
+    void editor_layer::register_core_editors() {
+
+        #define ADD_ASSET_EDITOR(type, window)                                                      \
+            GLT::editor::asset_editor_registry::register_editor(type,                               \
+                [](const std::filesystem::path& p) -> GLT::unique_ref<base_window> {                \
+                    return GLT::create_unique_ref<window>(p);                                       \
+                });
+
+        ADD_ASSET_EDITOR(GLT::asset::core_types::texture2D,     image_viewer_window)
+        ADD_ASSET_EDITOR(GLT::asset::core_types::texture3D,     image_viewer_window)
+        ADD_ASSET_EDITOR(GLT::asset::core_types::cube_map,      image_viewer_window)
+        ADD_ASSET_EDITOR(GLT::asset::core_types::audio,         audio_viewer_window)
+
+        #undef ADD_ASSET_EDITOR
+    }
+
+
+    void editor_layer::open_asset_editor(const asset_open_event& event) {
+
+        const GLT::asset::type type = event.get_asset_type();
+        const auto& path = event.get_path();
+        VALIDATE(!path.empty(), return, "", "asset_open_event with empty path (type {})", type.value);
+
+        auto window = GLT::editor::asset_editor_registry::create(type, path);
+        VALIDATE(window, return, "", "No editor registered for asset type [{}] (path: {})", type.value, path.generic_string());
+
+        // Dock new windows into the main dockspace
+        if (m_dockspace_id != 0)
+            window->dock_to(m_dockspace_id);
+
+        m_windows.push_back(std::move(window));
     }
 
 }

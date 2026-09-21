@@ -101,7 +101,7 @@ namespace GLT::editor {
         // Requests that this window dock into `dock_id` the next time it is
         // rendered. No-op if the window has already been shown once; call
         // this before the first frame the window is drawn.
-        void dock_to(ImGuiID dock_id);
+        virtual void dock_to(ImGuiID dock_id);
 
     protected:
 

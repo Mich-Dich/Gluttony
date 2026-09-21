@@ -16,7 +16,7 @@ namespace GLT::asset::factory::mesh_assimp {
     // CONSTANTS =======================================================================================================
 
     // Assimp post-process flags tuned for RT-ready static geometry.
-    // We deliberately do NOT use aiProcess_PreTransformVertices here —
+    // We deliberately do NOT use aiProcess_PreTransformVertices here -
     // it flattens the scene graph and destroys instancing. We walk nodes
     // ourselves and bake transforms into vertices below.
     constexpr unsigned int ASSIMP_FLAGS =
@@ -38,12 +38,12 @@ namespace GLT::asset::factory::mesh_assimp {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
-    // Read whole file through the VFS. Import-only — factories run in the
+    // Read whole file through the VFS. Import-only - factories run in the
     // editor / build tools, so a synchronous read here is fine.
     [[nodiscard]] std::expected<std::vector<std::byte>, GLT::asset::import_error> read_source(const std::filesystem::path& path);
 
 
-    // FNV-1a 64. Placeholder for xxh3 — swap when you have a wrapper.
+    // FNV-1a 64. Placeholder for xxh3 - swap when you have a wrapper.
     [[nodiscard]] constexpr u64 hash_bytes(std::span<const std::byte> data) noexcept;
 
 
@@ -259,7 +259,7 @@ namespace GLT::asset::factory::mesh_assimp {
         const aiScene* scene = importer.ReadFileFromMemory(bytes.data(), bytes.size(), ASSIMP_FLAGS, hint);
         if (!scene) {
 
-            LOG(error, "mesh_assimp: Assimp failed on '{}': {}", source.generic_string(), importer.GetErrorString());
+            LOG(error, "mesh_assimp: Assimp failed on [{}]: {}", source.generic_string(), importer.GetErrorString());
             return std::unexpected{ GLT::asset::import_error::unsupported_format };
         }
         if (!scene->HasMeshes())
@@ -317,7 +317,7 @@ namespace GLT::asset::factory::mesh_assimp {
             .payload_hash = hash,
         };
 
-        LOG(info, "mesh_assimp: '{}' → {} verts, {} tris, {} submeshes", 
+        LOG(info, "mesh_assimp: [{}] → {} verts, {} tris, {} submeshes", 
             source.generic_string(), vertices.size(), indices.size() / 3, submeshes.size());
 
         return result;

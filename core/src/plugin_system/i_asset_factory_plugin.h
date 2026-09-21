@@ -10,6 +10,10 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 namespace GLT::asset::factory {
+    class i_asset_factory_plugin;
+}
+
+namespace GLT::asset::factory {
 
     // CONSTANTS =======================================================================================================
 
@@ -17,13 +21,13 @@ namespace GLT::asset::factory {
 
     // TYPES ===========================================================================================================
 
-    // A single (source extension → target type) pairing the factory claims.
-    // `source_extension` is lowercase, no dot. Empty string = "any extension"
-    // (useful for formats detected by magic bytes rather than suffix).
+    // A single (source extension → target type) pairing the factory claims. `source_extension` is lowercase, no dot. 
+    // Empty string = "any extension" (useful for formats detected by magic bytes rather than suffix).
     struct binding {
 
         std::string_view                source_extension{};     // "fbx", "obj", "gltf", "png", "wav", ""
         GLT::asset::type                target_type;            // what it produces
+        const i_asset_factory_plugin*   factory{ nullptr };     // set by the registry; lets callers reach option_schema()
     };
 
 

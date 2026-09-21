@@ -28,7 +28,7 @@ namespace GLT::editor {
     // Cap the initial read of a pre-existing log file so opening the window is always cheap. Any earlier content is simply skipped.
     constexpr std::uintmax_t    MAX_INITIAL_READ_BYTES    = 4 * 1024 * 1024;
 
-    // If a "line" grows beyond this without ever hitting a newline, treat it as garbage and discard — protects against binary files.
+    // If a "line" grows beyond this without ever hitting a newline, treat it as garbage and discard - protects against binary files.
     constexpr size_t            MAX_PARTIAL_LINE_BYTES    = 64 * 1024;
 
     // Marker colours aligned with the logger plugin's console_color_table.
@@ -111,7 +111,7 @@ namespace GLT::editor {
 
     void log_viewer_window::update(const f32 delta_time) {
 
-        // Poll at a fixed cadence rather than every frame — cheap and
+        // Poll at a fixed cadence rather than every frame - cheap and
         // completely imperceptible at 4 Hz.
         m_poll_accumulator += delta_time;
         if (m_poll_accumulator >= POLL_INTERVAL) {
@@ -449,7 +449,7 @@ namespace GLT::editor {
         ImGui::BeginChild("##log_content", ImVec2(0, -status_height), false,
             ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
-        // Check BEFORE we render — auto-scroll should only kick in when the
+        // Check BEFORE we render - auto-scroll should only kick in when the
         // user hasn't scrolled up manually.
         const bool was_at_bottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f;
 
@@ -503,7 +503,7 @@ namespace GLT::editor {
                     // ---- the line itself ----------------------------------------------------------------
                     // ansi_text() handles any embedded ANSI colour codes that
                     // the logger's $B/$E format specifiers produced, and ends
-                    // with a NewLine() — one row per call.
+                    // with a NewLine() - one row per call.
                     UI::ansi_text(line.text);
                 }
             }

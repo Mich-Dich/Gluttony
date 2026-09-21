@@ -20,6 +20,7 @@
     "imgui",
     "implot",
     "instrumentor",
+    "miniaudio",
     "rolloff",
     "soloud",
     "spirv",

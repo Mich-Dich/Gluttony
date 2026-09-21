@@ -330,7 +330,7 @@ namespace GLT::editor::icon_manager {
             }
         }
 
-        // No room anywhere — create a new page.
+        // No room anywhere - create a new page.
         thumbnail_page page{};
         page.cpu_pixels.assign((size_t)THUMBNAIL_PAGE_WIDTH * THUMBNAIL_PAGE_HEIGHT * 4, 0);
         page.image = GLT::create_unique_ref<GLT::render::image>(page.cpu_pixels.data(), THUMBNAIL_PAGE_WIDTH, THUMBNAIL_PAGE_HEIGHT, false);
@@ -485,7 +485,7 @@ namespace GLT::editor::icon_manager {
             return it->second;
 
         LOG(error, "Icon [{}] not found in any atlas", GLT::util::enum_to_string(type));
-        return icon_data{};     // empty — callers should check tex_ref before drawing
+        return icon_data{};     // empty - callers should check tex_ref before drawing
     }
 
 

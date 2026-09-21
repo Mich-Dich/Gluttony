@@ -13,10 +13,15 @@ namespace GLT::asset::mesh {
 
     // Chunk IDs (any u32; keep them stable once shipped).
     inline constexpr chunk_id CHUNK_VERTICES     = 0x0001;
+
     inline constexpr chunk_id CHUNK_INDICES      = 0x0002;
+
     inline constexpr chunk_id CHUNK_SUBMESHES    = 0x0003;   // submesh + material index ranges
+
     inline constexpr chunk_id CHUNK_BOUNDS       = 0x0004;   // glm::vec3 min / max
+
     inline constexpr chunk_id CHUNK_SKELETON     = 0x0005;   // skeletal_mesh only
+
     inline constexpr chunk_id CHUNK_ANIMATIONS   = 0x0006;   // skeletal_mesh only
 
     // MACROS ==========================================================================================================

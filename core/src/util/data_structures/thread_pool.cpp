@@ -68,7 +68,7 @@ namespace GLT::thread_pool {
             }
 
             // Run the task outside the lock. Exceptions are the caller's
-            // problem — a task that throws takes the whole worker down unless
+            // problem - a task that throws takes the whole worker down unless
             // the task wraps its own body in try/catch. That is deliberate:
             // silently swallowing exceptions in a worker hides bugs.
             current();

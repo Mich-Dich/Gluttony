@@ -1,8 +1,9 @@
-#include <plugin_system/i_plugin.h>
-#include <plugin_system/i_audio_plugin.h>
-#include <util/io/logger.h>
+
 #include <event/event_bus.h>
 #include <event/application_event.h>
+#include <plugin_system/i_plugin.h>
+#include <plugin_system/i_audio_plugin.h>
+#include <plugin_system/i_asset_registry_plugin.h>
 
 
 
@@ -32,7 +33,8 @@ namespace GLT::audio::soloud_backend {
 
     static constexpr plugin_manager::interface                  dependencies_interfaces[] = {
 
-        plugin_manager::interface::window
+        plugin_manager::interface::virtual_file_system,
+        plugin_manager::interface::asset_registry,
     };
 
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
@@ -51,37 +53,27 @@ namespace GLT::audio::soloud_backend {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-
-    class audio : public GLT::audio::i_audio_plugin {
+    class plugin final : public GLT::audio::i_audio_plugin {
     public:
 
-        audio();
-        ~audio() override;
+        plugin();
+        ~plugin() override;
 
 
-
-        void on_load() override;
+        void on_load()   override;
 
 
         void on_unload() override;
 
 
-        bool create() override;
+        bool create()  override;
 
 
         void destroy() override;
 
+        // ---- playback -------------------------------------------------------
 
-        handle load_sound(const std::string& name, const std::string& file_path, bool is_stream = false) override;
-
-
-        void unload_sound(handle handle) override;
-
-
-        [[nodiscard]] handle get_sound(const std::string& name) const override;
-
-
-        handle play(handle sound, const audio_source_config& config = {}) override;
+        handle play(GLT::asset::handle sound, const GLT::asset::audio::source_config& config = {}) override;
 
 
         void stop(handle handle) override;
@@ -96,11 +88,12 @@ namespace GLT::audio::soloud_backend {
         void resume(handle handle) override;
 
 
-        [[nodiscard]] audio_state get_state(handle handle) const override;
+        [[nodiscard]] GLT::asset::audio::state get_state(handle handle) const override;
 
 
         [[nodiscard]] bool is_valid(handle handle) const override;
 
+        // ---- per-voice params -----------------------------------------------
 
         void set_volume(handle handle, f32 volume) override;
 
@@ -113,24 +106,28 @@ namespace GLT::audio::soloud_backend {
 
         void set_looping(handle handle, bool loop) override;
 
+        // ---- transport ------------------------------------------------------
 
         void seek(handle handle, f32 seconds) override;
 
 
         [[nodiscard]] f32 get_playback_position(handle handle) const override;
 
+        // ---- 3D -------------------------------------------------------------
 
         void set_3d_source_position(handle handle, const glm::vec3& position, const glm::vec3& velocity = {}) override;
 
 
-        void set_3d_source_attenuation(handle handle, f32 min_distance, f32 max_distance, f32 rolloff_factor, attenuation_model model) override;
+        void set_3d_source_attenuation(handle handle, f32 min_distance, f32 max_distance, f32 rolloff_factor,
+            GLT::asset::audio::attenuation_model model) override;
 
 
-        void set_listener(const listener_config& config) override;
+        void set_listener(const GLT::asset::audio::listener_config& config) override;
 
 
         void update_3d_audio() override;
 
+        // ---- global ---------------------------------------------------------
 
         void set_global_volume(f32 volume) override;
 
@@ -145,18 +142,27 @@ namespace GLT::audio::soloud_backend {
 
     private:
 
-        struct sound_entry {
+        // One cached SoLoud source per asset. Rebuilt when info().hash changes.
+        struct cached_sound {
 
-            GLT::unique_ref<SoLoud::Wav>                        wav{};
-            GLT::unique_ref<SoLoud::WavStream>                  stream{};
-            bool                                                is_stream = false;
+            GLT::unique_ref<SoLoud::Wav>                            wav{};
+            GLT::asset::content_hash                                hash{};
         };
 
-        GLT::unique_ref<SoLoud::Soloud>                         m_soloud{};
-        std::unordered_map<handle, sound_entry>                 m_sounds{};
-        std::unordered_map<std::string, handle>                 m_sound_name_map{};
-        handle                                                  m_next_sound_handle = 1;
-        listener_config                                         m_listener{};
+
+        // Lazily build (or fetch) the SoLoud source for a given audio asset.
+        // Returns nullptr if the handle is not loaded / not an audio asset.
+        [[nodiscard]] SoLoud::Wav* wav_for(GLT::asset::handle sound);
+
+
+        // Drop the cached source for a single asset (called on hot-reload).
+        void invalidate(GLT::asset::handle sound);
+
+
+        GLT::ref<GLT::asset::i_asset_registry_plugin>               m_registry{};
+        GLT::unique_ref<SoLoud::Soloud>                             m_soloud{};
+        std::unordered_map<GLT::asset::handle, cached_sound>        m_cache{};
+        GLT::asset::audio::listener_config                          m_listener{};
     };
 
 }
@@ -164,37 +170,4 @@ namespace GLT::audio::soloud_backend {
 #include "plugin.inl"
 #include "audio.inl"
 
-EXPORT_PLUGIN_CLASS(GLT::audio::soloud_backend::audio, GLT::audio::soloud_backend::descriptor)
-
-
-/*
-
-// In the engine's application class, during application_ready phase:
-auto audio_plugin = GLT::audio::manager::get_ref();
-
-if (audio_plugin) {
-    audio_plugin->create();
-
-    // Load a sound
-    auto snd = audio_plugin->load_sound("explosion", "assets/audio/explosion.wav");
-
-    // Play a 3D sound
-    GLT::audio::audio_source_config cfg;
-    cfg.is_3d = true;
-    cfg.position = { 10.0f, 0.0f, 5.0f };
-    cfg.min_distance = 2.0f;
-    cfg.max_distance = 50.0f;
-    auto voice = audio_plugin->play(snd, cfg);
-
-    // In the update loop (each frame):
-    GLT::audio::listener_config listener;
-    listener.position = camera.get_position();
-    listener.forward  = camera.get_forward();
-    listener.up       = camera.get_up();
-    audio_plugin->set_listener(listener);
-
-    // Update 3D audio (recalculate panning/Doppler)
-    audio_plugin->update_3d_audio();
-}
-    
-*/
+EXPORT_PLUGIN_CLASS(GLT::audio::soloud_backend::plugin, GLT::audio::soloud_backend::descriptor)

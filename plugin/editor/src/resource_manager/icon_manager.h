@@ -122,7 +122,7 @@ namespace GLT::editor::icon_manager {
     thumbnail_handle request_thumbnail(const std::filesystem::path& path);
 
 
-    // Poll a thumbnail handle. Cheap — safe to call every frame. Returns a
+    // Poll a thumbnail handle. Cheap - safe to call every frame. Returns a
     // default-constructed (failed) thumbnail_data for an invalid handle.
     thumbnail_data get_thumbnail(thumbnail_handle handle);
 

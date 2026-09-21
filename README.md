@@ -3,7 +3,7 @@
 
 **A work-in-progress game engine built around a plugin-based, microkernel architecture.**
 
-Gluttony is the start of an actual game engine. The core stays small and loads most of its functionality as plugins, so subsystems can be developed, swapped, and tested independently. It’s still very early: many features are missing or incomplete, and the code is rough around the edges. But it’s no longer just an experiment—it’s the foundation of an engine.
+Gluttony is the start of an actual game engine. The core stays small and loads most of its functionality as plugins, so subsystems can be developed, swapped, and tested independently. It’s still very early: many features are missing or incomplete, and the code is rough around the edges. But it’s no longer just an experiment - it’s the foundation of an engine.
 
 > **⚠ This is very much a work in progress.**  
 > Expect missing features, occasional jank, and interfaces that don’t do much yet. You’ve been warned.

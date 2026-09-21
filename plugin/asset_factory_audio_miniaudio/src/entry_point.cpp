@@ -1,17 +1,14 @@
 
 #include "util/pch.h"
 
-#include <asset/type.h>
-#include <asset/mesh.h>
-#include <plugin_system/i_project_manager.h>
-#include <plugin_system/i_asset_handler_plugin.h>
+#include <plugin_system/i_asset_factory_plugin.h>
 #include <plugin_system/i_asset_registry_plugin.h>
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::asset::handler::mesh {
+namespace GLT::asset::factory::audio_miniaudio {
 
     // CONSTANTS =======================================================================================================
 
@@ -19,40 +16,11 @@ namespace GLT::asset::handler::mesh {
 
     // TYPES ===========================================================================================================
 
-    // The runtime representation of a loaded mesh asset. Handlers own this
-    // type; the registry only ever sees it as `i_runtime_asset*`.
-    //
-    // IMPORTANT: this struct OWNS the decoded geometry. The chunk_reader
-    // hands out spans into a buffer that dies when the registry's load
-    // function returns, so every handler must copy what it wants to keep.
-    class mesh_asset final : public GLT::asset::i_runtime_asset {
-    public:
-
-        GLT::asset::type                                asset_type{ GLT::asset::core_types::static_mesh };
-
-        std::vector<GLT::asset::mesh::vertex>           vertices;
-        std::vector<u32>                                indices;
-        std::vector<GLT::asset::mesh::submesh>          submeshes;
-        GLT::asset::mesh::bounds                        bounds{};
-
-        // Positional. material_handles[i] corresponds to submesh.material_slot == i.
-        // Entries may be INVALID_HANDLE when a material reference couldn't be
-        // resolved - the renderer is expected to substitute a fallback.
-        std::vector<GLT::asset::handle>                 material_handles;
-
-
-        [[nodiscard]] GLT::asset::type type() const noexcept override;
-
-
-        [[nodiscard]] u64 memory_usage() const noexcept override;
-
-    };
-
     // STATIC VARIABLES ================================================================================================
 
     static constexpr const char*                                dependencies_names[] = {
-        
-        nullptr 
+
+        nullptr
     };
 
     static constexpr GLT::plugin_manager::interface             dependencies_interfaces[] = {
@@ -87,28 +55,29 @@ namespace GLT::asset::handler::mesh {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    // CLASS PUBLIC ====================================================================================================
-
-    class plugin final : public GLT::asset::i_asset_handler {
+    class plugin final : public GLT::asset::factory::i_asset_factory_plugin {
     public:
 
-        void on_load()   override;
+        void on_load() override;
 
 
         void on_unload() override;
 
-        // ---- i_asset_handler ----
 
-        [[nodiscard]] std::span<const GLT::asset::type> types() const noexcept override;
+        [[nodiscard]] std::span<const GLT::asset::factory::binding> bindings() const noexcept override;
 
 
-        [[nodiscard]] std::expected<std::unique_ptr<GLT::asset::i_runtime_asset>, GLT::asset::load_error>
-            deserialize(const GLT::asset::info& info, GLT::asset::chunk_reader& reader) override;
+        [[nodiscard]] std::expected<GLT::asset::factory::import_result, GLT::asset::import_error> import(
+            const std::filesystem::path& source, GLT::asset::type target_type, const GLT::asset::import_options& opts,
+            GLT::asset::asset_writer& out) override;
 
     private:
 
         GLT::ref<GLT::asset::i_asset_registry_plugin>           m_registry{};
+
     };
+
+    // CLASS PUBLIC ====================================================================================================
 
     // CLASS PROTECTED =================================================================================================
 
@@ -116,7 +85,6 @@ namespace GLT::asset::handler::mesh {
 
 }
 
-#include "mesh_asset.inl"
 #include "plugin.inl"
 
-EXPORT_PLUGIN_CLASS(GLT::asset::handler::mesh::plugin, GLT::asset::handler::mesh::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::asset::factory::audio_miniaudio::plugin, GLT::asset::factory::audio_miniaudio::descriptor)

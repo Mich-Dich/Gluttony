@@ -48,14 +48,14 @@ namespace GLT::asset::registry_default {
 
     bool write_blob(const std::filesystem::path& path, std::span<const std::byte> data) {
 
-        std::error_code ec;
-        GLT::vfs::create_directories(path.parent_path(), ec);
-        if (ec)
+        std::error_code error{};
+        GLT::vfs::create_directories(path.parent_path(), error);
+        if (error)
             return false;
 
         const auto mode = GLT::vfs::file_open_mode::write | GLT::vfs::file_open_mode::truncate | GLT::vfs::file_open_mode::create;
-        const auto h = GLT::vfs::open_file(path, mode, ec);
-        if (ec || h == ::INVALID_HANDLE) 
+        const auto h = GLT::vfs::open_file(path, mode, error);
+        if (error || h == ::INVALID_HANDLE) 
             return false;
 
         const size_t written = GLT::vfs::write_file(h, data.data(), data.size(), 0);
@@ -178,11 +178,7 @@ namespace GLT::asset::registry_default {
 
     FORCE_INLINE_R bool is_valid_file(const std::filesystem::path& p) {
 
-        if (p.empty())
-            return false;
-
-        std::error_code error{};
-        return GLT::vfs::is_regular_file(p, error) && !error;
+        return !p.empty() && p.has_extension();         // check if file
     }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -342,7 +338,7 @@ namespace GLT::asset::registry_default {
 
             auto [it, inserted] = m_handlers.try_emplace(t, handler);
             VALIDATE(inserted || it->second == handler, it->second = handler, "", 
-                "type {} already has a handler — overriding", t.value);
+                "type {} already has a handler - overriding", t.value);
         }
     }
 
@@ -408,9 +404,9 @@ namespace GLT::asset::registry_default {
 
     // Routes to whichever factory binds (source_extension, target_type).
     // If out_path is empty, the registry derives one next to the source (or under a configured import root). 
-    // On success the imported asset is loaded and its handle returned — the editor basically always wants a preview right away.
+    // On success the imported asset is loaded and its handle returned - the editor basically always wants a preview right away.
     std::expected<GLT::asset::handle, GLT::asset::import_error>
-    plugin::import(const std::filesystem::path& source, GLT::asset::type target_type, const std::filesystem::path& out_dir,
+    plugin::import(const std::filesystem::path& source, GLT::asset::type target_type, const std::filesystem::path& out_path,
         const GLT::asset::import_options& opts) {
 
 
@@ -443,7 +439,7 @@ namespace GLT::asset::registry_default {
         if (!factory)
             return std::unexpected{ GLT::asset::import_error::not_supported };
 
-        asset_writer_impl writer;                                               // run the factory (NO lock held — this is the parallel part)
+        asset_writer_impl writer;                                               // run the factory (NO lock held - this is the parallel part)
         auto import_res = factory->import(source, target_type, opts, writer);
         if (!import_res)
             return std::unexpected{ import_res.error() };
@@ -472,7 +468,7 @@ namespace GLT::asset::registry_default {
 
         auto handle_res = load(final_path);                                     // load it so the editor gets a handle back
         VALIDATE(handle_res, return std::unexpected{ GLT::asset::import_error::handler_rejected }, "", 
-            "import: finalize ok but load failed for '{}'", final_path.generic_string())
+            "import: finalize ok but load failed for [{}]", final_path.generic_string())
         
         return *handle_res;
     }
@@ -481,7 +477,6 @@ namespace GLT::asset::registry_default {
     std::span<const GLT::asset::factory::binding>
     plugin::candidate_imports(const std::filesystem::path& source) const {
 
-        // thread_local scratch so concurrent editor queries don't stomp each other.
         thread_local std::vector<GLT::asset::factory::binding> scratch;
         scratch.clear();
 
@@ -493,10 +488,16 @@ namespace GLT::asset::registry_default {
         for (auto* f : m_factories) {
 
             const bool sniff = f->can_sniff(source);
-            for (const auto& b : f->bindings()) {
+            for (auto& b : f->bindings()) {
 
-                if (sniff || b.source_extension.empty() || b.source_extension == ext)
-                    scratch.push_back(b);
+                if (sniff || b.source_extension.empty() || b.source_extension == ext) {
+
+                    // Make a local copy so we can stamp the backpointer without
+                    // mutating the factory's own bindings array.
+                    GLT::asset::factory::binding copy = b;
+                    copy.factory = f;
+                    scratch.push_back(copy);
+                }
             }
         }
         return scratch;
@@ -525,7 +526,8 @@ namespace GLT::asset::registry_default {
 
         std::shared_lock lock(m_mutex);
         auto it = m_type_name_to_id.find(std::string(name));
-        if (it == m_type_name_to_id.end()) return std::nullopt;
+        if (it == m_type_name_to_id.end())
+            return std::nullopt;
         return it->second;
     }
 
@@ -687,15 +689,14 @@ namespace GLT::asset::registry_default {
 
         // --- dependency table (dependency_disk[]) ---
         //
-        // Each row carries the target asset's UUID AND (optionally) a
-        // NUL-terminated virtual path in the string table. Resolution order:
+        // Each row carries the target asset's UUID AND (optionally) a NUL-terminated virtual path in the string table. 
+        // Resolution order:
         //   1. id already resident  → reuse the existing handle
         //   2. path_offset != 0     → load_unlocked(path.parent_path() / path)
         //   3. otherwise            → INVALID_HANDLE (unresolved slot)
         //
-        // We keep a slot for every row even when the dep can't be resolved,
-        // because the handler indexes dependencies[submesh.material_slot] and
-        // relies on positional alignment.
+        // We keep a slot for every row even when the dep can't be resolved, because the handler indexes 
+        // dependencies[submesh.material_slot] and relies on positional alignment.
         std::vector<GLT::asset::handle> resolved_deps;
         resolved_deps.reserve(hdr.dependency_count);
 
@@ -710,13 +711,13 @@ namespace GLT::asset::registry_default {
 
             for (const GLT::asset::dependency_disk& d : dep_disk) {
 
-                // fast path — already resident by id
+                // fast path - already resident by id
                 if (auto it = m_by_id.find(d.id); it != m_by_id.end()) {
                     resolved_deps.push_back(it->second);
                     continue;
                 }
 
-                // slow path — resolve by path relative to the importing asset
+                // slow path - resolve by path relative to the importing asset
                 if (d.path_offset == 0) {
                     resolved_deps.push_back(INVALID_HANDLE);
                     continue;
@@ -732,7 +733,7 @@ namespace GLT::asset::registry_default {
 
                 auto child = load_unlocked(abs_dep, in_flight);
                 if (!child) {
-                    // A missing/broken dependency is not fatal — hand back an
+                    // A missing/broken dependency is not fatal - hand back an
                     // unresolved slot so the handler can substitute a fallback.
                     resolved_deps.push_back(INVALID_HANDLE);
                     continue;

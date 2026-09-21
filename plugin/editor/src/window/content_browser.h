@@ -3,6 +3,8 @@
 
 #include "window/base_window.h"
 
+#include "util/event/file_event.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -107,6 +109,7 @@ namespace GLT::editor {
         void history_push(const std::filesystem::path& dir);
 
         void import_files(const std::vector<std::filesystem::path>& paths);
+        void on_file_event(const file_event& event);
 
         std::filesystem::path                                       m_content_dir{};    // Immutable root of the content tree.
         std::filesystem::path                                       m_current_dir{};    // Directory currently shown on the right.
@@ -134,6 +137,8 @@ namespace GLT::editor {
         char                                                        m_rename_buffer[256]{};
         bool                                                        m_open_rename_popup = false;
         bool                                                        m_open_delete_popup = false;
+
+        handle                                                      m_file_event_sub_handle{};
 
     };
 

@@ -29,17 +29,28 @@ namespace GLT::audio::soloud_backend {
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 
-    audio::audio() = default;
+    plugin::plugin() {}
 
 
-    audio::~audio() = default;
+    plugin::~plugin() {}
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    void audio::on_load()             { LOG_LOADED }
+    FORCE_INLINE void plugin::on_load() {
+
+        m_registry = GLT::asset::registry::get_ref();
+        VALIDATE(m_registry, return, "", "asset_registry not available - audio manager inactive")
+        LOG_LOADED
+    }
 
 
-    void audio::on_unload()           { LOG_UNLOADED }
+    FORCE_INLINE void plugin::on_unload() {
+
+        // Drop SoLoud sources first; they reference nothing from the registry.
+        m_cache.clear();
+        m_registry.reset();
+        LOG_UNLOADED
+    }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

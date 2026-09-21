@@ -6,7 +6,7 @@
 #include <layer/layer.h>
 
 #include "window/base_window.h"
-#include "util/event/asset_open_event.h"
+#include "util/event/asset_event.h"
 
 
 
@@ -65,8 +65,13 @@ namespace GLT::editor {
 
         void on_asset_open_event(const asset_open_event& event);
 
+        void on_asset_import_request_event(const asset_import_request_event& event);
 
-        std::vector<asset_open_event>                   m_asset_open_event_buffer{};
+        void register_core_editors();
+
+        void open_asset_editor(const asset_open_event& event);
+
+
         GLT::unique_ref<GLT::render::image>             m_logo{};
         std::vector<GLT::unique_ref<base_window>>       m_windows{};
 
@@ -74,8 +79,14 @@ namespace GLT::editor {
         bool                                            m_show_demo  = false;
         bool                                            m_show_style = false;
         bool                                            m_reset_layout = true;
-        handle                                          m_asset_open_event_sub_handle{};
         ImGuiID                                         m_dockspace_id = 0;
+
+        handle                                          m_asset_open_event_sub_handle{};
+        handle                                          m_asset_import_request_event_sub_handle{};
+
+        // event could be called during draw, so buffer
+        std::vector<asset_open_event>                   m_asset_open_event_buffer{};
+        std::vector<asset_import_request_event>         m_asset_import_request_event_buffer{};
 
     };
 

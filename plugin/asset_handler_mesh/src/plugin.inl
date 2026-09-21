@@ -35,7 +35,7 @@ namespace GLT::asset::handler::mesh {
     FORCE_INLINE void plugin::on_load() {
 
         m_registry = GLT::asset::registry::get_ref();
-        VALIDATE(m_registry, return, "", "asset_registry not available — handler inactive")
+        VALIDATE(m_registry, return, "", "asset_registry not available - handler inactive")
         m_registry->register_handler(this);
 
         // Ask the registry for the "mesh_collection" type on demand if you want
@@ -71,34 +71,29 @@ namespace GLT::asset::handler::mesh {
     FORCE_INLINE_R std::expected<std::unique_ptr<GLT::asset::i_runtime_asset>, GLT::asset::load_error> plugin::deserialize(
         const GLT::asset::info& info, GLT::asset::chunk_reader& reader) {
 
-
-        using namespace GLT::asset;
-        using namespace GLT::asset::mesh;
-
-        // ---- required chunks ---------------------------------------------------
-
-        const auto verts = reader.get_as<vertex>(CHUNK_VERTICES);
-        const auto idxs = reader.get_as<u32>(CHUNK_INDICES);
-        const auto subs = reader.get_as<submesh>(CHUNK_SUBMESHES);
+        // ---- required chunks ----------------------------------------------------------------------------------------
+        const auto verts = reader.get_as<GLT::asset::mesh::vertex>(GLT::asset::mesh::CHUNK_VERTICES);
+        const auto idxs = reader.get_as<u32>(GLT::asset::mesh::CHUNK_INDICES);
+        const auto subs = reader.get_as<GLT::asset::mesh::submesh>(GLT::asset::mesh::CHUNK_SUBMESHES);
         VALIDATE(!verts.empty() && !idxs.empty(), return std::unexpected{ load_error::corrupt_header }, "", 
-            "'{}' missing required chunks (verts={}, idx={})", info.name, verts.size(), idxs.size())
+            "[{}] missing required chunks (verts={}, idx={})", info.name, verts.size(), idxs.size())
 
-        // ---- build the runtime asset ------------------------------------------
-
+        // ---- build the runtime asset --------------------------------------------------------------------------------
         auto asset = std::make_unique<mesh_asset>();
         asset->asset_type = info.asset_type;
 
-        // Copy — the chunk_reader's backing buffer dies when the registry's
-        // load function returns. Do not keep the spans.
-        asset->vertices .assign(verts.begin(), verts.end());
-        asset->indices  .assign(idxs .begin(), idxs .end());
-        asset->submeshes.assign(subs .begin(), subs .end());
+        // Copy - the chunk_reader's backing buffer dies when the registry's load function returns. Do not keep the spans.
+        asset->vertices.assign(verts.begin(), verts.end());
+        asset->indices.assign(idxs.begin(), idxs.end());
+        asset->submeshes.assign(subs.begin(), subs.end());
 
-        // ---- bounds ------------------------------------------------------------
+        // ---- bounds -------------------------------------------------------------------------------------------------
+        if (const auto b = reader.get_as<GLT::asset::mesh::bounds>(GLT::asset::mesh::CHUNK_BOUNDS); b.size() == 1) {
 
-        if (const auto b = reader.get_as<bounds>(CHUNK_BOUNDS); b.size() == 1) {
             asset->bounds = b[0];
+
         } else {
+
             // Recompute if the writer didn't emit one (or emitted a malformed one).
             asset->bounds.min = asset->bounds.max = asset->vertices.front().position;
             for (const auto& v : asset->vertices) {
@@ -107,30 +102,27 @@ namespace GLT::asset::handler::mesh {
             }
         }
 
-        // ---- material handles --------------------------------------------------
+        // ---- material handles ---------------------------------------------------------------------------------------
 
-        // Positional alignment is guaranteed by the factory: it wrote one
-        // dependency per submesh, in submesh order. Unresolved references
-        // come through as INVALID_HANDLE and are preserved here so
-        // submesh.material_slot keeps indexing correctly.
+        // Positional alignment is guaranteed by the factory: it wrote one dependency per submesh, in submesh order. 
+        // Unresolved references come through as INVALID_HANDLE and are preserved here so submesh.material_slot keeps indexing correctly.
         asset->material_handles.assign(info.dependencies.begin(), info.dependencies.end());
 
-        // Sanity check: every submesh must point at a valid slot. If the file
-        // was hand-edited or the factory changed, catch it here rather than
-        // blowing up in the renderer.
-        for (const submesh& sm : asset->submeshes) {
+        // Sanity check: every submesh must point at a valid slot. If the file was hand-edited or the factory changed, 
+        // catch it here rather than blowing up in the renderer.
+        for (const GLT::asset::mesh::submesh& sm : asset->submeshes) {
             if (sm.material_slot >= asset->material_handles.size()) {
-                LOG(warn, "'{}' submesh references material slot {} but only {} dependencies exist — clamping to invalid",
+                LOG(warn, "[{}] submesh references material slot {} but only {} dependencies exist - clamping to invalid",
                     info.name, sm.material_slot, asset->material_handles.size());
                 // We do not fail the load; the renderer will substitute a
                 // fallback material. But we also don't want garbage indices.
             }
         }
 
-        LOG(info, "loaded '{}' — {} verts, {} tris, {} submeshes", info.name, asset->vertices.size(), 
+        LOG(info, "loaded [{}] - {} verts, {} tris, {} submeshes", info.name, asset->vertices.size(), 
             asset->indices.size() / 3, asset->submeshes.size());
 
-        return std::unique_ptr<i_runtime_asset>(std::move(asset));
+        return std::unique_ptr<GLT::asset::i_runtime_asset>(std::move(asset));
     }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================

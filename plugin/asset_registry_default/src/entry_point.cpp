@@ -120,7 +120,7 @@ namespace GLT::asset::registry_default {
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
         .name                                                   = GLT_MODULE_NAME,
-        .load_phase                                             = GLT::plugin_manager::phase::application_ready,
+        .load_phase                                             = GLT::plugin_manager::phase::pre_application,
         .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
         .target                                                 = GLT::plugin_manager::interface::asset_registry,
         .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
@@ -211,9 +211,9 @@ namespace GLT::asset::registry_default {
 
         // Routes to whichever factory binds (source_extension, target_type).
         // If out_path is empty, the registry derives one next to the source (or under a configured import root). 
-        // On success the imported asset is loaded and its handle returned — the editor basically always wants a preview right away.
+        // On success the imported asset is loaded and its handle returned - the editor basically always wants a preview right away.
         [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::import_error> import(const std::filesystem::path& source, 
-            GLT::asset::type target_type, const std::filesystem::path& out_dir = {}, const GLT::asset::import_options& opts = {}) override;
+            GLT::asset::type target_type, const std::filesystem::path& out_path = {}, const GLT::asset::import_options& opts = {}) override;
 
 
         // Cheap probe: which factories could handle this file? The editor uses this to populate the "Import as…" context menu.

@@ -252,7 +252,7 @@ namespace GLT::renderer_vk_ray {
                 .setBaseArrayLayer(0)
                 .setLayerCount(1);
 
-            // note: from eShaderReadOnlyOptimal, not eUndefined — the image is
+            // note: from eShaderReadOnlyOptimal, not eUndefined - the image is
             // already in use by ImGui at this point
             vr_dev->transition_image_layout(cmd, m_allocated_image.image,
                 vk::ImageLayout::eShaderReadOnlyOptimal,

@@ -15,7 +15,9 @@ namespace GLT::asset {
 
     using handle = ::handle;
 
-    using content_hash = u64;    // xxh3 of the payload — hot-reload detection
+
+    using content_hash = u64;    // xxh3 of the payload - hot-reload detection
+
 
     using chunk_id = u32;    // handler-defined (mesh: "vertices", "indices", "bvh", ...)
 

@@ -1,7 +1,7 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
 
-// NO rayPayloadInEXT here — intersection shaders are not allowed to declare one.
+// NO rayPayloadInEXT here - intersection shaders are not allowed to declare one.
 hitAttributeEXT vec3 attribs;
 
 void main() {
@@ -26,7 +26,7 @@ void main() {
     const float tmax = min(min(tbig.x,   tbig.y),   min(tbig.z,   gl_RayTmaxEXT));
 
     if (tmin > tmax)
-        return;   // miss — do NOT report
+        return;   // miss - do NOT report
 
     // Encode a colour by which face was hit (now in object space, so it rotates with the box)
     vec3 n = -sign(d) * step(tsmall.yzx, tsmall.xyz) * step(tsmall.zxy, tsmall.xyz);

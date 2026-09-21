@@ -72,7 +72,7 @@ namespace GLT::util
     constexpr const char* bool_to_str(bool boolean) { return boolean ? "true" : "false"; }
 
 
-    // Lowercase a copy — used to normalize file extensions.
+    // Lowercase a copy - used to normalize file extensions.
     std::string to_lower(std::string s);
 
 

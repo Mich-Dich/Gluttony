@@ -1,10 +1,7 @@
 #pragma once
 
-#include <event/event_bus.h>
-
 #include <soloud.h>
 #include <soloud_wav.h>
-#include <soloud_wavstream.h>
 
 
 
@@ -34,121 +31,65 @@ namespace GLT::audio::soloud_backend {
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 
-    bool audio::create() {
+    bool plugin::create() {
 
         m_soloud = GLT::create_unique_ref<SoLoud::Soloud>();
-        VALIDATE(m_soloud->init() == SoLoud::SO_NO_ERROR, m_soloud.reset(); return false, 
+        VALIDATE(m_soloud->init() == SoLoud::SO_NO_ERROR, m_soloud.reset(); return false,
             "SoLoud audio backend initialized", "SoLoud initialization failed");
+
         return true;
     }
 
 
-    void audio::destroy() {
+    void plugin::destroy() {
 
-        if (m_soloud) {
-            m_soloud->deinit();
-            m_soloud.reset();
-        }
-        m_sounds.clear();
-        m_sound_name_map.clear();
+        if (!m_soloud)
+            return;
+
+        m_soloud->stopAll();
+        m_cache.clear();          // destroys Wav objects before Soloud::deinit
+        m_soloud->deinit();
+        m_soloud.reset();
     }
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    handle audio::load_sound(const std::string& name, const std::string& file_path, bool is_stream) {
+    // ---- playback --------------------------------------------------------------------------------------------------
+
+    handle plugin::play(GLT::asset::handle sound, const GLT::asset::audio::source_config& config) {
+
+        using namespace GLT::asset::audio;
 
         if (!m_soloud)
             return INVALID_HANDLE;
 
-        handle handle = m_next_sound_handle++;
-        sound_entry entry;
-
-        if (is_stream) {
-
-            auto stream = GLT::create_unique_ref<SoLoud::WavStream>();
-            VALIDATE(stream->load(file_path.c_str()) == SoLoud::SO_NO_ERROR, return INVALID_HANDLE, 
-                "", "Failed to load streamed sound: {}", file_path);
-            entry.stream = std::move(stream);
-            entry.is_stream = true;
-
-        } else {
-
-            auto wav = GLT::create_unique_ref<SoLoud::Wav>();
-            VALIDATE(wav->load(file_path.c_str()) == SoLoud::SO_NO_ERROR, return INVALID_HANDLE, 
-                "", "Failed to load sound: {}", file_path);
-            entry.wav = std::move(wav);
-            entry.is_stream = false;
-
-        }
-
-        m_sounds[handle] = std::move(entry);
-        m_sound_name_map[name] = handle;
-        return handle;
-    }
-
-
-    void audio::unload_sound(handle handle) {
-
-        auto it = m_sounds.find(handle);
-        if (it != m_sounds.end()) {
-            // Remove from name map
-            for (auto name_it = m_sound_name_map.begin(); name_it != m_sound_name_map.end(); ) {
-                if (name_it->second == handle)
-                    name_it = m_sound_name_map.erase(name_it);
-                else
-                    ++name_it;
-            }
-            m_sounds.erase(it);
-        }
-    }
-
-
-    handle audio::get_sound(const std::string& name) const {
-
-        auto it = m_sound_name_map.find(name);
-        return (it != m_sound_name_map.end()) ? it->second : INVALID_HANDLE;
-    }
-
-    // --- playback control -------------------------------------------------------------
-
-    handle audio::play(handle sound, const audio_source_config& config) {
-
-        if (!m_soloud) 
+        SoLoud::Wav* wav = wav_for(sound);
+        if (!wav)
             return INVALID_HANDLE;
 
-        auto it = m_sounds.find(sound);
-        if (it == m_sounds.end()) return INVALID_HANDLE;
-
-        SoLoud::AudioSource* source = it->second.is_stream
-            ? static_cast<SoLoud::AudioSource*>(it->second.stream.get())
-            : static_cast<SoLoud::AudioSource*>(it->second.wav.get());
-
         SoLoud::handle voice_handle = 0;
+
         if (config.is_3d) {
-            voice_handle = m_soloud->play3d(*source,
-                config.position.x,
-                config.position.y,
-                config.position.z,
-                config.volume,
-                config.pan,
-                config.play_speed);
-            // Apply 3D parameters
+
+            voice_handle = m_soloud->play3d(*wav,
+                config.position.x, config.position.y, config.position.z,
+                config.volume, config.pan, config.play_speed);
+
             m_soloud->set3dSourceParameters(voice_handle,
                 config.position.x, config.position.y, config.position.z,
                 config.velocity.x, config.velocity.y, config.velocity.z);
+
             m_soloud->set3dSourceMinMaxDistance(voice_handle,
-                config.min_distance,
-                config.max_distance);
+                config.min_distance, config.max_distance);
+
             m_soloud->set3dSourceAttenuation(voice_handle,
                 static_cast<unsigned int>(config.attenuation),
                 config.rolloff_factor);
-        
+
         } else {
 
-            voice_handle = m_soloud->play(*source,
-                config.volume,
-                config.pan,
-                config.play_speed);
+            voice_handle = m_soloud->play(*wav,
+                config.volume, config.pan, config.play_speed);
         }
 
         if (config.loop)
@@ -158,161 +99,246 @@ namespace GLT::audio::soloud_backend {
     }
 
 
-    void audio::stop(handle handle) {
+    void plugin::stop(handle handle) {
 
         if (m_soloud && handle != INVALID_HANDLE)
             m_soloud->stop(handle);
     }
 
 
-    void audio::stop_all(bool /*include_paused*/) {
+    void plugin::stop_all(bool /*include_paused*/) {
 
         if (m_soloud)
             m_soloud->stopAll();
     }
 
 
-    void audio::pause(handle handle) {
+    void plugin::pause(handle handle) {
 
         if (m_soloud && handle != INVALID_HANDLE)
             m_soloud->setPause(handle, true);
     }
 
 
-    void audio::resume(handle handle) {
+    void plugin::resume(handle handle) {
 
         if (m_soloud && handle != INVALID_HANDLE)
             m_soloud->setPause(handle, false);
     }
 
 
-    audio_state audio::get_state(handle handle) const {
+    GLT::asset::audio::state plugin::get_state(handle handle) const {
 
         if (!m_soloud || handle == INVALID_HANDLE)
-            return audio_state::stopped;
+            return GLT::asset::audio::state::stopped;
 
-        if (m_soloud->isValidVoiceHandle(handle)) {
-            return m_soloud->getPause(handle) ? audio_state::paused : audio_state::playing;
-        }
-        return audio_state::stopped;
+        if (m_soloud->isValidVoiceHandle(handle))
+            return m_soloud->getPause(handle) ? GLT::asset::audio::state::paused : GLT::asset::audio::state::playing;
+
+        return GLT::asset::audio::state::stopped;
     }
 
 
-    bool audio::is_valid(handle handle) const { return m_soloud && m_soloud->isValidVoiceHandle(handle); }
+    bool plugin::is_valid(handle handle) const {
 
-    // --- per‑voice parameters --------------------------------------------------------
+        return m_soloud && m_soloud->isValidVoiceHandle(handle);
+    }
 
-    void audio::set_volume(handle handle, f32 volume) {
+    // ---- per-voice params ------------------------------------------------------------------------------------------
+
+    void plugin::set_volume(handle handle, f32 volume) {
 
         if (m_soloud && handle != INVALID_HANDLE)
             m_soloud->setVolume(handle, volume);
     }
 
 
-    void audio::set_pan(handle handle, f32 pan) {
+    void plugin::set_pan(handle handle, f32 pan) {
 
         if (m_soloud && handle != INVALID_HANDLE)
             m_soloud->setPan(handle, pan);
     }
 
 
-    void audio::set_play_speed(handle handle, f32 speed) {
+    void plugin::set_play_speed(handle handle, f32 speed) {
 
         if (m_soloud && handle != INVALID_HANDLE)
             m_soloud->setRelativePlaySpeed(handle, speed);
     }
 
 
-    void audio::set_looping(handle handle, bool loop) {
+    void plugin::set_looping(handle handle, bool loop) {
 
         if (m_soloud && handle != INVALID_HANDLE)
             m_soloud->setLooping(handle, loop);
     }
 
-    // --- transport --------------------------------------------------------------
+    // ---- transport -------------------------------------------------------------------------------------------------
 
-    void audio::seek(handle handle, f32 seconds) {
+    void plugin::seek(handle handle, f32 seconds) {
 
         if (m_soloud && handle != INVALID_HANDLE)
             m_soloud->seek(handle, seconds);
     }
 
 
-    f32 audio::get_playback_position(handle handle) const {
+    f32 plugin::get_playback_position(handle handle) const {
 
         if (!m_soloud || handle == INVALID_HANDLE)
             return 0.0f;
+
         return m_soloud->getStreamPosition(handle);
     }
 
-    // --- 3D specialization ------------------------------------------------------------
+    // ---- 3D --------------------------------------------------------------------------------------------------------
 
-    void audio::set_3d_source_position(handle handle, const glm::vec3& position, const glm::vec3& velocity) {
+    void plugin::set_3d_source_position(handle handle, const glm::vec3& position, const glm::vec3& velocity) {
 
-        if (m_soloud && handle != INVALID_HANDLE) {
-            m_soloud->set3dSourceParameters(handle,
-                position.x, position.y, position.z,
-                velocity.x, velocity.y, velocity.z);
-        }
+        if (m_soloud && handle != INVALID_HANDLE)
+            m_soloud->set3dSourceParameters(handle, position.x, position.y, position.z, velocity.x, velocity.y, velocity.z);
     }
 
-    
-    void audio::set_3d_source_attenuation(handle handle, f32 min_distance, f32 max_distance, f32 rolloff_factor, attenuation_model model) {
+
+    void plugin::set_3d_source_attenuation(handle handle, f32 min_distance, f32 max_distance, f32 rolloff_factor, 
+        GLT::asset::audio::attenuation_model model) {
 
         if (m_soloud && handle != INVALID_HANDLE) {
             m_soloud->set3dSourceMinMaxDistance(handle, min_distance, max_distance);
-            m_soloud->set3dSourceAttenuation(handle,
-                static_cast<unsigned int>(model),
-                rolloff_factor);
+            m_soloud->set3dSourceAttenuation(handle, static_cast<unsigned int>(model), rolloff_factor);
         }
     }
 
 
-    void audio::set_listener(const listener_config& config) {
+    void plugin::set_listener(const GLT::asset::audio::listener_config& config) {
 
         m_listener = config;
         if (m_soloud) {
-            m_soloud->set3dListenerPosition(config.position.x,
-                config.position.y,
-                config.position.z);
-            m_soloud->set3dListenerAt(config.forward.x,
-                config.forward.y,
-                config.forward.z);
-            m_soloud->set3dListenerUp(config.up.x,
-                config.up.y,
-                config.up.z);
-            m_soloud->set3dListenerVelocity(config.velocity.x,
-                config.velocity.y,
-                config.velocity.z);
+            m_soloud->set3dListenerPosition(config.position.x, config.position.y, config.position.z);
+            m_soloud->set3dListenerAt(config.forward.x, config.forward.y, config.forward.z);
+            m_soloud->set3dListenerUp(config.up.x, config.up.y, config.up.z);
+            m_soloud->set3dListenerVelocity(config.velocity.x, config.velocity.y, config.velocity.z);
         }
     }
 
-    
-    void audio::update_3d_audio() {
+
+    void plugin::update_3d_audio() {
 
         if (m_soloud)
             m_soloud->update3dAudio();
     }
 
-    // --- global controls --------------------------------------------------------------
+    // ---- global ----------------------------------------------------------------------------------------------------
 
-    void audio::set_global_volume(f32 volume) {
+    void plugin::set_global_volume(f32 volume) {
 
         if (m_soloud)
             m_soloud->setGlobalVolume(volume);
     }
 
 
-    f32 audio::get_global_volume() const { return m_soloud ? m_soloud->getGlobalVolume() : 1.0f; }
+    f32 plugin::get_global_volume() const { return m_soloud ? m_soloud->getGlobalVolume() : 1.0f; }
 
 
-    const char* audio::get_backend_name() const { return "SoLoud"; }
+    const char* plugin::get_backend_name() const { return "SoLoud"; }
 
 
-    u32 audio::get_active_voice_count() const { return m_soloud ? m_soloud->getActiveVoiceCount() : 0; }
+    u32 plugin::get_active_voice_count() const { return m_soloud ? m_soloud->getActiveVoiceCount() : 0; }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
+
+    SoLoud::Wav* plugin::wav_for(GLT::asset::handle sound) {
+
+        if (!m_registry || sound == INVALID_HANDLE)
+            return nullptr;
+
+        const auto& info = m_registry->info(sound);
+
+        // ---- cache lookup ---------------------------------------------------
+        if (auto it = m_cache.find(sound); it != m_cache.end()) {
+            if (it->second.hash == info.hash)
+                return it->second.wav.get();
+            // stale (hot-reload) - fall through and rebuild
+        }
+
+        // ---- fetch the runtime asset ---------------------------------------
+        auto* runtime = m_registry->data(sound);
+        auto* asset = dynamic_cast<GLT::asset::audio::audio_asset*>(runtime);
+        if (!asset)
+            return nullptr;
+
+        using namespace GLT::asset::audio;
+
+        if (asset->format.kind != sample_kind::f32) {
+            LOG(warn, "[audio] asset '{}' is not f32 - unsupported", info.name);
+            return nullptr;
+        }
+
+        const u32 channels = asset->format.channels;
+        const u64 frames = asset->format.frame_count;
+
+        if (channels != 1 && channels != 2) {
+            LOG(warn, "[audio] asset '{}' has {} channels - only mono/stereo supported", info.name, channels);
+            return nullptr;
+        }
+
+        if (frames == 0 || asset->samples.size() != frames * channels) {
+            LOG(warn, "[audio] asset '{}' sample count mismatch ({} vs {} * {})", info.name, asset->samples.size(), frames, channels);
+            return nullptr;
+        }
+
+        // ---- deinterleave ---------------------------------------------------
+        //
+        // SoLoud::Wav stores audio PLANAR: mData[ch * frame_count + frame_idx]. WavInstance::getAudio reads it the same way. 
+        // Our asset is INTERLEAVED (frame-major), so we build a planar buffer for SoLoud.
+        //
+        // We pass aCopy = false, aTakeOwnership = true, so SoLoud::Wav::loadRawWave takes ownership and will delete[] this buffer in ~Wav().
+        const u64 total_floats = frames * channels;
+        auto* planar = new float[total_floats];
+
+        if (channels == 1) {
+
+            std::memcpy(planar, asset->samples.data(), total_floats * sizeof(float));
+
+        } else {
+
+            // ch == 2
+            const float* src = asset->samples.data();
+            float* l = planar;
+            float* r = planar + frames;
+            for (u64 f = 0; f < frames; ++f) {
+                l[f] = src[f * 2 + 0];
+                r[f] = src[f * 2 + 1];
+            }
+        }
+
+        auto wav = GLT::create_unique_ref<SoLoud::Wav>();
+
+        const auto res = wav->loadRawWave(
+            planar,
+            static_cast<unsigned int>(total_floats),
+            static_cast<float>(asset->format.sample_rate),
+            static_cast<unsigned int>(channels),
+            false,                                  // aCopy
+            true);                                  // aTakeOwnership
+
+        if (res != SoLoud::SO_NO_ERROR) {
+            delete[] planar;                        // loadRawWave rejected it before taking ownership
+            LOG(error, "[audio] SoLoud rejected raw wave for '{}' (err {})", info.name, static_cast<int>(res));
+            return nullptr;
+        }
+
+        // ---- apply loop points if the asset carries them -------------------
+        // SoLoud's setLoopPoint takes a sample index in the source's own planar layout, i.e. it's already per-channel, so no * channels here.
+        if (asset->loop.has_loop)
+            wav->setLoopPoint(static_cast<double>(asset->loop.loop_start_frame));
+
+        auto [it, _] = m_cache.insert_or_assign(sound, cached_sound{ std::move(wav), info.hash });
+        return it->second.wav.get();
+    }
+
+
+    void plugin::invalidate(GLT::asset::handle sound) { m_cache.erase(sound); }
 
 }

@@ -42,7 +42,7 @@ namespace GLT::renderer_vk_ray {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
-    // Counts primitive draws ImGui will issue — i.e. every cmd buffer entry
+    // Counts primitive draws ImGui will issue - i.e. every cmd buffer entry
     // that isn't a user callback. This matches the Vulkan backend's actual
     // vkCmdDraw* count.
     u32 count_imgui_draw_calls(const ImDrawData* draw_data);
@@ -741,7 +741,7 @@ namespace GLT::renderer_vk_ray {
         hit_group.closest_hit_shader = closest_hit_shader_module;
         shader_collection.hit_groups.push_back(hit_group);
 
-        // [POI] Callables — order matters, they get sequential SBT indices 0, 1, ...
+        // [POI] Callables - order matters, they get sequential SBT indices 0, 1, ...
         shader_collection.callable_shaders.push_back(call0_shader_module);   // SBT index 0
         shader_collection.callable_shaders.push_back(call1_shader_module);   // SBT index 1
 
@@ -813,7 +813,7 @@ namespace GLT::renderer_vk_ray {
         const auto  now = std::chrono::high_resolution_clock::now();
         const f32   t   = std::chrono::duration<f32>(now - start_time).count();
 
-        const f32 angle = t;              // ~1 rad/sec — tweak to taste
+        const f32 angle = t;              // ~1 rad/sec - tweak to taste
         const f32 c = cosf(angle);
         const f32 s = sinf(angle);
 
