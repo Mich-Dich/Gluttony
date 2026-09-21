@@ -49,16 +49,20 @@ namespace GLT::editor {
     void base_window::close_window() { m_show_window = false; }
 
 
-    void base_window::dock_to(ImGuiID dock_id) { m_pending_dock_id = dock_id; }
+    void base_window::dock_to(ImGuiID dock_id) { 
+        
+        m_pending_dock_id = dock_id;
+        m_window_state_cache.panding = true;
+    }
 
     // CLASS PROTECTED =================================================================================================
 
-    void base_window::apply_pending_dock() {
+    void base_window::apply_pending_dock(const bool force) {
 
-        // One-shot dock request from dock_to().
-        if (m_pending_dock_id != 0) {
+        if (m_pending_dock_id != 0 && (m_window_state_cache.panding || force)) {
+
             ImGui::SetNextWindowDockID(m_pending_dock_id, ImGuiCond_Always);
-            // m_pending_dock_id = 0;
+            m_window_state_cache.panding = false;
         }
 
         // Restore state cached before a rename. Order doesn't matter for these

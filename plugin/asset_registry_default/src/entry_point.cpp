@@ -32,7 +32,7 @@ namespace GLT::asset::registry_default {
         std::vector<GLT::asset::handle>                         deps_storage;         // info.dependencies
         std::vector<GLT::asset::handle>                         dependents_storage;   // info.dependents
 
-        std::unique_ptr<i_runtime_asset>                        data;
+        GLT::unique_ref<i_runtime_asset>                        data;
         GLT::asset::i_asset_handler*                            handler{ nullptr };
     };
 

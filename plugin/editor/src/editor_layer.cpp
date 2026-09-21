@@ -135,6 +135,7 @@ namespace GLT::editor {
 
     editor_layer::~editor_layer() {
 
+        GLT::event_bus::unsubscribe(m_asset_import_request_event_sub_handle);
         GLT::event_bus::unsubscribe(m_asset_open_event_sub_handle);
         file_watcher::unwatch_all();
         file_watcher::shutdown();

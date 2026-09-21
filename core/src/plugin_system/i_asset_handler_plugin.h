@@ -87,7 +87,7 @@ namespace GLT::asset {
         [[nodiscard]] virtual std::span<const GLT::asset::type> types() const noexcept = 0;
 
 
-        [[nodiscard]] virtual std::expected<std::unique_ptr<GLT::asset::i_runtime_asset>, GLT::asset::load_error> deserialize(
+        [[nodiscard]] virtual std::expected<GLT::unique_ref<GLT::asset::i_runtime_asset>, GLT::asset::load_error> deserialize(
             const GLT::asset::info& info, GLT::asset::chunk_reader& reader) = 0;
 
 

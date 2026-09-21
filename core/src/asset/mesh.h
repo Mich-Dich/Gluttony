@@ -66,4 +66,39 @@ namespace GLT::asset::mesh {
 
     // CLASS DECLARATION ===============================================================================================
 
+    // The runtime representation of a loaded mesh asset. Handlers own this
+    // type; the registry only ever sees it as `i_runtime_asset*`.
+    //
+    // IMPORTANT: this struct OWNS the decoded geometry. The chunk_reader
+    // hands out spans into a buffer that dies when the registry's load
+    // function returns, so every handler must copy what it wants to keep.
+    class mesh_asset final : public GLT::asset::i_runtime_asset {
+    public:
+
+        GLT::asset::type                                asset_type{ GLT::asset::core_types::static_mesh };
+        std::vector<GLT::asset::mesh::vertex>           vertices;
+        std::vector<u32>                                indices;
+        std::vector<GLT::asset::mesh::submesh>          submeshes;
+        GLT::asset::mesh::bounds                        bounds{};
+
+        // Positional. material_handles[i] corresponds to submesh.material_slot == i.
+        // Entries may be INVALID_HANDLE when a material reference couldn't be
+        // resolved - the renderer is expected to substitute a fallback.
+        std::vector<GLT::asset::handle>                 material_handles;
+
+
+        FORCE_INLINE_R GLT::asset::type type() const noexcept override { return asset_type; }
+
+
+        FORCE_INLINE_R u64 memory_usage() const noexcept override {
+
+            return sizeof(*this)
+                + vertices.capacity()  * sizeof(GLT::asset::mesh::vertex)
+                + indices.capacity()   * sizeof(u32)
+                + submeshes.capacity() * sizeof(GLT::asset::mesh::submesh)
+                + material_handles.capacity() * sizeof(GLT::asset::handle);
+        }
+        
+    };
+
 }

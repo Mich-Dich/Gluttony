@@ -7,8 +7,11 @@
 
 #include <plugin_system/i_renderer_plugin.h>
 #include <plugin_system/i_window_plugin.h>
+#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/mesh.h>
 #include <world/object/camera.h>
 #include <render/image.h>
+#include <application.h>
 
 #include "util/utils.h"
 #include "util/data_structures.h"
@@ -151,9 +154,6 @@ namespace GLT::renderer_vk_ray {
 
         vk::DescriptorSet create_imgui_texture(vr::accessible_image& img);
 
-
-        void update_tlas();
-
         // --- IMGUI ---------------------------------------------------------------------------------------------------
 
         void imgui_init();
@@ -201,10 +201,6 @@ namespace GLT::renderer_vk_ray {
         vr::device*                                             m_vr_dev = nullptr;
         GLT::ref<image>                                         m_output_image = nullptr;
         vr::allocated_buffer                                    m_uniform_buffer = {};
-        vr::allocated_buffer                                    m_vertex_buffer{};
-        vr::allocated_buffer                                    m_index_buffer{};
-        vr::allocated_buffer                                    m_transform_buffer{};
-        vr::blas_handle                                         m_blas_handle;
         vr::tlas_handle                                         m_tlas_handle;
         std::vector<vr::descriptor_item>                        m_resource_bindings;
         vk::DescriptorSetLayout                                 m_resource_descriptor_layout;
@@ -213,6 +209,13 @@ namespace GLT::renderer_vk_ray {
         utils::shader_compiler                                  m_shader_compiler{};
         vk::Pipeline                                            m_rt_pipeline = nullptr;
         vr::sbt_buffer                                          m_sbt_buffer; // contains the shader records for the SBT
+
+        // --- scene geometry (loaded from the asset registry) ----------------------------------------------------------
+        std::vector<GLT::asset::handle>                         m_mesh_handles{};
+        std::vector<vr::blas_handle>                            m_blas_handles{};          // one per mesh
+        vr::allocated_buffer                                    m_vertex_buffer{};
+        vr::allocated_buffer                                    m_index_buffer{};
+        vr::allocated_buffer                                    m_material_buffer{};
 
         // ImGui resources
         vk::DescriptorPool                                      m_imgui_descriptor_pool = nullptr;
@@ -251,12 +254,6 @@ namespace GLT::renderer_vk_ray {
         u32                                                     m_live_buffer_count = 0;
         u32                                                     m_live_pipeline_count = 0;
         u32                                                     m_live_descriptor_set_count = 0;
-
-        // --- rotating TLAS -------------------------------------------------------------------------------
-        vr::tlas_build_info                                     m_tlas_build_info{};
-        std::vector<vk::AccelerationStructureInstanceKHR>       m_instance_data{};
-        vr::allocated_buffer                                    m_instance_buffer{};
-        vr::allocated_buffer                                    m_tlas_scratch_buffer{};
 
     };
 

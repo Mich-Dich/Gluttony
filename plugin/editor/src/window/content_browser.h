@@ -3,6 +3,7 @@
 
 #include "window/base_window.h"
 
+#include "event/event_bus.h"
 #include "util/event/file_event.h"
 
 
@@ -50,6 +51,9 @@ namespace GLT::editor {
 
         content_browser_window();
         ~content_browser_window();
+
+        DEFAULT_MOVE_CONSTRUCTOR(content_browser_window)
+        DELETE_COPY_CONSTRUCTOR(content_browser_window)
 
         DEFAULT_GETTER(std::filesystem::path,                       current_dir)
 
@@ -119,7 +123,7 @@ namespace GLT::editor {
         // matches). When the buffer is full, pushing a new entry drops the
         // oldest by shifting.
         std::array<std::filesystem::path, k_history_capacity>       m_history{};
-        i32                                                         m_history_size  = 0;
+        i32                                                         m_history_size = 0;
         i32                                                         m_history_index = -1;
 
         std::vector<dir_entry>                                      m_entries{};        // Cached children of m_current_dir.

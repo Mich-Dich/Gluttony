@@ -2,6 +2,7 @@
 #include "util/pch.h"
 #include "plugin_system/plugin_manager.h"
 #include "util/argument_parser.h"
+#include "event/event_bus.h"
 #include "application.h"
 
 

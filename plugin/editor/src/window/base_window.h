@@ -106,7 +106,7 @@ namespace GLT::editor {
     protected:
 
         // Call immediately before ImGui::Begin() to honor a pending dock request.
-        void apply_pending_dock();
+        void apply_pending_dock(const bool force = false);
 
 
         // Snapshot the current ImGui window state (position, size, dock id,
@@ -132,6 +132,7 @@ namespace GLT::editor {
             ImVec2                          pos = ImVec2(0.0f, 0.0f);
             ImVec2                          size = ImVec2(0.0f, 0.0f);
             ImGuiID                         dock_id = 0;
+            bool                            panding = false;
             bool                            collapsed = false;
         };
 

@@ -901,11 +901,11 @@ namespace GLT::editor {
         }
 
         GLT::asset::audio::source_config cfg;
-        cfg.volume     = m_volume;
-        cfg.pan        = m_pan;
-        cfg.loop       = m_looping;
+        cfg.volume = m_volume;
+        cfg.pan = m_pan;
+        cfg.loop = m_looping;
         cfg.play_speed = m_playback_speed;
-        cfg.is_3d      = false;
+        cfg.is_3d = false;
 
         m_voice_handle = plugin->play(m_asset_handle, cfg);
         m_playing = (m_voice_handle != 0);

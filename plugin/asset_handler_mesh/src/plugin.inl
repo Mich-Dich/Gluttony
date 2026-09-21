@@ -37,9 +37,6 @@ namespace GLT::asset::handler::mesh {
         m_registry = GLT::asset::registry::get_ref();
         VALIDATE(m_registry, return, "", "asset_registry not available - handler inactive")
         m_registry->register_handler(this);
-
-        // Ask the registry for the "mesh_collection" type on demand if you want
-        // it later; for now the core types we handle are already registered.
         LOG_LOADED
     }
 
@@ -68,7 +65,7 @@ namespace GLT::asset::handler::mesh {
     }
 
 
-    FORCE_INLINE_R std::expected<std::unique_ptr<GLT::asset::i_runtime_asset>, GLT::asset::load_error> plugin::deserialize(
+    FORCE_INLINE_R std::expected<GLT::unique_ref<GLT::asset::i_runtime_asset>, GLT::asset::load_error> plugin::deserialize(
         const GLT::asset::info& info, GLT::asset::chunk_reader& reader) {
 
         // ---- required chunks ----------------------------------------------------------------------------------------
@@ -79,7 +76,7 @@ namespace GLT::asset::handler::mesh {
             "[{}] missing required chunks (verts={}, idx={})", info.name, verts.size(), idxs.size())
 
         // ---- build the runtime asset --------------------------------------------------------------------------------
-        auto asset = std::make_unique<mesh_asset>();
+        auto asset = std::make_unique<GLT::asset::mesh::mesh_asset>();
         asset->asset_type = info.asset_type;
 
         // Copy - the chunk_reader's backing buffer dies when the registry's load function returns. Do not keep the spans.
@@ -122,7 +119,7 @@ namespace GLT::asset::handler::mesh {
         LOG(info, "loaded [{}] - {} verts, {} tris, {} submeshes", info.name, asset->vertices.size(), 
             asset->indices.size() / 3, asset->submeshes.size());
 
-        return std::unique_ptr<GLT::asset::i_runtime_asset>(std::move(asset));
+        return GLT::unique_ref<GLT::asset::i_runtime_asset>(std::move(asset));
     }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================

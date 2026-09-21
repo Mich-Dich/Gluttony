@@ -97,9 +97,9 @@ namespace GLT::input_action_mapper {
     
     void plugin::on_unload() {
 
-        GLT::event_bus::unsubscribe(m_key_event_sub);
-        GLT::event_bus::unsubscribe(m_mouse_event_sub);
         GLT::event_bus::unsubscribe(m_update_event_sub);
+        GLT::event_bus::unsubscribe(m_mouse_event_sub);
+        GLT::event_bus::unsubscribe(m_key_event_sub);
         LOG_UNLOADED
     }
 

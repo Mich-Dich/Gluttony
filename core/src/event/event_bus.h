@@ -48,7 +48,7 @@ namespace GLT::event_bus {
 
 
     template<typename T>
-    using event_handler_fn = std::function<void(const T&)>;
+    using event_handler_fn = std::function<void(T&)>;
 
     // STATIC VARIABLES ================================================================================================
 
@@ -57,19 +57,19 @@ namespace GLT::event_bus {
     // Subscribe to a specific event type.
     // @return A handle that can be used to unsubscribe later.
     template<event_class T>
-    FORCE_INLINE_R handle subscribe(event_handler_fn<T> handler);
+    FORCE_INLINE_R handle subscribe(event_handler_fn<T> handler, i32 priority = 0);
 
 
     // Dispatch an event to all subscribers of its exact type.
     // Subscribers that are added/removed during dispatch do not affect
     // the current iteration (snapshot taken).
     template<event_class T>
-    FORCE_INLINE void post(const T event);
+    FORCE_INLINE void post(T event);          // by value, so we own a mutable copy
 
 
     // Factory: same signature as subscribe<T>(), but returns an RAII guard.
     template<event_class T>
-    FORCE_INLINE_R subscription_guard subscribe_scoped(event_handler_fn<T> handler);
+    FORCE_INLINE_R subscription_guard subscribe_scoped(event_handler_fn<T> handler, i32 priority = 0);
 
     // CLASS DECLARATION ===============================================================================================
 

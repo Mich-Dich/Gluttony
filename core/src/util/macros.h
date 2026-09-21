@@ -140,9 +140,17 @@ namespace GLT {
 
     // copy/move operations --------------------------------------------------------------------------------------------
 
+    #define DEFAULT_COPY_CONSTRUCTOR(name)                                                                              \
+        name(const name&) = default;                                                                                    \
+        name& operator=(const name&) = default;
+
     #define DELETE_COPY_CONSTRUCTOR(name)                                                                               \
         name(const name&) = delete;                                                                                     \
         name& operator=(const name&) = delete;
+    
+    #define DEFAULT_MOVE_CONSTRUCTOR(name)                                                                              \
+        name(name&&) = default;                                                                                         \
+        name& operator=(name&&) = default;
 
     #define DELETE_MOVE_CONSTRUCTOR(name)                                                                               \
         name(name&&) = delete;                                                                                          \
@@ -155,9 +163,6 @@ namespace GLT {
     #define DEFAULT_CONSTRUCTORS(name)                                                                                  \
         name() = default;													                                            \
         name(const name&) = default;
-
-    #define DEFAULT_COPY_CONSTRUCTOR(name)							                                                    \
-        name(const name& other) = default;
 
     // getters ---------------------------------------------------------------------------------------------------------
 

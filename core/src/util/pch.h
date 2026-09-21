@@ -122,7 +122,6 @@
 // #include "platform/window.h"
 // #include "layer/layer.h"
 // #include "layer/layer_stack.h"
-// #include "event/event.h"
 // #include "event/input_event.h"
 // #include "event/application_event.h"
 // #include "data_structures/UUID.h"

@@ -35,7 +35,7 @@ namespace GLT::asset::handler::audio {
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
         .name                                                   = GLT_MODULE_NAME,
-        .load_phase                                             = GLT::plugin_manager::phase::application_ready,
+        .load_phase                                             = GLT::plugin_manager::phase::pre_application,
         .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
         .target                                                 = GLT::plugin_manager::interface::custom,
         .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
@@ -73,7 +73,7 @@ namespace GLT::asset::handler::audio {
         [[nodiscard]] std::span<const GLT::asset::type> types() const noexcept override;
 
 
-        [[nodiscard]] std::expected<std::unique_ptr<GLT::asset::i_runtime_asset>, GLT::asset::load_error>
+        [[nodiscard]] std::expected<GLT::unique_ref<GLT::asset::i_runtime_asset>, GLT::asset::load_error>
             deserialize(const GLT::asset::info& info, GLT::asset::chunk_reader& reader) override;
 
     private:

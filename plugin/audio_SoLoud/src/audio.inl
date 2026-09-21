@@ -88,8 +88,9 @@ namespace GLT::audio::soloud_backend {
 
         } else {
 
-            voice_handle = m_soloud->play(*wav,
-                config.volume, config.pan, config.play_speed);
+            voice_handle = m_soloud->play(*wav, config.volume, config.pan, false);
+            if (voice_handle != INVALID_HANDLE)
+                m_soloud->setRelativePlaySpeed(voice_handle, config.play_speed);
         }
 
         if (config.loop)

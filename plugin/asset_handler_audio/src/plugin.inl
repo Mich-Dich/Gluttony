@@ -53,9 +53,8 @@ namespace GLT::asset::handler::audio {
 
     FORCE_INLINE_R std::span<const GLT::asset::type> plugin::types() const noexcept {
 
-        // Single type for now. If you later split streamed vs. fully-resident
-        // audio (music vs. sfx), claim extra types here and branch in
-        // deserialize() on info.asset_type.
+        // Single type for now.
+        // MAYBE: split streamed vs. fully-resident audio (music vs. sfx) -> claim extra types here and branch in deserialize() on info.asset_type.
         static constexpr GLT::asset::type t[] = { GLT::asset::core_types::audio, };
         return t;
     }
@@ -68,7 +67,7 @@ namespace GLT::asset::handler::audio {
         // ---- required chunks ---------------------------------------------------
 
         const auto fmt_span = reader.get_as<GLT::asset::audio::format>(GLT::asset::audio::CHUNK_FORMAT);
-        VALIDATE(fmt_span.size() == 1, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "", 
+        VALIDATE(fmt_span.size() == 1, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
             "[{}] missing or malformed format chunk (got {})", info.name, fmt_span.size())
 
         const auto pcm = reader.get_as<f32>(GLT::asset::audio::CHUNK_PCM_DATA);

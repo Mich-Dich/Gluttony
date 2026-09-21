@@ -210,7 +210,7 @@ namespace GLT::editor {
 
     content_browser_window::~content_browser_window() {
 
-        // GLT::event_bus::unsubscribe(m_file_event_sub_handle);
+        GLT::event_bus::unsubscribe(m_file_event_sub_handle);
     }
 
     // CLASS PUBLIC ====================================================================================================
