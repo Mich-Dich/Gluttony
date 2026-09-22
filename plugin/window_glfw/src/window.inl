@@ -444,11 +444,26 @@ namespace GLT::platform::glfw_backend {
 		});
 
 
-		glfwSetCursorPosCallback(m_native_window, [](GLFWwindow* window, double x_pos, double y_pos) {
+        glfwSetCursorPosCallback(m_native_window, [](GLFWwindow* window, double x_pos, double y_pos) {
 
-			mouse_event event(mouse_event::action_type::move, glm::vec2(static_cast<f32>(x_pos), static_cast<f32>(y_pos)));
-			GLT::event_bus::post(event);
-		});
+            static glm::vec2 last_pos{ std::numeric_limits<f32>::quiet_NaN(), std::numeric_limits<f32>::quiet_NaN() };
+            static bool first = true;
+            const glm::vec2 pos{ static_cast<f32>(x_pos), static_cast<f32>(y_pos) };
+
+            if (first) {          // suppress the initial large jump
+                last_pos = pos;
+                first = false;
+                return;
+            }
+
+            const glm::vec2 delta = pos - last_pos;
+            last_pos = pos;
+
+            if (delta.x == 0.0f && delta.y == 0.0f)
+                return;
+
+            GLT::event_bus::post(mouse_event(mouse_event::action_type::move, delta));
+        });
 
 
 		glfwSetCursorEnterCallback(m_native_window, [](GLFWwindow* window, int entered) {
@@ -458,11 +473,15 @@ namespace GLT::platform::glfw_backend {
 		});
 
 
-		glfwSetScrollCallback(m_native_window, [](GLFWwindow* window, double x_offset, double y_offset) {
+        glfwSetScrollCallback(m_native_window, [](GLFWwindow* /*window*/, double x_offset, double y_offset) {
 
-			mouse_event event(mouse_event::action_type::scroll, glm::vec2(static_cast<f32>(x_offset), static_cast<f32>(y_offset)));
-			GLT::event_bus::post(event);
-		});
+            const glm::vec2 delta{ static_cast<f32>(y_offset), static_cast<f32>(x_offset) };
+
+            if (delta.x == 0.0f && delta.y == 0.0f)
+                return;
+
+            GLT::event_bus::post(mouse_event(mouse_event::action_type::scroll, delta));
+        });
 
 		IGNORE_UNUSED_PARAMETER_STOP
 	}

@@ -343,7 +343,7 @@ namespace GLT::editor {
         }
         ImGui::End();
     }
-
+ 
 
     void audio_viewer_window::update(const f32 /*delta_time*/) { update_playhead(); }
 

@@ -380,6 +380,9 @@ namespace GLT::renderer_vk_ray {
         };
     }
 
+        
+    void renderer::set_active_camera(ref<GLT::world::camera> active_camera) { m_active_camera = active_camera; }
+
 
 	void renderer::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
 

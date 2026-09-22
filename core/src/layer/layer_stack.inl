@@ -31,7 +31,7 @@ namespace GLT {
         auto new_layer = create_unique_ref<T>(std::forward<Args>(args)...);          // Create the layer
         new_layer->set_is_overlay(false);
         new_layer->on_attach();
-        weak_ref<T> weak_layer = new_layer;                                   // Get weak reference before moving ownership
+        weak_ref<T> weak_layer = new_layer;                                         // Get weak reference before moving ownership
 
         auto insert_pos = m_layers.begin() + m_layer_count;                         // Insert at the position after existing layers (before overlays)
         m_layers.insert(insert_pos, std::move(new_layer));
@@ -58,22 +58,49 @@ namespace GLT {
     }
 
 
-    FORCE_INLINE layer_iterator layer_stack::begin()             { return m_layers.begin(); }
+    template<typename T>
+    requires std::derived_from<T, layer>
+    [[nodiscard]] T* layer_stack::get() {
+
+        for (auto& l : m_layers)
+            if (auto* p = dynamic_cast<T*>(l.get()))
+                return p;
+        return nullptr;
+    }
 
 
-    FORCE_INLINE layer_iterator layer_stack::end()               { return m_layers.end(); }
+    template<typename T>
+    requires std::derived_from<T, layer>
+    [[nodiscard]] const T* layer_stack::get() const {
+
+        for (const auto& l : m_layers)
+            if (auto* p = dynamic_cast<const T*>(l.get()))
+                return p;
+        return nullptr;
+    }
 
 
-    FORCE_INLINE layer_iterator layer_stack::layer_begin()       { return m_layers.begin(); }
+    template<typename T>
+    requires std::derived_from<T, layer>
+    [[nodiscard]] bool layer_stack::has() const                     { return get<T>() != nullptr; }
 
 
-    FORCE_INLINE layer_iterator layer_stack::layer_end()         { return m_layers.end() - m_overlay_count; }
+    FORCE_INLINE layer_iterator layer_stack::begin()                { return m_layers.begin(); }
 
 
-    FORCE_INLINE layer_iterator layer_stack::overlay_begin()     { return m_layers.begin() + m_layer_count; }
+    FORCE_INLINE layer_iterator layer_stack::end()                  { return m_layers.end(); }
 
 
-    FORCE_INLINE layer_iterator layer_stack::overlay_end()       { return m_layers.end(); }
+    FORCE_INLINE layer_iterator layer_stack::layer_begin()          { return m_layers.begin(); }
+
+
+    FORCE_INLINE layer_iterator layer_stack::layer_end()            { return m_layers.end() - m_overlay_count; }
+
+
+    FORCE_INLINE layer_iterator layer_stack::overlay_begin()        { return m_layers.begin() + m_layer_count; }
+
+
+    FORCE_INLINE layer_iterator layer_stack::overlay_end()          { return m_layers.end(); }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

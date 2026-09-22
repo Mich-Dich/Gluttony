@@ -16,6 +16,10 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
+namespace GLT::world {
+    class camera;
+}
+
 namespace GLT::render {
     class i_renderer_plugin;
 }
@@ -262,6 +266,9 @@ namespace GLT::render {
 
 
         [[nodiscard]] virtual debug::render_stats get_render_stats() const = 0;
+
+
+        virtual void set_active_camera(ref<GLT::world::camera> active_camera) = 0;
 
     };
 

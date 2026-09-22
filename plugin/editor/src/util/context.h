@@ -1,13 +1,11 @@
 
 #pragma once
 
-#include "action.h"
-#include "mapping.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::input_action_mapper {
+namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
 
@@ -19,23 +17,23 @@ namespace GLT::input_action_mapper {
 
     // FUNCTION DECLARATION ============================================================================================
 
-    // Register a new action 
-    UUID register_action(const action& def);
-
-
-    // unregister an action
-    void register_action(UUID& id);
-
-
-    // Retrieve an action by name
-    weak_ref<action> get_action(const UUID id);
-
-
-    // Clear all registered actions (useful for unload)
-    void clear();
-
     // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================
+
+    class context {
+    public:
+
+        static context& get()               { static context i; return i; }
+
+
+        DEFAULT_GETTER_SETTER(bool,         viewport_interacted)
+
+    private:
+
+        context() = default;
+        bool                                m_viewport_interacted{};
+
+    };
 
 }

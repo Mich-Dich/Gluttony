@@ -363,12 +363,6 @@ namespace GLT {
 		mouse_bu_right = mouse_bu_2,
 		mouse_bu_middle = mouse_bu_3,
 
-		mouse_move = 110,
-		mouse_move_x = 111,
-		mouse_move_y = 112,
-		mouse_scroll_x = 113,
-		mouse_scroll_y = 114,
-
 		key_unknown = -1,
 		key_space = 32,
 		key_apostrophe = 39, // '
@@ -493,28 +487,6 @@ namespace GLT {
 		key_right_super = 347, // windows key
 		key_menu = 348,
 	};
-
-
-    constexpr bool is_mouse_event(key_code key) {
-
-        return  key == key_code::mouse_bu_1
-        	|| key == key_code::mouse_bu_2
-        	|| key == key_code::mouse_bu_3
-        	|| key == key_code::mouse_bu_4
-        	|| key == key_code::mouse_bu_5
-        	|| key == key_code::mouse_bu_6
-        	|| key == key_code::mouse_bu_7
-        	|| key == key_code::mouse_bu_8
-        	|| key == key_code::mouse_bu_last
-        	|| key == key_code::mouse_bu_left
-        	|| key == key_code::mouse_bu_right
-        	|| key == key_code::mouse_bu_middle
-        	|| key == key_code::mouse_move
-        	|| key == key_code::mouse_move_x
-        	|| key == key_code::mouse_move_y
-        	|| key == key_code::mouse_scroll_x
-        	|| key == key_code::mouse_scroll_y;
-    }
 
 	// STATIC VARIABLES ================================================================================================
 

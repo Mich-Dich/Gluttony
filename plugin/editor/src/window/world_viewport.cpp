@@ -7,11 +7,13 @@
 
 #include <plugin_system/plugin_manager.h>
 #include <plugin_system/i_renderer_plugin.h>
+#include <plugin_system/i_window_plugin.h>
 #include <render/image.h>
 
 #include "util/ui/pannel_collection.h"
 #include "resource_manager/icon_manager.h"
 #include "window/content_browser.h"
+#include "util/context.h"
 
 
 
@@ -145,6 +147,24 @@ namespace GLT::editor {
 
             m_viewport_size = ImGui::GetContentRegionAvail();
             ImGui::Image(m_renderer->get_rendered_image(), m_viewport_size);
+            const bool hovered = ImGui::IsItemHovered();
+            const bool right_down = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+
+            // Enter: press RMB while the image itself is the top-most hovered item
+            if (!m_cursor_captured && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+
+                set_cursor_captured(true);
+                GLT::editor::context::get().set_viewport_interacted(true);
+                LOG(trace, "Capturing cursor")
+            }
+
+            // release RMB. MUST NOT depend on hover — once captured, ImGui reports the virtual cursor at the window center
+            if (m_cursor_captured && !right_down) {
+
+                set_cursor_captured(false);
+                GLT::editor::context::get().set_viewport_interacted(false);
+                LOG(trace, "releasing cursor")
+            }
         }
         ImGui::End();
         ImGui::PopStyleVar(2);
@@ -166,6 +186,20 @@ namespace GLT::editor {
 
         }
         ImGui::End();
+    }
+
+
+    void world_viewport_window::set_cursor_captured(const bool captured) {
+
+        m_cursor_captured = captured;
+
+        auto window = GLT::platform::get_window_ref();
+        if (!window)
+            return;
+
+        window->set_cursor_mode(captured
+            ? GLT::platform::cursor_mode::cursor_disabled   // hidden + relative motion, frozen visually
+            : GLT::platform::cursor_mode::cursor_normal);
     }
 
 }

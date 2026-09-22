@@ -1,15 +1,16 @@
 
+#include "util/pch.h"
+
 #include <plugin_system/i_plugin.h>
+
+#include "type.h"
+#include "controller.h"
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::editor {
-    class editor_layer;
-}
-
-namespace GLT::editor {
+namespace GLT::input::input_manager_default {
 
     // CONSTANTS =======================================================================================================
 
@@ -17,30 +18,29 @@ namespace GLT::editor {
 
     // TYPES ===========================================================================================================
 
-    // STATIC VARIABLES ================================================================================================
-
     static constexpr const char*                                dependencies_names[] = {
 
         nullptr
     };
-    
+
     static constexpr GLT::plugin_manager::interface             dependencies_interfaces[] = {
-        
-        GLT::plugin_manager::interface::renderer,
-        GLT::plugin_manager::interface::input_system,
+
+        GLT::plugin_manager::interface::none,
     };
 
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
         .name                                                   = GLT_MODULE_NAME,
-        .load_phase                                             = GLT::plugin_manager::phase::application_ready,
-        .unload_phase                                           = GLT::plugin_manager::phase::pre_application_shutdown,
-        .target                                                 = GLT::plugin_manager::interface::editor_core,
+        .load_phase                                             = GLT::plugin_manager::phase::pre_application,
+        .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
+        .target                                                 = GLT::plugin_manager::interface::input_system,
         .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
         .dependency_names                                       = dependencies_names,
         .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
         .dependency_interfaces                                  = dependencies_interfaces,
     };
+
+    // STATIC VARIABLES ================================================================================================
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
@@ -62,28 +62,19 @@ namespace GLT::editor {
 
     // CLASS PRIVATE ===================================================================================================
 
-    class plugin : public GLT::plugin_manager::i_plugin {
+    class plugin final : public GLT::plugin_manager::i_plugin {
     public:
 
-        plugin();
-        ~plugin();
+        plugin() {}
 
 
-        void on_load() override;
+        void on_load() { LOG_LOADED }
 
 
-        void on_unload() override;
+        void on_unload() { LOG_UNLOADED }
 
-
-        void update(const GLT::update_event&) override;
-
-    private:
-
-        weak_ref<editor::editor_layer>          mp_editor_layer{};
     };
 
 }
 
-#include "plugin.inl"
-
-EXPORT_PLUGIN_CLASS(GLT::editor::plugin, GLT::editor::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::input::input_manager_default::plugin, GLT::input::input_manager_default::descriptor)

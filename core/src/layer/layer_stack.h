@@ -45,6 +45,21 @@ namespace GLT {
         weak_ref<T> push_overlay(Args&&... args);
 
 
+        template<typename T>
+        requires std::derived_from<T, layer>
+        [[nodiscard]] T* get();
+
+
+        template<typename T>
+        requires std::derived_from<T, layer>
+
+        [[nodiscard]] const T* get() const;
+
+        template<typename T>
+        requires std::derived_from<T, layer>
+        [[nodiscard]] bool has() const;
+
+
 		// Gets an iterator to the beginning of the layer stack.
 		// @return Iterator pointing to the first layer in the stack.
 		FORCE_INLINE layer_iterator begin();

@@ -23,11 +23,11 @@ namespace GLT::plugin_manager {
 
     #if defined(PLATFORM_LINUX)
 
-        constexpr std::string_view          dynamic_lib_extention = ".so";
+        constexpr std::string_view          DYNAMIC_LIB_EXTENTION = ".so";
 
     #elif defined(PLATFORM_WINDOWS)
 
-        constexpr std::string_view          dynamic_lib_extention = ".dll";
+        constexpr std::string_view          DYNAMIC_LIB_EXTENTION = ".dll";
         
     #endif
 
@@ -325,8 +325,11 @@ namespace GLT::plugin_manager {
         else
             LOG(error, "Project file does not exist [{}]: [{}]", project_dir_path.generic_string(), error.message())
 
-        // discover plugins
-        s_discovered.clear();    
+        s_discovered.clear();
+
+        std::unordered_map<interface, discovered_info>  first_candidate_per_interface{};  // first non-preferred plugin seen for interface
+        std::unordered_set<interface>                   preferred_plugin_found{};         // interfaces for which the configured preferred plugin was discovered
+
         GLT::vfs::recursive_directory_iterator iterator(plugin_dir, GLT::vfs::directory_options::skip_permission_denied, error);
         VALIDATE(!error, return, "", "Fail to create recursive_directory_iterator for [{}]", plugin_dir.generic_string())
         for (const auto& entry : iterator) {
@@ -336,10 +339,10 @@ namespace GLT::plugin_manager {
                 continue;
 
             const auto& path = entry.path();
-            if (path.extension() != dynamic_lib_extention)
+            if (path.extension() != DYNAMIC_LIB_EXTENTION)
                 continue;
 
-            // Temporarily load the library to get the descriptor.
+            // Temporarily load the library to read its descriptor.
             void* handle = load_library(path.c_str(), lib_load_mode::lazy);
             VALIDATE(handle, continue, "", "load_library failed: [{}]", get_dynamic_library_error());
 
@@ -349,52 +352,74 @@ namespace GLT::plugin_manager {
             const plugin_descriptor* desc = desc_fn();
             VALIDATE(desc, continue; free_library(handle), "", "Failed to load descriptor function");
 
-            // Filter based on user configuration 
-            const interface iface = desc->target;                               // Retrieve the interface this plugin targets.
+            const interface iface = desc->target;
             const std::string plugin_name = desc->name ? std::string(desc->name) : path.stem().string();
 
-            if (iface != interface::custom) {           // target not custom -> dedicated interface, only one needed
-
-                const auto it = s_plugin_names_per_target_interface.find(iface);        // Look up what the user configured for this interface.
-                const bool has_config = (it != s_plugin_names_per_target_interface.end());
-                std::string preferred_plugin_name = has_config ? it->second : "";
-    
-                // Reject the plugin if [configured name] != [this plugin’s name]
-                if (!has_config || preferred_plugin_name.empty() || preferred_plugin_name == "unknown") {
-    
-                    LOG(trace, "No preferred plugin found for interface [{}], setting to first found [{}]", to_string(iface), plugin_name)
-                    s_plugin_names_per_target_interface[iface] = plugin_name;
-                
-                } else if (plugin_name != preferred_plugin_name) {                             // Not the user’s chosen plugin – skip.
-    
-                    free_library(handle);
-                    continue;
-                }
-            }
-
-            // Plugin passes the filter
+            // Build the discovered_info up-front; we may keep it (moved into
+            // s_discovered), buffer it as a fallback, or drop it.
             discovered_info info {
-                .path           = path,
-                .name           = plugin_name,
-                .load_phase     = desc->load_phase,
-                .unload_phase   = desc->unload_phase,
-                .target         = iface,
+                .path = path,
+                .name = plugin_name,
+                .load_phase = desc->load_phase,
+                .unload_phase = desc->unload_phase,
+                .target = iface,
             };
 
-            // Name dependencies
-            info.dependencies_names.reserve(desc->dependency_names_count);
+            info.dependencies_names.reserve(desc->dependency_names_count);              // name dependencies
             for (int i = 0; i < desc->dependency_names_count; ++i)
                 if (desc->dependency_names && desc->dependency_names[i])
                     info.dependencies_names.emplace_back(desc->dependency_names[i]);
 
-            // Interface dependencies
-            info.dependencies_interfaces.reserve(desc->dependency_interface_count);
+            info.dependencies_interfaces.reserve(desc->dependency_interface_count);     // interface dependencies
             for (int i = 0; i < desc->dependency_interface_count; ++i)
                 if (desc->dependency_interfaces)
                     info.dependencies_interfaces.push_back(desc->dependency_interfaces[i]);
 
+            free_library(handle);                                                       // descriptor copied to [info] close temporary handle
+
+            if (iface == interface::custom) {                                           // Custom plugins dont care about [interface preference]
+
+                s_discovered.push_back(std::move(info));
+                continue;
+            }
+
+            // ---- interface-preference resolution (deferred) -----------------------
+            const auto it = s_plugin_names_per_target_interface.find(iface);
+            const bool has_config = (it != s_plugin_names_per_target_interface.end());
+            const std::string preferred_plugin_name = has_config ? it->second : "";
+            const bool has_preference = !preferred_plugin_name.empty() && preferred_plugin_name != "unknown";
+            if (!has_preference) {
+
+                // No preference configured -> first plugin for this interface wins.
+                LOG(trace, "No preferred plugin for interface [{}], using first found [{}]", to_string(iface), plugin_name)
+                s_plugin_names_per_target_interface[iface] = plugin_name;
+                s_discovered.push_back(std::move(info));
+
+            } else if (plugin_name == preferred_plugin_name) {
+
+                // The configured plugin found
+                preferred_plugin_found.insert(iface);
+                s_discovered.push_back(std::move(info));
+
+            } else {
+
+                // Not the preferred one — buffer it as a candidate fallback, only first is kept; others are dropped silently.
+                first_candidate_per_interface.try_emplace(iface, std::move(info));
+            }
+        }
+
+        // Fallback pass: interfaces without preferred plugins get buffered
+        for (auto& [iface, info] : first_candidate_per_interface) {
+
+            if (preferred_plugin_found.contains(iface))
+                continue;                                           // preferred plugin is present, fallback not needed
+
+            const std::string missing = s_plugin_names_per_target_interface.contains(iface) ? s_plugin_names_per_target_interface[iface] : std::string{"<unset>"};
+            LOG(warn, "Preferred plugin [{}] for interface [{}] was not found; falling back to [{}]", missing, to_string(iface), info.name)
+
+            // Point the resolved map at the fallback so runtime lookups (dependencies_satisfied, get_plugin_base) find it.
+            s_plugin_names_per_target_interface[iface] = info.name;
             s_discovered.push_back(std::move(info));
-            free_library(handle);   // close temporary handle
         }
 
         serialize(s_config_path, serializer::option::save);
@@ -407,6 +432,8 @@ namespace GLT::plugin_manager {
 
         if (s_shutdown)
             return;
+        
+        LOG(trace, "loading plugins for load phase [{}]", GLT::util::enum_to_string(current_phase))
 
         // Filter discovered plugins by phase and not yet loaded.
         std::vector<discovered_info> pending;

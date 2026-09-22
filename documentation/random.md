@@ -185,20 +185,3 @@ Ctrl+P style fuzzy search over every registered editor action ("open image viewe
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -9,6 +9,7 @@
 #include "plugin_system/i_game_loop_plugin.h"
 #include "plugin_system/i_audio_plugin.h"
 #include "config/imgui_config.h"
+#include "world/world_layer.h"
 
 #include "application.h"
 
@@ -40,8 +41,10 @@ namespace GLT {
         s_instance = this;
 
         m_project.serialize_projects_data(project_path, GLT::serializer::option::load);
-        set_target_fps(30);                 // DEBUG-ONLY - TODO: load from config
+        set_target_fps(60);                                             // DEBUG-ONLY - TODO: load from config
         imgui_config::init();
+
+        m_layer_stack.push_layer<GLT::world::world_layer>();            // first layer is the game world
 
         plugin_manager::load_plugins(plugin_manager::phase::pre_application);
         plugin_manager::unload_plugins(plugin_manager::phase::pre_application);

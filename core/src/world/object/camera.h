@@ -50,8 +50,7 @@ namespace GLT::world {
 		glm::mat4 get_view_matrix();
 
 
-        // @brief Computes the perspective projection matrix.
-        //        The Y axis is flipped to match a Y‑up coordinate system.
+        // @brief Computes the perspective projection matrix. The Y axis is flipped to match a Y‑up coordinate system.
         // @return 4x4 projection matrix.
 		glm::mat4 get_projection_matrix();
 
@@ -108,13 +107,13 @@ namespace GLT::world {
 		f32 				m_near_plane;   				// Near clipping plane
 		f32 				m_far_plane;    				// Far clipping plane
 
-		f32 				m_sensitivity = 75000.0f; 		// Pitch and Yaw sensitivity
-		f32 				m_roll_sensitivity = 100.0f; 	// Roll sensitivity
-		f32 				m_speed = 25.0f;       			// Camera movement speed
+		f32 				m_sensitivity = .01f; 			// Pitch and Yaw sensitivity
+		f32 				m_roll_sensitivity = .3f; 		// Roll sensitivity
+		f32 				m_speed = 25.f;       			// Camera movement speed
 
-		glm::vec3 			m_front = glm::vec3(0.0, 0.0, -1.0);
-		glm::vec3 			m_right = glm::vec3(1.0, 0.0, 0.0);
-		glm::vec3 			m_up = glm::vec3(0.0, 1.0, 0.0);
+		glm::vec3 			m_front = glm::vec3( 0.f,  0.f, -1.f);
+		glm::vec3 			m_right = glm::vec3( 1.f,  0.f,  0.f);
+		glm::vec3 			m_up = glm::vec3(    0.f,  1.f,  0.f);
 
 	};
 

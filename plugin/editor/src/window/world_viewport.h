@@ -53,11 +53,13 @@ namespace GLT::editor {
         void render_viewport();
         void render_details();
         void render_tools();
+        void set_cursor_captured(const bool captured);
 
         std::vector<content_browser_window>             m_content_browsers{};
         GLT::ref<GLT::render::i_renderer_plugin>        m_renderer{};
         ImVec2                                          m_viewport_size{100, 60};
         bool                                            m_reset_layout = true;
+        bool                                            m_cursor_captured = false;
 
     };
 

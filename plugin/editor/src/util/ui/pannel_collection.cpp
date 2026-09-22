@@ -219,17 +219,16 @@ namespace GLT::editor::UI {
 
 		if (block_input)
 			return mouse_interation::none;
-		
+
+		// Must be called right after widget to test. IsItemHovered() respects window z-order and popups
+		if (!ImGui::IsItemHovered())
+			return mouse_interation::none;
+
 		static bool is_middle_button_down = false;
 		static bool is_right_button_down = false;
 		static bool is_left_button_down = false;
 
-		const ImVec2 item_pos = ImGui::GetItemRectMin();
-		const ImVec2 item_max{item_pos.x + ImGui::GetItemRectSize().x, item_pos.y + ImGui::GetItemRectSize().y};
-		if (!ImGui::IsMouseHoveringRect(item_pos, item_max))							// If the mouse is not hovering over the item, return none
-			return mouse_interation::none;
-
-		mouse_interation state = mouse_interation::hovered;								// default to hover state
+		mouse_interation state = mouse_interation::hovered;
 
 		if (ImGui::IsItemFocused())
 			state = mouse_interation::focused;
@@ -242,8 +241,8 @@ namespace GLT::editor::UI {
 
 		if (ImGui::IsItemDeactivatedAfterEdit())
 			state = mouse_interation::deactivated_after_edit;
-			
-		set_mouse_interaction_state(ImGuiMouseButton_Middle, state, is_middle_button_down);			// least importent one first
+
+		set_mouse_interaction_state(ImGuiMouseButton_Middle, state, is_middle_button_down);
 		set_mouse_interaction_state(ImGuiMouseButton_Right, state, is_right_button_down);
 		set_mouse_interaction_state(ImGuiMouseButton_Left, state, is_left_button_down);
 

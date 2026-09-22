@@ -70,6 +70,16 @@ target_include_directories(${PLUGIN_NAME}_static                        PRIVATE 
 target_include_directories(${PLUGIN_NAME}                               PRIVATE "${DR_LIBS_DIR}")
 target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${DR_LIBS_DIR}")
 
+
+
+# LINKED PLUGINS ----------------------------------------------------------------------------------
+set(INPUT_MANAGER_DEFAULT_PLUGIN_DIR                                    "${CMAKE_SOURCE_DIR}/plugin/input_manager_default")
+target_include_directories(${PLUGIN_NAME}                               PRIVATE "${INPUT_MANAGER_DEFAULT_PLUGIN_DIR}/include")
+target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${INPUT_MANAGER_DEFAULT_PLUGIN_DIR}/include")
+target_link_libraries(${PLUGIN_NAME}                                    PRIVATE input_manager_default)
+
+
+
 # ------------- Copy assets directory to output ---------------------------------------------------
 set(COMPILE_OUTPUT_DIR                                                  "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 if(EXISTS ${CMAKE_SOURCE_DIR}/asset)

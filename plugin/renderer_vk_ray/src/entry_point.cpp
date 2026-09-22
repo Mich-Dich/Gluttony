@@ -111,6 +111,9 @@ namespace GLT::renderer_vk_ray {
         [[nodiscard]] debug::render_stats get_render_stats() const;
 
 
+        void set_active_camera(ref<GLT::world::camera> active_camera) override;
+
+
         void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
     private:

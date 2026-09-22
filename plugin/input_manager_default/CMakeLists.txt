@@ -7,7 +7,7 @@
 # ===========================================================================================
 
 include(${CMAKE_SOURCE_DIR}/helper.cmake)
-set(PLUGIN_NAME                                                         "input_action_mapper")
+set(PLUGIN_NAME                                                         "input_manager_default")
 
 file(GLOB_RECURSE PLUGIN_SOURCES
     CONFIGURE_DEPENDS
@@ -20,6 +20,9 @@ set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES" "${PLUGIN_SOU
 # add libraries in both static and shared
 compile_plugin(SHARED                                                   ${PLUGIN_NAME}          glm)
 compile_plugin(STATIC                                                   ${PLUGIN_NAME}_static   glm)
+
+target_include_directories(${PLUGIN_NAME}                               PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include/input_manager_default")
+target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include/input_manager_default")
 
 
 print_source_file_details(

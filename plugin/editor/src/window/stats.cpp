@@ -106,12 +106,6 @@ namespace GLT::editor {
                     UI::shift_cursor_pos(ImVec2(0.0f, 8.0f));
 
                     // ---- individual plots ---------------------------------------------------------------------------------
-                    draw_stat_plot("##plot_fps", "FPS", m_fps_history, ImVec4(0.35f, 0.85f, 0.90f, 1.0f), "fps");
-                    UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
-
-                    draw_stat_plot("##plot_drawcalls", "Draw calls", m_draw_calls_history, ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "calls");
-                    UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
-
                     draw_stat_plot("##plot_triangles", "Triangles", m_triangles_history, ImVec4(0.75f, 0.55f, 0.95f, 1.0f), "tris");
                     UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
 
@@ -122,6 +116,12 @@ namespace GLT::editor {
                     UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
 
                     draw_stat_plot("##plot_ram", "RAM (MB)", m_ram_history, ImVec4(0.55f, 0.90f, 0.55f, 1.0f), "MB");
+                    UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
+
+                    draw_stat_plot("##plot_fps", "FPS", m_fps_history, ImVec4(0.35f, 0.85f, 0.90f, 1.0f), "fps");
+                    UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
+
+                    draw_stat_plot("##plot_drawcalls", "Draw calls (includes ImGui)", m_draw_calls_history, ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "calls");
                 });
         }
 

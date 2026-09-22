@@ -10,6 +10,8 @@
 #include <event/application_event.h>
 #include <config/imgui_config.h>
 #include <render/image.h>
+#include <plugin_system/i_renderer_plugin.h>
+#include <world/world_layer.h>
 
 #include "window/content_browser.h"
 #include "window/world_viewport.h"
@@ -21,6 +23,7 @@
 #include "window/asset_import.h"
 #include "util/asset_editor_registry.h"
 #include "util/file_watcher.h"
+#include "input/editor_controller.h"
 
 
 
@@ -130,10 +133,23 @@ namespace GLT::editor {
         file_watcher::watch(PROJECT_CONTENT_DIR, true);
         m_asset_open_event_sub_handle = GLT::event_bus::subscribe<asset_open_event>(std::bind_front(&editor_layer::on_asset_open_event, this));
         m_asset_import_request_event_sub_handle = GLT::event_bus::subscribe<asset_import_request_event>(std::bind_front(&editor_layer::on_asset_import_request_event, this));
+        
+        if (auto* world = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>()) {
+
+            world->soft_create_editor_camera(glm::vec3{ 0.f }, glm::vec3{ 0.f });
+            world->set_controller<GLT::editor::input::editor_controller>();                         // create controller
+            GLT::render::renderer::get_ref()->set_active_camera(world->get_editor_camera());        // Update renderer camera
+        }
     }
 
 
     editor_layer::~editor_layer() {
+
+        if (auto* world = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>()) {
+
+            auto camera = world->get_editor_camera();
+            GLT::application::get().get_project_path() / 
+        }
 
         GLT::event_bus::unsubscribe(m_asset_import_request_event_sub_handle);
         GLT::event_bus::unsubscribe(m_asset_open_event_sub_handle);
