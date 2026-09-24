@@ -153,7 +153,7 @@ namespace GLT {
 			return std::make_unique<T>(std::forward<args>(arguments)...);
 	}
 
-	// smart pointer ---------------------------------------------------------------------------------------------------
+	// data types ------------------------------------------------------------------------------------------------------
 
 	// @brief Semantic versioning structure
 	struct version {

@@ -1,9 +1,11 @@
+
 #pragma once
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::asset::registry_default {
+namespace GLT::world::world_ecs_entt {
 
     // CONSTANTS =======================================================================================================
 
@@ -29,56 +31,51 @@ namespace GLT::asset::registry_default {
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    void asset_writer_impl::write_chunk(GLT::asset::chunk_id id, std::span<const std::byte> data, u32 compression) {
+    template<typename T>
+    void entity_codec::register_component(std::string_view name) {
 
-        record_chunk c{};
-        c.id = id;
-        c.compression = compression;
-        c.bytes.assign(data.begin(), data.end());
-        m_chunks.push_back(std::move(c));
+        static_assert(std::is_trivially_copyable_v<T>,
+            "Components registered with entity_codec must be trivially copyable. "
+            "Use register_custom_component<T>() if your component owns heap data.");
+
+        register_custom_component<T>(name,
+
+            [](const entt::registry& r, entt::entity e, std::vector<std::byte>& out) {
+                const auto& c = r.get<T>(e);
+                const auto* p = reinterpret_cast<const std::byte*>(&c);
+                out.insert(out.end(), p, p + sizeof(T));
+            },
+
+            [](entt::registry& r, entt::entity e, std::span<const std::byte> data) {
+                if (data.size() != sizeof(T))
+                    return;   // version skew
+                auto& c = r.emplace_or_replace<T>(e);
+                std::memcpy(&c, data.data(), sizeof(T));
+            });
     }
 
 
-    void asset_writer_impl::declare_dependency(const UUID id) {
+    template<typename T>
+    void entity_codec::register_custom_component(std::string_view name,
+        std::function<void(const entt::registry&, entt::entity, std::vector<std::byte>&)> save_fn,
+        std::function<void(entt::registry&, entt::entity, std::span<const std::byte>)> load_fn) {
 
-        record_dep dep{};
-        dep.id = id;
-        dep.by_path = false;
-        m_deps.push_back(std::move(dep));
+        entry e{
+            .type_hash = component_name_hash(name),
+            .name = std::string(name),
+            .has = [](const entt::registry& r, entt::entity ent) { return r.all_of<T>(ent); },
+            .save = std::move(save_fn),
+            .load = std::move(load_fn),
+        };
+
+        for (auto& existing : m_components) {
+            if (existing.type_hash == e.type_hash) {
+                existing = std::move(e);
+                return;
+            }
+        }
+        m_components.push_back(std::move(e));
     }
-
-
-    void asset_writer_impl::declare_dependency(std::string_view virtual_path, GLT::asset::type target_type) {
-
-        record_dep dep{};
-        dep.virtual_path = std::string(virtual_path);
-        dep.target_type = target_type;
-        dep.by_path = true;
-        m_deps.push_back(std::move(dep));
-    }
-
-
-    void asset_writer_impl::declare_dependency(const UUID id, std::string_view virtual_path, GLT::asset::type target_type) {
-
-        record_dep dep{};
-        dep.id = id;
-        dep.virtual_path = std::string(virtual_path);
-        dep.target_type = target_type;
-        dep.by_path = !virtual_path.empty();
-        m_deps.push_back(std::move(dep));
-    }
-
-
-    void asset_writer_impl::set_name(std::string_view name) { m_name.assign(name.begin(), name.end()); }
-
-
-    [[nodiscard]] const std::string& asset_writer_impl::name() const noexcept { return m_name; }
-
-
-    [[nodiscard]] const std::vector<asset_writer_impl::record_chunk>& asset_writer_impl::chunks() const noexcept { return m_chunks; }
-
-
-    [[nodiscard]] const std::vector<asset_writer_impl::record_dep>& asset_writer_impl::deps() const noexcept { return m_deps; }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

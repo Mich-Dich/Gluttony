@@ -7,7 +7,7 @@
 # ===========================================================================================
 
 include(${CMAKE_SOURCE_DIR}/helper.cmake)
-set(PLUGIN_NAME                                                         "logger_default")
+set(PLUGIN_NAME                                                         "asset_handler_texture")
 
 file(GLOB_RECURSE PLUGIN_SOURCES
     CONFIGURE_DEPENDS
@@ -15,11 +15,11 @@ file(GLOB_RECURSE PLUGIN_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
-set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES" "${PLUGIN_SOURCES}")
+set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES"      "${PLUGIN_SOURCES}")
 
 # add libraries in both static and shared
-compile_plugin(SHARED                                                   ${PLUGIN_NAME})
-compile_plugin(STATIC                                                   ${PLUGIN_NAME}_static)
+compile_plugin(SHARED                                                   ${PLUGIN_NAME}          glm imgui)
+compile_plugin(STATIC                                                   ${PLUGIN_NAME}_static   glm imgui)
 
 
 

@@ -74,9 +74,6 @@ namespace GLT::editor {
 
         void on_unload() override;
 
-
-        void update(const GLT::update_event&) override;
-
     private:
 
         weak_ref<editor::editor_layer>          mp_editor_layer{};

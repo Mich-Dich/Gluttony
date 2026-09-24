@@ -712,8 +712,8 @@ namespace GLT::editor {
 
                 GLT::asset::import_options opts{};
                 opts.editor_preview_only = j.editor_preview_only;
-                opts.strip_editor_data   = j.strip_editor_data;
-                opts.type_specific       = j.type_specific;
+                opts.strip_editor_data = j.strip_editor_data;
+                opts.type_specific = j.type_specific;
 
                 auto result = registry->import(j.source, j.target_type, j.target_path, opts);
                 GLT::thread_pool::push_main([this, src = j.source, result = std::move(result)]() mutable {

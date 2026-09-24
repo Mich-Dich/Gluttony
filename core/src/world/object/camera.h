@@ -33,8 +33,8 @@ namespace GLT::world {
         // @param aspect_ratio Width/height ratio of the viewport.
         // @param near_plane   Distance to the near clipping plane.
         // @param far_plane    Distance to the far clipping plane.
-		camera(glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-			f32 fov = 45.0f, f32 aspect_ratio = 16.0f / 9.0f, f32 near_plane = 0.1f, f32 far_plane = 100.0f);
+		camera(glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f), glm::quat rotation = glm::quat(1.f, 0.f, 0.f, 0.f),
+			f32 fov = 45.f, f32 aspect_ratio = 16.f / 9.f, f32 near_plane = 0.1f, f32 far_plane = 100.f);
 
 
 		DEFAULT_GETTER_SETTER(glm::vec3, 	position)
@@ -100,20 +100,20 @@ namespace GLT::world {
 		void update_directions();
 
 
-		glm::vec3 			m_position;      				// Camera position
-		glm::quat 			m_rotation;      				// Camera rotation
-		f32 				m_fov;         					// Field of view (in degrees)
-		f32 				m_aspect_ratio; 				// Aspect ratio of the viewport
-		f32 				m_near_plane;   				// Near clipping plane
-		f32 				m_far_plane;    				// Far clipping plane
+		glm::vec3 						m_position;      				// Camera position
+		glm::quat 						m_rotation;      				// Camera rotation
+		f32 							m_fov;         					// Field of view (in degrees)
+		f32 							m_aspect_ratio; 				// Aspect ratio of the viewport
+		f32 							m_near_plane;   				// Near clipping plane
+		f32 							m_far_plane;    				// Far clipping plane
 
-		f32 				m_sensitivity = .01f; 			// Pitch and Yaw sensitivity
-		f32 				m_roll_sensitivity = .3f; 		// Roll sensitivity
-		f32 				m_speed = 25.f;       			// Camera movement speed
+		f32 							m_sensitivity = .01f; 			// Pitch and Yaw sensitivity
+		f32 							m_roll_sensitivity = .3f; 		// Roll sensitivity
+		f32 							m_speed = 25.f;       			// Camera movement speed
 
-		glm::vec3 			m_front = glm::vec3( 0.f,  0.f, -1.f);
-		glm::vec3 			m_right = glm::vec3( 1.f,  0.f,  0.f);
-		glm::vec3 			m_up = glm::vec3(    0.f,  1.f,  0.f);
+		glm::vec3 						m_front = glm::vec3( 0.f,  0.f, -1.f);
+		glm::vec3 						m_right = glm::vec3( 1.f,  0.f,  0.f);
+		glm::vec3 						m_up = glm::vec3(    0.f,  1.f,  0.f);
 
 	};
 

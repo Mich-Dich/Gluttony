@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include "util/data_structures/AABB.h"
 #include "asset/header.h"
 
 
@@ -12,17 +13,17 @@ namespace GLT::asset::mesh {
     // CONSTANTS =======================================================================================================
 
     // Chunk IDs (any u32; keep them stable once shipped).
-    inline constexpr chunk_id CHUNK_VERTICES     = 0x0001;
+    inline constexpr GLT::asset::chunk_id               CHUNK_VERTICES = 0x0001;
 
-    inline constexpr chunk_id CHUNK_INDICES      = 0x0002;
+    inline constexpr GLT::asset::chunk_id               CHUNK_INDICES = 0x0002;
 
-    inline constexpr chunk_id CHUNK_SUBMESHES    = 0x0003;   // submesh + material index ranges
+    inline constexpr GLT::asset::chunk_id               CHUNK_SUBMESHES = 0x0003;   // submesh + material index ranges
 
-    inline constexpr chunk_id CHUNK_BOUNDS       = 0x0004;   // glm::vec3 min / max
+    inline constexpr GLT::asset::chunk_id               CHUNK_BOUNDS = 0x0004;   // glm::vec3 min / max
 
-    inline constexpr chunk_id CHUNK_SKELETON     = 0x0005;   // skeletal_mesh only
+    inline constexpr GLT::asset::chunk_id               CHUNK_SKELETON = 0x0005;   // skeletal_mesh only
 
-    inline constexpr chunk_id CHUNK_ANIMATIONS   = 0x0006;   // skeletal_mesh only
+    inline constexpr GLT::asset::chunk_id               CHUNK_ANIMATIONS = 0x0006;   // skeletal_mesh only
 
     // MACROS ==========================================================================================================
 
@@ -48,16 +49,6 @@ namespace GLT::asset::mesh {
     };
     static_assert(sizeof(submesh) == 12);
 
-
-    struct bounds {
-
-        glm::vec3   min;
-        f32         _pad0;
-        glm::vec3   max;
-        f32         _pad1;
-    };
-    static_assert(sizeof(bounds) == 32);
-
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -79,7 +70,7 @@ namespace GLT::asset::mesh {
         std::vector<GLT::asset::mesh::vertex>           vertices;
         std::vector<u32>                                indices;
         std::vector<GLT::asset::mesh::submesh>          submeshes;
-        GLT::asset::mesh::bounds                        bounds{};
+        GLT::AABB                                       bounds{};
 
         // Positional. material_handles[i] corresponds to submesh.material_slot == i.
         // Entries may be INVALID_HANDLE when a material reference couldn't be

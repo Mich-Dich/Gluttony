@@ -59,19 +59,23 @@ namespace GLT::editor {
     };
 
 
-    // Produced on the worker thread and applied on the main thread.
-    struct decode_result {
+    namespace audio {
 
-        bool                                            ok = false;
-        audio_details                                   details{};
-        std::vector<std::vector<audio_peak_pair>>       peaks{};
-        u32                                             peak_count = 0;
+        // Produced on the worker thread and applied on the main thread.
+        struct decode_result {
+    
+            bool                                            ok = false;
+            audio_details                                   details{};
+            std::vector<std::vector<audio_peak_pair>>       peaks{};
+            u32                                             peak_count = 0;
+    
+            // Registry handle for the loaded audio asset. On discard this is
+            // unloaded by the main-thread callback; on success it becomes
+            // m_asset_handle and is used for playback.
+            GLT::asset::handle                              asset_handle = INVALID_HANDLE;
+        };
 
-        // Registry handle for the loaded audio asset. On discard this is
-        // unloaded by the main-thread callback; on success it becomes
-        // m_asset_handle and is used for playback.
-        GLT::asset::handle                              asset_handle = INVALID_HANDLE;
-    };
+    }
 
     // STATIC VARIABLES ================================================================================================
 
@@ -152,7 +156,7 @@ namespace GLT::editor {
         void transport_toggle();
 
 
-        void apply_decode_result(decode_result&& result);
+        void apply_decode_result(audio::decode_result&& result);
 
         // Stops the active voice (if any) and unloads the current asset.
         void teardown_playback();

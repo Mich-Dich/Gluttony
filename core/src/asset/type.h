@@ -42,30 +42,30 @@ namespace GLT::asset {
     namespace core_types {
 
         inline constexpr type invalid               {  0 };
-        inline constexpr type world                 {  1 };             // Complete world/scene file  
-        inline constexpr type map                   {  2 };             // Sub-section of a world (chunk/region)  
-        inline constexpr type audio                 {  3 };             // Generic audio asset (to be specialized later)  
+        inline constexpr type world                 {  1 };     // Complete world/scene file
+        inline constexpr type region                {  2 };     // Sub-section of a world
+        inline constexpr type audio                 {  3 };     // Generic audio asset (to be specialized later)
 
 		// ------ mesh types ------
-        inline constexpr type static_mesh           {  4 };             // Non-animated mesh geometry
-        inline constexpr type procedural_mesh       {  5 };             // Programmatically generated mesh
-        inline constexpr type dynamic_mesh          {  6 };             // Mesh that can be modified at runtime
-        inline constexpr type skeletal_mesh         {  7 };             // Mesh with bone animation support
-        inline constexpr type mesh_collection       {  8 };             // Collection of multiple meshes
+        inline constexpr type static_mesh           {  4 };     // Non-animated mesh geometry
+        inline constexpr type procedural_mesh       {  5 };     // Programmatically generated mesh
+        inline constexpr type dynamic_mesh          {  6 };     // Mesh that can be modified at runtime
+        inline constexpr type skeletal_mesh         {  7 };     // Mesh with bone animation support
+        inline constexpr type mesh_collection       {  8 };     // Collection of multiple meshes
 
 		// ------ texture types ------
-        inline constexpr type texture2D             {  9 };             // Standard 2D texture
-        inline constexpr type texture3D             { 10 };             // 3D volume texture
-        inline constexpr type cube_map              { 11 };             // Cube map texture for sbyboxs/reflection
+        inline constexpr type texture2D             {  9 };     // Standard 2D texture
+        inline constexpr type texture3D             { 10 };     // 3D volume texture
+        inline constexpr type cube_map              { 11 };     // Cube map texture for sbyboxs/reflection
 
 		// ------ material types ------
-        inline constexpr type material              { 12 };             // Base material definition
-        inline constexpr type material_instance     { 13 };             // Instance of a material with parameter overrides
+        inline constexpr type material              { 12 };     // Base material definition
+        inline constexpr type material_instance     { 13 };     // Instance of a material with parameter overrides
 
         inline constexpr type anim                  { 14 };
-        inline constexpr type light                 { 15 };             // RT light profiles
-        inline constexpr type bvh                   { 16 };             // prebuilt BLAS/TLAS
-        inline constexpr type volume                { 17 };             // participating media
+        inline constexpr type light                 { 15 };     // RT light profiles
+        inline constexpr type bvh                   { 16 };     // prebuilt BLAS/TLAS
+        inline constexpr type volume                { 17 };     // participating media
     }
 
 
@@ -117,8 +117,7 @@ namespace GLT::asset {
     };
 
 
-    // On-disk dependency row. Path is NUL-terminated in the string table;
-    // path_offset == 0 means "id-only" (resolved via the registry's id map).
+    // On-disk dependency row. Path is NUL-terminated in the string table; path_offset == 0 means "id-only" (resolved via the registry's id map).
     struct dependency_disk {
 
         UUID                                    id{};
@@ -131,7 +130,6 @@ namespace GLT::asset {
 
 
     // General data that every asset file must have + custom data that is decided by the asset handler
-    // TODO: finish this struct
     struct info {
 
         // --- identity (copied from header) ---
@@ -177,7 +175,8 @@ namespace GLT::asset {
         if (t == bvh)                                               return "glt_bvh";
         if (t == volume)                                            return "glt_volume";
         if (t == world)                                             return "glt_world";
-        if (t == map)                                               return "glt_map";
+        if (t == world)                                             return "glt_world";
+        if (t == region)                                            return "glt_region";
         return "glt_asset";
     }
 
@@ -202,7 +201,7 @@ namespace GLT::asset {
 
 }
 
-// ---- std::hash specialization -------------------------------------------------
+// ---- std::hash specialization ---------------------------------------------------------------------------------------
 namespace std {
 
     template<>

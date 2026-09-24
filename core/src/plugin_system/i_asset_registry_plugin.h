@@ -54,6 +54,18 @@ namespace GLT::asset {
 
         virtual void unload(GLT::asset::handle h) noexcept = 0;
 
+        // persistence -------------------------------------------------------------------------------------------------
+
+        // Persist the live asset back to its canonical path. No-op for handlers that haven't overridden serialize() (returns load_error::no_handler).
+        //
+        // The write is atomic: bytes go to `<path>.tmp`, then a rename swaps them in. A failed save never leaves a half-written file on disk.
+        [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> save(GLT::asset::handle h) = 0;
+
+
+        // Same as save(), but moves the asset to a new canonical path. The old path entry is dropped from the path index,
+        // the new one takes over. Useful for "Save As" in the editor.
+        [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> save_as(GLT::asset::handle h, const std::filesystem::path& new_path) = 0;
+
 
         [[nodiscard]] virtual bool is_loaded(GLT::asset::handle h) const = 0;
 

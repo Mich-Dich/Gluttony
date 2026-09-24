@@ -15,6 +15,12 @@ namespace GLT::asset::registry_default {
 
     // TYPES ===========================================================================================================
 
+    struct composed_file {
+
+        std::vector<std::byte>              bytes;
+        std::vector<chunk_entry>            chunks;     // final offsets, post-alignment
+    };
+
     // STATIC VARIABLES ================================================================================================
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
@@ -33,15 +39,16 @@ namespace GLT::asset::registry_default {
     //   [chunk data]          each chunk, 8-byte aligned
     //
     // Returns the composed file as a single byte vector.
-    std::vector<std::byte> compose_asset_file(const UUID& id, GLT::asset::type asset_type, GLT::asset::content_hash payload_hash, 
+    composed_file compose_asset_file(const UUID& id, GLT::asset::type asset_type, GLT::asset::content_hash payload_hash, 
         const std::filesystem::path& source_path, const asset_writer_impl& writer);
 
     // <source_dir>/<source_stem>.<ext_for_type>
     std::filesystem::path default_output_path(const std::filesystem::path& source, GLT::asset::type target);
 
-
     FORCE_INLINE_R bool is_valid_file(const std::filesystem::path& p);
     
+    GLT::asset::content_hash hash_writer(const asset_writer_impl& w);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
@@ -64,14 +71,14 @@ namespace GLT::asset::registry_default {
     }
 
 
-    std::vector<std::byte> compose_asset_file(const UUID& id, GLT::asset::type asset_type, GLT::asset::content_hash payload_hash, 
+    composed_file compose_asset_file(const UUID& id, GLT::asset::type asset_type, GLT::asset::content_hash payload_hash, 
         const std::filesystem::path& source_path, const asset_writer_impl& writer) {
 
         using GLT::asset::header;
         using GLT::asset::chunk_entry;
         using GLT::asset::dependency_disk;
 
-        // ---- string table ----
+        // string table ------------------------------------------------------------------------------------------------
         std::string strtab;
         auto push_string = [&strtab](std::string_view s) -> u64 {
 
@@ -91,7 +98,7 @@ namespace GLT::asset::registry_default {
                 dep_path_offsets[i] = push_string(deps[i].virtual_path);
         }
 
-        // ---- tables (as raw byte blobs, so we can memcpy them out later) ----
+        // tables (as raw byte blobs, so we can memcpy them out later) -------------------------------------------------
         std::vector<dependency_disk> dep_table(deps.size());
         for (size_t i = 0; i < deps.size(); ++i) {
             dep_table[i].id          = deps[i].id;
@@ -102,7 +109,7 @@ namespace GLT::asset::registry_default {
         const auto& chunks = writer.chunks();
         std::vector<chunk_entry> chunk_table(chunks.size());
 
-        // ---- compute layout ----
+        // compute layout ----------------------------------------------------------------------------------------------
         // Align each section start to 8 bytes.
         auto align8 = [](u64 x) { return (x + 7u) & ~u64(7u); };
 
@@ -127,7 +134,7 @@ namespace GLT::asset::registry_default {
         }
         const u64 total_size = align8(cursor);
 
-        // ---- header ----
+        // header ------------------------------------------------------------------------------------------------------
         header hdr{};
         hdr.magic = header::MAGIC;
         hdr.format_version = header::CURRENT_VERSION;
@@ -145,7 +152,7 @@ namespace GLT::asset::registry_default {
         hdr.dependency_count = static_cast<u32>(dep_table.size());
         hdr.total_size = total_size;
 
-        // ---- emit ----
+        // emit --------------------------------------------------------------------------------------------------------
         std::vector<std::byte> out(total_size, std::byte{0});
         auto store = [&out](u64 off, const void* src, size_t n) { std::memcpy(out.data() + off, src, n); };
 
@@ -164,7 +171,7 @@ namespace GLT::asset::registry_default {
                 store(chunk_offsets[i], chunks[i].bytes.data(), chunks[i].bytes.size());
         }
 
-        return out;
+        return composed_file{ std::move(out), std::move(chunk_table) };
     }
 
 
@@ -179,6 +186,26 @@ namespace GLT::asset::registry_default {
     FORCE_INLINE_R bool is_valid_file(const std::filesystem::path& p) {
 
         return !p.empty() && p.has_extension();         // check if file
+    }
+
+
+    // Cheap xxh3-ish placeholder — swap for whatever you actually use.
+    GLT::asset::content_hash hash_writer(const asset_writer_impl& w) {
+
+        u64 h = 0xcbf29ce484222325ULL;
+        auto mix = [&h](const void* p, size_t n) {
+            const auto* b = static_cast<const u8*>(p);
+            for (size_t i = 0; i < n; ++i) {
+                h ^= b[i];
+                h *= 0x100000001b3ULL;
+            }
+        };
+        for (const auto& c : w.chunks()) {
+            mix(&c.id, sizeof(c.id));
+            if (!c.bytes.empty())
+                mix(c.bytes.data(), c.bytes.size());
+        }
+        return h;
     }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -200,18 +227,25 @@ namespace GLT::asset::registry_default {
 
         define(invalid,             "invalid");
         define(world,               "world");
-        define(map,                 "map");
+        define(region,              "region");
         define(audio,               "audio");
+
+		// ------ mesh types ------
         define(static_mesh,         "static_mesh");
         define(procedural_mesh,     "procedural_mesh");
         define(dynamic_mesh,        "dynamic_mesh");
         define(skeletal_mesh,       "skeletal_mesh");
         define(mesh_collection,     "mesh_collection");
+
+		// ------ texture types ------
         define(texture2D,           "texture2D");
         define(texture3D,           "texture3D");
         define(cube_map,            "cube_map");
+
+		// ------ material types ------
         define(material,            "material");
         define(material_instance,   "material_instance");
+
         define(anim,                "anim");
         define(light,               "light");
         define(bvh,                 "bvh");
@@ -284,6 +318,82 @@ namespace GLT::asset::registry_default {
 
         m_by_path.erase(s->canonical_path.generic_string());
         release_slot(h);
+    }
+
+
+    std::expected<void, GLT::asset::load_error> plugin::save(GLT::asset::handle h) { return save_as(h, {}); }
+
+
+    std::expected<void, GLT::asset::load_error> plugin::save_as(GLT::asset::handle h, const std::filesystem::path& new_path) {
+
+        std::unique_lock lock(m_mutex);
+
+        slot* s = slot_for(h);
+        if (!s)
+            return std::unexpected{ GLT::asset::load_error::not_found };
+        if (!s->handler || !s->data)
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
+        // build the writer --------------------------------------------------------------------------------------------
+
+        asset_writer_impl writer;
+        writer.set_name(s->asset_info.name);
+
+        // Re-declare every dependency so the file stays self-describing.
+        // Skip INVALID_HANDLE — those never resolved, so there's nothing to write; the slot's positional alignment is preserved regardless.
+        for (GLT::asset::handle dep : s->deps_storage) {
+
+            const slot* d = slot_for(dep);
+            if (!d)
+                continue;
+
+            std::error_code error{};
+            const auto rel = std::filesystem::relative(d->canonical_path, s->canonical_path.parent_path(), error);
+            const std::string path_str = error ? d->canonical_path.generic_string() : rel.generic_string();
+
+            writer.declare_dependency(d->asset_info.id, path_str, d->asset_info.asset_type);
+        }
+
+        // let the handler emit chunks ---------------------------------------------------------------------------------
+
+        if (auto r = s->handler->serialize(s->asset_info, *s->data, writer); !r)
+            return std::unexpected{ r.error() };
+
+        // compose + atomic write --------------------------------------------------------------------------------------
+
+        const std::filesystem::path target = new_path.empty() ? s->canonical_path : new_path;
+        const GLT::asset::content_hash new_hash = hash_writer(writer);
+        auto composed = compose_asset_file(s->asset_info.id, s->asset_info.asset_type, new_hash, s->asset_info.source_path, writer);
+        const std::filesystem::path tmp = std::filesystem::path(target).concat(".tmp");
+
+        if (!write_blob(tmp, composed.bytes))
+            return std::unexpected{ GLT::asset::load_error::out_of_memory };
+
+        std::error_code error{};
+        std::filesystem::rename(tmp, target, error);
+        if (error) {
+
+            std::filesystem::remove(tmp, error);            // best effort
+            return std::unexpected{ GLT::asset::load_error::out_of_memory };
+        }
+
+        // repair the slot so it matches what we just wrote ------------------------------------------------------------
+
+        const std::string old_key = s->canonical_path.generic_string();
+        const std::string new_key = target.generic_string();
+
+        s->canonical_path = target;
+        s->chunks_storage = std::move(composed.chunks);
+        s->asset_info.chunks = s->chunks_storage;             // re-anchor the span
+        s->asset_info.hash = new_hash;
+        s->asset_info.last_modified = std::chrono::system_clock::now();
+
+        if (old_key != new_key) {
+            m_by_path.erase(old_key);
+            m_by_path.emplace(new_key, h);
+        }
+
+        return {};
     }
 
 
@@ -452,13 +562,13 @@ namespace GLT::asset::registry_default {
                                                   default_output_path(source, target_type);     // default as last resort
 
         // compose + write the file (still no lock)
-        const auto file_bytes = compose_asset_file(result.id, target_type, result.payload_hash, source, writer);
-        if (!write_blob(final_path, file_bytes))
+        const auto composed_file = compose_asset_file(result.id, target_type, result.payload_hash, source, writer);
+        if (!write_blob(final_path, composed_file.bytes))
             return std::unexpected{ GLT::asset::import_error::io_failure };
 
         {                                                                       // remember source->asset for the watcher
             std::unique_lock lock(m_mutex);
-            m_source_index[source.generic_string()] = source_record{
+            m_source_index[source.generic_string()] = source_record {
                 .id = result.id,
                 .output = final_path,
                 .source_hash = result.source_hash,

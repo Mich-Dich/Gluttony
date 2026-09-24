@@ -7,6 +7,7 @@
     #include <windows.h>
 #endif
 
+#include "util/util.h"
 #include "util/io/serializer_yaml.h"
 #include "util/io/directory_iterator.h"
 #include "config/config.h"
@@ -30,30 +31,6 @@ namespace GLT::plugin_manager {
         constexpr std::string_view          DYNAMIC_LIB_EXTENTION = ".dll";
         
     #endif
-
-    
-    constexpr std::array<std::string_view, static_cast<size_t>(interface::custom) +1> s_interface_names = {
-        "none", 
-        "logger", 
-        "window", 
-        "memory_manager", 
-        "configuration", 
-        "input_system", 
-        "virtual_file_system", 
-        "renderer", 
-        "asset_registry", 
-        "resource_cache", 
-        "ecs", 
-        "scene_manager", 
-        "physics", 
-        "audio", 
-        "scripting", 
-        "ui_system", 
-        "editor_core", 
-        "networking", 
-        "online_subsystem", 
-        "custom",
-    };
 
     // MACROS ==========================================================================================================
 
@@ -116,9 +93,13 @@ namespace GLT::plugin_manager {
     // STATIC VARIABLES ================================================================================================
 
     static bool                                             s_shutdown = false;
+
     static std::vector<plugin_handle>                       s_loaded_plugins{};
+
     static std::vector<discovered_info>                     s_discovered{};
+
     static std::unordered_map<interface, std::string>       s_plugin_names_per_target_interface{};
+
     static std::filesystem::path                            s_config_path{};
 
     // HELPER FUNCTIONS ===============================================================================================
@@ -229,14 +210,14 @@ namespace GLT::plugin_manager {
         auto instance = std::shared_ptr<i_plugin>(raw_instance, deleter{ destroy, handle });
         instance->on_load();                                            // Call the startup hook.
         s_loaded_plugins.push_back(plugin_handle{                       // Store the handle.
-            .name                       = info.name,
-            .path                       = info.path,
-            .module_handle              = handle,
-            .instance                   = instance,
-            .load_phase                 = info.load_phase,
-            .unload_phase               = info.unload_phase,
-            .dependencies_names         = info.dependencies_names,
-            .dependencies_interfaces    = info.dependencies_interfaces,
+            .name = info.name,
+            .path = info.path,
+            .module_handle = handle,
+            .instance = instance,
+            .load_phase = info.load_phase,
+            .unload_phase = info.unload_phase,
+            .dependencies_names = info.dependencies_names,
+            .dependencies_interfaces = info.dependencies_interfaces,
         });
         
         GLT::logger::flush_buffer();
@@ -283,15 +264,6 @@ namespace GLT::plugin_manager {
         return true;
     }
 
-    
-    constexpr std::string to_string(interface targeted) {
-
-        auto targeted_index = static_cast<size_t>(targeted);
-        if (targeted_index < s_interface_names.size())
-            return std::string(s_interface_names[targeted_index]);
-        return "unknown";
-    }
-
 
     void serialize(const std::filesystem::path& config_path, serializer::option option) {
         
@@ -302,7 +274,7 @@ namespace GLT::plugin_manager {
             if (option == serializer::option::save)
                 buffer = s_plugin_names_per_target_interface[target];
 
-            plugin_serializer.entry(to_string(target), buffer);
+            plugin_serializer.entry(std::string(GLT::util::enum_to_string(target)), buffer);
 
             if (option == serializer::option::load)
                 s_plugin_names_per_target_interface[target] = buffer;
@@ -391,7 +363,7 @@ namespace GLT::plugin_manager {
             if (!has_preference) {
 
                 // No preference configured -> first plugin for this interface wins.
-                LOG(trace, "No preferred plugin for interface [{}], using first found [{}]", to_string(iface), plugin_name)
+                LOG(trace, "No preferred plugin for interface [{}], using first found [{}]", GLT::util::enum_to_string(iface), plugin_name)
                 s_plugin_names_per_target_interface[iface] = plugin_name;
                 s_discovered.push_back(std::move(info));
 
@@ -415,7 +387,7 @@ namespace GLT::plugin_manager {
                 continue;                                           // preferred plugin is present, fallback not needed
 
             const std::string missing = s_plugin_names_per_target_interface.contains(iface) ? s_plugin_names_per_target_interface[iface] : std::string{"<unset>"};
-            LOG(warn, "Preferred plugin [{}] for interface [{}] was not found; falling back to [{}]", missing, to_string(iface), info.name)
+            LOG(warn, "Preferred plugin [{}] for interface [{}] was not found; falling back to [{}]", missing, GLT::util::enum_to_string(iface), info.name)
 
             // Point the resolved map at the fallback so runtime lookups (dependencies_satisfied, get_plugin_base) find it.
             s_plugin_names_per_target_interface[iface] = info.name;

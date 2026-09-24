@@ -74,6 +74,9 @@ namespace GLT::asset::registry_default {
         void declare_dependency(std::string_view virtual_path, GLT::asset::type target_type);
 
 
+        void declare_dependency(const UUID id, std::string_view virtual_path, GLT::asset::type target_type);
+
+
         void set_name(std::string_view name);
 
 
@@ -173,6 +176,13 @@ namespace GLT::asset::registry_default {
 
 
         void unload(GLT::asset::handle h) noexcept override;
+
+        // persistence -------------------------------------------------------------------------------------------------
+
+        [[nodiscard]] std::expected<void, GLT::asset::load_error> save(GLT::asset::handle h) override;
+
+
+        [[nodiscard]] std::expected<void, GLT::asset::load_error> save_as(GLT::asset::handle h, const std::filesystem::path& new_path) override;
 
 
         [[nodiscard]] bool is_loaded(GLT::asset::handle h) const override;

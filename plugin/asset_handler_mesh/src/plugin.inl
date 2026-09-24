@@ -85,9 +85,9 @@ namespace GLT::asset::handler::mesh {
         asset->submeshes.assign(subs.begin(), subs.end());
 
         // ---- bounds -------------------------------------------------------------------------------------------------
-        if (const auto b = reader.get_as<GLT::asset::mesh::bounds>(GLT::asset::mesh::CHUNK_BOUNDS); b.size() == 1) {
+        if (const auto bound = reader.get_as<GLT::AABB>(GLT::asset::mesh::CHUNK_BOUNDS); bound.size() == 1) {
 
-            asset->bounds = b[0];
+            asset->bounds = bound[0];
 
         } else {
 

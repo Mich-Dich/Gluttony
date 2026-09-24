@@ -9,6 +9,7 @@
 
 namespace GLT::world {
     class camera;
+    class i_world_plugin;
 }
 
 namespace GLT::world {
@@ -44,8 +45,11 @@ namespace GLT::world {
         void render_imgui(const f32 delta_time) override;
 
 
-        // Hand the layer ownership of a controller. Accepts anything derived
-        // from controller by implicit unique_ptr conversion.
+        // Bind a world plugin. Any previous one is detached (not unloaded - the plugin manager owns its lifetime).
+        void set_world(ref<GLT::world::i_world_plugin> world);
+
+
+        // Hand the layer ownership of a controller. Accepts anything derived from controller by implicit unique_ptr conversion.
         template<typename controller_type, typename... args>
         requires std::derived_from<controller_type, GLT::world::controller>
         void set_controller(args&&... arguments);
@@ -63,6 +67,7 @@ namespace GLT::world {
 
         ref<GLT::world::controller>                             m_controller{};
         ref<GLT::world::camera>                                 m_editor_camera{};
+        ref<GLT::world::i_world_plugin>                         m_world{};
 
     };
 

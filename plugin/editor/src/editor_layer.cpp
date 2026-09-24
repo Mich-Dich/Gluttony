@@ -15,7 +15,7 @@
 
 #include "window/content_browser.h"
 #include "window/world_viewport.h"
-#include "window/image_viewer.h"
+#include "window/texture_viewer.h"
 #include "window/log_viewer.h"
 #include "window/stats.h"
 #include "window/audio_viewer.h"
@@ -145,12 +145,6 @@ namespace GLT::editor {
 
     editor_layer::~editor_layer() {
 
-        if (auto* world = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>()) {
-
-            auto camera = world->get_editor_camera();
-            GLT::application::get().get_project_path() / 
-        }
-
         GLT::event_bus::unsubscribe(m_asset_import_request_event_sub_handle);
         GLT::event_bus::unsubscribe(m_asset_open_event_sub_handle);
         file_watcher::unwatch_all();
@@ -159,7 +153,7 @@ namespace GLT::editor {
         m_logo.reset();
     }
 
-    // CLASS PUBLIC ====================================================================================================Fugaxe
+    // CLASS PUBLIC ====================================================================================================
     
     void editor_layer::update(const f32 delta_time) {
 
@@ -463,9 +457,9 @@ namespace GLT::editor {
                     return GLT::create_unique_ref<window>(p);                                       \
                 });
 
-        ADD_ASSET_EDITOR(GLT::asset::core_types::texture2D,     image_viewer_window)
-        ADD_ASSET_EDITOR(GLT::asset::core_types::texture3D,     image_viewer_window)
-        ADD_ASSET_EDITOR(GLT::asset::core_types::cube_map,      image_viewer_window)
+        // ADD_ASSET_EDITOR(GLT::asset::core_types::texture2D,     texture_viewer_window)       // TODO: fix image viewer implementation
+        // ADD_ASSET_EDITOR(GLT::asset::core_types::texture3D,     texture_viewer_window)
+        // ADD_ASSET_EDITOR(GLT::asset::core_types::cube_map,      texture_viewer_window)
         ADD_ASSET_EDITOR(GLT::asset::core_types::audio,         audio_viewer_window)
 
         #undef ADD_ASSET_EDITOR

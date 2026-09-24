@@ -52,14 +52,23 @@ namespace GLT::asset {
 
         virtual ~asset_writer() = default;
 
+
         virtual void write_chunk(chunk_id id, std::span<const std::byte> data, u32 compression = 0) = 0;
 
-        // ID form - caller already knows the target asset.
+
+        // ID form — caller already knows the target asset's UUID.
         virtual void declare_dependency(const UUID id) = 0;
 
-        // Path form - the registry resolves (and imports if needed) on finalize.
-        // `virtual_path` is relative to the source being imported.
+
+        // Path form — resolved by the registry on finalize. Used by importers.
         virtual void declare_dependency(std::string_view virtual_path, GLT::asset::type target_type) = 0;
+
+
+        // Full form — preserve both. Used by save(): the loader shortcuts by id
+        // when the dep is already resident, and falls back to the path on cold
+        // start. Pass an empty path for "id-only".
+        virtual void declare_dependency(const UUID id, std::string_view virtual_path, GLT::asset::type target_type) = 0;
+
 
         virtual void set_name(std::string_view name) = 0;
     };
@@ -83,13 +92,30 @@ namespace GLT::asset {
     class i_asset_handler : public GLT::plugin_manager::i_plugin {
     public:
 
-        // ---- decoding ----
         [[nodiscard]] virtual std::span<const GLT::asset::type> types() const noexcept = 0;
 
+        // ---- decoding ----
 
         [[nodiscard]] virtual std::expected<GLT::unique_ref<GLT::asset::i_runtime_asset>, GLT::asset::load_error> deserialize(
             const GLT::asset::info& info, GLT::asset::chunk_reader& reader) = 0;
 
+
+        // ---- encoding ----
+
+        // Called by the registry when the user asks to persist a live asset back to disk. The handler is expected to emit
+        // the SAME chunk layout it consumes in deserialize(), plus re-declare its dependencies via writer.declare_dependency(...) 
+        // so cold-start resolution keeps working.
+        //
+        // Default: refuses with load_error::no_handler. Override only for asset types whose runtime state can actually diverge
+        // from disk (worlds, regions, user-edited materials, ...). Meshes and textures can leave this alone.
+        [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> serialize(const GLT::asset::info& /*info*/, 
+            const GLT::asset::i_runtime_asset& /*asset*/, GLT::asset::asset_writer& /*out*/) const {
+
+            return std::unexpected{ GLT::asset::load_error::no_handler };
+        }
+
+
+        // ---- hot reload ----
 
         // Hot-reload path. Default: rebuild from scratch by returning
         // std::unexpected{ GLT::asset::load_error::needs_reload }. The registry then

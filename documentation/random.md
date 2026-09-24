@@ -185,3 +185,72 @@ Ctrl+P style fuzzy search over every registered editor action ("open image viewe
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+POTENTIAL ESC USAGE:
+
+**build a small hierarchy**
+  Root (transform)
+    ├─ Body (mesh, transform)
+    └─ Head (mesh, transform)
+         └─ Helmet (mesh, transform)
+    └─ Ambience (audio)
+
+```cpp
+auto world_plugin = GLT::world::manager::get_ref();
+auto* ecs = world_plugin->as<GLT::world::world_ecs_entt::ecs_world_plugin>();
+if (!ecs) return;
+
+auto root = ecs->make_entity("Root")
+    .set_transform({ .position = { 0.f, 0.f, 0.f } })
+    .id();
+
+auto body = ecs->make_entity("Body")
+    .parent(root)
+    .set_transform({ .position = { 0.f, 1.f, 0.f } })
+    .set_mesh(body_mesh_handle)
+    .id();
+
+auto head = ecs->make_entity("Head")
+    .parent(body)                                       // body.parent_of root -> still O(1)
+    .set_transform({ .position = { 0.f, 2.f, 0.f } })
+    .set_mesh(head_mesh_handle)
+    .id();
+
+auto helmet = ecs->make_entity("Helmet")
+    .parent(head)
+    .set_transform({ .position = { 0.f, 0.3f, 0.f } })
+    .set_mesh(helmet_mesh_handle)
+    .id();
+
+ecs->make_entity("Ambience")
+    .parent(root)
+    .set_audio(ambient_loop_handle, {}, /*autoplay*/ true);
+
+// --- edit an existing entity ---
+ecs->edit(body)
+    .set_mesh(body_mesh_lod1_handle, /*visible*/ true)
+    .add<no_inherit_transform>();                       // detach body's local from Root
+
+// --- reparent ---
+ecs->set_parent(helmet, body);                          // now a sibling of head
+```
+
+
+**inspect hierarchy (editor outliner)**
+
+```cpp
+for (entity_id child : ecs->children_of(root)) {
+    const auto* h = ecs->hierarchy_of(child);           // exposed via friend
+    // ...
+}
+```

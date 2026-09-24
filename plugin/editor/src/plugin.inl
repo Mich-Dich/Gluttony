@@ -59,11 +59,6 @@ namespace GLT::editor {
         implot_config::shutdown();
     }
 
-
-    void plugin::update(const GLT::update_event&) {
-
-    }
-
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================

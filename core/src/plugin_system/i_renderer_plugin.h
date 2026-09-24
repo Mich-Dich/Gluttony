@@ -32,6 +32,32 @@ namespace GLT::render {
 
     // TYPES ===========================================================================================================
 
+    // Standard modes that every renderer must support. Plugin‑specific modes must have ids >= GLT::render::mode::count
+    enum class mode : u32 {
+
+        lit = 0,            // full shading with lighting (default)
+        unlit,              // flat surface color, no lighting
+        albedo,             // base color / albedo channel
+        normals,            // world‑space surface normals, remapped to [0,1]
+        depth,              // linear depth from camera (normalized)
+        roughness,
+        metallic,
+        uv,                 // texture coordinates
+        wireframe,
+        overdraw,           // number of shading invocations per pixel
+        count,              // sentinel — not a real mode
+    };
+    inline constexpr u32 count = static_cast<u32>(GLT::render::mode::count);
+
+
+    // A plugin‑specific debug mode, `id` must be >= standard_render_mode::count and unique within the renderer
+    struct custom_render_mode {
+        u32             id;
+        const char*     name;           // shown in the debug dropdown
+        const char*     description;    // optional tooltip
+    };
+
+
     // Renderer capability flags (optional, can be used for feature queries)
     enum class renderer_feature : u8 {
 

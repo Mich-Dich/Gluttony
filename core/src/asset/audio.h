@@ -42,12 +42,12 @@ namespace GLT::asset::audio {
     // samples without consulting this - the handler trusts it blindly.
     struct format {
 
-        u32             sample_rate;            // frames / second
-        u16             channels;               // interleaved
-        u16             bit_depth;              // valid bits per sample (32 for f32)
-        sample_kind     kind;                   // how to read CHUNK_PCM_DATA
-        u16             _pad0{};
-        u64             frame_count;            // total frames (not bytes)
+        u32                                     sample_rate;            // frames / second
+        u16                                     channels;               // interleaved
+        u16                                     bit_depth;              // valid bits per sample (32 for f32)
+        sample_kind                             kind;                   // how to read CHUNK_PCM_DATA
+        u16                                     _pad0{};
+        u64                                     frame_count;            // total frames (not bytes)
     };
     static_assert(sizeof(format) == 24);
     static_assert(std::is_trivially_copyable_v<format>);
@@ -55,10 +55,10 @@ namespace GLT::asset::audio {
 
     struct loop_points {
 
-        u64             loop_start_frame;
-        u64             loop_end_frame;
-        u8              has_loop;               // 0/1
-        u8              _pad[7]{};
+        u64                                     loop_start_frame;
+        u64                                     loop_end_frame;
+        u8                                      has_loop;               // 0/1
+        u8                                      _pad[7]{};
     };
     static_assert(sizeof(loop_points) == 24);
     static_assert(std::is_trivially_copyable_v<loop_points>);

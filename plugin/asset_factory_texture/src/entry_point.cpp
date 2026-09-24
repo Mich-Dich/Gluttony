@@ -1,7 +1,7 @@
 
 #include "util/pch.h"
 
-#include <plugin_system/plugin_manager.h>
+#include <asset/texture.h>
 #include <plugin_system/i_asset_factory_plugin.h>
 #include <plugin_system/i_asset_registry_plugin.h>
 
@@ -9,7 +9,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::asset::factory::mesh_assimp {
+namespace GLT::asset::factory::texture_stb {
 
     // CONSTANTS =======================================================================================================
 
@@ -65,15 +65,16 @@ namespace GLT::asset::factory::mesh_assimp {
         void on_unload() override;
 
 
+        [[nodiscard]] std::span<const GLT::asset::factory::binding> bindings() const noexcept override;
+
+
         [[nodiscard]] std::span<const GLT::asset::factory::i_asset_factory_plugin::option_descriptor>
             option_schema(const GLT::asset::type& target_type) const noexcept override;
 
 
-        [[nodiscard]] std::span<const GLT::asset::factory::binding> bindings() const noexcept override;
-
-
-        [[nodiscard]] std::expected<GLT::asset::factory::import_result, GLT::asset::import_error> import(const std::filesystem::path& source,
-            GLT::asset::type target_type, const GLT::asset::import_options& opts, GLT::asset::asset_writer& out) override;
+        [[nodiscard]] std::expected<GLT::asset::factory::import_result, GLT::asset::import_error> import(
+            const std::filesystem::path& source, GLT::asset::type target_type, const GLT::asset::import_options& opts,
+            GLT::asset::asset_writer& out) override;
 
     private:
 
@@ -91,4 +92,4 @@ namespace GLT::asset::factory::mesh_assimp {
 
 #include "plugin.inl"
 
-EXPORT_PLUGIN_CLASS(GLT::asset::factory::mesh_assimp::plugin, GLT::asset::factory::mesh_assimp::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::asset::factory::texture_stb::plugin, GLT::asset::factory::texture_stb::descriptor)

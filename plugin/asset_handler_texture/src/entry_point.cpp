@@ -1,15 +1,16 @@
-
 #include "util/pch.h"
 
-#include <plugin_system/plugin_manager.h>
-#include <plugin_system/i_asset_factory_plugin.h>
+#include <asset/type.h>
+#include <asset/texture.h>
+#include <plugin_system/i_project_manager.h>
+#include <plugin_system/i_asset_handler_plugin.h>
 #include <plugin_system/i_asset_registry_plugin.h>
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::asset::factory::mesh_assimp {
+namespace GLT::asset::handler::texture {
 
     // CONSTANTS =======================================================================================================
 
@@ -56,29 +57,25 @@ namespace GLT::asset::factory::mesh_assimp {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    class plugin final : public GLT::asset::factory::i_asset_factory_plugin {
+    class plugin final : public GLT::asset::i_asset_handler {
     public:
 
-        void on_load() override;
+        void on_load()   override;
 
 
         void on_unload() override;
 
+        // ---- i_asset_handler ----
 
-        [[nodiscard]] std::span<const GLT::asset::factory::i_asset_factory_plugin::option_descriptor>
-            option_schema(const GLT::asset::type& target_type) const noexcept override;
-
-
-        [[nodiscard]] std::span<const GLT::asset::factory::binding> bindings() const noexcept override;
+        [[nodiscard]] std::span<const GLT::asset::type> types() const noexcept override;
 
 
-        [[nodiscard]] std::expected<GLT::asset::factory::import_result, GLT::asset::import_error> import(const std::filesystem::path& source,
-            GLT::asset::type target_type, const GLT::asset::import_options& opts, GLT::asset::asset_writer& out) override;
+        [[nodiscard]] std::expected<GLT::unique_ref<GLT::asset::i_runtime_asset>, GLT::asset::load_error>
+            deserialize(const GLT::asset::info& info, GLT::asset::chunk_reader& reader) override;
 
     private:
 
         GLT::ref<GLT::asset::i_asset_registry_plugin>           m_registry{};
-
     };
 
     // CLASS PUBLIC ====================================================================================================
@@ -91,4 +88,4 @@ namespace GLT::asset::factory::mesh_assimp {
 
 #include "plugin.inl"
 
-EXPORT_PLUGIN_CLASS(GLT::asset::factory::mesh_assimp::plugin, GLT::asset::factory::mesh_assimp::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::asset::handler::texture::plugin, GLT::asset::handler::texture::descriptor)

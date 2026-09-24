@@ -1,15 +1,11 @@
 
 #include "util/pch.h"
-#include "world_layer.h"
-
-#include "world/object/camera.h"
-#include "plugin_system/i_world_plugin.h"
-
+#include "entity_builder.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::world {
+namespace GLT::world::world_ecs_entt {
 
     // CONSTANTS =======================================================================================================
 
@@ -33,59 +29,66 @@ namespace GLT::world {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    world_layer::world_layer()
-        : layer("input") {}
-
-
-    world_layer::~world_layer() = default;
+    entity_builder::entity_builder(ecs_world_plugin& plugin, entity_id id) noexcept
+        : m_plugin(&plugin), m_id(id) {}
 
     // CLASS PUBLIC ====================================================================================================
 
-    void world_layer::update(const f32 delta_time) {
+    entity_builder& entity_builder::named(std::string name) {
 
-        if (m_controller)
-            m_controller->update(delta_time);
-
-        if (!m_world)
-            return;
-
-        // The editor camera is the streaming anchor
-        if (m_editor_camera)
-            m_world->set_streaming_anchor(m_editor_camera->get_position());
-
-        m_world->update(delta_time);
+        name_component n{ std::move(name) };
+        return add_or_replace<name_component>(std::move(n));
     }
 
 
-    void world_layer::render_imgui(const f32 /*delta_time*/) { }
+    entity_builder& entity_builder::set_transform(const transform& t) { return add_or_replace<transform>(t); }
 
 
-    void world_layer::set_world(ref<GLT::world::i_world_plugin> world) {
+    entity_builder& entity_builder::set_mesh(GLT::asset::handle mesh, bool visible) {
 
-        VALIDATE(world, return, "", "Provided world plugin is invalid")
-        m_world = std::move(world);
+        mesh_renderer mr{};
+        mr.mesh = mesh;
+        mr.visible = visible;
+        return add_or_replace<mesh_renderer>(mr);
     }
 
 
-    void world_layer::create_editor_camera(const glm::vec3 position, const glm::vec3 rotation) {
+    entity_builder& entity_builder::set_audio(GLT::asset::handle clip, const GLT::asset::audio::source_config& cfg, bool autoplay) {
 
-        m_editor_camera = GLT::create_ref<GLT::world::camera>();
-        m_editor_camera->set_position(position);
-        m_editor_camera->rotate(rotation);
+        audio_source as{};
+        as.clip = clip;
+        as.config = cfg;
+        as.autoplay = autoplay;
+        return add_or_replace<audio_source>(as);
     }
 
 
-    void world_layer::soft_create_editor_camera(const glm::vec3 position, const glm::vec3 rotation) {
+    entity_builder& entity_builder::parent(entity_id p) {
 
-        if (!m_editor_camera)
-            create_editor_camera(position, rotation);
+        m_plugin->set_parent(m_id, p);
+        return *this;
     }
 
 
-    void world_layer::set_controller(ref<GLT::world::controller> ctrl) {
+    entity_builder& entity_builder::detach() {
 
-        VALIDATE(ctrl, return, "", "Provided Controller is invalid")
-        m_controller = ctrl;
+        m_plugin->set_parent(m_id, INVALID_ENTITY);
+        return *this;
+    }
+
+
+    entity_builder& entity_builder::adopt(entity_id child) {
+
+        m_plugin->set_parent(child, m_id);
+        return *this;
+    }
+
+
+    entity_builder& entity_builder::disown(entity_id child) {
+
+        // set_parent handles removing `child` from this entity's children list.
+        m_plugin->set_parent(child, INVALID_ENTITY);
+        return *this;
     }
 
     // CLASS PROTECTED =================================================================================================

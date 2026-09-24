@@ -1,9 +1,12 @@
+
 #pragma once
 
+// This file is #included at the bottom of ecs_world_plugin.h. It relies on ecs_world_plugin being fully defined by the time it's reached,
+// so it must not be included independently.
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::asset::registry_default {
+namespace GLT::world::world_ecs_entt {
 
     // CONSTANTS =======================================================================================================
 
@@ -29,56 +32,42 @@ namespace GLT::asset::registry_default {
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    void asset_writer_impl::write_chunk(GLT::asset::chunk_id id, std::span<const std::byte> data, u32 compression) {
+    template<typename T, typename... Args>
+    entity_builder& entity_builder::add(Args&&... args) {
 
-        record_chunk c{};
-        c.id = id;
-        c.compression = compression;
-        c.bytes.assign(data.begin(), data.end());
-        m_chunks.push_back(std::move(c));
+        auto& reg = m_plugin->registry();
+        reg.emplace_or_replace<T>(m_plugin->entt_of(m_id), std::forward<Args>(args)...);
+        return *this;
     }
 
 
-    void asset_writer_impl::declare_dependency(const UUID id) {
+    template<typename T>
+    entity_builder& entity_builder::add_or_replace(T&& component) {
 
-        record_dep dep{};
-        dep.id = id;
-        dep.by_path = false;
-        m_deps.push_back(std::move(dep));
+        auto& reg = m_plugin->registry();
+        reg.emplace_or_replace<T>(m_plugin->entt_of(m_id), std::forward<T>(component));
+        return *this;
     }
 
 
-    void asset_writer_impl::declare_dependency(std::string_view virtual_path, GLT::asset::type target_type) {
+    template<typename T>
+    entity_builder& entity_builder::remove() {
 
-        record_dep dep{};
-        dep.virtual_path = std::string(virtual_path);
-        dep.target_type = target_type;
-        dep.by_path = true;
-        m_deps.push_back(std::move(dep));
+        m_plugin->registry().remove<T>(m_plugin->entt_of(m_id));
+        return *this;
     }
 
 
-    void asset_writer_impl::declare_dependency(const UUID id, std::string_view virtual_path, GLT::asset::type target_type) {
-
-        record_dep dep{};
-        dep.id = id;
-        dep.virtual_path = std::string(virtual_path);
-        dep.target_type = target_type;
-        dep.by_path = !virtual_path.empty();
-        m_deps.push_back(std::move(dep));
-    }
+    template<typename T>
+    bool entity_builder::has() const { return m_plugin->registry().all_of<T>(m_plugin->entt_of(m_id)); }
 
 
-    void asset_writer_impl::set_name(std::string_view name) { m_name.assign(name.begin(), name.end()); }
+    template<typename T>
+    T& entity_builder::get() { return m_plugin->registry().get<T>(m_plugin->entt_of(m_id)); }
 
 
-    [[nodiscard]] const std::string& asset_writer_impl::name() const noexcept { return m_name; }
-
-
-    [[nodiscard]] const std::vector<asset_writer_impl::record_chunk>& asset_writer_impl::chunks() const noexcept { return m_chunks; }
-
-
-    [[nodiscard]] const std::vector<asset_writer_impl::record_dep>& asset_writer_impl::deps() const noexcept { return m_deps; }
+    template<typename T>
+    const T& entity_builder::get() const { return m_plugin->registry().get<T>(m_plugin->entt_of(m_id)); }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

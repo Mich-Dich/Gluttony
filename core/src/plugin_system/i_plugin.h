@@ -137,7 +137,7 @@ namespace GLT::plugin_manager {
         asset_registry,
         resource_cache,
         ecs,
-        scene_manager,
+        world,
         physics,
         audio,
         scripting,
@@ -190,7 +190,7 @@ namespace GLT::plugin_manager {
         virtual void on_unload() = 0;
 
 
-        virtual void update(const GLT::update_event&) {}
+        virtual void update(const f32 /*delta_time*/) {}
 
     };
 

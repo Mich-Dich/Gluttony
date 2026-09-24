@@ -251,7 +251,7 @@ namespace GLT::editor {
         GLT::thread_pool::push([this, lifetime, abs_path, name, ext, generation]() {
 
             // worker thread -------------------------------------------------------------------------------------------
-            auto result = std::make_shared<decode_result>();
+            auto result = std::make_shared<audio::decode_result>();
             result->details = populate_details_from_disk(abs_path, name, ext);
 
             auto registry = GLT::asset::registry::get_ref();
@@ -861,7 +861,7 @@ namespace GLT::editor {
     }
 
 
-    void audio_viewer_window::apply_decode_result(decode_result&& result) {
+    void audio_viewer_window::apply_decode_result(audio::decode_result&& result) {
 
         m_loading = false;
 
