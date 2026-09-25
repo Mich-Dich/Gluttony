@@ -33,6 +33,14 @@ namespace GLT::renderer_vk_ray {
 
     constexpr u32                                               MAX_CONCURRENT_FRAMES = 3;
 
+    static constexpr u32                                        TLAS_MAX_INSTANCES   = 1024;
+
+    static constexpr u32                                        VERTEX_HEADROOM_MIN  = 64 * 1024;       // 64k verts
+
+    static constexpr u32                                        INDEX_HEADROOM_MIN   = 128 * 1024;      // 128k indices
+
+    static constexpr u32                                        MATERIAL_HEADROOM_MIN = 1024;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -116,6 +124,16 @@ namespace GLT::renderer_vk_ray {
 
         void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
+        // uploaded mesh data ------------------------------------------------------------------------------------------
+        
+        bool load_mesh(const std::filesystem::path& path) override;
+        
+        
+        bool load_mesh(const GLT::asset::handle handle) override;
+
+
+        void unload_mesh(GLT::asset::handle handle) override;
+
     private:
 
         enum class image_type{
@@ -123,6 +141,19 @@ namespace GLT::renderer_vk_ray {
             render,
         };
 
+
+        struct mesh_slot {
+
+            GLT::asset::handle                                      asset{};
+            u32                                                     vertex_offset = 0;      // in vertices
+            u32                                                     vertex_count = 0;
+            u32                                                     index_offset = 0;      // in indices
+            u32                                                     index_count = 0;
+            u32                                                     material_offset = 0;      // in gpu_material entries
+            u32                                                     material_count = 0;
+            vr::blas_handle                                         blas{};
+            bool                                                    alive = false;
+        };
 
         void init_vulkan();
 
@@ -175,6 +206,22 @@ namespace GLT::renderer_vk_ray {
 
 
         void end_imgui_frame(vk::CommandBuffer& current_cmd);
+        
+        // mesh handling -----------------------------------------------------------------------------------------------
+
+        bool reserve_mesh_space(u32 v, u32 i, u32 m);
+
+
+        void rebuild_tlas_if_dirty();
+
+
+        void build_blas_for_slot(mesh_slot& slot);
+
+
+        void rebuild_all_blases();
+
+
+        void upload_mesh_slice(mesh_slot& slot, GLT::asset::mesh::mesh_asset& mesh);
 
 
         glm::ivec2                                              m_render_size{ 300, 400};
@@ -204,7 +251,6 @@ namespace GLT::renderer_vk_ray {
         vr::device*                                             m_vr_dev = nullptr;
         GLT::ref<image>                                         m_output_image = nullptr;
         vr::allocated_buffer                                    m_uniform_buffer = {};
-        vr::tlas_handle                                         m_tlas_handle;
         std::vector<vr::descriptor_item>                        m_resource_bindings;
         vk::DescriptorSetLayout                                 m_resource_descriptor_layout;
         vr::descriptor_buffer                                   m_resource_desc_buffer;
@@ -212,13 +258,6 @@ namespace GLT::renderer_vk_ray {
         utils::shader_compiler                                  m_shader_compiler{};
         vk::Pipeline                                            m_rt_pipeline = nullptr;
         vr::sbt_buffer                                          m_sbt_buffer; // contains the shader records for the SBT
-
-        // --- scene geometry (loaded from the asset registry) ----------------------------------------------------------
-        std::vector<GLT::asset::handle>                         m_mesh_handles{};
-        std::vector<vr::blas_handle>                            m_blas_handles{};          // one per mesh
-        vr::allocated_buffer                                    m_vertex_buffer{};
-        vr::allocated_buffer                                    m_index_buffer{};
-        vr::allocated_buffer                                    m_material_buffer{};
 
         // ImGui resources
         vk::DescriptorPool                                      m_imgui_descriptor_pool = nullptr;
@@ -243,10 +282,6 @@ namespace GLT::renderer_vk_ray {
         u32                                                     m_frame_draw_calls = 0;
         u32                                                     m_frame_render_passes = 0;
 
-        // Scene geometry totals (set when acceleration structures are built).
-        u32                                                     m_scene_triangles = 0;
-        u32                                                     m_scene_vertices = 0;
-
         // --- GPU timing (timestamp queries) --------------------------------------------------------------------------
         vk::QueryPool                                           m_timestamp_pool = nullptr;
         f32                                                     m_timestamp_period_ns = 1.0f;
@@ -257,6 +292,28 @@ namespace GLT::renderer_vk_ray {
         u32                                                     m_live_buffer_count = 0;
         u32                                                     m_live_pipeline_count = 0;
         u32                                                     m_live_descriptor_set_count = 0;
+
+        // scene geometry (loaded from the asset registry) -------------------------------------------------------------
+
+        vr::allocated_buffer                                    m_vertex_buffer{};
+        vr::allocated_buffer                                    m_index_buffer{};
+        vr::allocated_buffer                                    m_material_buffer{};
+        u32                                                     m_vertex_capacity = 0;    // in vertices
+        u32                                                     m_index_capacity = 0;    // in indices
+        u32                                                     m_material_capacity = 0;    // in gpu_material entries
+        u32                                                     m_vertex_used = 0;
+        u32                                                     m_index_used = 0;
+        u32                                                     m_material_used = 0;
+
+        std::vector<mesh_slot>                                  m_mesh_slots{};
+        std::vector<u32>                                        m_free_slots{};               // indices into m_mesh_slots
+
+        vr::tlas_handle                                         m_tlas_handle{};
+        vr::tlas_build_info                                     m_tlas_build_info{};        // kept, not local
+        vr::allocated_buffer                                    m_tlas_instance_buffer{};   // sized for TLAS_MAX_INSTANCES
+        bool                                                    m_tlas_dirty = false;
+
+        std::vector<vk::AccelerationStructureInstanceKHR>       m_tlas_instances;  // scratch, reused
 
     };
 

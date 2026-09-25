@@ -191,6 +191,8 @@ namespace GLT::renderer_vk_ray {
             }
         }
 
+        rebuild_tlas_if_dirty();
+
         // ---- reset per-frame counters ------------------------------------------------------
         m_frame_draw_calls    = 0;
         m_frame_render_passes = 0;
@@ -356,27 +358,27 @@ namespace GLT::renderer_vk_ray {
 
         return debug::render_stats{
 
-            // GPU time: most recent completed measurement (updated in begin_frame from the previous use of the current command buffer slot). 
+            // GPU time: most recent completed measurement (updated in begin_frame from the previous use of the current command buffer slot)
             // Zero until the first slot has wrapped at least once.
             .gpu_time_ms = m_last_gpu_time_ms,
 
             // rendering -----------------------------------------------------------------------------------------------
             // These are per-frame totals; the HUD reads them after draw_frame(). draw_calls includes both the scene RT dispatch 
             // and every ImGui primitive draw. render_passes is the RT dispatch plus the ImGui render pass.
-            .draw_calls    = m_frame_draw_calls,
-            .triangles     = m_scene_triangles,
-            .vertices      = m_scene_vertices,
+            .draw_calls = m_frame_draw_calls,
+            .triangles = m_index_used / 3,
+            .vertices = m_vertex_used,
             .render_passes = m_frame_render_passes,
 
             // memory (absolute, not per-frame) ------------------------------------------------------------------------
             .vram_bytes = GLT::render::image::get_live_vram_bytes(),
-            .ram_bytes  = 0,                    // not tracked yet; would need a heap hook
+            .ram_bytes = 0,                     // not tracked yet; would need a heap hook
 
             // resources (absolute counts) -----------------------------------------------------------------------------
-            .texture_count        = GLT::render::image::get_live_count(),
-            .buffer_count         = m_live_buffer_count,
+            .texture_count = GLT::render::image::get_live_count(),
+            .buffer_count = m_live_buffer_count,
             .descriptor_set_count = m_live_descriptor_set_count,
-            .pipeline_count       = m_live_pipeline_count,
+            .pipeline_count = m_live_pipeline_count,
         };
     }
 
@@ -408,6 +410,150 @@ namespace GLT::renderer_vk_ray {
 
         VK_CHECK_S(m_device.waitForFences(m_immediate_submit_fence, VK_TRUE, UINT64_MAX));
 	}
+
+    // uploaded mesh data ----------------------------------------------------------------------------------------------
+
+    bool renderer::load_mesh(const std::filesystem::path& path) {
+
+        auto registry = GLT::asset::registry::get_ref();
+        ASSERT(registry, "", "No asset registry");
+
+        auto handle = registry->load(path);
+        VALIDATE(handle.has_value(), return false, "", "Failed to load mesh [{}]", path.generic_string());
+
+        return load_mesh(*handle);
+    }
+
+
+    bool renderer::load_mesh(const GLT::asset::handle handle) {
+
+        auto registry = GLT::asset::registry::get_ref();
+        ASSERT(registry, "", "No asset registry");
+
+        for (const auto& slot : m_mesh_slots)
+            if (slot.asset == handle)
+                return true;                        // mesh already uploaded
+
+        auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(handle);
+        VALIDATE(mesh, return false, "", "Asset [{}] is not a mesh_asset", registry->info(handle).name);
+       
+        // reserve buffer space. May grow the shared buffers
+        u32 live_submeshes = 0;
+        for (const auto& sm : mesh->submeshes)
+            if (sm.index_count >= 3)
+                live_submeshes++;
+
+        // DEBUG-ONLY: -------------------------------------------------------------------------------------------------
+        #define SANITY_CHECK_ON_THE_DECODED_MESH 0
+        #if SANITY_CHECK_ON_THE_DECODED_MESH
+            {
+                LOG(info, "count supplied to reserve_mesh_space(): [{}], count in mesh asset [{}]", live_submeshes, mesh->submeshes.size())
+
+                const size_t n_idx = mesh->indices.size();
+                const size_t n_vtx = mesh->vertices.size();
+
+                u32 global_max_idx = 0;
+                for (u32 i : mesh->indices)
+                    global_max_idx = std::max(global_max_idx, i);
+
+                LOG(info, "mesh: {} verts, {} indices, max index in array = {}", n_vtx, n_idx, global_max_idx);
+
+                if (global_max_idx >= n_vtx)
+                    LOG(fatal, "  !! mesh index {} >= vertex count {} — asset is corrupt", global_max_idx, n_vtx);
+
+                for (size_t si = 0; si < mesh->submeshes.size(); ++si) {
+                    const auto& sm = mesh->submeshes[si];
+
+                    const u64 end = u64(sm.first_index) + u64(sm.index_count);
+                    if (end > n_idx) {
+                        LOG(fatal, "  submesh[{}]: first={} count={} -> end={} OVERFLOWS index array size {}",
+                            si, sm.first_index, sm.index_count, end, n_idx);
+                        continue;
+                    }
+
+                    u32 sub_max_idx = 0;
+                    for (u32 k = 0; k < sm.index_count; ++k)
+                        sub_max_idx = std::max(sub_max_idx, mesh->indices[sm.first_index + k]);
+
+                    LOG(info, "  submesh[{}]: first={} count={} max_vertex_idx={}{}",
+                        si, sm.first_index, sm.index_count, sub_max_idx,
+                        (sub_max_idx >= n_vtx ? "  <-- OOB VERTEX" : ""));
+                }
+            }
+        #endif
+
+        const bool grew = reserve_mesh_space(
+            static_cast<u32>(mesh->vertices.size()),
+            static_cast<u32>(mesh->indices.size()),
+            live_submeshes);
+        
+        // If buffers moved, every existing BLAS references a dead address — rebuild them all once, right here, not per-mesh
+        // This is the only path that touches other meshes
+        if (grew)
+            rebuild_all_blases();
+
+        u32 slot_idx;
+        if (!m_free_slots.empty()) {                                // claim a slot
+        
+            slot_idx = m_free_slots.back();
+            m_free_slots.pop_back();
+        
+        } else {
+        
+            slot_idx = static_cast<u32>(m_mesh_slots.size());
+            m_mesh_slots.emplace_back();
+        }
+
+        mesh_slot& slot = m_mesh_slots[slot_idx];
+        slot.asset = handle;
+        slot.vertex_offset = m_vertex_used;
+        slot.vertex_count = static_cast<u32>(mesh->vertices.size());
+        slot.index_offset = m_index_used;
+        slot.index_count = static_cast<u32>(mesh->indices.size());
+        slot.material_offset = m_material_used;
+        slot.material_count = live_submeshes;
+        slot.alive = true;
+
+        upload_mesh_slice(slot, *mesh);                             // Upload just this mesh's slice
+        m_vertex_used += slot.vertex_count;
+        m_index_used += slot.index_count;
+        m_material_used += slot.material_count;
+
+        build_blas_for_slot(slot);                                  // Build exactly one BLAS for this mesh
+        m_tlas_dirty = true;                                        // TLAS contents changed; the handle did not
+
+        return true;
+    }
+
+
+    void renderer::unload_mesh(GLT::asset::handle handle) {
+
+        u32 slot_idx = std::numeric_limits<u32>::max();
+        for (u32 i = 0; i < m_mesh_slots.size(); ++i)
+            if (m_mesh_slots[i].alive && m_mesh_slots[i].asset == handle) {
+                
+                slot_idx = i;
+                break;
+            }
+
+        VALIDATE(slot_idx != std::numeric_limits<u32>::max(), return, "", "handle not loaded");
+
+        mesh_slot& slot = m_mesh_slots[slot_idx];
+        slot.alive = false;
+
+        // BLAS destroy must not race in-flight frames. Easiest correct thing: wait for the GPU, then destroy. Load/unload is not a hot path.
+        m_device.waitIdle();
+        m_vr_dev->destroy_blas(slot.blas);
+        slot.blas = {};
+
+        // Leave the vertex/index/material ranges as holes for now. Adding a per-buffer free list is a follow-up if this ever matters.
+        m_free_slots.push_back(slot_idx);
+        m_tlas_dirty = true;
+
+        // Drop the asset registry reference so the CPU-side mesh can be evicted too.
+        if (auto reg = GLT::asset::registry::get_ref())
+            reg->unload(handle);
+    }
 
     // CLASS PROTECTED =================================================================================================
 
@@ -547,245 +693,62 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::create_acceleration_structures() {
 
-        // Load the two meshes through the asset registry. The registry returns handles;
-        // we ask it for the typed runtime representation via data_as<>().
+        // Create the persistent TLAS ----------------------------------------------------------------------------------
+        // Created once with a fixed max instance count. Its device address gets baked into the descriptor set inside 
+        // create_rt_pipeline(), so it must never move. Only its *contents* are rebuilt as the scene changes (rebuild_tlas_if_dirty).
+        {
+            vr::tlas_create_info tci{};
+            tci.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+            tci.max_instance_count = TLAS_MAX_INSTANCES;
+
+            std::tie(m_tlas_handle, m_tlas_build_info) = m_vr_dev->create_tlas(tci);
+
+            m_tlas_instance_buffer = m_vr_dev->create_instance_buffer(TLAS_MAX_INSTANCES);
+            m_live_buffer_count += 1;
+        }
+
+        // Pre-reserve shared-buffer headroom --------------------------------------------------------------------------
+        // Does two things at once:
+        //   a) Makes the first load_mesh() below see a non-empty source buffer, so the "grow" branch in reserve_mesh_space()
+        //      isn't hit against default-constructed buffers on the very first call.
+        //   b) Gives every load/unload thereafter room to fit without triggering a realloc.
+        reserve_mesh_space(VERTEX_HEADROOM_MIN, INDEX_HEADROOM_MIN, MATERIAL_HEADROOM_MIN);
+
+        // Load the initial meshes through the asset registry ----------------------------------------------------------
+        // Each call: claims a slot, uploads its slice, builds one BLAS, marks the TLAS dirty. Existing meshes are never touched.
+        // This is the same code path that runtime callers hit.
         auto registry = GLT::asset::registry::get_ref();
-        ASSERT(registry, "", "Failed to get asset registry")
+        ASSERT(registry, "", "Failed to get asset registry");
 
         const auto content_dir = std::filesystem::path(PROJECT_CONTENT_DIR);
         const std::filesystem::path mesh_paths[] = {
-            // content_dir / "mesh" / "cube.glt_mesh",
             content_dir / "mesh" / "stealth_ship.glt_mesh",
         };
 
-        std::vector<GLT::asset::mesh::mesh_asset*> meshes;
-        meshes.reserve(ARRAY_SIZE(mesh_paths));
+        for (const auto& path : mesh_paths) {
 
-        for (const auto& p : mesh_paths) {
-
-            auto h = registry->load(p);
-            ASSERT(h.has_value(), "", "Failed to load mesh asset")
-
-            GLT::asset::mesh::mesh_asset* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(*h);
-            ASSERT(mesh, "", "Asset is not a mesh_asset")
-
-            m_mesh_handles.push_back(*h);
-            meshes.push_back(mesh);
+            ASSERT(load_mesh(path), "", "Failed to load initial mesh [{}]", path.generic_string());
         }
 
-        // Figure out the total buffer sizes across all meshes.
-        u32 total_vertices = 0;
-        u32 total_indices = 0;
-        u32 total_submeshes = 0;
+        // Populate the TLAS with whatever we just loaded --------------------------------------------------------------
+        // The scene is now "ready" once create() returns, instead of waiting for the first begin_frame().
+        rebuild_tlas_if_dirty();
 
-        for (auto* m : meshes) {
-            total_vertices  += static_cast<u32>(m->vertices.size());
-            total_indices   += static_cast<u32>(m->indices.size());
-            total_submeshes += static_cast<u32>(m->submeshes.size());
-        }
-
-        m_scene_triangles = total_indices / 3;
-        m_scene_vertices  = total_vertices;
-
-        // Allocate GPU buffers. Vertex/index are also storage buffers so the chit shader
-        // could read them later (not used yet, but free to set up).
-        const auto as_input =
-            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-            vk::BufferUsageFlagBits::eStorageBuffer;
-
-        m_vertex_buffer = m_vr_dev->create_buffer(total_vertices * sizeof(GLT::asset::mesh::vertex), as_input,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-
-        m_index_buffer = m_vr_dev->create_buffer(total_indices * sizeof(u32), as_input,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-
-        m_material_buffer = m_vr_dev->create_buffer(total_submeshes * sizeof(gpu_material), vk::BufferUsageFlagBits::eStorageBuffer,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-
-        m_live_buffer_count += 3;
-
-        // Copy mesh data into the combined buffers, and build a per-mesh info table.
-        struct per_mesh {
-            GLT::asset::mesh::mesh_asset*       mesh;
-            u32                                 vertex_offset;      // in vertices
-            u32                                 index_offset;       // in indices
-            u32                                 material_offset;    // in gpu_material entries (= instance custom index)
-        };
-        std::vector<per_mesh> infos;
-        infos.reserve(meshes.size());
-
-        auto* vert_dst = static_cast<GLT::asset::mesh::vertex*>(m_vr_dev->map_buffer(m_vertex_buffer));
-        auto* idx_dst  = static_cast<u32*>(m_vr_dev->map_buffer(m_index_buffer));
-        auto* mat_dst  = static_cast<gpu_material*>(m_vr_dev->map_buffer(m_material_buffer));
-        u32 vert_off = 0, idx_off = 0, mat_off = 0;
-        for (auto* m : meshes) {
-
-            per_mesh info{ m, vert_off, idx_off, mat_off };
-            infos.push_back(info);
-
-            std::memcpy(vert_dst + vert_off, m->vertices.data(),
-                m->vertices.size() * sizeof(GLT::asset::mesh::vertex));
-            std::memcpy(idx_dst + idx_off, m->indices.data(),
-                m->indices.size() * sizeof(u32));
-
-            for (size_t si = 0; si < m->submeshes.size(); ++si) {
-
-                const auto& sm = m->submeshes[si];
-                if (sm.index_count < 3)
-                    continue;                                   // must match the BLAS loop below
-
-                const f32 t = static_cast<f32>(mat_off) / static_cast<f32>(total_submeshes);
-                gpu_material mat{};
-                mat.base_color = glm::vec4(
-                    0.5f + 0.5f * std::cos(6.2831853f * (t + 0.00f)),
-                    0.5f + 0.5f * std::cos(6.2831853f * (t + 0.33f)),
-                    0.5f + 0.5f * std::cos(6.2831853f * (t + 0.67f)),
-                    1.0f);
-                mat.roughness   = 0.6f;
-                mat.metallic    = 0.0f;
-                mat.vertex_base = info.vertex_offset;
-                mat.index_base  = info.index_offset + sm.first_index;
-
-                mat_dst[mat_off] = mat;
-                ++mat_off;
-            }
-
-            vert_off += static_cast<u32>(m->vertices.size());
-            idx_off  += static_cast<u32>(m->indices.size());
-        }
-
-        m_vr_dev->unmap_buffer(m_vertex_buffer);
-        m_vr_dev->unmap_buffer(m_index_buffer);
-        m_vr_dev->unmap_buffer(m_material_buffer);
-
-        // One BLAS per mesh, one geometry per submesh.
-        std::vector<vr::blas_create_info> blas_create_infos;
-        std::vector<vr::blas_build_info>  blas_build_infos;
-        m_blas_handles.resize(meshes.size());
-        blas_create_infos.reserve(meshes.size());
-        blas_build_infos.reserve(meshes.size());
-
-        for (size_t mi = 0; mi < meshes.size(); ++mi) {
-
-            const auto& info = infos[mi];
-            auto* m = info.mesh;
-
-            vr::blas_create_info bci{};
-            bci.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
-
-            const vk::DeviceAddress base_vertex_addr = m_vertex_buffer.dev_address + info.vertex_offset * sizeof(GLT::asset::mesh::vertex);
-            const vk::DeviceAddress base_index_addr = m_index_buffer.dev_address + info.index_offset * sizeof(u32);
-            for (const auto& sm : m->submeshes) {
-
-                if (sm.index_count < 3)
-                    continue;                                   // skip empty / degenerate submeshes
-
-                vr::geometry_data gd{};
-                gd.vertex_format = vk::Format::eR32G32B32Sfloat;
-                gd.stride = sizeof(GLT::asset::mesh::vertex);
-                gd.index_format = vk::IndexType::eUint32;
-                gd.primitive_count = sm.index_count / 3;
-                gd.data_addresses.vertex_dev_address = base_vertex_addr;
-                // Submesh indices live starting at sm.first_index inside this mesh's index block.
-                // The values inside that block already index into the mesh's own vertices, so the
-                // vertex address stays at the start of the mesh's vertex slice.
-                gd.data_addresses.index_dev_address  = base_index_addr + sm.first_index * sizeof(u32);
-                bci.geometries.push_back(gd);
-            }
-
-            auto [handle, build_info] = m_vr_dev->create_blas(bci);
-            m_blas_handles[mi] = handle;
-            blas_build_infos.push_back(build_info);
-            LOG(trace, "mesh '{}': {} verts, {} indices, {} submeshes", mi, m->vertices.size(), m->indices.size(), m->submeshes.size());
-        }
-
-        // TLAS: one instance per mesh. InstanceCustomIndex = material offset of that mesh.
-        // Layout (hard-coded for now): meshes placed along the X axis, spaced by 2.5 units.
-        vr::tlas_create_info tci{};
-        tci.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
-        tci.max_instance_count = static_cast<u32>(meshes.size());
-
-        vr::tlas_build_info tbi{};
-        std::tie(m_tlas_handle, tbi) = m_vr_dev->create_tlas(tci);
-
-        auto tlas_scratch = m_vr_dev->create_scratch_buffer_from_build_info(tbi);
-        auto instance_buf = m_vr_dev->create_instance_buffer(static_cast<u32>(meshes.size()));
-        m_live_buffer_count += 1;
-
-        std::vector<vk::AccelerationStructureInstanceKHR> instances;
-        instances.reserve(meshes.size());
-
-        for (size_t mi = 0; mi < meshes.size(); ++mi) {
-
-            const f32 x = (static_cast<f32>(mi) - (static_cast<f32>(meshes.size()) - 1.0f) * 0.5f) * 2.5f;
-            VkTransformMatrixKHR xform = {
-                1.0f, 0.0f, 0.0f, x,
-                0.0f, 1.0f, 0.0f, 0.0f,
-                0.0f, 0.0f, 1.0f, 0.0f
-            };
-
-            auto inst = vk::AccelerationStructureInstanceKHR()
-                .setTransform(xform)
-                .setInstanceCustomIndex(infos[mi].material_offset)   // <-- key material lookup
-                .setAccelerationStructureReference(m_blas_handles[mi].buffer.dev_address)
-                .setFlags(vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable)
-                .setMask(0xFF)
-                .setInstanceShaderBindingTableRecordOffset(0);
-
-            instances.push_back(inst);
-        }
-
-        m_vr_dev->update_buffer(instance_buf, instances.data(),
-            sizeof(vk::AccelerationStructureInstanceKHR) * instances.size());
-
-        // ---------------------------------------------------------------------------------
-        // Allocate the scratch buffer that all BLAS builds will share.
-        // IMPORTANT: this call also writes the scratch device address into every
-        // build_info; without it the vkCmdBuildAccelerationStructuresKHR we record
-        // below would reference a null scratch address and fault the device.
-        // ---------------------------------------------------------------------------------
-        auto blas_scratch = m_vr_dev->create_scratch_buffer_from_build_infos(blas_build_infos);
-        m_live_buffer_count += 1;
-
-        // ---------------------------------------------------------------------------------
-        // Record BLAS + TLAS builds.
-        // ---------------------------------------------------------------------------------
-        auto build_cmd = m_device.allocateCommandBuffers(
-            vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
-
-        build_cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-
-        m_vr_dev->build_blas(blas_build_infos, build_cmd);
-        m_vr_dev->add_acceleration_build_barrier(build_cmd);
-        m_vr_dev->build_tlas(tbi, instance_buf, static_cast<u32>(instances.size()), build_cmd);
-
-        build_cmd.end();
-
-        auto submit_info = vk::SubmitInfo()
-            .setCommandBufferCount(1)
-            .setPCommandBuffers(&build_cmd);
-
-        m_queues.graphics_queue.submit(submit_info, nullptr);
-        m_device.waitIdle();
-
-        // ---------------------------------------------------------------------------------
-        // Scratch and instance buffers are only needed for the duration of the build,
-        // so we can release them once the GPU is idle.
-        // ---------------------------------------------------------------------------------
-        m_vr_dev->destroy_buffer(blas_scratch);
-        m_vr_dev->destroy_buffer(tlas_scratch);
-        m_vr_dev->destroy_buffer(instance_buf);
-        m_live_buffer_count -= 2;                      // blas_scratch + tlas_scratch were both counted
-        m_device.freeCommandBuffers(m_graphics_pool, build_cmd);
-
-        // Cleanup
+        // Deferred cleanup --------------------------------------------------------------------------------------------
+        // BLASes now live on the slots, so walk those. Buffers and the TLAS are renderer-owned and go straight into the deletion queue.
         m_deletion_queue.push_func([&]() {
 
-            m_vr_dev->destroy_buffer(m_vertex_buffer);
-            m_vr_dev->destroy_buffer(m_index_buffer);
-            m_vr_dev->destroy_buffer(m_material_buffer);
-            for (auto& b : m_blas_handles)
-                m_vr_dev->destroy_blas(b);
+            for (auto& slot : m_mesh_slots) {
+                if (slot.alive && slot.blas.buffer.buffer)
+                    m_vr_dev->destroy_blas(slot.blas);
+            }
+            m_mesh_slots.clear();
+
+            if (m_vertex_buffer.buffer)        m_vr_dev->destroy_buffer(m_vertex_buffer);
+            if (m_index_buffer.buffer)         m_vr_dev->destroy_buffer(m_index_buffer);
+            if (m_material_buffer.buffer)      m_vr_dev->destroy_buffer(m_material_buffer);
+            if (m_tlas_instance_buffer.buffer) m_vr_dev->destroy_buffer(m_tlas_instance_buffer);
+
             m_vr_dev->destroy_tlas(m_tlas_handle);
         });
     }
@@ -916,6 +879,13 @@ namespace GLT::renderer_vk_ray {
 
 
     void renderer::update_descriptor_set() {
+
+        // Called from two places:
+        //   1. reserve_mesh_space() when the shared buffers move — m_resource_desc_buffer already exists by then, we're just refreshing the resource handles.
+        //   2. During init via reserve_mesh_space(), *before* create_rt_pipeline() has built m_resource_desc_buffer. 
+        //      Skip — create_rt_pipeline() will pick up the current m_resource_bindings state when it builds the descriptor buffer.
+        if (!m_resource_desc_buffer.buffer.buffer)
+            return;
 
         // // Set the camera position
         // // movement, rotation and input is handled by the Application Base class and we can modify the camera values as we like
@@ -1205,6 +1175,247 @@ namespace GLT::renderer_vk_ray {
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
+        }
+    }
+
+    // mesh handling ---------------------------------------------------------------------------------------------------
+
+    bool renderer::reserve_mesh_space(u32 v, u32 i, u32 m) {
+
+        const u32 need_v = m_vertex_used + v;
+        const u32 need_i = m_index_used + i;
+        const u32 need_m = m_material_used + m;
+
+        bool grew = false;
+
+        if (need_v > m_vertex_capacity) {
+            m_vertex_capacity = std::max(need_v, m_vertex_capacity + std::max(m_vertex_capacity / 2, VERTEX_HEADROOM_MIN));
+            grew = true;
+        }
+        if (need_i > m_index_capacity) {
+            m_index_capacity  = std::max(need_i, m_index_capacity + std::max(m_index_capacity / 2, INDEX_HEADROOM_MIN));
+            grew = true;
+        }
+        if (need_m > m_material_capacity) {
+            m_material_capacity = std::max(need_m, m_material_capacity + std::max(m_material_capacity / 2, MATERIAL_HEADROOM_MIN));
+            grew = true;
+        }
+        if (!grew) return false;
+
+        // Grow: create new buffers, copy old, then swap. Because device addresses change, every BLAS that reads them is invalid — caller must rebuild them.
+        const auto as_input = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer;
+
+        auto new_vb = m_vr_dev->create_buffer(m_vertex_capacity * sizeof(GLT::asset::mesh::vertex), as_input,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        auto new_ib = m_vr_dev->create_buffer(m_index_capacity * sizeof(u32), as_input,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        auto new_mb = m_vr_dev->create_buffer(m_material_capacity * sizeof(gpu_material), vk::BufferUsageFlagBits::eStorageBuffer,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+
+        std::memset(m_vr_dev->map_buffer(new_vb), 0, m_vertex_capacity * sizeof(GLT::asset::mesh::vertex));
+        std::memset(m_vr_dev->map_buffer(new_ib), 0, m_index_capacity  * sizeof(u32));
+        std::memset(m_vr_dev->map_buffer(new_mb), 0, m_material_capacity * sizeof(gpu_material));
+        m_vr_dev->unmap_buffer(new_vb);
+        m_vr_dev->unmap_buffer(new_ib);
+        m_vr_dev->unmap_buffer(new_mb);
+
+        // Copy the used region from old to new. Only touch a buffer if it has data —
+        // an unpopulated slot (e.g. right after the initial pre-reservation) was never mapped, so calling unmap on it would trip VMA's assertion.
+        if (m_vertex_used) {
+            const void* src = m_vr_dev->map_buffer(m_vertex_buffer);
+            void*       dst = m_vr_dev->map_buffer(new_vb);
+            std::memcpy(dst, src, m_vertex_used * sizeof(GLT::asset::mesh::vertex));
+            m_vr_dev->unmap_buffer(m_vertex_buffer);
+            m_vr_dev->unmap_buffer(new_vb);
+        }
+
+        if (m_index_used) {
+            const void* src = m_vr_dev->map_buffer(m_index_buffer);
+            void*       dst = m_vr_dev->map_buffer(new_ib);
+            std::memcpy(dst, src, m_index_used * sizeof(u32));
+            m_vr_dev->unmap_buffer(m_index_buffer);
+            m_vr_dev->unmap_buffer(new_ib);
+        }
+
+        if (m_material_used) {
+            const void* src = m_vr_dev->map_buffer(m_material_buffer);
+            void*       dst = m_vr_dev->map_buffer(new_mb);
+            std::memcpy(dst, src, m_material_used * sizeof(gpu_material));
+            m_vr_dev->unmap_buffer(m_material_buffer);
+            m_vr_dev->unmap_buffer(new_mb);
+        }
+
+        std::swap(m_vertex_buffer, new_vb);
+        std::swap(m_index_buffer, new_ib);
+        std::swap(m_material_buffer, new_mb);
+
+        m_device.waitIdle();
+
+        // After the swap, new_* hold the *old* buffers (possibly default-constructed).
+        if (new_vb.buffer) m_vr_dev->destroy_buffer(new_vb);
+        if (new_ib.buffer) m_vr_dev->destroy_buffer(new_ib);
+        if (new_mb.buffer) m_vr_dev->destroy_buffer(new_mb);
+
+        update_descriptor_set();
+        return true;
+    }
+
+
+    void renderer::rebuild_tlas_if_dirty() {
+
+        if (!m_tlas_dirty)
+            return;
+        m_tlas_dirty = false;
+
+        m_tlas_instances.clear();
+        m_tlas_instances.reserve(m_mesh_slots.size());
+
+        for (const auto& slot : m_mesh_slots) {
+
+            if (!slot.alive)
+                continue;
+
+            // layout (whatever you want, e.g. layout N by 2.5 units along X)
+            const f32 x = (static_cast<f32>(m_tlas_instances.size()) - 0.5f * (static_cast<f32>(m_mesh_slots.size()) - 1.0f)) * 2.5f;
+            VkTransformMatrixKHR xform = { 1,0,0,x,  0,1,0,0,  0,0,1,0 };
+
+            m_tlas_instances.push_back(
+                vk::AccelerationStructureInstanceKHR()
+                    .setTransform(xform)
+                    .setInstanceCustomIndex(slot.material_offset)
+                    .setAccelerationStructureReference(slot.blas.buffer.dev_address)
+                    .setFlags(vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable)
+                    .setMask(0xFF)
+                    .setInstanceShaderBindingTableRecordOffset(0));
+        }
+
+        if (!m_tlas_instances.empty()) {
+            m_vr_dev->update_buffer(m_tlas_instance_buffer, m_tlas_instances.data(),
+                sizeof(vk::AccelerationStructureInstanceKHR) * m_tlas_instances.size());
+        }
+
+        auto scratch = m_vr_dev->create_scratch_buffer_from_build_info(m_tlas_build_info);
+        auto cmd = m_device.allocateCommandBuffers(vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
+        cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+        m_vr_dev->build_tlas(m_tlas_build_info, m_tlas_instance_buffer, static_cast<u32>(m_tlas_instances.size()), cmd);
+        cmd.end();
+
+        auto si = vk::SubmitInfo().setCommandBufferCount(1).setPCommandBuffers(&cmd);
+        m_queues.graphics_queue.submit(si, nullptr);
+        m_device.waitIdle();
+
+        m_vr_dev->destroy_buffer(scratch);
+        m_device.freeCommandBuffers(m_graphics_pool, cmd);
+    }
+
+
+    void renderer::build_blas_for_slot(mesh_slot& slot) {
+
+        auto* mesh = GLT::asset::registry::get_ref()->data_as<GLT::asset::mesh::mesh_asset>(slot.asset);
+        ASSERT(mesh, "", "slot has no mesh");
+
+        vr::blas_create_info bci{};
+        bci.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+
+        const vk::DeviceAddress base_vertex_addr = m_vertex_buffer.dev_address + slot.vertex_offset * sizeof(GLT::asset::mesh::vertex);
+        const vk::DeviceAddress base_index_addr = m_index_buffer.dev_address  + slot.index_offset  * sizeof(u32);
+
+        for (const auto& sm : mesh->submeshes) {
+            if (sm.index_count < 3)
+                continue;
+
+            vr::geometry_data gd{};
+            gd.vertex_format = vk::Format::eR32G32B32Sfloat;
+            gd.stride = sizeof(GLT::asset::mesh::vertex);
+            gd.index_format = vk::IndexType::eUint32;
+            gd.primitive_count = sm.index_count / 3;
+            gd.data_addresses.vertex_dev_address = base_vertex_addr;
+            gd.data_addresses.index_dev_address  = base_index_addr + sm.first_index * sizeof(u32);
+            bci.geometries.push_back(gd);
+        }
+
+        auto [handle, build_info] = m_vr_dev->create_blas(bci);
+        slot.blas = handle;
+
+        std::vector<vr::blas_build_info> infos = { build_info };
+        auto scratch = m_vr_dev->create_scratch_buffer_from_build_infos(infos);
+        auto cmd = m_device.allocateCommandBuffers(vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
+        
+        cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+        m_vr_dev->build_blas(infos, cmd);
+        m_vr_dev->add_acceleration_build_barrier(cmd);
+        cmd.end();
+
+        auto si = vk::SubmitInfo().setCommandBufferCount(1).setPCommandBuffers(&cmd);
+        m_queues.graphics_queue.submit(si, nullptr);
+        m_device.waitIdle();
+
+        m_vr_dev->destroy_buffer(scratch);
+        m_device.freeCommandBuffers(m_graphics_pool, cmd);
+    }
+
+
+    void renderer::upload_mesh_slice(mesh_slot& slot, GLT::asset::mesh::mesh_asset& mesh) {
+
+        // Vertices
+        {
+            auto* dst = static_cast<GLT::asset::mesh::vertex*>(m_vr_dev->map_buffer(m_vertex_buffer));
+            std::memcpy(dst + slot.vertex_offset, mesh.vertices.data(), mesh.vertices.size() * sizeof(GLT::asset::mesh::vertex));
+            m_vr_dev->unmap_buffer(m_vertex_buffer);
+        }
+
+        // Indices
+        {
+            auto* dst = static_cast<u32*>(m_vr_dev->map_buffer(m_index_buffer));
+            std::memcpy(dst + slot.index_offset, mesh.indices.data(), mesh.indices.size() * sizeof(u32));
+            m_vr_dev->unmap_buffer(m_index_buffer);
+        }
+
+        // Materials — one entry per submesh.
+        {
+            auto* dst = static_cast<gpu_material*>(m_vr_dev->map_buffer(m_material_buffer));
+
+            u32 mat_off = slot.material_offset;
+            for (const auto& sm : mesh.submeshes) {
+                if (sm.index_count < 3)
+                    continue;                 // must match build_blas_for_slot
+
+                const f32 t = static_cast<f32>(mat_off) / static_cast<f32>(std::max(1u, m_material_used + slot.material_count));
+
+                gpu_material mat{};
+                mat.base_color = glm::vec4(
+                    0.5f + 0.5f * std::cos(6.2831853f * (t + 0.00f)),
+                    0.5f + 0.5f * std::cos(6.2831853f * (t + 0.33f)),
+                    0.5f + 0.5f * std::cos(6.2831853f * (t + 0.67f)),
+                    1.0f);
+                mat.roughness   = 0.6f;
+                mat.metallic    = 0.0f;
+                mat.vertex_base = slot.vertex_offset;
+                mat.index_base  = slot.index_offset + sm.first_index;
+
+                dst[mat_off++] = mat;
+            }
+            m_vr_dev->unmap_buffer(m_material_buffer);
+        }
+    }
+
+
+    void renderer::rebuild_all_blases() {
+
+        // Called after the shared vertex/index/material buffers moved. Every BLAS
+        // baked a device address into its build; they are all stale now.
+        m_device.waitIdle();
+
+        for (auto& slot : m_mesh_slots) {
+
+            if (!slot.alive)
+                continue;
+
+            if (slot.blas.buffer.buffer)          // guard against a default-constructed handle
+                m_vr_dev->destroy_blas(slot.blas);
+                
+            slot.blas = {};
+            build_blas_for_slot(slot);
         }
     }
 

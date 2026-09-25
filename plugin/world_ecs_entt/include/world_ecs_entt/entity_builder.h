@@ -10,8 +10,11 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 namespace GLT::world::world_ecs_entt {
-
     class ecs_world_plugin;
+}
+
+namespace GLT::world::world_ecs_entt {
+
 
     // CONSTANTS =======================================================================================================
 
@@ -104,4 +107,4 @@ namespace GLT::world::world_ecs_entt {
 
 }
 
-// NOTE: entity_builder.inl is included at the bottom of ecs_world_plugin.h, after the plugin class has been fully defined.
+// NOTE: [entity_builder.inl] is included at the bottom of [world.h], after the plugin class has been fully defined.

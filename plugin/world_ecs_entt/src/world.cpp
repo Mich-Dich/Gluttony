@@ -96,6 +96,10 @@ namespace GLT::world::world_ecs_entt {
                 std::memcpy(&h.parent, data.data(), sizeof(entity_id));
             });
 
+
+        // Editor-side registrations (the UI side). May be empty in a runtime build; components still work, they just don't show a panel.
+        register_all_component_descriptors(m_components);
+
         LOG_LOADED
     }
 
@@ -283,25 +287,27 @@ namespace GLT::world::world_ecs_entt {
         stream_pass();
     }
 
+    // hierarchy -------------------------------------------------------------------------------------------------------
 
-    entity_builder ecs_world_plugin::make_entity(std::string_view name) {
+    std::vector<entity_id> ecs_world_plugin::root_entities() const {
 
-        const entity_id id = spawn();
-        entity_builder b{ *this, id };
-        if (!name.empty())
-            b.named(std::string(name));
-        return b;
-    }
+        std::vector<entity_id> roots;
+        roots.reserve(m_slots.size());
 
+        for (u32 i = 0; i < m_slots.size(); ++i) {
 
-    entity_builder ecs_world_plugin::edit(entity_id id) { return entity_builder{ *this, id }; }
+            if (m_slots[i].handle == entt::null)
+                continue;
 
+            const entity_id id{ i, m_slots[i].generation };
 
-    entity_id ecs_world_plugin::parent_of(entity_id id) const noexcept {
-
-        if (const hierarchy* h = hierarchy_of(id))
-            return h->parent;
-        return INVALID_ENTITY;
+            // Orphans count as roots so a corrupted parent link doesn't make
+            // an entity unreachable in the outliner.
+            const hierarchy* h = hierarchy_of(id);
+            if (!h || !h->parent.is_valid() || !alive(h->parent))
+                roots.push_back(id);
+        }
+        return roots;
     }
 
 
@@ -310,6 +316,22 @@ namespace GLT::world::world_ecs_entt {
         if (const hierarchy* h = hierarchy_of(id))
             return h->children;
         return {};
+    }
+
+
+    std::string_view ecs_world_plugin::entity_name(entity_id id) const {
+
+        if (const auto* n = m_registry.try_get<name_component>(entt_of(id)))
+            return n->name;
+        return {};
+    }
+
+
+    bool ecs_world_plugin::has_children(entity_id id) const noexcept {
+
+        if (const hierarchy* h = hierarchy_of(id))
+            return !h->children.empty();
+        return false;
     }
 
 
@@ -335,8 +357,8 @@ namespace GLT::world::world_ecs_entt {
         // Detach from old parent's child list.
         if (h.parent.is_valid()) {
             if (auto* old = hierarchy_of(h.parent)) {
-                auto& v = old->children;
-                v.erase(std::remove(v.begin(), v.end(), child), v.end());
+                auto& children_vec = old->children;
+                children_vec.erase(std::remove(children_vec.begin(), children_vec.end(), child), children_vec.end());
             }
         }
 
@@ -351,12 +373,30 @@ namespace GLT::world::world_ecs_entt {
         }
     }
 
+    // builder API -----------------------------------------------------------------------------------------------------
 
-    [[nodiscard]] entt::registry& ecs_world_plugin::registry() noexcept { return m_registry; }
+    entity_builder ecs_world_plugin::make_entity(std::string_view name) {
+
+        const entity_id id = spawn();
+        entity_builder b{ *this, id };
+        if (!name.empty())
+            b.named(std::string(name));
+        return b;
+    }
 
 
-    [[nodiscard]] const entt::registry& ecs_world_plugin::registry() const noexcept { return m_registry; }
+    entity_builder ecs_world_plugin::edit(entity_id id) { return entity_builder{ *this, id }; }
 
+    // hierarchy queries -----------------------------------------------------------------------------------------------
+
+    entity_id ecs_world_plugin::parent_of(entity_id id) const noexcept {
+
+        if (const hierarchy* h = hierarchy_of(id))
+            return h->parent;
+        return INVALID_ENTITY;
+    }
+
+    // ECS internals (used by entity_builder) --------------------------------------------------------------------------
 
     entt::entity ecs_world_plugin::entt_of(entity_id id) const noexcept {
 
@@ -378,6 +418,22 @@ namespace GLT::world::world_ecs_entt {
                 return { i, m_slots[i].generation };
         return INVALID_ENTITY;
     }
+        
+    // i_world_inspector -----------------------------------------------------------------------------------------------
+
+    std::span<const GLT::world::component_descriptor> ecs_world_plugin::descriptors() const noexcept { return m_components.all(); }
+
+
+    std::vector<const GLT::world::component_descriptor*> ecs_world_plugin::components_on(entity_id id) const { return m_components.on(id); }
+
+
+    bool ecs_world_plugin::add_component(entity_id id, u64 hash) { return m_components.add(id, hash); }
+
+
+    bool ecs_world_plugin::remove_component(entity_id id, u64 hash) { return m_components.remove(id, hash); }
+
+
+    void ecs_world_plugin::copy_components(entity_id from, entity_id to) { m_components.copy(from, to); }
 
     // CLASS PROTECTED =================================================================================================
 
@@ -528,6 +584,24 @@ namespace GLT::world::world_ecs_entt {
             if (region.id == id)
                 return &region;
         return nullptr;
+    }
+
+
+    hierarchy* ecs_world_plugin::hierarchy_of(entity_id id) noexcept {
+
+        const entt::entity e = entt_of(id);
+        if (e == entt::null)
+            return nullptr;
+        return m_registry.try_get<hierarchy>(e);
+    }
+
+
+    const hierarchy* ecs_world_plugin::hierarchy_of(entity_id id) const noexcept {
+
+        const entt::entity e = entt_of(id);
+        if (e == entt::null)
+            return nullptr;
+        return m_registry.try_get<hierarchy>(e);
     }
 
 }

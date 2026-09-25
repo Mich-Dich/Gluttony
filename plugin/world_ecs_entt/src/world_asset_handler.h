@@ -100,3 +100,5 @@ namespace GLT::world::world_ecs_entt {
     };
 
 }
+
+#include "world_asset_handler.inl"

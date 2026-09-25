@@ -123,13 +123,13 @@ void main() {
             gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
             0xFF,
             1u,                    // sbtRecordOffset  → AO hit group
-            1u,                    // sbtRecordStride  → unused with a single AO group
+            0u,                    // sbtRecordStride  → offset alone selects the hit group (do NOT walk by geometry)
             1u,                    // missIndex        → AO miss shader
             org,
             0.001,
             dir,
             AO_RADIUS,
-            0);                    // payload location 0
+            0);
 
         occlusion += payload.x;
     }

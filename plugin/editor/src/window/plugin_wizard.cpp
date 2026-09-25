@@ -304,7 +304,7 @@ namespace GLT::editor {
 
         if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
 
-            UI::custom_frame(SETTINGS_PANEL_WIDTH, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
+            GLT::UI::custom_frame(SETTINGS_PANEL_WIDTH, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
                 [this]() {
                     draw_settings_panel(); 
                 },
@@ -372,24 +372,24 @@ namespace GLT::editor {
             m_cmake_editor.SetText(cmake_src);
 
         const std::string entry_file_loc = "src/" + ENTRY_FILE_NAME;
-        if (UI::begin_collapsing_header_section(entry_file_loc.c_str())) {
+        if (GLT::UI::begin_collapsing_header_section(entry_file_loc.c_str())) {
 
             ImGui::BeginChild("##pw_preview_entry");
             ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::monospace_regular));
             m_entry_point_editor.Render("##entry_editor");
             ImGui::PopFont();
             ImGui::EndChild();
-            UI::end_collapsing_header_section();
+            GLT::UI::end_collapsing_header_section();
         }
 
-        if (UI::begin_collapsing_header_section(BUILD_FILE_NAME.c_str())) {
+        if (GLT::UI::begin_collapsing_header_section(BUILD_FILE_NAME.c_str())) {
 
             ImGui::BeginChild("##pw_preview_cmake");
             ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::monospace_regular));
             m_cmake_editor.Render("##cmake_editor");
             ImGui::PopFont();
             ImGui::EndChild();
-            UI::end_collapsing_header_section();
+            GLT::UI::end_collapsing_header_section();
         }
     }
 
@@ -397,65 +397,65 @@ namespace GLT::editor {
 
     void plugin_wizard_window::draw_identity_section() {
 
-        if (!UI::begin_collapsing_header_section("Identity"))
+        if (!GLT::UI::begin_collapsing_header_section("Identity"))
             return;
 
-        if (UI::begin_table("plugin_editor_details", false)) {
+        if (GLT::UI::begin_table("plugin_editor_details", false)) {
 
-            UI::table_row("name", m_plugin_name, m_editing_plugin_name);
+            GLT::UI::table_row("name", m_plugin_name, m_editing_plugin_name);
 
-            if (UI::table_row("##pw_root", m_target_root, enum_options<target_root>(), 
+            if (GLT::UI::table_row("##pw_root", m_target_root, enum_options<target_root>(), 
                 "Where the plugin source should be written.\nProject: next to the project's content folder.\nEngine:  under the engine source tree (requires write access)."))
                     refresh_plugin_path();
 
-            UI::end_table();
+            GLT::UI::end_table();
         }
 
         if (!m_plugin_name.empty() && namespace_name() != m_plugin_name)
             ImGui::TextDisabled("Namespace will be sanitized to '%s'", namespace_name().c_str());
 
-        UI::end_collapsing_header_section();
+        GLT::UI::end_collapsing_header_section();
     }
 
 
     void plugin_wizard_window::draw_lifecycle_section() {
 
-        if (!UI::begin_collapsing_header_section("Lifecycle"))
+        if (!GLT::UI::begin_collapsing_header_section("Lifecycle"))
             return;
 
-        if (UI::begin_table("plugin_editor_details", false)) {
+        if (GLT::UI::begin_table("plugin_editor_details", false)) {
 
-            UI::table_row("load phase", m_load_phase, enum_options<GLT::plugin_manager::phase>(),
+            GLT::UI::table_row("load phase", m_load_phase, enum_options<GLT::plugin_manager::phase>(),
                 "Engine lifecycle moment when this plugin is loaded.\nPick the phase that provides the subsystems you depend on.");
 
-            UI::table_row("unload phase", m_unload_phase, enum_options<GLT::plugin_manager::phase>(),
+            GLT::UI::table_row("unload phase", m_unload_phase, enum_options<GLT::plugin_manager::phase>(),
                 "Engine lifecycle moment when this plugin is unloaded.\nShould be symmetric with the load phase in most cases.");
 
-            UI::table_row("target interface", m_target_interface, enum_options<GLT::plugin_manager::interface>(),
+            GLT::UI::table_row("target interface", m_target_interface, enum_options<GLT::plugin_manager::interface>(),
                 "Core subsystem this plugin replaces or extends.\nOnly one plugin per interface may be active at a time.");
 
-            UI::end_table();
+            GLT::UI::end_table();
         }
-        UI::end_collapsing_header_section();
+        GLT::UI::end_collapsing_header_section();
     }
 
 
     void plugin_wizard_window::draw_dependencies_section() {
 
-        if (!UI::begin_collapsing_header_section("Dependencies"))
+        if (!GLT::UI::begin_collapsing_header_section("Dependencies"))
             return;
 
         i32 remove_name_idx  = -1;
         i32 remove_iface_idx = -1;
 
-        if (UI::begin_table("plugin_editor_details", false)) {
+        if (GLT::UI::begin_table("plugin_editor_details", false)) {
 
             // ---- name-based dependencies -----------------------------------
             for (size_t i = 0; i < m_plugin_dependencies_name.size(); ++i) {
 
                 ImGui::PushID(static_cast<int>(i));
 
-                UI::table_row(
+                GLT::UI::table_row(
                     []{ ImGui::TextUnformatted("name"); },
                     [this, &remove_name_idx, i]{
                         ImGui::TextUnformatted(m_plugin_dependencies_name[i].c_str());
@@ -473,7 +473,7 @@ namespace GLT::editor {
                 ImGui::PushID(static_cast<int>(i));
 
                 bool removed = false;
-                UI::table_row("interface", m_plugin_dependencies_interface[i], enum_options<GLT::plugin_manager::interface>(), &removed);
+                GLT::UI::table_row("interface", m_plugin_dependencies_interface[i], enum_options<GLT::plugin_manager::interface>(), &removed);
 
                 if (removed)
                     remove_iface_idx = static_cast<i32>(i);
@@ -481,7 +481,7 @@ namespace GLT::editor {
                 ImGui::PopID();
             }
 
-            UI::end_table();
+            GLT::UI::end_table();
         }
 
         if (remove_name_idx >= 0)
@@ -494,39 +494,39 @@ namespace GLT::editor {
             ImGui::TextDisabled("(no dependencies)");
 
         ImGui::Spacing();
-        if (UI::gray_button("+ Add dependency"))
+        if (GLT::UI::gray_button("+ Add dependency"))
             m_open_add_dependency = true;
 
-        UI::end_collapsing_header_section();
+        GLT::UI::end_collapsing_header_section();
     }
 
 
     void plugin_wizard_window::draw_build_section() {
 
-        if (!UI::begin_collapsing_header_section("Build config"))
+        if (!GLT::UI::begin_collapsing_header_section("Build config"))
             return;
 
-        if (UI::begin_table("plugin_editor_details", false)) {
+        if (GLT::UI::begin_table("plugin_editor_details", false)) {
 
-            UI::table_row("compile defs", m_compile_defs, m_editing_compile_defs);
-            UI::table_row("Use GLM", m_use_glm);
-            UI::table_row("Use ImGui", m_use_imgui);
-            UI::table_row("Create asset dir", m_create_asset_dir);
-            UI::end_table();
+            GLT::UI::table_row("compile defs", m_compile_defs, m_editing_compile_defs);
+            GLT::UI::table_row("Use GLM", m_use_glm);
+            GLT::UI::table_row("Use ImGui", m_use_imgui);
+            GLT::UI::table_row("Create asset dir", m_create_asset_dir);
+            GLT::UI::end_table();
         }
 
-        UI::end_collapsing_header_section();
+        GLT::UI::end_collapsing_header_section();
     }
 
 
     void plugin_wizard_window::draw_vendor_section() {
 
-        if (!UI::begin_collapsing_header_section("Vendor repositories"))
+        if (!GLT::UI::begin_collapsing_header_section("Vendor repositories"))
             return;
 
         i32 remove_idx = -1;
 
-        if (UI::begin_table("plugin_editor_details", false)) {
+        if (GLT::UI::begin_table("plugin_editor_details", false)) {
 
             for (size_t i = 0; i < m_vendors.size(); ++i) {
 
@@ -538,7 +538,7 @@ namespace GLT::editor {
                     (v.ref_mode == vendor_ref_mode::branch) ? " [BRANCH]" :
                     (v.ref_mode == vendor_ref_mode::tag)    ? " [TAG]"    : "";
 
-                UI::table_row(
+                GLT::UI::table_row(
                     [&alias, ref_suffix]{ ImGui::Text("%s%s", alias.c_str(), ref_suffix); },
                     [&v, &remove_idx, i]{
 
@@ -556,7 +556,7 @@ namespace GLT::editor {
                 ImGui::PopID();
             }
 
-            UI::end_table();
+            GLT::UI::end_table();
         }
 
         if (remove_idx >= 0)
@@ -566,10 +566,10 @@ namespace GLT::editor {
             ImGui::TextDisabled("(no vendor libraries)");
 
         ImGui::Spacing();
-        if (UI::gray_button("+ Add vendor repo"))
+        if (GLT::UI::gray_button("+ Add vendor repo"))
             m_open_add_vendor = true;
 
-        UI::end_collapsing_header_section();
+        GLT::UI::end_collapsing_header_section();
     }
 
 
@@ -597,12 +597,12 @@ namespace GLT::editor {
         // Buttons -------------------------------------------------------------------------------------------------
         const f32 width = (ImGui::GetContentRegionAvail().x / 2.0f) - 5.0f;
 
-        if (UI::gray_button("Reset", ImVec2(width, 0.0f)))
+        if (GLT::UI::gray_button("Reset", ImVec2(width, 0.0f)))
             reset_form();
 
         ImGui::SameLine();
 
-        if (UI::gray_button("Create Plugin", ImVec2(width, 0.0f)))
+        if (GLT::UI::gray_button("Create Plugin", ImVec2(width, 0.0f)))
             on_create_clicked();
     }
 
@@ -616,20 +616,20 @@ namespace GLT::editor {
         ImGui::TextUnformatted("Add plugin dependency");
         ImGui::Separator();
 
-        if (UI::begin_table("plugin_editor_details", false)) {
+        if (GLT::UI::begin_table("plugin_editor_details", false)) {
 
-            UI::table_row("mode", m_new_dep_mode, enum_options<dependency_mode>());
+            GLT::UI::table_row("mode", m_new_dep_mode, enum_options<dependency_mode>());
 
             if (m_new_dep_mode == dependency_mode::by_name) {
 
-                UI::table_row("plugin name", m_new_dep_name, m_editing_new_dep_name);
+                GLT::UI::table_row("plugin name", m_new_dep_name, m_editing_new_dep_name);
 
             } else {
 
-                UI::table_row("interface", m_new_dep_iface, enum_options<GLT::plugin_manager::interface>());
+                GLT::UI::table_row("interface", m_new_dep_iface, enum_options<GLT::plugin_manager::interface>());
             }
 
-            UI::end_table();
+            GLT::UI::end_table();
         }
 
         const bool can_add =
@@ -638,7 +638,7 @@ namespace GLT::editor {
 
         ImGui::BeginDisabled(!can_add);
 
-        if (UI::gray_button("Add")) {
+        if (GLT::UI::gray_button("Add")) {
 
             if (m_new_dep_mode == dependency_mode::by_name)
                 m_plugin_dependencies_name.push_back(m_new_dep_name);
@@ -652,7 +652,7 @@ namespace GLT::editor {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (UI::gray_button("Cancel"))
+        if (GLT::UI::gray_button("Cancel"))
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
@@ -668,26 +668,26 @@ namespace GLT::editor {
         ImGui::TextUnformatted("Add vendor repository");
         ImGui::Separator();
 
-        if (UI::begin_table("plugin_editor_details", false)) {
+        if (GLT::UI::begin_table("plugin_editor_details", false)) {
 
-            UI::table_row("url", m_new_vendor_url, m_editing_new_vendor_url);
+            GLT::UI::table_row("url", m_new_vendor_url, m_editing_new_vendor_url);
 
-            UI::table_row("alias", m_new_vendor_alias, m_editing_new_vendor_alias, true,
+            GLT::UI::table_row("alias", m_new_vendor_alias, m_editing_new_vendor_alias, true,
                 "Short identifier used for the vendored directory and\nthe generated <ALIAS>_DIR CMake variable.");
 
-            UI::table_row("ref type", m_new_vendor_ref_mode, enum_options<vendor_ref_mode>());
+            GLT::UI::table_row("ref type", m_new_vendor_ref_mode, enum_options<vendor_ref_mode>());
 
             if (m_new_vendor_ref_mode != vendor_ref_mode::none)
-                UI::table_row("ref value", m_new_vendor_ref_value, m_editing_new_vendor_ref_value);
+                GLT::UI::table_row("ref value", m_new_vendor_ref_value, m_editing_new_vendor_ref_value);
 
-            UI::table_row("shallow", m_new_vendor_shallow);
+            GLT::UI::table_row("shallow", m_new_vendor_shallow);
 
-            UI::end_table();
+            GLT::UI::end_table();
         }
 
         ImGui::BeginDisabled(m_new_vendor_url.empty());
 
-        if (UI::gray_button("Add")) {
+        if (GLT::UI::gray_button("Add")) {
 
             vendor_entry v{
 
@@ -710,7 +710,7 @@ namespace GLT::editor {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (UI::gray_button("Cancel"))
+        if (GLT::UI::gray_button("Cancel"))
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();

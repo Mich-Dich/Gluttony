@@ -3,10 +3,11 @@
 
 #include <plugin_system/i_world_plugin.h>
 
-#include "handler.h"
+#include "world_asset_handler.h"
 #include "components.h"
 #include "entity_codec.h"
 #include "entity_builder.h"
+#include "component_registry.h"
 
 
 
@@ -30,8 +31,7 @@ namespace GLT::world::world_ecs_entt {
 
     // Default world implementation shipped with the engine. Backed by EnTT.
     //
-    // Region entity data lives in region_asset::entity_data as an opaque blob
-    // produced by entity_codec (CODEC_ENTT_V1).
+    // Region entity data lives in region_asset::entity_data as an opaque blob produced by entity_codec (CODEC_ENTT_V1).
     //
     // Owns:
     //   - the ECS registry
@@ -41,7 +41,7 @@ namespace GLT::world::world_ecs_entt {
     // Does NOT own:
     //   - the region/world assets themselves (registry does)
     //   - asset refcounting (see notes at the bottom of the .cpp)
-    class ecs_world_plugin final : public i_world_plugin {
+    class ecs_world_plugin final : public GLT::world::i_world_plugin, public GLT::world::i_world_inspector {
     public:
 
         ecs_world_plugin();
@@ -103,11 +103,37 @@ namespace GLT::world::world_ecs_entt {
 
         [[nodiscard]] f32 get_streaming_radius() const noexcept override;
 
-        // --- update ---------------------------------------------------------------------------------------------------
+        // update ------------------------------------------------------------------------------------------------------
 
         void update(f32 delta_time) override;
 
-        // --- extension API for plugins that couple to this concrete type ----------------------------------------------
+        // hierarchy ---------------------------------------------------------------------------------------------------
+
+        [[nodiscard]] std::vector<entity_id> root_entities() const override;
+
+
+        // Returns a copy — the underlying vector lives in the ECS and may be invalidated by any subsequent structural change.
+        [[nodiscard]] std::vector<entity_id> children_of(entity_id id) const override;
+
+
+        [[nodiscard]] std::string_view entity_name(entity_id id) const override;
+
+
+        [[nodiscard]] bool has_children(entity_id id) const noexcept override;
+
+
+        // The only place the parent/child invariant is enforced. Use this instead of touching `hierarchy` directly.
+        //
+        //   - self-parent: no-op
+        //   - cycle-creating: no-op
+        //   - parent == INVALID_ENTITY: detach from current parent
+        //   - parent not alive: no-op
+        void set_parent(entity_id child, entity_id parent) override;
+
+
+        [[nodiscard]] entity_id parent_of(entity_id id) const noexcept override;
+
+        // extension API for plugins that couple to this concrete type -------------------------------------------------
 
         [[nodiscard]] entt::registry& registry() noexcept { return m_registry; }
 
@@ -127,37 +153,31 @@ namespace GLT::world::world_ecs_entt {
         // Open an existing entity for editing. The returned builder is invalid if `id` is not alive.
         [[nodiscard]] entity_builder edit(entity_id id);
 
-        // hierarchy queries -------------------------------------------------------------------------------------------
-
-        [[nodiscard]] entity_id parent_of(entity_id id) const noexcept;
-
-
-        // Returns a copy — the underlying vector lives in the ECS and may be invalidated by any subsequent structural change.
-        [[nodiscard]] std::vector<entity_id> children_of(entity_id id) const;
-
-
-        // hierarchy mutation ------------------------------------------------------------------------------------------
-
-        // The only place the parent/child invariant is enforced. Use this instead of touching `hierarchy` directly.
-        //
-        //   - self-parent: no-op
-        //   - cycle-creating: no-op
-        //   - parent == INVALID_ENTITY: detach from current parent
-        //   - parent not alive: no-op
-        void set_parent(entity_id child, entity_id parent);
-
         // ECS internals (used by entity_builder) -----------------------------------------------------------------------
-
-        [[nodiscard]] entt::registry& registry() noexcept;
-
-
-        [[nodiscard]] const entt::registry& registry() const noexcept;
-
 
         [[nodiscard]] entt::entity entt_of(entity_id id) const noexcept;
 
 
         [[nodiscard]] entity_id id_of(entt::entity e) const noexcept;
+
+
+
+
+        // i_world_inspector -------------------------------------------------------------------------------------------
+
+        [[nodiscard]] std::span<const GLT::world::component_descriptor> descriptors() const noexcept override;
+
+
+        [[nodiscard]] std::vector<const GLT::world::component_descriptor*> components_on(entity_id id) const override;
+
+
+        bool add_component(entity_id id, u64 hash) override;
+
+
+        bool remove_component(entity_id id, u64 hash) override;
+
+
+        void copy_components(entity_id from, entity_id to) override;
 
     private:
 
@@ -218,6 +238,10 @@ namespace GLT::world::world_ecs_entt {
         GLT::asset::handle                                  m_world{};
         glm::vec3                                           m_streaming_anchor{ 0.f };
         f32                                                 m_streaming_radius{ 0.f };
+        component_registry                                  m_components{ *this };
     };
 
 }
+
+#include "entity_builder.inl"
+#include "component_registry.inl"

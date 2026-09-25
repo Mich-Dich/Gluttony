@@ -3,7 +3,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::editor::UI {
+namespace GLT::UI {
 
     // CONSTANTS =======================================================================================================
 
@@ -333,7 +333,6 @@ namespace GLT::editor::UI {
 	template<typename T>
 	bool table_row_slider(std::string_view label, T& value, f32 min_value, f32 max_value, f32 draw_speed, ImGuiInputTextFlags flags) {
 
-		ImGuiStyle& style = ImGui::GetStyle();
 		flags |= ImGuiInputTextFlags_AllowTabInput;
 
 		ImGui::TableNextRow();
@@ -374,7 +373,6 @@ namespace GLT::editor::UI {
 	bool table_row_drag_scalar(std::string_view label, T& value, const char* format, T min_value, T max_value, f32 draw_speed, 
         ImGuiInputTextFlags flags) {
 
-		ImGuiStyle& style = ImGui::GetStyle();
 		flags |= ImGuiInputTextFlags_AllowTabInput;
 
 		ImGui::TableNextRow();

@@ -114,6 +114,38 @@ namespace GLT::world {
         // activation/deactivation pass here using the current anchor.
         virtual void update(const f32 delta_time) = 0;
 
+        // hierarchy ---------------------------------------------------------------------------------------------------
+
+        // Tree view over the world's entities. Not every world needs a hierarchy — a flat implementation can leave the defaults
+        // and the outliner will show a single-level list.
+        // The editor consumes this; the world plugin does not know who's asking.
+
+        // Snapshot of every live entity that has no parent (or a parent that doesn't exist — orphans are treated as roots so they're always reachable).
+        [[nodiscard]] virtual std::vector<entity_id> root_entities() const { return {}; }
+
+
+        // Direct children of `id`, in a stable order. Empty if the entity has none or the implementation has no hierarchy.
+        [[nodiscard]] virtual std::vector<entity_id> children_of(entity_id /*id*/) const { return {}; }
+
+
+        // Borrowed for the current frame only. Valid until the next structural change (spawn / despawn / reparent / rename).
+        // Copy if you need to keep it. Empty view = "no name"; callers should substitute a fallback.
+        [[nodiscard]] virtual std::string_view entity_name(entity_id /*id*/) const { return {}; }
+
+
+        [[nodiscard]] virtual bool has_children(entity_id /*id*/) const noexcept { return false; }
+
+
+        // Reparent. INVALID_ENTITY detaches. Implementations are required to be cycle-safe: parenting an ancestor under its
+        // own descendant must be a no-op, not a corruption.
+        virtual void set_parent(entity_id /*child*/, entity_id /*parent*/) {}
+
+
+        // Returns the parent of `child`, or INVALID_ENTITY if it has none.
+        // Implementations that don't have a hierarchy can leave the default
+        // (everything is a root).
+        [[nodiscard]] virtual entity_id parent_of(entity_id /*id*/) const noexcept { return INVALID_ENTITY; }
+
         // capability cast ---------------------------------------------------------------------------------------------
 
         // Escape hatch for plugins that want to reach past this interface to a concrete implementation
@@ -124,12 +156,13 @@ namespace GLT::world {
         //     call as<T>() once on init, caching the result. They do NOT call as<T>() per frame.
         //   - Third-party / swappable plugins stay on i_world_plugin only.
         template<typename T>
-        requires std::derived_from<T, i_world_plugin>
+        requires std::is_polymorphic_v<T>
         [[nodiscard]] T* as() noexcept { return dynamic_cast<T*>(this); }
 
 
+        // and the const version:
         template<typename T>
-        requires std::derived_from<T, i_world_plugin>
+        requires std::is_polymorphic_v<T>
         [[nodiscard]] const T* as() const noexcept { return dynamic_cast<const T*>(this); }
 
     };

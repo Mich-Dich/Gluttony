@@ -5,9 +5,9 @@
 #include <implot.h>
 
 #include <debug/profiler.h>
+#include <util/ui/pannel_collection.h>
 
 #include <config/imgui_config.h>
-#include "util/ui/pannel_collection.h"
 
 
 
@@ -84,7 +84,7 @@ namespace GLT::editor {
             ImGui::Separator();
 
             // ---- split layout ----------------------------------------------------------------------------------
-            UI::custom_frame(DETAILS_PANEL_WIDTH, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
+            GLT::UI::custom_frame(DETAILS_PANEL_WIDTH, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
                 [this]() {
 
                     draw_core_section();
@@ -103,23 +103,23 @@ namespace GLT::editor {
 
                     // ---- combined ms plot ---------------------------------------------------------------------------------
                     draw_combined_ms_plot();
-                    UI::shift_cursor_pos(ImVec2(0.0f, 8.0f));
+                    GLT::UI::shift_cursor_pos(ImVec2(0.0f, 8.0f));
 
                     // ---- individual plots ---------------------------------------------------------------------------------
                     draw_stat_plot("##plot_triangles", "Triangles", m_triangles_history, ImVec4(0.75f, 0.55f, 0.95f, 1.0f), "tris");
-                    UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
+                    GLT::UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
 
                     draw_stat_plot("##plot_vertices", "Vertices", m_vertices_history, ImVec4(0.95f, 0.55f, 0.80f, 1.0f), "verts");
-                    UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
+                    GLT::UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
 
                     draw_stat_plot("##plot_vram", "VRAM (MB)", m_vram_history, ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "MB");
-                    UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
+                    GLT::UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
 
                     draw_stat_plot("##plot_ram", "RAM (MB)", m_ram_history, ImVec4(0.55f, 0.90f, 0.55f, 1.0f), "MB");
-                    UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
+                    GLT::UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
 
                     draw_stat_plot("##plot_fps", "FPS", m_fps_history, ImVec4(0.35f, 0.85f, 0.90f, 1.0f), "fps");
-                    UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
+                    GLT::UI::shift_cursor_pos(ImVec2(0.0f, 6.0f));
 
                     draw_stat_plot("##plot_drawcalls", "Draw calls (includes ImGui)", m_draw_calls_history, ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "calls");
                 });
@@ -155,18 +155,18 @@ namespace GLT::editor {
         if (!ImGui::CollapsingHeader("Frame", ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
-        if (UI::begin_table(STATS_TABLE_NAME, false)) {
+        if (GLT::UI::begin_table(STATS_TABLE_NAME, false)) {
 
-            UI::table_row_text("frame time", "%.2f ms", m_app_snapshot.frame_time_ms);
-            UI::table_row_text("fps", "%.1f",    m_app_snapshot.fps);
+            GLT::UI::table_row_text("frame time", "%.2f ms", m_app_snapshot.frame_time_ms);
+            GLT::UI::table_row_text("fps", "%.1f",    m_app_snapshot.fps);
 
             if (m_gpu_available)
-                UI::table_row_text("gpu time", "%.2f ms", m_app_snapshot.render.gpu_time_ms);
+                GLT::UI::table_row_text("gpu time", "%.2f ms", m_app_snapshot.render.gpu_time_ms);
 
             if (m_app_snapshot.cpu_time_ms > 0.0f)
-                UI::table_row_text("cpu time", "%.2f ms", m_app_snapshot.cpu_time_ms);
+                GLT::UI::table_row_text("cpu time", "%.2f ms", m_app_snapshot.cpu_time_ms);
 
-            UI::end_table();
+            GLT::UI::end_table();
         }
 
         // Summary of the sliding window - mirrors exactly what the plots
@@ -196,13 +196,13 @@ namespace GLT::editor {
         if (!ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
-        if (UI::begin_table(STATS_TABLE_NAME, false)) {
+        if (GLT::UI::begin_table(STATS_TABLE_NAME, false)) {
 
-            UI::table_row_text("draw calls", "%u", m_app_snapshot.render.draw_calls);
-            UI::table_row_text("triangles", "%u", m_app_snapshot.render.triangles);
-            UI::table_row_text("vertices", "%u", m_app_snapshot.render.vertices);
-            UI::table_row_text("passes", "%u", m_app_snapshot.render.render_passes);
-            UI::end_table();
+            GLT::UI::table_row_text("draw calls", "%u", m_app_snapshot.render.draw_calls);
+            GLT::UI::table_row_text("triangles", "%u", m_app_snapshot.render.triangles);
+            GLT::UI::table_row_text("vertices", "%u", m_app_snapshot.render.vertices);
+            GLT::UI::table_row_text("passes", "%u", m_app_snapshot.render.render_passes);
+            GLT::UI::end_table();
         }
 
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -214,12 +214,12 @@ namespace GLT::editor {
         if (!ImGui::CollapsingHeader("Memory", ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
-        if (UI::begin_table(STATS_TABLE_NAME, false)) {
+        if (GLT::UI::begin_table(STATS_TABLE_NAME, false)) {
 
-            UI::table_row_text("vram", "%.2f MB", m_app_snapshot.render.vram_bytes / MB);
-            UI::table_row_text("ram", "%.2f MB", m_app_snapshot.ram_bytes / MB);
-            UI::table_row_text("ram peak", "%.2f MB", GLT::util::get_process_peak_ram_bytes() / MB);
-            UI::end_table();
+            GLT::UI::table_row_text("vram", "%.2f MB", m_app_snapshot.render.vram_bytes / MB);
+            GLT::UI::table_row_text("ram", "%.2f MB", m_app_snapshot.ram_bytes / MB);
+            GLT::UI::table_row_text("ram peak", "%.2f MB", GLT::util::get_process_peak_ram_bytes() / MB);
+            GLT::UI::end_table();
         }
 
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -231,13 +231,13 @@ namespace GLT::editor {
         if (!ImGui::CollapsingHeader("Resources", ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
-        if (UI::begin_table(STATS_TABLE_NAME, false)) {
+        if (GLT::UI::begin_table(STATS_TABLE_NAME, false)) {
 
-            UI::table_row_text("textures", "%u", m_app_snapshot.render.texture_count);
-            UI::table_row_text("buffers", "%u", m_app_snapshot.render.buffer_count);
-            UI::table_row_text("descriptor sets", "%u", m_app_snapshot.render.descriptor_set_count);
-            UI::table_row_text("pipelines", "%u", m_app_snapshot.render.pipeline_count);
-            UI::end_table();
+            GLT::UI::table_row_text("textures", "%u", m_app_snapshot.render.texture_count);
+            GLT::UI::table_row_text("buffers", "%u", m_app_snapshot.render.buffer_count);
+            GLT::UI::table_row_text("descriptor sets", "%u", m_app_snapshot.render.descriptor_set_count);
+            GLT::UI::table_row_text("pipelines", "%u", m_app_snapshot.render.pipeline_count);
+            GLT::UI::end_table();
         }
 
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -261,12 +261,12 @@ namespace GLT::editor {
             if (!open)
                 continue;
 
-            if (UI::begin_table(STATS_TABLE_NAME, false)) {
+            if (GLT::UI::begin_table(STATS_TABLE_NAME, false)) {
 
                 for (const auto& v : stats.custom)
-                    UI::table_row_text(v.name.c_str(), v.format, v.value);
+                    GLT::UI::table_row_text(v.name.c_str(), v.format, v.value);
 
-                UI::end_table();
+                GLT::UI::end_table();
             }
 
             ImGui::Dummy(ImVec2(0.0f, 4.0f));
@@ -368,7 +368,7 @@ namespace GLT::editor {
         const f32 x_max = m_time_axis.back();
 
         // Section title above the plot so stacked plots read as a list.
-        if (UI::begin_collapsing_header_section(label)) {
+        if (GLT::UI::begin_collapsing_header_section(label)) {
 
             if (ImPlot::BeginPlot(id, ImVec2(-1.0f, GRAPH_HEIGHT), ImPlotFlags_NoMenus | ImPlotFlags_NoMouseText)) {
 
@@ -379,7 +379,7 @@ namespace GLT::editor {
 
                 ImPlot::EndPlot();
             }
-            UI::end_collapsing_header_section();
+            GLT::UI::end_collapsing_header_section();
         }
     }
 

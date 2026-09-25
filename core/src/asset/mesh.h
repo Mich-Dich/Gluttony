@@ -2,6 +2,7 @@
 #pragma once
 
 #include "util/data_structures/AABB.h"
+#include "asset/type.h"
 #include "asset/header.h"
 
 

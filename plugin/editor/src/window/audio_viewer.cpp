@@ -333,7 +333,7 @@ namespace GLT::editor {
         if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
 
             handle_drag_drop();
-            UI::custom_frame(DETAILS_PANEL_WIDTH, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
+            GLT::UI::custom_frame(DETAILS_PANEL_WIDTH, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
                 [this]() {
                     draw_details_panel();
                 },
@@ -409,12 +409,12 @@ namespace GLT::editor {
         if (!ImGui::CollapsingHeader("File", ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
-        if (UI::begin_table("audio_detail_and_edit", false)) {
+        if (GLT::UI::begin_table("audio_detail_and_edit", false)) {
 
-            UI::table_row("name",   m_details.name.c_str());
-            UI::table_row("format", m_details.format.c_str());
-            UI::table_row("size",   GLT::util::format_bytes(m_details.file_size));
-            UI::end_table();
+            GLT::UI::table_row("name",   m_details.name.c_str());
+            GLT::UI::table_row("format", m_details.format.c_str());
+            GLT::UI::table_row("size",   GLT::util::format_bytes(m_details.file_size));
+            GLT::UI::end_table();
         }
     }
 
@@ -424,17 +424,17 @@ namespace GLT::editor {
         if (!ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
-        if (UI::begin_table("audio_detail_and_edit", false)) {
+        if (GLT::UI::begin_table("audio_detail_and_edit", false)) {
 
-            UI::table_row("duration",    format_time(m_details.duration_sec).c_str());
-            UI::table_row("sample rate", std::to_string(m_details.sample_rate) + " Hz");
-            UI::table_row("channels",    m_details.channels == 1 ? "mono"
+            GLT::UI::table_row("duration",    format_time(m_details.duration_sec).c_str());
+            GLT::UI::table_row("sample rate", std::to_string(m_details.sample_rate) + " Hz");
+            GLT::UI::table_row("channels",    m_details.channels == 1 ? "mono"
                                        : m_details.channels == 2 ? "stereo"
                                        : std::to_string(m_details.channels));
-            UI::table_row("bit depth",   m_details.bit_depth ? std::to_string(m_details.bit_depth) + " bit" : std::string("--"));
-            UI::table_row("bitrate",     m_details.bitrate_kbps ? std::to_string(m_details.bitrate_kbps) + " kbps" : std::string("--"));
-            UI::table_row("peaks",       std::to_string(m_peak_count));
-            UI::end_table();
+            GLT::UI::table_row("bit depth",   m_details.bit_depth ? std::to_string(m_details.bit_depth) + " bit" : std::string("--"));
+            GLT::UI::table_row("bitrate",     m_details.bitrate_kbps ? std::to_string(m_details.bitrate_kbps) + " kbps" : std::string("--"));
+            GLT::UI::table_row("peaks",       std::to_string(m_peak_count));
+            GLT::UI::end_table();
         }
     }
 
@@ -451,11 +451,11 @@ namespace GLT::editor {
         else if (m_details.extension == ".ogg" || m_details.extension == ".oga") codec = "Vorbis";
         else if (m_details.extension == ".opus")                                 codec = "Opus";
 
-        if (UI::begin_table("audio_detail_and_edit", false)) {
+        if (GLT::UI::begin_table("audio_detail_and_edit", false)) {
 
-            UI::table_row("codec",      codec.c_str());
-            UI::table_row("compressed", std::string_view(GLT::util::to_string(m_details.extension == ".wav")));
-            UI::end_table();
+            GLT::UI::table_row("codec",      codec.c_str());
+            GLT::UI::table_row("compressed", std::string_view(GLT::util::to_string(m_details.extension == ".wav")));
+            GLT::UI::end_table();
         }
     }
 
@@ -465,12 +465,12 @@ namespace GLT::editor {
         if (!ImGui::CollapsingHeader("Playback", ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
-        if (UI::begin_table("audio_detail_and_edit", false)) {
+        if (GLT::UI::begin_table("audio_detail_and_edit", false)) {
 
             // Volume
             {
                 f32 v = m_volume;
-                UI::table_row(
+                GLT::UI::table_row(
                     []{ ImGui::TextUnformatted("volume"); },
                     [&v] {
                         ImGui::SetNextItemWidth(-1.0f);
@@ -486,7 +486,7 @@ namespace GLT::editor {
             // Pan
             {
                 f32 p = m_pan;
-                UI::table_row(
+                GLT::UI::table_row(
                     []{ ImGui::TextUnformatted("pan"); },
                     [&p] {
                         ImGui::SetNextItemWidth(-1.0f);
@@ -502,7 +502,7 @@ namespace GLT::editor {
             // Playback speed
             {
                 f32 s = m_playback_speed;
-                UI::table_row(
+                GLT::UI::table_row(
                     []{ ImGui::TextUnformatted("speed"); },
                     [&s] {
                         ImGui::SetNextItemWidth(-1.0f);
@@ -518,7 +518,7 @@ namespace GLT::editor {
             // Loop
             {
                 bool l = m_looping;
-                UI::table_row("loop", l);
+                GLT::UI::table_row("loop", l);
                 if (l != m_looping) {
                     m_looping = l;
                     if (auto plugin = m_audio_manager.lock(); plugin && m_voice_handle)
@@ -526,7 +526,7 @@ namespace GLT::editor {
                 }
             }
 
-            UI::end_table();
+            GLT::UI::end_table();
         }
 
         ImGui::Dummy(ImVec2(0.0f, 6.0f));

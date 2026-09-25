@@ -1,6 +1,9 @@
 
 #include "util/pch.h"
+
 #include "entity_builder.h"
+#include "world.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -41,25 +44,25 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    entity_builder& entity_builder::set_transform(const transform& t) { return add_or_replace<transform>(t); }
+    entity_builder& entity_builder::set_transform(const transform& t) { return add_or_replace<transform>(transform{ t }); }
 
 
     entity_builder& entity_builder::set_mesh(GLT::asset::handle mesh, bool visible) {
 
-        mesh_renderer mr{};
-        mr.mesh = mesh;
-        mr.visible = visible;
-        return add_or_replace<mesh_renderer>(mr);
+        mesh_renderer mesh_comp{};
+        mesh_comp.mesh = mesh;
+        mesh_comp.visible = visible;
+        return add_or_replace<mesh_renderer>(std::move(mesh_comp));
     }
 
 
     entity_builder& entity_builder::set_audio(GLT::asset::handle clip, const GLT::asset::audio::source_config& cfg, bool autoplay) {
 
-        audio_source as{};
-        as.clip = clip;
-        as.config = cfg;
-        as.autoplay = autoplay;
-        return add_or_replace<audio_source>(as);
+        audio_source audio_comp{};
+        audio_comp.clip = clip;
+        audio_comp.config = cfg;
+        audio_comp.autoplay = autoplay;
+        return add_or_replace<audio_source>(std::move(audio_comp));
     }
 
 

@@ -11,7 +11,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::editor::UI {
+namespace GLT::UI {
 
 	// CONSTANTS =======================================================================================================
 
@@ -353,7 +353,7 @@ namespace GLT::editor::UI {
 	// 
 	// @return true if the value was changed by the slider, false otherwise.
 	template<typename T>
-	bool table_row_slider(std::string_view label, T& value, f32 min_value = 0.f, f32 max_value = 1.f, f32 draw_speed = 0.2f, 
+	bool table_row_slider(std::string_view label, T& value, f32 min_value = 0.f, f32 max_value = 0.f, f32 draw_speed = 0.2f, 
 		ImGuiInputTextFlags flags = ImGuiInputTextFlags_None);
 	
 	

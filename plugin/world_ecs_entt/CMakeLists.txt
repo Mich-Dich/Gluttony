@@ -20,6 +20,7 @@ set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES"      "${PLUGI
 # add libraries in both static and shared
 compile_plugin(SHARED                                                   ${PLUGIN_NAME}          glm imgui)
 compile_plugin(STATIC                                                   ${PLUGIN_NAME}_static   glm imgui)
+# target_link_options(${PLUGIN_NAME}                                      PRIVATE "LINKER:--no-undefined")
 
 # clone all vendor libs ---------------------------------------------------------------------
 set(VENDOR_DIR                                                          "${CMAKE_CURRENT_SOURCE_DIR}/vendor")

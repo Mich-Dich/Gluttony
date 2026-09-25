@@ -2,6 +2,7 @@
 #pragma once
 
 #include <type_traits>
+#include "asset/type.h"
 
 
 

@@ -1,7 +1,10 @@
 
 #pragma once
 
+#include <asset/type.h>
 #include <plugin_system/i_asset_registry_plugin.h>
+
+#include "entity_codec.h"
 
 
 
@@ -91,9 +94,10 @@ namespace GLT::world::world_ecs_entt {
     world_asset_handler::deserialize(const GLT::asset::info& info, GLT::asset::chunk_reader& reader) {
 
         using namespace GLT::asset::core_types;
-        if (info.asset_type == world)
+        if (info.asset_type == GLT::asset::core_types::world)
             return deserialize_world(info, reader);
-        if (info.asset_type == region)
+
+        if (info.asset_type == GLT::asset::core_types::region)
             return deserialize_region(info, reader);
 
         return std::unexpected{ GLT::asset::load_error::no_handler };
@@ -105,14 +109,11 @@ namespace GLT::world::world_ecs_entt {
 
         using namespace GLT::asset::core_types;
 
-        if (info.asset_type == world) {
-            const auto& wa = static_cast<const GLT::asset::world::world_asset&>(asset);
-            return serialize_world(info, wa, out);
-        }
-        if (info.asset_type == region) {
-            const auto& ra = static_cast<const GLT::asset::region::region_asset&>(asset);
-            return serialize_region(info, ra, out);
-        }
+        if (info.asset_type == GLT::asset::core_types::world)
+            return serialize_world(info, static_cast<const GLT::asset::world::world_asset&>(asset), out);
+
+        if (info.asset_type == GLT::asset::core_types::region)
+            return serialize_region(info, static_cast<const GLT::asset::region::region_asset&>(asset), out);
 
         return std::unexpected{ GLT::asset::load_error::no_handler };
     }

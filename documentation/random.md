@@ -196,7 +196,7 @@ Ctrl+P style fuzzy search over every registered editor action ("open image viewe
 
 
 
-POTENTIAL ESC USAGE:
+POTENTIAL WORLD_ECS USAGE:
 
 **build a small hierarchy**
   Root (transform)
@@ -249,8 +249,23 @@ ecs->set_parent(helmet, body);                          // now a sibling of head
 **inspect hierarchy (editor outliner)**
 
 ```cpp
+auto ecs = GLT::world::manager::get_ref()->as<GLT::world::world_ecs_entt::ecs_world_plugin>();
 for (entity_id child : ecs->children_of(root)) {
     const auto* h = ecs->hierarchy_of(child);           // exposed via friend
     // ...
 }
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+# TODO:
+- move the interface files from [plugin_system] to dedicated locations

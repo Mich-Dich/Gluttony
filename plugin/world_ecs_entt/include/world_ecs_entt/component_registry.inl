@@ -1,8 +1,9 @@
 
 #pragma once
 
-// This file is #included at the bottom of [world.h].
-// It relies on ecs_world_plugin being fully defined by the time it's reached, so it must not be included independently.
+#include "entity_codec.h"
+
+
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -32,45 +33,46 @@ namespace GLT::world::world_ecs_entt {
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    template<typename T, typename... Args>
-    entity_builder& entity_builder::add(Args&&... args) {
-
-        auto& reg = m_plugin->registry();
-        reg.emplace_or_replace<T>(m_plugin->entt_of(m_id), std::forward<Args>(args)...);
-        return *this;
-    }
-
-
-    template<typename T>
-    entity_builder& entity_builder::add_or_replace(T&& component) {
-
-        auto& reg = m_plugin->registry();
-        reg.emplace_or_replace<T>(m_plugin->entt_of(m_id), std::forward<T>(component));
-        return *this;
-    }
-
-
-    template<typename T>
-    entity_builder& entity_builder::remove() {
-
-        m_plugin->registry().remove<T>(m_plugin->entt_of(m_id));
-        return *this;
-    }
-
-
-    template<typename T>
-    bool entity_builder::has() const { return m_plugin->registry().all_of<T>(m_plugin->entt_of(m_id)); }
-
-
-    template<typename T>
-    T& entity_builder::get() { return m_plugin->registry().get<T>(m_plugin->entt_of(m_id)); }
-
-
-    template<typename T>
-    const T& entity_builder::get() const { return m_plugin->registry().get<T>(m_plugin->entt_of(m_id)); }
-
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
+
+    template<typename T>
+    void component_registry::register_component(std::string_view name, std::string_view category, std::function<void(entity_id)> draw,
+        std::function<std::string(entity_id)> summary) {
+
+
+        static_assert(std::is_default_constructible_v<T>, "Registered components must be default-constructible for the "
+            "\"Add Component\" menu.");
+
+        GLT::world::component_descriptor descriptor{};
+
+        descriptor.hash = component_name_hash(name);
+        descriptor.name = name;
+        descriptor.category = category;
+        descriptor.draw = std::move(draw);
+        descriptor.summary = std::move(summary);
+
+        descriptor.has = [this](entity_id id) {
+            const auto entity = m_plugin.entt_of(id);
+            return entity != entt::null && m_plugin.registry().all_of<T>(entity);
+        };
+
+        descriptor.add = [this](entity_id id) {
+            const auto entity = m_plugin.entt_of(id);
+            if (entity != entt::null)
+                m_plugin.registry().emplace_or_replace<T>(entity);
+        };
+
+        descriptor.remove = [this](entity_id id) {
+            const auto entity = m_plugin.entt_of(id);
+            if (entity != entt::null)
+                m_plugin.registry().remove<T>(entity);
+        };
+
+        descriptor.can_remove = [](entity_id) { return true; };
+
+        m_descriptors.push_back(std::move(descriptor));
+    }
 
 }

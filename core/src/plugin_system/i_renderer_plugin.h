@@ -11,6 +11,7 @@
 #include "render/image.h"
 #include "debug/profiler.h"
 #include "plugin_system/plugin_manager.h"
+#include "asset/mesh.h"
 
 
 
@@ -296,6 +297,16 @@ namespace GLT::render {
 
         virtual void set_active_camera(ref<GLT::world::camera> active_camera) = 0;
 
+
+        // uploaded mesh data ------------------------------------------------------------------------------------------
+        
+        virtual bool load_mesh(const GLT::asset::handle handle) = 0;
+
+
+        virtual bool load_mesh(const std::filesystem::path& path) = 0;
+
+
+        virtual void unload_mesh(GLT::asset::handle handle) = 0;
     };
 
 }
