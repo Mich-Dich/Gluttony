@@ -8,10 +8,13 @@
 #include <application.h>
 #include <event/event_bus.h>
 #include <event/application_event.h>
+#include <asset/i_asset_registry.h>
 #include <config/imgui_config.h>
 #include <render/image.h>
-#include <plugin_system/i_renderer_plugin.h>
+#include <render/i_renderer.h>
 #include <world/world_layer.h>
+#include <util/ui/asset_picker.h>
+#include <util/ui/pannel_collection.h>
 
 #include "window/content_browser.h"
 #include "window/world_viewport.h"
@@ -131,20 +134,41 @@ namespace GLT::editor {
         register_core_editors();
         file_watcher::init();
         file_watcher::watch(PROJECT_CONTENT_DIR, true);
+        GLT::UI::set_asset_root(PROJECT_CONTENT_DIR);
         m_asset_open_event_sub_handle = GLT::event_bus::subscribe<asset_open_event>(std::bind_front(&editor_layer::on_asset_open_event, this));
         m_asset_import_request_event_sub_handle = GLT::event_bus::subscribe<asset_import_request_event>(std::bind_front(&editor_layer::on_asset_import_request_event, this));
-        
-        if (auto* world = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>()) {
+        m_key_sub_handle = GLT::event_bus::subscribe<key_event>(std::bind_front(&editor_layer::on_key_event, this));
+        m_save_sub_handle = GLT::event_bus::subscribe<GLT::save_event>(std::bind_front(&editor_layer::on_save_event, this));
+        m_save_as_sub_handle = GLT::event_bus::subscribe<save_as_request_event>(std::bind_front(&editor_layer::on_save_as_request_event, this));
 
-            world->soft_create_editor_camera(glm::vec3{ 0.f }, glm::vec3{ 0.f });
-            world->set_controller<GLT::editor::input::editor_controller>();                         // create controller
-            GLT::render::renderer::get_ref()->set_active_camera(world->get_editor_camera());        // Update renderer camera
+        if (auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>()) {
+
+            world_layer->soft_create_editor_camera(glm::vec3{ 0.f }, glm::vec3{ 0.f });
+            world_layer->set_controller<GLT::editor::input::editor_controller>();                         // create controller
+            GLT::render::renderer::get_ref()->set_active_camera(world_layer->get_editor_camera());        // Update renderer camera
+        }
+
+        // load the editor world
+        const auto& editor_world_path = GLT::application::get().get_project().editor_start_world;
+        if (!editor_world_path.empty()) {
+
+            auto registry = GLT::asset::registry::get_ref();
+            VALIDATE(registry, return, "", "Failed to get asset-registry");
+
+            const auto result = registry->load(editor_world_path);        // registry CAN find the editor world
+            if (result) {
+                GLT::application::get().load_world(editor_world_path, true);               // load project world if none loaded
+            } else
+                GLT::application::get().get_project().editor_start_world = std::filesystem::path{};              // reset if asset was not found
         }
     }
 
 
     editor_layer::~editor_layer() {
 
+        GLT::event_bus::unsubscribe(m_save_as_sub_handle);
+        GLT::event_bus::unsubscribe(m_save_sub_handle);
+        GLT::event_bus::unsubscribe(m_key_sub_handle);
         GLT::event_bus::unsubscribe(m_asset_import_request_event_sub_handle);
         GLT::event_bus::unsubscribe(m_asset_open_event_sub_handle);
         file_watcher::unwatch_all();
@@ -154,27 +178,39 @@ namespace GLT::editor {
     }
 
     // CLASS PUBLIC ====================================================================================================
-    
+
     void editor_layer::update(const f32 delta_time) {
 
-		for (const auto& editor_window : m_windows)
-			editor_window->update(delta_time);
+        for (const auto& editor_window : m_windows)
+            editor_window->update(delta_time);
 
-		// First pass to mark items for removal
-		auto it = std::remove_if(m_windows.begin(), m_windows.end(),
-			[](const unique_ref<base_window>& editor_window) {
-				return editor_window->should_close();
-			});
+        auto it = std::remove_if(m_windows.begin(), m_windows.end(), [](const unique_ref<base_window>& w) { return w->should_close(); });
+        m_windows.erase(it, m_windows.end());
 
-		// Erase the removed items
-		m_windows.erase(it, m_windows.end());
+        // Move any events that arrived during the previous frame into the queue.
+        for (auto& ev : m_save_as_event_buffer) {
 
+            pending_save_request pending{};
+            pending.req = ev.get();
+
+            std::snprintf(pending.filename, sizeof(pending.filename), "%s", pending.req.default_name.c_str());
+
+            // Picker and registry both speak project-relative — convert here so the modal opens with a path the picker can highlight in its tree
+            pending.directory = PROJECT_CONTENT_DIR;
+            if (pending.directory.empty())
+                pending.directory = pending.req.default_dir;        // fallback: picker still accepts absolute
+
+            m_save_as_queue.push_back(std::move(pending));
+        }
+        m_save_as_event_buffer.clear();
+
+        // The asset-opened buffers
         for (auto& event : m_asset_open_event_buffer)
             open_asset_editor(event);
 
         for (auto& event : m_asset_import_request_event_buffer)
             add_window<asset_import_window>(event.get_sources(), event.get_target_dir());
-            
+
         m_asset_open_event_buffer.clear();
         m_asset_import_request_event_buffer.clear();
     }
@@ -188,8 +224,13 @@ namespace GLT::editor {
         for (auto& window : m_windows)
             window->window(delta_time);
 
-        if (m_show_demo)            ImGui::ShowDemoWindow(&m_show_demo);
-        if (m_show_style)           ImGui::ShowStyleEditor();
+        if (m_show_demo)           
+            ImGui::ShowDemoWindow(&m_show_demo);
+
+        if (m_show_style)          
+            ImGui::ShowStyleEditor();
+    
+        render_save_as_popup();         // after every other window
     }
 
     // CLASS PROTECTED =================================================================================================
@@ -449,6 +490,81 @@ namespace GLT::editor {
     }
 
 
+    void editor_layer::on_key_event(const GLT::key_event& event) {
+
+        static bool control_pressed = false;
+        static bool alt_pressed = false;
+        static bool shift_pressed = false;
+        
+        if (event.is_key_code(GLT::key_code::key_left_control) || event.is_key_code(GLT::key_code::key_right_control))
+            control_pressed = !event.is_key_state(GLT::key_state::release);              // For hold and pressed
+
+        if (event.is_key_code(GLT::key_code::key_left_alt) || event.is_key_code(GLT::key_code::key_right_alt))
+            alt_pressed = !event.is_key_state(GLT::key_state::release);                  // For hold and pressed
+
+        if (event.is_key_code(GLT::key_code::key_left_shift) || event.is_key_code(GLT::key_code::key_right_shift))
+            shift_pressed = !event.is_key_state(GLT::key_state::release);                  // For hold and pressed
+
+        if (control_pressed && event.is(GLT::key_code::key_S, GLT::key_state::press))
+            GLT::event_bus::post(GLT::save_event(shift_pressed));
+
+        if (alt_pressed && event.is(GLT::key_code::key_F4, GLT::key_state::press))
+            GLT::event_bus::post(GLT::window_close_event());
+
+        if (event.is(GLT::key_code::key_F5, GLT::key_state::press)) {
+
+            // GLT::event_bus::post(GLT::application_refresh_event());
+            // GLT::event_bus::post(GLT::notification_event("Refreshed", GLT::Logger::severity::info));
+        }
+    }
+
+
+    void editor_layer::on_save_event(const GLT::save_event& event) {
+
+        // save world --------------------------------------------------------------------------------------------------
+        auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>();
+        VALIDATE(world_layer, return, "", "Failed to get world layer");
+
+        auto world = world_layer->get_world();
+        VALIDATE(world, return, "", "Failed to get world");
+
+        const bool has_handle = world->world_handle() != GLT::asset::handle{};
+        const bool force_as = event.is_forced_save_as();
+        if (has_handle && !force_as) {
+
+            if (auto result = world->save_world(); !result)
+                LOG(error, "save_world failed: error {}", GLT::util::enum_to_string(result.error()));
+            return;
+        }
+
+        // need a location from the user
+        GLT::save_as_request_event::request req{};
+        req.title = "Save World As";
+        req.default_name = has_handle
+            ? std::string(GLT::asset::registry::get_ref()->info(world->world_handle()).name)
+            : std::string("untitled_world");
+        req.default_dir = PROJECT_CONTENT_DIR / "world";
+        req.extension = std::string(GLT::asset::extension_for_type(GLT::asset::core_types::world));
+        req.on_resolved = [world](const std::filesystem::path& chosen) {
+
+            if (chosen.empty())
+                return;                                     // cancelled
+
+            if (auto result = world->save_world_as(chosen); !result)
+                LOG(error, "save_world_as failed: error {}", static_cast<int>(result.error()));
+        };
+
+        GLT::event_bus::post(GLT::save_as_request_event(std::move(req)));
+    }
+
+
+    void editor_layer::on_save_as_request_event(const save_as_request_event& event) {
+
+        // Buffered so we don't mutate the queue while someone else is iterating - update() drains this into m_save_as_queue
+        m_save_as_event_buffer.push_back(event);
+    }
+
+
     void editor_layer::register_core_editors() {
 
         #define ADD_ASSET_EDITOR(type, window)                                                      \
@@ -480,6 +596,137 @@ namespace GLT::editor {
             window->dock_to(m_dockspace_id);
 
         m_windows.push_back(std::move(window));
+    }
+
+
+    void editor_layer::open_next_save_request() {
+
+        if (m_save_as_open)
+            return;                         // one at a time
+
+        if (m_save_as_queue.empty())
+            return;
+
+        m_save_as_open = true;
+        ImGui::OpenPopup("##save_as_modal");
+    }
+
+
+    void editor_layer::render_save_as_popup() {
+
+        open_next_save_request();
+
+        if (!m_save_as_open)
+            return;
+
+        auto& pending = m_save_as_queue.front();
+
+        // Always centered in the main viewport — no ImGuiCond_Appearing.
+        const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(560, 0), ImVec2(FLT_MAX, FLT_MAX));
+
+        bool keep_open = true;
+        if (ImGui::BeginPopupModal("##save_as_modal", &keep_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+
+            ImGui::TextUnformatted(pending.req.title.c_str());
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ---- directory ----
+            ImGui::TextUnformatted("Directory");
+            ImGui::SameLine(100.f);
+            GLT::UI::draw_directory_picker("##save_as_dir_picker", pending.directory, PROJECT_CONTENT_DIR);
+
+            // ---- filename ----
+            ImGui::TextUnformatted("Filename");
+            ImGui::SameLine(100.f);
+            const std::string ext_hint = "." + pending.req.extension;
+            const f32 ext_w = ImGui::CalcTextSize(ext_hint.c_str()).x + 8.f;
+            ImGui::SetNextItemWidth(-(ext_w + ImGui::GetStyle().ItemSpacing.x));
+            ImGui::InputText("##name", pending.filename, sizeof(pending.filename));
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", ext_hint.c_str());
+
+            ImGui::Spacing();
+
+            // ---- preview + validation ----
+            std::filesystem::path full = pending.directory / pending.filename;
+            if (full.extension() != std::filesystem::path(ext_hint))
+                full += ext_hint;
+
+            ImGui::TextDisabled("Will write to:");
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", full.generic_string().c_str());
+
+            pending.error_message.clear();
+            if (pending.directory.empty())
+                pending.error_message = "Directory is required.";
+            else if (pending.filename[0] == '\0')
+                pending.error_message = "Filename is required.";
+
+            if (!pending.error_message.empty()) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.f, 0.5f, 0.4f, 1.f), "%s", pending.error_message.c_str());
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ---- buttons ----
+            const bool can_confirm = pending.error_message.empty();
+
+            ImGui::BeginDisabled(!can_confirm);
+            if (ImGui::Button("Save", ImVec2(120, 0))) {
+                resolve_save_as_request(true);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                resolve_save_as_request(false);
+                ImGui::CloseCurrentPopup();
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                resolve_save_as_request(false);
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+
+        if (!keep_open && m_save_as_open)
+            resolve_save_as_request(false);
+    }
+
+
+    void editor_layer::resolve_save_as_request(bool confirmed) {
+
+        if (m_save_as_queue.empty()) {
+            m_save_as_open = false;
+            return;
+        }
+
+        pending_save_request pending = std::move(m_save_as_queue.front());
+        m_save_as_queue.pop_front();
+        m_save_as_open = false;
+
+        std::filesystem::path resolved{};
+
+        if (confirmed) {
+
+            resolved = pending.directory / pending.filename;
+            const std::string ext_hint = "." + pending.req.extension;
+            if (resolved.extension() != ext_hint)
+                resolved += ext_hint;
+        }
+
+        auto callback = std::move(pending.req.on_resolved);
+        if (callback)
+            callback(resolved);
     }
 
 }

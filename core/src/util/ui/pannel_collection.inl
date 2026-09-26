@@ -25,10 +25,9 @@ namespace GLT::UI {
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
-    template<typename T>
-	bool table_row(std::string_view label, T& value, f32 drag_speed, T min_value, T max_value, ImGuiInputTextFlags flags) {
-
-		flags |= ImGuiInputTextFlags_AllowTabInput;
+	template<typename T>
+	bool table_row(std::string_view label, T& value, f32 drag_speed, std::optional<f32> min_value, std::optional<f32> max_value,
+		ImGuiSliderFlags flags) {
 
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
@@ -43,63 +42,78 @@ namespace GLT::UI {
 		ImGui::SetNextItemWidth(ImGui::GetColumnWidth());
 
 		if constexpr (std::is_same_v<T, bool>) {
-
 			ImGui::Text("%s", util::bool_to_str(value));
 			return false;
 		}
 
 		else if constexpr (std::is_integral_v<T>) {
+
+			// Convert to T before taking the address. The old code passed
+			// &min_value (a float*) straight into DragScalar with an int data
+			// type, so ImGui read the wrong bytes and the bounds were garbage.
+			T lo{}, hi{};
+			const void* p_lo = nullptr;
+			const void* p_hi = nullptr;
+			if (min_value) { lo = static_cast<T>(*min_value); p_lo = &lo; }
+			if (max_value) { hi = static_cast<T>(*max_value); p_hi = &hi; }
+
 			if constexpr (std::is_unsigned_v<T>) {
 				switch (sizeof(T)) {
-				case 1: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_U8, &value, drag_speed, &min_value, &max_value, "%u", flags);		// u8
-				case 2: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_U16, &value, drag_speed, &min_value, &max_value, "%u", flags);	// u16
-				case 4: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_U32, &value, drag_speed, &min_value, &max_value, "%u", flags);	// u32
-				case 8: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_U64, &value, drag_speed, &min_value, &max_value, "%llu", flags);	// u64
-				default:
-					ImGui::Text("Could not display variable of type unsigned int [size: %zu]", sizeof(T));
-					return false;
+				case 1: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_U8,  &value, drag_speed, p_lo, p_hi, "%u",   flags);
+				case 2: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_U16, &value, drag_speed, p_lo, p_hi, "%u",   flags);
+				case 4: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_U32, &value, drag_speed, p_lo, p_hi, "%u",   flags);
+				case 8: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_U64, &value, drag_speed, p_lo, p_hi, "%llu", flags);
 				}
 			} else {
 				switch (sizeof(T)) {
-				case 1: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_S8, &value, drag_speed, &min_value, &max_value, "%d", flags);		// i8
-				case 2: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_S16, &value, drag_speed, &min_value, &max_value, "%d", flags);	// i16
-				case 4: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_S32, &value, drag_speed, &min_value, &max_value, "%d", flags);	// i32
-				case 8: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_S64, &value, drag_speed, &min_value, &max_value, "%lld", flags);	// i64
-				default:
-					ImGui::Text("Could not display var of type signed int [size: %zu]", sizeof(T));
-					return false;
+				case 1: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_S8,  &value, drag_speed, p_lo, p_hi, "%d",   flags);
+				case 2: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_S16, &value, drag_speed, p_lo, p_hi, "%d",   flags);
+				case 4: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_S32, &value, drag_speed, p_lo, p_hi, "%d",   flags);
+				case 8: return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_S64, &value, drag_speed, p_lo, p_hi, "%lld", flags);
 				}
 			}
-		} else if constexpr (std::is_floating_point_v<T>) {
-			if constexpr (sizeof(T) <= 4)
-				return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_Float, &value, drag_speed, &min_value, &max_value, "%.3f", flags);
-			else 
-				return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_Double, &value, drag_speed, &min_value, &max_value, "%.3f", flags);
+			ImGui::Text("unsupported integral size");
+			return false;
 		}
 
-		else if constexpr (std::is_same_v<T, glm::vec2> || std::is_same_v<T, ImVec2>)
-			return ImGui::DragFloat2(loc_label.c_str(), &value[0], drag_speed, min_value[0], max_value[0], "%.2f", flags);
+		else if constexpr (std::is_floating_point_v<T>) {
+			const void* p_lo = min_value ? static_cast<const void*>(&*min_value) : nullptr;
+			const void* p_hi = max_value ? static_cast<const void*>(&*max_value) : nullptr;
+			if constexpr (sizeof(T) <= 4)
+				return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_Float,  &value, drag_speed, p_lo, p_hi, "%.3f", flags);
+			else
+				return ImGui::DragScalar(loc_label.c_str(), ImGuiDataType_Double, &value, drag_speed, p_lo, p_hi, "%.3f", flags);
+		}
 
-		else if constexpr (std::is_same_v<T, glm::vec3>)
-			return ImGui::DragFloat3(loc_label.c_str(), &value[0], drag_speed, min_value[0], max_value[0], "%.2f", flags);
-
-		else if constexpr (std::is_same_v<T, glm::vec4> || std::is_same_v<T, ImVec4>)
-			return ImGui::DragFloat4(loc_label.c_str(), &value[0], drag_speed, min_value[0], max_value[0], "%.2f", flags);
+		// vecN: DragFloat* takes floats by value. Per ImGui, v_min >= v_max
+		// disables clamping. We map "no min/max given" to 0/0 which hits that
+		// case, and "only min" / "only max" to the appropriate degenerate range.
+		else if constexpr (std::is_same_v<T, glm::vec2> || std::is_same_v<T, ImVec2>) {
+			const f32 lo = min_value.value_or(0.f);
+			const f32 hi = max_value.value_or(0.f);
+			return ImGui::DragFloat2(loc_label.c_str(), &value[0], drag_speed, lo, hi, "%.2f", flags);
+		}
+		else if constexpr (std::is_same_v<T, glm::vec3>) {
+			const f32 lo = min_value.value_or(0.f);
+			const f32 hi = max_value.value_or(0.f);
+			return ImGui::DragFloat3(loc_label.c_str(), &value[0], drag_speed, lo, hi, "%.2f", flags);
+		}
+		else if constexpr (std::is_same_v<T, glm::vec4> || std::is_same_v<T, ImVec4>) {
+			const f32 lo = min_value.value_or(0.f);
+			const f32 hi = max_value.value_or(0.f);
+			return ImGui::DragFloat4(loc_label.c_str(), &value[0], drag_speed, lo, hi, "%.2f", flags);
+		}
 
 		else if constexpr (std::is_same_v<T, std::string>) {
-
 			ImGui::Text("%s", value.c_str());
 			return false;
-
-		} else if constexpr (std::is_convertible_v<T, std::string>) {
-
+		}
+		else if constexpr (std::is_convertible_v<T, std::string>) {
 			ImGui::Text("%s", std::to_string(value).c_str());
 			return false;
 		}
 
-		else
-			ImGui::Text("Could not display variable");
-
+		ImGui::Text("Could not display variable");
 		return false;
 	}
 
@@ -330,8 +344,59 @@ namespace GLT::UI {
     }
 
 
+	// Enum-array overload: takes the result of GLT::util::enum_values<E>. Partial ordering prefers this over the generic Container
+	// overload for std::array<E, N>, so no ambiguity — and no constraining of the other overloads is needed.
+	template <typename E, std::size_t N>
+	requires std::is_enum_v<E>
+	bool table_row(std::string_view label, E& current_value, const std::array<E, N>& options, const char* desc, std::function<void(E)> on_changed) {
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::Text("%.*s", static_cast<int>(label.size()), label.data());
+
+		if (desc) {
+			ImGui::SameLine();
+			UI::shift_cursor_pos(ImGui::GetContentRegionAvail().x - 12.f, 0.f);
+			help_marker(desc);
+		}
+
+		ImGui::TableSetColumnIndex(1);
+
+		std::string loc_label = "##";
+		loc_label += label.data();
+
+		// Locate the current value's index by comparison, not by cast. Works for
+		// any enum with any underlying type, sparse values, negative values, etc.
+		int current_index = 0;
+		for (std::size_t i = 0; i < N; ++i) {
+			if (options[i] == current_value) {
+				current_index = static_cast<int>(i);
+				break;
+			}
+		}
+
+		static_assert(GLT::util::enum_name_ptrs<E>.size() == N,
+			"Enum options array size does not match the enumerator count for E. Did you pass a filtered sub-array?");
+
+		bool changed = false;
+		ImGui::SetNextItemWidth(ImGui::GetColumnWidth());
+		if (ImGui::Combo(loc_label.c_str(), &current_index, GLT::util::enum_name_ptrs<E>.data(), static_cast<int>(N))) {
+
+			const E new_value = options[current_index];
+			if (new_value != current_value) {
+
+				current_value = new_value;
+				changed = true;
+				if (on_changed) on_changed(current_value);
+			}
+		}
+
+		return changed;
+	}
+
+
 	template<typename T>
-	bool table_row_slider(std::string_view label, T& value, f32 min_value, f32 max_value, f32 draw_speed, ImGuiInputTextFlags flags) {
+	bool table_row_slider(std::string_view label, T& value, f32 min_value, f32 max_value, ImGuiInputTextFlags flags) {
 
 		flags |= ImGuiInputTextFlags_AllowTabInput;
 

@@ -8,7 +8,7 @@
     #include <GLFW/glfw3native.h>
 #endif
 
-#include <plugin_system/i_window_plugin.h>  
+#include <platform/i_window.h>  
 
 // FORWARD DECLARATIONS ================================================================================================
 

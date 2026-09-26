@@ -3,7 +3,7 @@
 #include "world.h"
 
 #include <asset/world.h>
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_registry.h>
 
 #include "components.h"
 
@@ -61,8 +61,8 @@ namespace GLT::world::world_ecs_entt {
         // name_component and hierarchy own heap data, so they get explicit codecs.
         m_codec.register_custom_component<name_component>("glt.name",
 
-            [](const entt::registry& r, entt::entity e, std::vector<std::byte>& out) {
-                const auto& n = r.get<name_component>(e);
+            [](const entt::registry& r, entt::entity entity, std::vector<std::byte>& out) {
+                const auto& n = r.get<name_component>(entity);
                 const u32 len = static_cast<u32>(n.name.size());
                 const auto* lp = reinterpret_cast<const std::byte*>(&len);
                 out.insert(out.end(), lp, lp + sizeof(len));
@@ -70,12 +70,12 @@ namespace GLT::world::world_ecs_entt {
                 out.insert(out.end(), sp, sp + len);
             },
 
-            [](entt::registry& r, entt::entity e, std::span<const std::byte> data) {
+            [](entt::registry& r, entt::entity entity, std::span<const std::byte> data) {
                 if (data.size() < sizeof(u32)) return;
                 u32 len;
                 std::memcpy(&len, data.data(), sizeof(len));
                 if (data.size() < sizeof(u32) + len) return;
-                auto& n = r.emplace_or_replace<name_component>(e);
+                auto& n = r.emplace_or_replace<name_component>(entity);
                 n.name.assign(reinterpret_cast<const char*>(data.data() + sizeof(u32)), len);
             });
 
@@ -84,15 +84,15 @@ namespace GLT::world::world_ecs_entt {
         // the tree in every blob.
         m_codec.register_custom_component<hierarchy>("glt.hierarchy",
 
-            [](const entt::registry& r, entt::entity e, std::vector<std::byte>& out) {
-                const auto& h = r.get<hierarchy>(e);
+            [](const entt::registry& r, entt::entity entity, std::vector<std::byte>& out) {
+                const auto& h = r.get<hierarchy>(entity);
                 const auto* p = reinterpret_cast<const std::byte*>(&h.parent);
                 out.insert(out.end(), p, p + sizeof(h.parent));
             },
 
-            [](entt::registry& r, entt::entity e, std::span<const std::byte> data) {
+            [](entt::registry& r, entt::entity entity, std::span<const std::byte> data) {
                 if (data.size() != sizeof(entity_id)) return;
-                auto& h = r.emplace_or_replace<hierarchy>(e);
+                auto& h = r.emplace_or_replace<hierarchy>(entity);
                 std::memcpy(&h.parent, data.data(), sizeof(entity_id));
             });
 
@@ -129,8 +129,22 @@ namespace GLT::world::world_ecs_entt {
         // Copy the region index into our mutable runtime vector. The asset's copy is treated as a template; we only ever mutate ours.
         m_regions = world_asset->region_index;
         m_region_states.clear();
-        for (const auto& r : m_regions)
-            m_region_states.try_emplace(r.id);
+        for (const auto& region : m_regions)
+            m_region_states.try_emplace(region.id);
+
+        // Pick a default region for runtime-spawned entities. Prefer the first region that's flagged always_loaded
+        // those are always active, so spawn() can safely put new entities there without checking stream state.
+        m_default_region_id = {};
+
+        for (const auto& region : m_regions) {
+            if (region.flags & 0x01) {
+
+                m_default_region_id = region.id;
+                break;
+            }
+        }
+        if (m_default_region_id == 0 && !m_regions.empty())
+            m_default_region_id = m_regions.front().id;
 
         return {};
     }
@@ -145,7 +159,7 @@ namespace GLT::world::world_ecs_entt {
         m_regions.clear();
         m_region_states.clear();
         m_world = {};
-
+        m_default_region_id = {};
         m_registry.clear();
         m_slots.clear();
         m_free.clear();
@@ -157,57 +171,118 @@ namespace GLT::world::world_ecs_entt {
 
     std::expected<void, GLT::asset::load_error> ecs_world_plugin::save_world() {
 
+        if (m_world == INVALID_HANDLE)
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
         auto registry = GLT::asset::registry::get_ref();
 
-        // Scratch reused across regions. Grows once, then allocates nothing.
-        std::vector<entt::entity> live;
+        // Regions first — if a region save fails, the world file on disk still points at the previous (consistent) region data.
+        if (auto result = flush_regions(); !result)
+            return result;
 
-        for (auto& r : m_regions) {
-            if (!r.is_active)
-                continue;
+        // Sync the plugin's authoritative region list back to the asset.
+        if (auto* wa = registry->data_as<GLT::asset::world::world_asset>(m_world))
+            wa->region_index = m_regions;
 
-            auto* region_asset = registry->data_as<GLT::asset::region::region_asset>(r.asset);
-            if (!region_asset)
-                continue;
+        return registry->save(m_world);
+    }
 
-            auto& state = m_region_states[r.id];
 
-            // Translate our stable entity_ids back to the ECS's native handles.  Any id whose generation doesn't match its slot has been
-            // recycled since the region was activated — those entities are gone and must not be serialized.
-            live.clear();
-            live.reserve(state.entities.size());
+    std::expected<void, GLT::asset::load_error> ecs_world_plugin::save_world_as(const std::filesystem::path& path) {
 
-            for (const entity_id id : state.entities) {
-                if (id.index >= m_slots.size())
-                    continue;
+        if (path.empty())
+            return std::unexpected{ GLT::asset::load_error::not_found };
 
-                const slot& s = m_slots[id.index];
-                if (s.generation != id.generation || s.handle == entt::null)
-                    continue;
+        auto registry = GLT::asset::registry::get_ref();
 
-                live.push_back(s.handle);
+        // fresh world: no handle yet
+        if (m_world == INVALID_HANDLE) {
+
+            // A world with no regions can't hold entities. Mint one before we register the world so the region is already
+            // a live asset by the time we declare it as a dependency.
+            if (m_regions.empty()) {
+
+                const std::string region_name = path.stem().string() + "_region0";
+                const std::filesystem::path region_path = path.parent_path() / (region_name + ".glt_region");
+
+                auto region_asset = GLT::create_unique_ref<GLT::asset::region::region_asset>();
+                region_asset->asset_type = GLT::asset::core_types::region;
+
+                GLT::AABB huge{};
+                huge.min = glm::vec3(-FLT_MAX);
+                huge.max = glm::vec3( FLT_MAX);
+                region_asset->bounds = huge;
+
+                auto region_handle_res = registry->register_runtime(std::move(region_asset), region_path, region_name);
+                if (!region_handle_res)
+                    return std::unexpected{ region_handle_res.error() };
+
+                const GLT::asset::handle region_handle = *region_handle_res;
+                const GLT::UUID region_id = registry->info(region_handle).id;      // whatever register_runtime minted
+
+                GLT::asset::region::region region{};
+                region.id = region_id;
+                region.asset = region_handle;
+                region.bounds = huge;
+                region.flags = 0x01;
+                region.is_active = true;
+
+                m_regions.push_back(region);
+                m_region_states[region.id] = {};
+                m_default_region_id = region.id;
             }
+            auto wa = GLT::create_unique_ref<GLT::asset::world::world_asset>();
+            wa->asset_type = GLT::asset::core_types::world;
+            wa->region_index = m_regions;
 
-            region_asset->entity_codec = CODEC_ENTT_V1;
+            auto handle_res = registry->register_runtime(std::move(wa), path, path.stem().string());
+            if (!handle_res)
+                return std::unexpected{ handle_res.error() };
 
-            m_codec.save(m_registry, std::span<const entt::entity>(live), [this](entt::entity e) { return entity_id_for(e); }, 
-                region_asset->entity_data);
+            m_world = *handle_res;
 
-            if (auto res = registry->save(r.asset); !res)
-                return res;
+            // Serialize the region handles into the world's dependency table so
+            // reload can resolve them. Without this, deserialize_world leaves
+            // every region's `asset` at INVALID_HANDLE.
+            for (const auto& region : m_regions)
+                if (region.asset != INVALID_HANDLE)
+                    registry->add_dependency(m_world, region.asset);
+
+            return save_world();
         }
 
-        if (m_world != GLT::asset::handle{}) {
-            if (auto res = registry->save(m_world); !res)
-                return res;
+        // existing handle, path differs: migrate the canonical path
+        if (registry->info(m_world).virtual_path != path) {
+
+            if (auto result = flush_regions(); !result)
+                return result;
+
+            if (auto* wa = registry->data_as<GLT::asset::world::world_asset>(m_world))
+                wa->region_index = m_regions;
+
+            return registry->save_as(m_world, path);
         }
 
-        return {};
+        return save_world();
     }
 
     // entity lifecycle ------------------------------------------------------------------------------------------------
 
-    entity_id ecs_world_plugin::spawn() { return alloc_slot(); }
+    entity_id ecs_world_plugin::spawn() {
+
+        const entity_id id = alloc_slot();
+
+        // Route into the default region so flush_regions() will pick this entity up on save. 
+        // Orphaned entities (no default region yet) are still valid — they just won't persist.
+        if (m_default_region_id != GLT::UUID{}) {
+
+            auto it = m_region_states.find(m_default_region_id);
+            if (it != m_region_states.end())
+                it->second.entities.push_back(id);
+        }
+
+        return id;
+    }
 
 
     void ecs_world_plugin::despawn(entity_id id) noexcept { release_slot(id); }
@@ -517,9 +592,11 @@ namespace GLT::world::world_ecs_entt {
     void ecs_world_plugin::stream_pass() {
 
         for (auto& region : m_regions) {
+
             const bool want = should_be_active(region);
             if (want && !region.is_active)
                 activate(region);
+
             else if (!want && region.is_active)
                 deactivate(region);
         }
@@ -531,8 +608,8 @@ namespace GLT::world::world_ecs_entt {
         auto registry = GLT::asset::registry::get_ref();
 
         // We treat region.asset as already resolved (see notes at bottom).
-        VALIDATE(region.asset != GLT::asset::handle{}, region.is_active = true; return, "", "region asset handle is unresolved; skipping entity load")
-        // don't retry every frame
+        VALIDATE(region.asset != INVALID_HANDLE, region.is_active = true; return, 
+            "", "region asset handle is unresolved; skipping entity load")
 
         const auto* region_asset = registry->data_as<GLT::asset::region::region_asset>(region.asset);
         VALIDATE(region_asset, region.is_active = true; return, "", "handle is not a region_asset")
@@ -549,7 +626,7 @@ namespace GLT::world::world_ecs_entt {
 
         // The entity blob stores parent pointers only. Rebuild the children lists so queries and the editor's outliner see a consistent tree.
         // Cheap: O(loaded entities) per activation, only when the region actually contains hierarchy components.
-        if (state.entities.empty() == false) {
+        if (!state.entities.empty()) {
 
             for (const entity_id child : state.entities) {
 
@@ -602,6 +679,46 @@ namespace GLT::world::world_ecs_entt {
         if (e == entt::null)
             return nullptr;
         return m_registry.try_get<hierarchy>(e);
+    }
+
+
+    std::expected<void, GLT::asset::load_error> ecs_world_plugin::flush_regions() {
+
+        auto registry = GLT::asset::registry::get_ref();
+
+        for (auto& region : m_regions) {
+
+            if (!region.is_active)
+                continue;
+
+            if (region.asset == INVALID_HANDLE)
+                continue;
+
+            auto* region_asset = registry->data_as<GLT::asset::region::region_asset>(region.asset);
+            if (!region_asset)
+                continue;
+
+            auto& state = m_region_states[region.id];
+
+            // Translate stable entity_ids to transient entt::entity handles. Skip any that already died 
+            // (despawned without going through the region's entity list — shouldn't happen, but the check is cheap)
+            std::vector<entt::entity> entities;
+            entities.reserve(state.entities.size());
+            for (const entity_id id : state.entities) {
+
+                const entt::entity entity = entt_of(id);
+                if (entity != entt::null)
+                    entities.push_back(entity);
+            }
+
+            region_asset->entity_codec = CODEC_ENTT_V1;
+            m_codec.save(m_registry, entities, [this](entt::entity entity) { return entity_id_for(entity); }, region_asset->entity_data);
+
+            if (auto result = registry->save(region.asset); !result)
+                return result;
+        }
+
+        return {};
     }
 
 }

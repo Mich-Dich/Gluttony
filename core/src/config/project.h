@@ -52,7 +52,12 @@ namespace GLT {
         static std::filesystem::path extract_path_from_project_dir(const std::filesystem::path& full_path);
 
 
-        static std::filesystem::path extract_path_from_project_content_dir(const std::filesystem::path& full_path);
+        // Accepts either a project-relative path (returned as-is) or an absolute path that lives under PROJECT_CONTENT_DIR (converted)
+        // Anything else is rejected.
+        static std::filesystem::path to_content_relative(const std::filesystem::path& path);
+
+
+        static std::filesystem::path extract_path_from_project_content_dir(const std::filesystem::path& full_path, const bool current_project = true);
 
     };
 

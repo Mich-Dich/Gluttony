@@ -7,7 +7,7 @@
 
 #include <config/imgui_config.h>
 #include <asset/texture.h>
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_registry.h>
 #include <plugin_system/plugin_manager.h>
 #include <render/image.h>
 #include <resource_manager/icon_manager.h>

@@ -7,7 +7,7 @@
 #include <application.h>
 #include <config/imgui_config.h>
 #include <event/event_bus.h>
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_registry.h>
 
 #include "util/event/asset_event.h"
 #include "util/ui/pannel_collection.h"
@@ -22,23 +22,23 @@ namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr f32                               LEFT_PANEL_MIN_WIDTH = 160.0f;
+    constexpr f32                                                   LEFT_PANEL_MIN_WIDTH = 160.0f;
 
-    constexpr f32                               LEFT_PANEL_MAX_WIDTH = 600.0f;
+    constexpr f32                                                   LEFT_PANEL_MAX_WIDTH = 600.0f;
 
-    constexpr f32                               ICON_RENDER_SIZE = 56.0f;
+    constexpr f32                                                   ICON_RENDER_SIZE = 56.0f;
 
-    constexpr f32                               ICON_TOP_MARGIN = 8.0f;
+    constexpr f32                                                   ICON_TOP_MARGIN = 8.0f;
 
-    constexpr f32                               CELL_WIDTH = ICON_RENDER_SIZE + (ICON_TOP_MARGIN * 2);
+    constexpr f32                                                   CELL_WIDTH = ICON_RENDER_SIZE + (ICON_TOP_MARGIN * 2);
 
-    constexpr f32                               CELL_HEIGHT = CELL_WIDTH + (18.f);
+    constexpr f32                                                   CELL_HEIGHT = CELL_WIDTH + (18.f);
 
-    constexpr f32                               LABEL_BOTTOM_MARGIN = 20.0f;
+    constexpr f32                                                   LABEL_BOTTOM_MARGIN = 20.0f;
 
-    constexpr const char*                       DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
+    constexpr const char*                                           DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
 
-	const std::vector<std::pair<std::string, std::string>> POSSIBLE_IMPORT_TILE_TYPES = {
+	const std::vector<std::pair<std::string, std::string>>          POSSIBLE_IMPORT_TILE_TYPES = {
 
 		//									mesh																 image
 		{"All supported file types",    	"*.fbx;*.gltf;*.glb;*.obj;*.stl;*.3mf;*.dae;*.xml;*.ply;*.plyb;*.3ds;*.png;*.jpg;*.jpeg;*.jpe;*.tga;*.bmp;*.psd;*.gif;*.hdr;*.pic;*.ppm;*.pgm*.wav;*.ogg;*.mp3;*.flac"},
@@ -155,14 +155,14 @@ namespace GLT::editor {
         // on top of the selection highlight.
         switch (cat) {
 
-            case asset_category::image:    return IM_COL32( 91, 155, 213, 100);  // soft blue
-            case asset_category::world:    return IM_COL32(224, 136,  64, 100);  // warm orange
-            case asset_category::source:   return IM_COL32(103, 194, 106, 100);  // fresh green
-            case asset_category::material: return IM_COL32(176, 107, 216, 100);  // muted violet
-            case asset_category::mesh:     return IM_COL32( 77, 194, 194, 100);  // teal
-            case asset_category::config:   return IM_COL32(224, 192,  70, 100);  // amber
-            case asset_category::audio:    return IM_COL32(224, 122, 138, 100);  // salmon
-            default:                      return IM_COL32(140, 140, 140, 100);  // neutral gray
+            case asset_category::image:     return IM_COL32( 91, 155, 213, 100);  // soft blue
+            case asset_category::world:     return IM_COL32(224, 136,  64, 100);  // warm orange
+            case asset_category::source:    return IM_COL32(103, 194, 106, 100);  // fresh green
+            case asset_category::material:  return IM_COL32(176, 107, 216, 100);  // muted violet
+            case asset_category::mesh:      return IM_COL32( 77, 194, 194, 100);  // teal
+            case asset_category::config:    return IM_COL32(224, 192,  70, 100);  // amber
+            case asset_category::audio:     return IM_COL32(224, 122, 138, 100);  // salmon
+            default:                        return IM_COL32(140, 140, 140, 100);  // neutral gray
         }
     }
 
@@ -564,14 +564,15 @@ namespace GLT::editor {
                 // Ask the registry what a file with this extension actually maps to. If nothing does, fall back to 
                 // the informational category - the editor will log "no editor registered" rather than silently open the wrong thing.
                 GLT::asset::type resolved = GLT::asset::core_types::invalid;
+                const auto project_relative_path = GLT::project::extract_path_from_project_content_dir(entry.path);
                 if (auto registry = GLT::asset::registry::get_ref()) {
 
-                    if (auto loaded = registry->load(entry.path))
+                    if (auto loaded = registry->load(project_relative_path))
                         resolved = registry->info(*loaded).asset_type;
                     else
                         LOG(warn, "Failed to load [{}]", entry.path)
                 }
-                GLT::event_bus::post(asset_open_event{ resolved, entry.path });
+                GLT::event_bus::post(asset_open_event{ resolved, project_relative_path });
             }
 
         } else if(button) {
@@ -724,14 +725,16 @@ namespace GLT::editor {
                 // Ask the registry what a file with this extension actually maps to. If nothing does, fall back to 
                 // the informational category - the editor will log "no editor registered" rather than silently open the wrong thing.
                 GLT::asset::type resolved = GLT::asset::core_types::invalid;
-                if (auto registry = GLT::asset::registry::get_ref()) {
+                const auto project_relative_path = GLT::project::extract_path_from_project_content_dir(entry.path);
+                auto registry = GLT::asset::registry::get_ref();
+                if (!project_relative_path.empty() && registry) {
 
-                    if (auto loaded = registry->load(entry.path))
+                    if (auto loaded = registry->load(project_relative_path))
                         resolved = registry->info(*loaded).asset_type;
                     else
-                        LOG(warn, "Failed to load [{}]", entry.path)
+                        LOG(warn, "Failed to load [{}]", project_relative_path)
                 }
-                GLT::event_bus::post(asset_open_event{ resolved, entry.path });
+                GLT::event_bus::post(asset_open_event{ resolved, project_relative_path });
             }
         }
 

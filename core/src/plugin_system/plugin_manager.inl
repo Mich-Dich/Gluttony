@@ -22,6 +22,13 @@ namespace GLT::plugin_manager {
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
+    FORCE_INLINE void enter_phase(const phase current_phase) {
+
+        plugin_manager::load_plugins(current_phase);
+        plugin_manager::unload_plugins(current_phase);
+    }
+
+
     template<typename T>
     FORCE_INLINE_R ref<T> get_plugin_ref(const std::string& name) {
 

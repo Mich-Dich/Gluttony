@@ -8,7 +8,7 @@
 #include <backends/imgui_impl_vulkan.h>
 
 #include <application.h>
-#include <plugin_system/i_window_plugin.h>
+#include <platform/i_window.h>
 
 // #include "initializer.h"
 

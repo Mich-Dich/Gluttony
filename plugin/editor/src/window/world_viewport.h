@@ -3,7 +3,7 @@
 
 #include <imgui.h>
 
-#include <plugin_system/i_world_plugin.h>
+#include <world/i_world.h>
 #include <world/i_world_inspector.h>
 
 #include "window/base_window.h"

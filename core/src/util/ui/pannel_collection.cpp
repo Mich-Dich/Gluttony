@@ -52,6 +52,8 @@ namespace GLT::UI {
 
 	void render_text_segment(const char* text, int length, ImVec4 fg_color, ImVec4 bg_color);
 
+    std::vector<std::filesystem::path> list_subdirs(const std::filesystem::path& dir);
+
 	// INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
 	// INTERNAL FUNCTION IMPLEMENTATION ================================================================================
@@ -163,6 +165,29 @@ namespace GLT::UI {
 		ImGui::TextColored(fg_color, "%.*s", length, text);
 		ImGui::SameLine(0, 0);
 	}
+
+
+    std::vector<std::filesystem::path> list_subdirs(const std::filesystem::path& dir) {
+
+        std::vector<std::filesystem::path> out;
+        std::error_code error{};
+        auto it = GLT::vfs::directory_iterator(dir, error);
+        if (error)
+            return out;
+
+        for (auto& e : it) {
+            if (!e.is_directory(error))
+                continue;
+
+            const auto name = e.path().filename().string();
+            if (!name.empty() && name.front() == '.')
+                continue;
+
+            out.push_back(e.path());
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }
 
 	// TEMPLATE IMPLEMENTATION =========================================================================================
 
@@ -753,6 +778,84 @@ namespace GLT::UI {
 	}
 
 
+    bool draw_dir_tree(const std::filesystem::path& dir, const std::filesystem::path& current, std::filesystem::path& out_selected) {
+
+        bool picked = false;
+        const auto sub = list_subdirs(dir);
+
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+
+        if (dir == current)
+            flags |= ImGuiTreeNodeFlags_Selected;
+
+        if (sub.empty())
+            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+        if (!current.empty() && current != dir) {
+            for (auto p = current.parent_path(); !p.empty(); p = p.parent_path()) {
+                if (p == dir) {
+                    flags |= ImGuiTreeNodeFlags_DefaultOpen;
+                    break;
+                }
+                if (p == p.root_path())
+                    break;
+            }
+        }
+
+        ImGui::PushID(dir.string().c_str());
+
+        const std::string label = dir.filename().empty() ? dir.generic_string() : dir.filename().string();
+        const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+            out_selected = dir;
+            picked = true;
+        }
+
+        if (open && !sub.empty()) {
+            for (const auto& s : sub)
+                if (draw_dir_tree(s, current, out_selected))
+                    picked = true;
+            ImGui::TreePop();
+        }
+
+        ImGui::PopID();
+        return picked;
+    }
+
+
+    bool draw_directory_picker(const char* id, std::filesystem::path& in_out, const std::filesystem::path& root) {
+
+        bool changed = false;
+        ImGui::PushID(id);
+
+        if (ImGui::Button(in_out.generic_string().c_str(), ImVec2(-FLT_MIN, 0)))
+            ImGui::OpenPopup("##picker");
+
+        if (ImGui::BeginPopup("##picker")) {
+
+            if (ImGui::BeginChild("##tree_scroll", ImVec2(440.0f, 300.0f), true)) {
+
+                if (root.empty()) {
+                    ImGui::TextDisabled("(no content root configured)");
+                } else {
+                    std::filesystem::path selected;
+                    if (draw_dir_tree(root, in_out, selected)) {
+                        in_out  = selected;
+                        changed = true;
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+            }
+            ImGui::EndChild();
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopID();
+        return changed;
+    }
+
+
 	bool begin_table(std::string_view label, bool display_name, ImVec2 size, f32 inner_width, bool set_columns_width, f32 columns_width_percentage) {
 
 		if (display_name)
@@ -1134,8 +1237,7 @@ namespace GLT::UI {
 
 		ImGui::TableSetColumnIndex(1);
 
-		ImGui::Checkbox(label.data(), &value);
-		//ImGui::Text("%s", value.data());
+		ImGui::Checkbox((std::string("##") + label.data()).c_str(), &value);
 	}
 
 
@@ -1160,7 +1262,7 @@ namespace GLT::UI {
 			rotation = glm::degrees(rotation);
 
 		const bool changed_0 = UI::table_row("translation", translation);
-		const bool changed_1 = UI::table_row("rotation", rotation, display_in_degree ? 0.1f : 0.01f, glm::vec3(0), glm::vec3(0));
+		const bool changed_1 = UI::table_row("rotation", rotation, display_in_degree ? 0.1f : 0.01f, 0.f, 0.f);
 		const bool changed_2 = UI::table_row("scale", scale);
 
 		if (changed_0 || changed_1 || changed_2) {

@@ -2,8 +2,10 @@
 #include "util/pch.h"
 #include "world_layer.h"
 
+#include "event/event_bus.h"
 #include "world/object/camera.h"
-#include "plugin_system/i_world_plugin.h"
+#include "world/i_world.h"
+#include "asset/i_asset_registry.h"
 
 
 
@@ -34,10 +36,13 @@ namespace GLT::world {
     // CLASS IMPLEMENTATION ============================================================================================
 
     world_layer::world_layer()
-        : layer("input") {}
+        : layer("input") {
+
+        m_world = GLT::world::manager::get_ref();
+    }
 
 
-    world_layer::~world_layer() = default;
+    world_layer::~world_layer() { }
 
     // CLASS PUBLIC ====================================================================================================
 
@@ -49,8 +54,7 @@ namespace GLT::world {
         if (!m_world)
             return;
 
-        // The editor camera is the streaming anchor
-        if (m_editor_camera)
+        if (m_editor_camera)        // The editor camera is the streaming anchor FOR NOW
             m_world->set_streaming_anchor(m_editor_camera->get_position());
 
         m_world->update(delta_time);

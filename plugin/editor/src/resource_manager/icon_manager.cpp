@@ -22,7 +22,7 @@
 #include <util/io/vfs.h>
 #include <util/io/directory_iterator.h>
 #include <plugin_system/plugin_manager.h>
-#include <plugin_system/i_renderer_plugin.h>
+#include <render/i_renderer.h>
 
 
 

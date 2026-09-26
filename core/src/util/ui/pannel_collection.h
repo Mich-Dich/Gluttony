@@ -173,8 +173,14 @@ namespace GLT::UI {
 	void shift_cursor_pos(const ImVec2 shift);
 
 
+    bool draw_dir_tree(const std::filesystem::path& dir, const std::filesystem::path& current, std::filesystem::path& out_selected);
+
+
 	void progressbar_with_text(const char* label, const char* progress_bar_text, f32 percent, f32 label_size = 50.f, 
 		f32 progressbar_size_x = 50.f, f32 progressbar_size_y = 1.f);
+
+
+	bool draw_directory_picker(const char* id, std::filesystem::path& in_out, const std::filesystem::path& root);
 
 
 	// @brief This function sets up an ImGui table with two columns, where the first column is resizable and the second column fills the remaining available area
@@ -326,8 +332,15 @@ namespace GLT::UI {
 	// @param [value] The value to be displayed or edited.
 	// @param [flags] Flags controlling the behavior of the input field.
 	template<typename T>
-	bool table_row(std::string_view label, T& value, f32 drag_speed = 0.01f, T min_value = T{0}, T max_value = T{1}, 
-		ImGuiInputTextFlags flags = ImGuiInputTextFlags_None);
+	bool table_row(std::string_view label, T& value, f32 drag_speed = .05f, std::optional<f32> min_value = std::nullopt,
+		std::optional<f32> max_value = std::nullopt, ImGuiSliderFlags flags = ImGuiSliderFlags_None);
+
+
+	template <typename E, std::size_t N>
+	requires std::is_enum_v<E>
+	bool table_row(std::string_view label, E& current_value, const std::array<E, N>& options, const char* desc = nullptr,
+		std::function<void(E)> on_changed = nullptr);
+
 
 	// @brief Renders a slider within a table row in an ImGui interface.
 	// 
@@ -353,7 +366,7 @@ namespace GLT::UI {
 	// 
 	// @return true if the value was changed by the slider, false otherwise.
 	template<typename T>
-	bool table_row_slider(std::string_view label, T& value, f32 min_value = 0.f, f32 max_value = 0.f, f32 draw_speed = 0.2f, 
+	bool table_row_slider(std::string_view label, T& value, f32 min_value = 0.f, f32 max_value = 0.f, 
 		ImGuiInputTextFlags flags = ImGuiInputTextFlags_None);
 	
 	

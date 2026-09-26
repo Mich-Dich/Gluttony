@@ -1,6 +1,6 @@
 
 #include "util/pch.h"
-#include "i_window_plugin.h"
+#include "i_window.h"
 
 #include "util/io/serializer_yaml.h"
 

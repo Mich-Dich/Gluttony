@@ -2,7 +2,7 @@
 #pragma once
 
 #include <asset/type.h>
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_registry.h>
 
 #include "entity_codec.h"
 
@@ -125,13 +125,13 @@ namespace GLT::world::world_ecs_entt {
     FORCE_INLINE_R std::expected<GLT::unique_ref<GLT::asset::i_runtime_asset>, GLT::asset::load_error>
     world_asset_handler::deserialize_world(const GLT::asset::info& info, GLT::asset::chunk_reader& reader) {
 
-        // ---- required chunks ----------------------------------------------------------------------------------------
+        // required chunks ---------------------------------------------------------------------------------------------
 
+        // An empty (or missing) region chunk is a valid "world with no regions yet". A fresh world saved before any region was added
+        // will have exactly this shape, and there's no reason to reject it — the plugin will create a default region on the next edit
         const auto disks = reader.get_as<region_disk>(GLT::asset::world::CHUNK_WORLD_REGIONS);
-        VALIDATE(!disks.empty(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] missing region list chunk", info.name)
 
-        // ---- positional dependency invariant ------------------------------------------------------------------------
+        // positional dependency invariant -----------------------------------------------------------------------------
 
         // The writer is required to emit one dependency per region, in region-declaration order.
         // Mismatch means the file was hand-edited or the factory changed; we still load,
@@ -142,27 +142,27 @@ namespace GLT::world::world_ecs_entt {
                 info.name, disks.size(), info.dependencies.size());
         }
 
-        // ---- build the runtime asset --------------------------------------------------------------------------------
+        // build the runtime asset -------------------------------------------------------------------------------------
 
         auto asset = std::make_unique<GLT::asset::world::world_asset>();
         asset->asset_type = info.asset_type;
         asset->region_index.reserve(disks.size());
 
-        for (size_t i = 0; i < disks.size(); ++i) {
+        for (size_t index = 0; index < disks.size(); index++) {
 
-            const region_disk& disk = disks[i];
+            const region_disk& disk = disks[index];
 
-            GLT::asset::region::region r{};
-            r.id = disk.id;
-            r.bounds = disk.bounds;
-            r.flags = disk.flags;
-            r.is_active = false;
-            r.asset = (i < info.dependencies.size()) ? info.dependencies[i] : GLT::asset::handle{};
+            GLT::asset::region::region region{};
+            region.id = disk.id;
+            region.bounds = disk.bounds;
+            region.flags = disk.flags;
+            region.is_active = false;
+            region.asset = (index < info.dependencies.size()) ? info.dependencies[index] : INVALID_HANDLE;
 
-            asset->region_index.push_back(r);
+            asset->region_index.push_back(region);
         }
 
-        // ---- optional settings --------------------------------------------------------------------------------------
+        // optional settings -------------------------------------------------------------------------------------------
 
         if (const auto settings = reader.get(GLT::asset::world::CHUNK_WORLD_SETTINGS); !settings.empty())
             asset->settings.assign(settings.begin(), settings.end());
@@ -192,9 +192,8 @@ namespace GLT::world::world_ecs_entt {
 
         if (const auto blob = reader.get(GLT::asset::region::CHUNK_REGION_ENTITIES); !blob.empty()) {
 
-            VALIDATE(blob.size() >= sizeof(entity_blob_header),
-                return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-                "[{}] entity chunk too small for header ({} bytes)", info.name, blob.size())
+            VALIDATE(blob.size() >= sizeof(entity_blob_header), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+                "", "[{}] entity chunk too small for header ({} bytes)", info.name, blob.size())
 
             entity_blob_header hdr;
             std::memcpy(&hdr, blob.data(), sizeof(hdr));
@@ -202,9 +201,8 @@ namespace GLT::world::world_ecs_entt {
             asset->entity_codec = hdr.codec;
             asset->entity_data.assign(blob.begin() + sizeof(entity_blob_header), blob.end());
 
-            // A codec id of NONE with a non-empty payload is almost certainly a
-            // writer bug - the plugin will skip the blob on activate() and the
-            // region will look empty. Warn so it's visible.
+            // A codec id of NONE with a non-empty payload is almost certainly a writer bug - the plugin will skip the blob on
+            // activate() and the region will look empty. Warn so it's visible.
             if (hdr.codec == CODEC_NONE && !asset->entity_data.empty())
                 LOG(warn, "[{}] entity payload present ({} bytes) but codec is NONE - blob will be ignored",
                     info.name, asset->entity_data.size());
@@ -225,11 +223,11 @@ namespace GLT::world::world_ecs_entt {
         // deserialize_world() relies on, so this loop is symmetric with it.
         std::vector<region_disk> disks(asset.region_index.size());
 
-        for (size_t i = 0; i < asset.region_index.size(); ++i) {
-            const auto& r = asset.region_index[i];
-            disks[i].id     = r.id;
-            disks[i].bounds = r.bounds;
-            disks[i].flags  = r.flags;
+        for (size_t index = 0; index < asset.region_index.size(); ++index) {
+            const auto& region = asset.region_index[index];
+            disks[index].id = region.id;
+            disks[index].bounds = region.bounds;
+            disks[index].flags = region.flags;
         }
 
         write_chunk_span(out, GLT::asset::world::CHUNK_WORLD_REGIONS, std::span<const region_disk>(disks));
@@ -252,8 +250,9 @@ namespace GLT::world::world_ecs_entt {
             // blob = [entity_blob_header][payload]
             std::vector<std::byte> blob(sizeof(entity_blob_header) + asset.entity_data.size());
 
-            entity_blob_header hdr{};
-            hdr.codec = asset.entity_codec;
+            entity_blob_header hdr{
+                .codec = asset.entity_codec,
+            };
             std::memcpy(blob.data(), &hdr, sizeof(hdr));
             std::memcpy(blob.data() + sizeof(hdr), asset.entity_data.data(), asset.entity_data.size());
 

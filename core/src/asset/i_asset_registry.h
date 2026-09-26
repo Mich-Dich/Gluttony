@@ -3,7 +3,7 @@
 
 #include "asset/type.h"
 #include "plugin_system/plugin_manager.h"
-#include "plugin_system/i_asset_factory_plugin.h"
+#include "asset/i_asset_factory.h"
 
 
 
@@ -49,6 +49,7 @@ namespace GLT::asset {
 
         // lifecycle ---------------------------------------------------------------------------------------------------
 
+        // @param path  CAUTION - this uses a content dir relative path (PROJECT_CONTENT_DIR / path)
         [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::load_error> load(std::filesystem::path path) = 0;
 
 
@@ -64,13 +65,30 @@ namespace GLT::asset {
 
         // Same as save(), but moves the asset to a new canonical path. The old path entry is dropped from the path index,
         // the new one takes over. Useful for "Save As" in the editor.
+        // @param new_path  CAUTION - this uses a content dir relative path (PROJECT_CONTENT_DIR / path)
         [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> save_as(GLT::asset::handle h, const std::filesystem::path& new_path) = 0;
 
 
         [[nodiscard]] virtual bool is_loaded(GLT::asset::handle h) const = 0;
 
 
-        [[nodiscard]] virtual GLT::asset::handle find(const std::filesystem::path&) const = 0;
+        // @param path  CAUTION - this uses a content dir relative path (PROJECT_CONTENT_DIR / path)
+        [[nodiscard]] virtual GLT::asset::handle find(const std::filesystem::path& path) const = 0;
+
+        // persistence -------------------------------------------------------------------------------------------------
+
+        // Persist an in-memory asset that has no backing file yet. The registry takes ownership of `asset`, mints a fresh UUID
+        // unless one is provided, and installs it at `path`. The asset is NOT written to disk - call save(handle) afterwards to
+        // emit the first bytes.
+        //
+        // Intended for: a plugin that builds runtime state (a fresh world, a procedural material) and wants the registry to
+        // start tracking it so subsequent save() calls work. Most callers should expose a higher-level method on their own
+        // interface instead of calling this directly.
+        //
+        // Fails with `already_exists` if `path` or `id` is already claimed.
+        [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::load_error> register_runtime(
+            GLT::unique_ref<GLT::asset::i_runtime_asset> asset, const std::filesystem::path& path, std::string_view name = {},
+            GLT::UUID id = {}) = 0;
 
         // queries -----------------------------------------------------------------------------------------------------
 

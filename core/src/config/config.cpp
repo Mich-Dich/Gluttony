@@ -2,7 +2,7 @@
 #include "util/pch.h"
 #include "config.h"
 
-#include "plugin_system/i_window_plugin.h"
+#include "platform/i_window.h"
 #include "util/io/serializer_yaml.h"
 
 

@@ -1,12 +1,12 @@
 
 #pragma once
 
-#include "i_plugin.h"
+#include "plugin_system/i_plugin.h"
 #include "event/event.h"               // core event base class
 #include <glm/vec2.hpp>
 
 #include "plugin_system/plugin_manager.h"
-#include "plugin_system/i_renderer_plugin.h"
+#include "render/i_renderer.h"
 
 
 

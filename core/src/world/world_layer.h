@@ -2,6 +2,7 @@
 #pragma once
 
 #include "world/controller.h"
+#include "event/application_event.h"
 
 
 
@@ -37,6 +38,7 @@ namespace GLT::world {
 
         DEFAULT_GETTER(ref<GLT::world::controller>,             controller)
         DEFAULT_GETTER(ref<GLT::world::camera>,                 editor_camera)
+        DEFAULT_GETTER(ref<GLT::world::i_world_plugin>,         world)
 
 
         void update(const f32 delta_time) override;
@@ -65,9 +67,13 @@ namespace GLT::world {
 
     private:
 
+        void on_save_event(const GLT::save_event& event);
+
+
         ref<GLT::world::controller>                             m_controller{};
         ref<GLT::world::camera>                                 m_editor_camera{};
         ref<GLT::world::i_world_plugin>                         m_world{};
+        handle                                                  m_save_sub_handle{};
 
     };
 

@@ -7,7 +7,7 @@
 
 #include <config/imgui_config.h>
 #include <asset/audio.h>
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_registry.h>
 #include <plugin_system/plugin_manager.h>
 #include <plugin_system/i_audio_plugin.h>
 #include <resource_manager/icon_manager.h>
@@ -139,12 +139,13 @@ namespace GLT::editor {
         details.extension = ext;
         details.format = audio::pretty_format(ext);
 
+        const auto absolute_path = PROJECT_CONTENT_DIR / path;
         std::error_code error{};
-        const auto size = GLT::vfs::file_size(path, error);
+        const auto size = GLT::vfs::file_size(absolute_path, error);
         if (!error)
             details.file_size = static_cast<u64>(size);
 
-        const GLT::system_time time = GLT::vfs::last_write_time(path, error);
+        const GLT::system_time time = GLT::vfs::last_write_time(absolute_path, error);
         if (!error)
             details.last_modified = time;
 
@@ -191,42 +192,33 @@ namespace GLT::editor {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    audio_viewer_window::audio_viewer_window(const std::filesystem::path& path) {
-
-        open(path);
-    }
+    audio_viewer_window::audio_viewer_window(const std::filesystem::path& path) { open(path); }
 
 
-    audio_viewer_window::~audio_viewer_window() {
-
-        teardown_playback();
-    }
+    audio_viewer_window::~audio_viewer_window() { teardown_playback(); }
 
     // CLASS PUBLIC ====================================================================================================
 
     void audio_viewer_window::open(const std::filesystem::path& path) {
 
-        // Invalidate any in-flight worker for a previous file.
-        ++m_load_generation;
+        m_load_generation++;            // Invalidate any in-flight worker for a previous file.
+        teardown_playback();            // Stop playback and release the previous asset (main-thread only).
 
-        // Stop playback and release the previous asset (main-thread only).
-        teardown_playback();
-
-        m_loading      = false;
-        m_details      = {};
-        m_has_audio    = false;
-        m_load_failed  = false;
+        m_loading = false;
+        m_details = {};
+        m_has_audio = false;
+        m_load_failed = false;
 
         m_peaks.clear();
         m_peak_count = 0;
         m_visible_start_sec = 0.0f;
-        m_visible_end_sec   = 0.0f;
-        m_playhead_sec      = 0.0f;
-        m_fit_pending       = true;
-        m_show_window       = true;
+        m_visible_end_sec = 0.0f;
+        m_playhead_sec = 0.0f;
+        m_fit_pending = true;
+        m_show_window = true;
 
-        m_details.path = GLT::project::extract_path_from_project_content_dir(path);
-        m_details.name = path.filename().string();
+        m_details.path = path;
+        m_details.name = path.filename().replace_extension("").string();
         m_details.extension = GLT::util::to_lower(path.extension().string());
         m_details.format = audio::pretty_format(m_details.extension);
 
@@ -234,46 +226,44 @@ namespace GLT::editor {
         make_window_name((std::string("AUD: ") + m_details.name).c_str());
 
         std::error_code error{};
-        VALIDATE(GLT::vfs::exists(path, error) && !error, m_load_failed = true; return, "",
+        VALIDATE(GLT::vfs::exists(PROJECT_CONTENT_DIR / path, error) && !error, m_load_failed = true; return, "",
             "file not found [{}]", path.generic_string())
-        VALIDATE(!GLT::vfs::is_directory(path, error) && !error, m_load_failed = true; return, "",
+
+        VALIDATE(!GLT::vfs::is_directory(PROJECT_CONTENT_DIR /path, error) && !error, m_load_failed = true; return, "",
             "path is a directory [{}]", path.generic_string())
 
-        // --- background load through the asset registry -------------------------
+        // background load through the asset registry ------------------------------------------------------------------
         m_loading = true;
-
-        const std::filesystem::path abs_path = path;
+        const std::filesystem::path relative_path = m_details.path;
         const std::string name = m_details.name;
-        const std::string ext  = m_details.extension;
-        const u64 generation   = m_load_generation;
+        const std::string ext = m_details.extension;
+        const u64 generation = m_load_generation;
         std::weak_ptr<int> lifetime = m_lifetime_token;
-
-        GLT::thread_pool::push([this, lifetime, abs_path, name, ext, generation]() {
+        GLT::thread_pool::push([this, relative_path, name, ext, generation, lifetime]() {
 
             // worker thread -------------------------------------------------------------------------------------------
             auto result = std::make_shared<audio::decode_result>();
-            result->details = populate_details_from_disk(abs_path, name, ext);
+            result->details = populate_details_from_disk(relative_path, name, ext);
 
             auto registry = GLT::asset::registry::get_ref();
             if (!registry) {
                 result->ok = false;
-            } else if (auto loaded = registry->load(abs_path); loaded) {
+            } else if (auto loaded = registry->load(relative_path); loaded) {
 
                 result->asset_handle = *loaded;
 
                 const auto* runtime = registry->data(result->asset_handle);
-                const auto* asset   = dynamic_cast<const GLT::asset::audio::audio_asset*>(runtime);
-
+                const auto* asset = dynamic_cast<const GLT::asset::audio::audio_asset*>(runtime);
                 if (asset) {
 
                     result->details.sample_rate = asset->format.sample_rate;
-                    result->details.channels    = asset->format.channels;
-                    result->details.bit_depth   = asset->format.bit_depth;
-                    result->details.duration_sec =
-                        static_cast<f32>(asset->format.frame_count) /
+                    result->details.channels = asset->format.channels;
+                    result->details.bit_depth = asset->format.bit_depth;
+                    result->details.duration_sec = static_cast<f32>(asset->format.frame_count) /
                         static_cast<f32>(std::max<u32>(1, asset->format.sample_rate));
 
                     if (result->details.duration_sec > 0.0f) {
+
                         result->details.bitrate_kbps = static_cast<u32>(
                             (static_cast<f64>(result->details.file_size) * 8.0) /
                             (static_cast<f64>(result->details.duration_sec) * 1000.0) + 0.5);

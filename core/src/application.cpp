@@ -3,13 +3,15 @@
 
 #include "event/event_bus.h"
 #include "event/application_event.h"
+#include "render/i_renderer.h"
 #include "plugin_system/plugin_manager.h"
-#include "plugin_system/i_window_plugin.h"
-#include "plugin_system/i_renderer_plugin.h"
+#include "platform/i_window.h"
 #include "plugin_system/i_game_loop_plugin.h"
 #include "plugin_system/i_audio_plugin.h"
 #include "config/imgui_config.h"
+#include "asset/i_asset_registry.h"
 #include "world/world_layer.h"
+#include "world/i_world.h"
 
 #include "application.h"
 
@@ -44,10 +46,9 @@ namespace GLT {
         set_target_fps(60);                                             // DEBUG-ONLY - TODO: load from config
         imgui_config::init();
 
-        m_layer_stack.push_layer<GLT::world::world_layer>();            // first layer is the game world
+        plugin_manager::enter_phase(plugin_manager::phase::pre_application);
 
-        plugin_manager::load_plugins(plugin_manager::phase::pre_application);
-        plugin_manager::unload_plugins(plugin_manager::phase::pre_application);
+        m_layer_stack.push_layer<GLT::world::world_layer>();            // first layer is the game world
 
         mp_window = GLT::platform::get_window_ref();
         ASSERT(mp_window, "", "Failed to load window plugin")
@@ -63,8 +64,7 @@ namespace GLT {
         ASSERT(mp_renderer, "", "Failed to load render plugin")
         mp_renderer->create();
 
-        plugin_manager::load_plugins(plugin_manager::phase::application_ready);
-        plugin_manager::unload_plugins(plugin_manager::phase::application_ready);
+        plugin_manager::enter_phase(plugin_manager::phase::application_ready);
 
         LOG_INIT
     }
@@ -72,8 +72,7 @@ namespace GLT {
 
     application::~application() {
 
-        plugin_manager::load_plugins(plugin_manager::phase::pre_application_shutdown);
-        plugin_manager::unload_plugins(plugin_manager::phase::pre_application_shutdown);
+        plugin_manager::enter_phase(plugin_manager::phase::pre_application_shutdown);
 
         mp_renderer->destroy();
         mp_audio->destroy();
@@ -83,8 +82,7 @@ namespace GLT {
         mp_window->destroy();
 
         imgui_config::shutdown();
-        plugin_manager::load_plugins(plugin_manager::phase::post_application_shutdown);
-        plugin_manager::unload_plugins(plugin_manager::phase::post_application_shutdown);
+        plugin_manager::enter_phase(plugin_manager::phase::post_application_shutdown);
 
         s_instance = nullptr;
         LOG_SHUTDOWN
@@ -94,8 +92,9 @@ namespace GLT {
 
     void application::run() {
 
-        plugin_manager::load_plugins(plugin_manager::phase::pre_application_run);
-        plugin_manager::unload_plugins(plugin_manager::phase::pre_application_run);
+        // load_world(m_project.start_world, false);           // load project world if none loaded
+
+        plugin_manager::enter_phase(plugin_manager::phase::pre_application_run);
 
         auto game_loop = GLT::game_loop::get_ref();
         ASSERT(game_loop, "", "Failed to load game_loop plugin");
@@ -116,8 +115,29 @@ namespace GLT {
         game_loop->run(ctx);
         game_loop->shutdown(ctx);
 
-        plugin_manager::load_plugins(plugin_manager::phase::post_application_run);
-        plugin_manager::unload_plugins(plugin_manager::phase::post_application_run);
+        plugin_manager::enter_phase(plugin_manager::phase::post_application_run);
+    }
+
+
+    void application::load_world(const std::filesystem::path& world_path, const bool override_current) {
+
+        auto* world_layer = m_layer_stack.get<GLT::world::world_layer>();
+        VALIDATE(world_layer, return, "", "Failed to get world layer from layer stack")
+        
+        auto world = world_layer->get_world();
+        VALIDATE(world, return, "", "Failed to get world from world layer")
+        
+        if (!override_current)                         // already set, dont override
+            return;
+
+        auto registry = GLT::asset::registry::get_ref();
+        VALIDATE(registry, return, "", "Failed to get asset-registry")
+
+        auto result = registry->load(world_path);
+        VALIDATE(result, return, "", "Registry failed to load world [{}]", world_path.generic_string())
+
+        const auto world_result = world->load_world(*result);
+        VALIDATE(world_result, return, "", "Failed to load world")
     }
 
 

@@ -96,6 +96,7 @@ namespace GLT::asset {
         out_of_memory,
         needs_reload,                                                   // handler asks registry to rebuild
         cyclic_dependency,                                              // useful for the loader below
+        already_exists,                                                 // path or id already registered
     };
 
 

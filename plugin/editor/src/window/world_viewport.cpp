@@ -6,8 +6,8 @@
 #include <imgui_internal.h>
 
 #include <plugin_system/plugin_manager.h>
-#include <plugin_system/i_renderer_plugin.h>
-#include <plugin_system/i_window_plugin.h>
+#include <render/i_renderer.h>
+#include <platform/i_window.h>
 #include <render/image.h>
 
 #include "util/ui/pannel_collection.h"
@@ -202,12 +202,12 @@ namespace GLT::editor {
         ImGui::Separator();
 
         // ---- component list ----
-        for (const auto* d : m_inspector->components_on(id)) {
+        for (const auto* comp : m_inspector->components_on(id)) {
 
-            ImGui::PushID(static_cast<int>(d->hash));
+            ImGui::PushID(static_cast<int>(comp->hash));
 
             // One collapsing header per component. Default-open.
-            const bool open = ImGui::CollapsingHeader(d->name.data(),
+            const bool open = ImGui::CollapsingHeader(comp->name.data(),
                 ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
 
             // "..." button on the header row.
@@ -217,23 +217,21 @@ namespace GLT::editor {
 
             if (ImGui::BeginPopup("##comp_ctx")) {
 
-                if (ImGui::MenuItem("Remove", nullptr, false,
-                        !d->can_remove || d->can_remove(id))) {
-                    m_inspector->remove_component(id, d->hash);
-                }
+                if (ImGui::MenuItem("Remove", nullptr, false, !comp->can_remove || comp->can_remove(id)))
+                    m_inspector->remove_component(id, comp->hash);
 
-                if (ImGui::MenuItem("Copy")) {
+                if (ImGui::MenuItem("Copy"))
                     // Stash the descriptor hash; paste applies on the target.
-                    m_clipboard_component = d->hash;
-                }
+                    m_clipboard_component = comp->hash;
 
                 ImGui::EndPopup();
             }
 
             if (open) {
+
                 ImGui::Indent(8.f);
-                if (d->draw)
-                    d->draw(id);
+                if (comp->draw)
+                    comp->draw(id);
                 else
                     ImGui::TextDisabled("(runtime-only component)");
                 ImGui::Unindent(8.f);

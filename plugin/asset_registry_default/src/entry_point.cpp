@@ -2,8 +2,8 @@
 #include "util/pch.h"
 
 #include <plugin_system/i_plugin.h>
-#include <plugin_system/i_asset_registry_plugin.h>
-#include <plugin_system/i_asset_handler_plugin.h>
+#include <asset/i_asset_registry.h>
+#include <asset/i_asset_handler.h>
 
 
 
@@ -97,7 +97,9 @@ namespace GLT::asset::registry_default {
         };
 
         [[nodiscard]] const std::string& name() const noexcept;
+
         [[nodiscard]] const std::vector<record_chunk>& chunks() const noexcept;
+
         [[nodiscard]] const std::vector<record_dep>& deps() const noexcept;
 
     private:
@@ -163,15 +165,16 @@ namespace GLT::asset::registry_default {
     class plugin final : public GLT::asset::i_asset_registry_plugin {
     public:
 
-        // ---- i_plugin ----
+        // i_plugin ----------------------------------------------------------------------------------------------------
 
         void on_load()   override;
 
 
         void on_unload() override;
 
-        // ---- lifecycle ----
+        // lifecycle ---------------------------------------------------------------------------------------------------
 
+        // the path supplied to the asset_registry should be inside the PROJECT_CONTENT_DIR.
         [[nodiscard]] std::expected<GLT::asset::handle, GLT::asset::load_error> load(std::filesystem::path path) override;
 
 
@@ -190,7 +193,12 @@ namespace GLT::asset::registry_default {
 
         [[nodiscard]] GLT::asset::handle find(const std::filesystem::path&) const override;
 
-        // ---- queries ----
+        // persistence -------------------------------------------------------------------------------------------------
+
+        [[nodiscard]] std::expected<GLT::asset::handle, GLT::asset::load_error> register_runtime(
+            GLT::unique_ref<GLT::asset::i_runtime_asset> asset, const std::filesystem::path& path, std::string_view name, GLT::UUID id) override;
+
+        // queries -----------------------------------------------------------------------------------------------------
 
         [[nodiscard]] const GLT::asset::info& info(GLT::asset::handle h) const override;
 
@@ -200,7 +208,7 @@ namespace GLT::asset::registry_default {
 
         [[nodiscard]] const GLT::asset::i_runtime_asset* data(GLT::asset::handle h) const noexcept override;
 
-        // ---- handler registration ----
+        // handler registration ----------------------------------------------------------------------------------------
 
         void register_handler(GLT::asset::i_asset_handler* handler) override;
 
@@ -229,7 +237,7 @@ namespace GLT::asset::registry_default {
         // Cheap probe: which factories could handle this file? The editor uses this to populate the "Import as…" context menu.
         [[nodiscard]] virtual std::span<const GLT::asset::factory::binding> candidate_imports(const std::filesystem::path& source) const override;
 
-        // ---- type registry ----
+        // type registry -----------------------------------------------------------------------------------------------
 
         [[nodiscard]] GLT::asset::type reserve_type(std::string_view name) override;
 
@@ -239,14 +247,14 @@ namespace GLT::asset::registry_default {
 
         [[nodiscard]] std::string_view name_from_type(GLT::asset::type t) const override;
 
-        // ---- dependency graph ----
+        // dependency graph --------------------------------------------------------------------------------------------
 
         void add_dependency(GLT::asset::handle from, GLT::asset::handle to) override;
 
 
         [[nodiscard]] std::span<const GLT::asset::handle> dependencies(GLT::asset::handle h) const override;
 
-        // ---- async ----
+        // async -------------------------------------------------------------------------------------------------------
 
         [[nodiscard]] std::future<std::expected<GLT::asset::handle, GLT::asset::load_error>> load_async(std::filesystem::path path) override;
 
@@ -272,7 +280,15 @@ namespace GLT::asset::registry_default {
         [[nodiscard]] std::expected<std::vector<std::byte>, GLT::asset::load_error> read_file(const std::filesystem::path& path) const;
 
 
-        // --- storage ---
+        struct source_record {
+            UUID                                                                id{};
+            std::filesystem::path                                               output{};
+            GLT::asset::content_hash                                            source_hash{};
+            GLT::asset::content_hash                                            payload_hash{};
+        };
+
+        // storage -----------------------------------------------------------------------------------------------------
+
         std::deque<slot>                                                        m_slots{};             // stable addresses
         std::vector<u32>                                                        m_free_indices{};      // recycled slots
 
@@ -285,21 +301,14 @@ namespace GLT::asset::registry_default {
         u32                                                                     m_next_custom_type{ CUSTOM_TYPE_BEGIN };
         mutable std::vector<GLT::asset::type>                                   m_registered_types_cache{};
 
-        // --- concurrency ---
+        // concurrency -------------------------------------------------------------------------------------------------
+
         mutable std::shared_mutex                                               m_mutex{};
 
         // in the class, next to m_by_path:
         std::unordered_map<UUID, GLT::asset::handle>                            m_by_id{};
         std::vector<GLT::asset::factory::i_asset_factory_plugin*>               m_factories{};
         mutable std::vector<GLT::asset::factory::binding>                       m_candidate_cache{};
-
-        // in the plugin class, in the private section:
-        struct source_record {
-            UUID                                                                id{};
-            std::filesystem::path                                               output{};
-            GLT::asset::content_hash                                            source_hash{};
-            GLT::asset::content_hash                                            payload_hash{};
-        };
         std::unordered_map<std::string, source_record>                          m_source_index{};
 
     };

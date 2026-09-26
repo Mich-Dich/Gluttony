@@ -2,8 +2,8 @@
 #include "util/pch.h"
 
 #include <plugin_system/plugin_manager.h>
-#include <plugin_system/i_asset_factory_plugin.h>
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_factory.h>
+#include <asset/i_asset_registry.h>
 
 
 

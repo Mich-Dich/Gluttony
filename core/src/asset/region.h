@@ -31,7 +31,7 @@ namespace GLT::asset::region {
     // stays cheap to copy and safe to hand out as a span.
     struct region {
 
-        GLT::UUID                                       id{};
+        GLT::UUID                                       id = 0;
         GLT::asset::handle                              asset{};                    // INVALID until streamed in
         GLT::AABB                                       bounds{};
         bool                                            is_active{ false };

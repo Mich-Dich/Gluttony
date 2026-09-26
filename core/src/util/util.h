@@ -45,15 +45,25 @@ namespace GLT::util {
 
 
     template <typename E, std::size_t... Is>
-    constexpr auto make_enum_values(std::index_sequence<Is...>) {
-        return std::array<E, sizeof...(Is)>{ [: enum_enumerators<E>[Is] :]... };
-    }
+    constexpr auto make_enum_values(std::index_sequence<Is...>) { return std::array<E, sizeof...(Is)>{ [: enum_enumerators<E>[Is] :]... }; }
+
 
     template <typename E>
     requires std::is_enum_v<E>
-    inline constexpr auto enum_values = make_enum_values<E>(
-        std::make_index_sequence<enum_enumerators<E>.size()>{}
-    );
+    inline constexpr auto enum_values = make_enum_values<E>(std::make_index_sequence<enum_enumerators<E>.size()>{});
+
+
+    template <typename E, std::size_t... Is>
+    constexpr auto make_enum_name_ptrs(std::index_sequence<Is...>) {
+        return std::array<const char*, sizeof...(Is)>{
+            std::define_static_string(std::meta::identifier_of(GLT::util::enum_enumerators<E>[Is]))...
+        };
+    }
+
+
+    template <typename E>
+    requires std::is_enum_v<E>
+    inline constexpr auto enum_name_ptrs = make_enum_name_ptrs<E>(std::make_index_sequence<GLT::util::enum_enumerators<E>.size()>{});
 
     // CLASS DECLARATION ===============================================================================================
 

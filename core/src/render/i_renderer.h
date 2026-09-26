@@ -7,7 +7,7 @@
 #include <glm/glm.hpp>
 #include <glm/vec4.hpp>
 
-#include "i_plugin.h"
+#include "plugin_system/i_plugin.h"
 #include "render/image.h"
 #include "debug/profiler.h"
 #include "plugin_system/plugin_manager.h"
@@ -299,11 +299,12 @@ namespace GLT::render {
 
 
         // uploaded mesh data ------------------------------------------------------------------------------------------
-        
+
+        // load a mesh asset by pyth (must be a content relative path!)
+        virtual bool load_mesh(const std::filesystem::path& content_relative_path) = 0;
+
+
         virtual bool load_mesh(const GLT::asset::handle handle) = 0;
-
-
-        virtual bool load_mesh(const std::filesystem::path& path) = 0;
 
 
         virtual void unload_mesh(GLT::asset::handle handle) = 0;

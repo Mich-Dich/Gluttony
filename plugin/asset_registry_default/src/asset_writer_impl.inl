@@ -31,11 +31,11 @@ namespace GLT::asset::registry_default {
 
     void asset_writer_impl::write_chunk(GLT::asset::chunk_id id, std::span<const std::byte> data, u32 compression) {
 
-        record_chunk c{};
-        c.id = id;
-        c.compression = compression;
-        c.bytes.assign(data.begin(), data.end());
-        m_chunks.push_back(std::move(c));
+        record_chunk chunk{};
+        chunk.id = id;
+        chunk.compression = compression;
+        chunk.bytes.assign(data.begin(), data.end());
+        m_chunks.push_back(std::move(chunk));
     }
 
 

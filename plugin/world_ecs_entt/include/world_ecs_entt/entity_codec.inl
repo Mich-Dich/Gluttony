@@ -52,12 +52,14 @@ namespace GLT::world::world_ecs_entt {
             register_custom_component<T>(name,
 
                 [](const entt::registry& registry, entt::entity entity, std::vector<std::byte>& out) {
+
                     const auto& comp = registry.get<T>(entity);
                     const auto* as_bytes = reinterpret_cast<const std::byte*>(&comp);
                     out.insert(out.end(), as_bytes, as_bytes + sizeof(T));
                 },
 
                 [](entt::registry& registry, entt::entity entity, std::span<const std::byte> data) {
+
                     if (data.size() != sizeof(T))
                         return;   // version skew
                     auto& comp = registry.emplace_or_replace<T>(entity);

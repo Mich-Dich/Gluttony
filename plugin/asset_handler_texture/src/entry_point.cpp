@@ -3,8 +3,8 @@
 #include <asset/type.h>
 #include <asset/texture.h>
 #include <plugin_system/i_project_manager.h>
-#include <plugin_system/i_asset_handler_plugin.h>
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_handler.h>
+#include <asset/i_asset_registry.h>
 
 
 

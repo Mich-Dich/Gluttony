@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include <plugin_system/i_renderer_plugin.h>
+#include <render/i_renderer.h>
 
 
 

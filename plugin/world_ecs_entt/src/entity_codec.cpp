@@ -52,6 +52,7 @@ namespace GLT::world::world_ecs_entt {
     // CLASS IMPLEMENTATION ============================================================================================
 
     // CLASS PUBLIC ====================================================================================================
+
     const entity_codec::entry* entity_codec::find(u64 hash) const noexcept {
 
         for (const auto& e : m_components)
@@ -68,32 +69,32 @@ namespace GLT::world::world_ecs_entt {
         write_pod<u32>(out, CODEC_ENTT_V1);
         write_pod<u32>(out, static_cast<u32>(entities.size()));
 
-        for (auto ent : entities) {
+        for (auto entity : entities) {
 
-            const GLT::world::entity_id id = resolve(ent);
+            const GLT::world::entity_id id = resolve(entity);
             write_pod<u32>(out, id.index);
             write_pod<u32>(out, id.generation);
 
             // Count components first so the reader can skip cleanly.
             u32 count = 0;
-            for (const auto& e : m_components)
-                if (e.has(reg, ent))
-                    ++count;
+            for (const auto& entry : m_components)
+                if (entry.has(reg, entity))
+                    count++;
             write_pod<u32>(out, count);
 
-            for (const auto& e : m_components) {
-                if (!e.has(reg, ent))
+            for (const auto& entry : m_components) {
+                if (!entry.has(reg, entity))
                     continue;
 
-                write_pod<u64>(out, e.type_hash);
+                write_pod<u64>(out, entry.type_hash);
 
                 // Reserve size, write payload, backfill size.
                 const size_t size_pos = out.size();
-                write_pod<u32>(out, 0);
+                write_pod<u32>(out, 0);                                             // save empty size for component size
                 const size_t data_start = out.size();
-                e.save(reg, ent, out);
+                entry.save(reg, entity, out);                                       // write component data
                 const u32 actual = static_cast<u32>(out.size() - data_start);
-                std::memcpy(out.data() + size_pos, &actual, sizeof(u32));
+                std::memcpy(out.data() + size_pos, &actual, sizeof(u32));           // override empty size files with measured size
             }
         }
     }

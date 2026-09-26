@@ -44,14 +44,14 @@ namespace GLT {
 
     class application {
     public:
-        
+
         application(const std::filesystem::path& project_path);
         ~application();
 
         GETTER(ref<GLT::platform::i_window_plugin>,     window,         mp_window)
         GETTER(ref<GLT::render::i_renderer_plugin>,     renderer,       mp_renderer)
         GETTER(ref<GLT::audio::i_audio_plugin>,         audio,          mp_audio)
-        
+
         DEFAULT_GETTER_REF(layer_stack,                 layer_stack)
         DEFAULT_GETTER_CC(f32,                          delta_time)
         DEFAULT_GETTER_CC(util::interval_controller,    fps_controller)
@@ -62,13 +62,15 @@ namespace GLT {
         FORCE_INLINE_R static application& get()	    { return *s_instance; }
 
         void run();
-        
+
+        void load_world(const std::filesystem::path& world_path, const bool override_current);
+
         void set_target_fps(const f32 fps);
-        
+
         void shutdown();
 
     private:
-        
+
         static application*			                    s_instance;
         version                                         m_version{};
         ref<GLT::platform::i_window_plugin>             mp_window{};

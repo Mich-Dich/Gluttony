@@ -3,7 +3,7 @@
 #include <event/application_event.h>
 #include <plugin_system/i_plugin.h>
 #include <plugin_system/i_audio_plugin.h>
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_registry.h>
 
 
 

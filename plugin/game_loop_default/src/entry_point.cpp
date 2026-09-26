@@ -4,11 +4,11 @@
 #include <util/timing/stopwatch.h>
 #include <event/event_bus.h>
 #include <event/application_event.h>
+#include <platform/i_window.h>
 #include <plugin_system/i_plugin.h>
 #include <plugin_system/i_game_loop_plugin.h>
-#include <plugin_system/i_window_plugin.h>
 #include <plugin_system/i_audio_plugin.h>
-#include <plugin_system/i_renderer_plugin.h>
+#include <render/i_renderer.h>
 
 
 

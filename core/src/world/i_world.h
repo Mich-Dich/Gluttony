@@ -66,6 +66,14 @@ namespace GLT::world {
 
         [[nodiscard]] virtual GLT::asset::handle world_handle() const noexcept = 0;
 
+        // Persist the live world back to its canonical path. Flushes every active region's entity blob first so the on-disk
+        // world never references stale region data. Fails with `not_found` if no world is bound.
+        [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> save_world() = 0;
+
+        // Persist to `path`. If no world is bound, mints a fresh one and installs it there (this is the Save-As on a never-saved world).
+        // If a world is bound at a different path, migrates the canonical path and flushes.
+        [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> save_world_as(const std::filesystem::path& path) = 0;
+
         // entity lifecycle --------------------------------------------------------------------------------------------
 
         // Allocate a fresh entity. The returned id is guaranteed alive until despawn().

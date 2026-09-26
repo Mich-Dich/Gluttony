@@ -1,7 +1,9 @@
 #pragma once
 
-#include "asset/type.h"
-#include "asset/header.h"
+#include <asset/type.h>
+#include <asset/header.h>
+#include <application.h>
+#include <config/project.h>
 
 
 
@@ -78,17 +80,22 @@ namespace GLT::asset::registry_default {
         using GLT::asset::chunk_entry;
         using GLT::asset::dependency_disk;
 
-        // string table ------------------------------------------------------------------------------------------------
-        std::string strtab;
-        auto push_string = [&strtab](std::string_view s) -> u64 {
+        // Align each section start to 8 bytes.
+        auto align8 = [](u64 x) { return (x + 7u) & ~u64(7u); };
 
-            const u64 off = strtab.size();
+        // string table ------------------------------------------------------------------------------------------------
+        const u64 header_off = 0;
+        const u64 strtab_off = align8(header_off + sizeof(header));
+
+        std::string strtab;
+        auto push_string = [&strtab, strtab_off](std::string_view s) -> u64 {
+            const u64 off = strtab_off + strtab.size();   // file-absolute
             strtab.append(s);
             strtab.push_back('\0');
             return off;
         };
 
-        const u64 name_off   = push_string(writer.name());
+        const u64 name_off = push_string(writer.name());
         const u64 source_off = push_string(source_path.generic_string());
 
         const auto& deps = writer.deps();
@@ -101,7 +108,7 @@ namespace GLT::asset::registry_default {
         // tables (as raw byte blobs, so we can memcpy them out later) -------------------------------------------------
         std::vector<dependency_disk> dep_table(deps.size());
         for (size_t i = 0; i < deps.size(); ++i) {
-            dep_table[i].id          = deps[i].id;
+            dep_table[i].id = deps[i].id;
             dep_table[i].path_offset = dep_path_offsets[i];
             dep_table[i].target_type = deps[i].target_type.value;
         }
@@ -110,12 +117,8 @@ namespace GLT::asset::registry_default {
         std::vector<chunk_entry> chunk_table(chunks.size());
 
         // compute layout ----------------------------------------------------------------------------------------------
-        // Align each section start to 8 bytes.
-        auto align8 = [](u64 x) { return (x + 7u) & ~u64(7u); };
 
-        const u64 header_off   = 0;
-        const u64 strtab_off   = align8(header_off + sizeof(header));
-        const u64 deptab_off   = align8(strtab_off + strtab.size());
+        const u64 deptab_off = align8(strtab_off + strtab.size());
         const u64 chunktab_off = align8(deptab_off + dep_table.size() * sizeof(dependency_disk));
         const u64 chunkdata_off = align8(chunktab_off + chunk_table.size() * sizeof(chunk_entry));
 
@@ -125,9 +128,9 @@ namespace GLT::asset::registry_default {
         for (size_t i = 0; i < chunks.size(); ++i) {
             cursor = align8(cursor);
             chunk_offsets[i] = cursor;
-            chunk_table[i].id          = chunks[i].id;
+            chunk_table[i].id = chunks[i].id;
             chunk_table[i].compression = chunks[i].compression;
-            chunk_table[i].offset      = cursor;
+            chunk_table[i].offset = cursor;
             chunk_table[i].size_on_disk = chunks[i].bytes.size();
             chunk_table[i].size_decoded = chunks[i].bytes.size();    // no compression yet
             cursor += chunks[i].bytes.size();
@@ -285,9 +288,13 @@ namespace GLT::asset::registry_default {
 
     std::expected<GLT::asset::handle, GLT::asset::load_error> plugin::load(std::filesystem::path path) {
 
+        auto relative = GLT::project::to_content_relative(path);
+        if (relative.empty())
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
         std::unique_lock lock(m_mutex);
         std::unordered_set<std::string> in_flight;
-        return load_unlocked(path, in_flight);
+        return load_unlocked(relative, in_flight);
     }
 
 
@@ -328,65 +335,78 @@ namespace GLT::asset::registry_default {
 
         std::unique_lock lock(m_mutex);
 
-        slot* s = slot_for(h);
-        if (!s)
+        GLT::asset::registry_default::slot* slot = slot_for(h);
+        if (!slot)
             return std::unexpected{ GLT::asset::load_error::not_found };
-        if (!s->handler || !s->data)
+
+        if (!slot->handler || !slot->data)
             return std::unexpected{ GLT::asset::load_error::not_found };
+
+        // resolve target (project-relative) ---------------------------------------------------------------------------
+
+        std::filesystem::path target;
+        if (new_path.empty()) {
+            target = slot->canonical_path;
+        } else {
+            auto relative = GLT::project::to_content_relative(new_path);
+            if (relative.empty())
+                return std::unexpected{ GLT::asset::load_error::not_found };
+            target = relative;
+        }
 
         // build the writer --------------------------------------------------------------------------------------------
 
         asset_writer_impl writer;
-        writer.set_name(s->asset_info.name);
+        writer.set_name(slot->asset_info.name);
 
-        // Re-declare every dependency so the file stays self-describing.
-        // Skip INVALID_HANDLE — those never resolved, so there's nothing to write; the slot's positional alignment is preserved regardless.
-        for (GLT::asset::handle dep : s->deps_storage) {
+        // Re-declare every dependency so the file stays self-describing
+        // Skip INVALID_HANDLE — those never resolved, so there's nothing to write; the slot's positional alignment is preserved regardless
+        for (GLT::asset::handle dep : slot->deps_storage) {
 
-            const slot* d = slot_for(dep);
-            if (!d)
+            const GLT::asset::registry_default::slot* dep_slot = slot_for(dep);
+            if (!dep_slot)
                 continue;
 
             std::error_code error{};
-            const auto rel = std::filesystem::relative(d->canonical_path, s->canonical_path.parent_path(), error);
-            const std::string path_str = error ? d->canonical_path.generic_string() : rel.generic_string();
+            const auto rel = std::filesystem::relative(dep_slot->canonical_path, slot->canonical_path.parent_path(), error);
+            const std::string path_str = error ? dep_slot->canonical_path.generic_string() : rel.generic_string();
 
-            writer.declare_dependency(d->asset_info.id, path_str, d->asset_info.asset_type);
+            writer.declare_dependency(dep_slot->asset_info.id, path_str, dep_slot->asset_info.asset_type);
         }
 
         // let the handler emit chunks ---------------------------------------------------------------------------------
 
-        if (auto r = s->handler->serialize(s->asset_info, *s->data, writer); !r)
-            return std::unexpected{ r.error() };
+        if (auto result = slot->handler->serialize(slot->asset_info, *slot->data, writer); !result)
+            return std::unexpected{ result.error() };
 
         // compose + atomic write --------------------------------------------------------------------------------------
 
-        const std::filesystem::path target = new_path.empty() ? s->canonical_path : new_path;
         const GLT::asset::content_hash new_hash = hash_writer(writer);
-        auto composed = compose_asset_file(s->asset_info.id, s->asset_info.asset_type, new_hash, s->asset_info.source_path, writer);
-        const std::filesystem::path tmp = std::filesystem::path(target).concat(".tmp");
+        auto composed = compose_asset_file(slot->asset_info.id, slot->asset_info.asset_type, new_hash, slot->asset_info.source_path, writer);
 
-        if (!write_blob(tmp, composed.bytes))
+        const std::filesystem::path abs_target = PROJECT_CONTENT_DIR / target;
+        const std::filesystem::path abs_tmp = PROJECT_CONTENT_DIR / (target.string() + ".tmp");
+
+        if (!write_blob(abs_tmp, composed.bytes))
             return std::unexpected{ GLT::asset::load_error::out_of_memory };
 
         std::error_code error{};
-        std::filesystem::rename(tmp, target, error);
+        std::filesystem::rename(abs_tmp, abs_target, error);
         if (error) {
-
-            std::filesystem::remove(tmp, error);            // best effort
+            std::filesystem::remove(abs_tmp, error);
             return std::unexpected{ GLT::asset::load_error::out_of_memory };
         }
 
         // repair the slot so it matches what we just wrote ------------------------------------------------------------
 
-        const std::string old_key = s->canonical_path.generic_string();
+        const std::string old_key = slot->canonical_path.generic_string();
         const std::string new_key = target.generic_string();
 
-        s->canonical_path = target;
-        s->chunks_storage = std::move(composed.chunks);
-        s->asset_info.chunks = s->chunks_storage;             // re-anchor the span
-        s->asset_info.hash = new_hash;
-        s->asset_info.last_modified = std::chrono::system_clock::now();
+        slot->canonical_path = target;
+        slot->chunks_storage = std::move(composed.chunks);
+        slot->asset_info.chunks = slot->chunks_storage;             // re-anchor the span
+        slot->asset_info.hash = new_hash;
+        slot->asset_info.last_modified = std::chrono::system_clock::now();
 
         if (old_key != new_key) {
             m_by_path.erase(old_key);
@@ -404,13 +424,82 @@ namespace GLT::asset::registry_default {
     }
 
 
-    GLT::asset::handle plugin::find(const std::filesystem::path& p) const {
+    GLT::asset::handle plugin::find(const std::filesystem::path& path) const {
+
+        auto relative = GLT::project::to_content_relative(path);
+        if (relative.empty())
+            return {};
 
         std::shared_lock lock(m_mutex);
-        auto it = m_by_path.find(p.generic_string());
+        auto it = m_by_path.find(relative.generic_string());
         if (it == m_by_path.end()) 
             return INVALID_HANDLE;
+
         return it->second;
+    }
+    
+    // persistence -----------------------------------------------------------------------------------------------------
+
+    std::expected<GLT::asset::handle, GLT::asset::load_error>plugin::register_runtime(GLT::unique_ref<GLT::asset::i_runtime_asset> asset,
+        const std::filesystem::path& path, std::string_view name, GLT::UUID id) {
+
+        if (!asset)
+            return std::unexpected{ GLT::asset::load_error::out_of_memory };
+
+        auto relative = GLT::project::to_content_relative(path);
+        if (relative.empty())
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
+        std::unique_lock lock(m_mutex);
+
+        const std::string key = relative.generic_string();
+        if (m_by_path.contains(key))
+            return std::unexpected{ GLT::asset::load_error::already_exists };
+
+        // The asset must have a handler — that's how save() will serialize it,
+        // and how a future load() would reconstruct it.
+        const GLT::asset::type asset_type = asset->type();
+        auto hit = m_handlers.find(asset_type);
+        if (hit == m_handlers.end())
+            return std::unexpected{ GLT::asset::load_error::no_handler };
+
+        if (id == 0)
+            id = GLT::UUID{};
+
+        if (m_by_id.contains(id))
+            return std::unexpected{ GLT::asset::load_error::already_exists };
+
+        const GLT::asset::handle handle = acquire_slot();
+        GLT::asset::registry_default::slot* slot = slot_for(handle);
+        if (!slot)
+            return std::unexpected{ GLT::asset::load_error::out_of_memory };
+
+        slot->handler = hit->second;
+        slot->canonical_path = path;
+        // slot->chunks_storage stays empty — no disk chunks yet.
+
+        GLT::asset::info& ai = slot->asset_info;
+        ai.id = id;
+        ai.asset_type = asset_type;
+        ai.hash = 0;                                                // save() recomputes
+        ai.flag_bits = GLT::asset::flags::none;
+        ai.format_version = GLT::asset::header::CURRENT_VERSION;
+        ai.engine_version = GLT::asset::header::CURRENT_VERSION;
+        ai.virtual_path = path;
+        ai.source_path = std::filesystem::path{};                                        // caller can set later
+        ai.name = name.empty() ? path.stem().string() : std::string(name);
+        ai.chunks = slot->chunks_storage;
+        ai.dependencies = slot->deps_storage;
+        ai.dependents = slot->dependents_storage;
+        ai.last_loaded = std::chrono::system_clock::now();
+        ai.bytes_resident = asset->memory_usage();
+
+        slot->data = std::move(asset);
+
+        m_by_path.emplace(key, handle);
+        m_by_id.emplace(id, handle);
+
+        return handle;
     }
 
     // queries ---------------------------------------------------------------------------------------------------------
@@ -512,13 +601,13 @@ namespace GLT::asset::registry_default {
 
     // import (editor / build-time) --------------------------------------------------------------------------------
 
-    // Routes to whichever factory binds (source_extension, target_type).
-    // If out_path is empty, the registry derives one next to the source (or under a configured import root). 
-    // On success the imported asset is loaded and its handle returned - the editor basically always wants a preview right away.
-    std::expected<GLT::asset::handle, GLT::asset::import_error>
-    plugin::import(const std::filesystem::path& source, GLT::asset::type target_type, const std::filesystem::path& out_path,
-        const GLT::asset::import_options& opts) {
+    std::expected<GLT::asset::handle, GLT::asset::import_error> plugin::import(const std::filesystem::path& source,
+        GLT::asset::type target_type, const std::filesystem::path& out_path, const GLT::asset::import_options& opts) {
 
+        // Source is typically absolute (drag-drop from OS). We never store it absolute, but factories expect the real path for reading
+        const std::filesystem::path abs_source = source.is_absolute() ? source : PROJECT_CONTENT_DIR / source;
+
+        // factory selection -------------------------------------------------------------------------------------------
 
         GLT::asset::factory::i_asset_factory_plugin* factory = nullptr;         // pick a factory (under shared lock)
         {
@@ -549,37 +638,64 @@ namespace GLT::asset::registry_default {
         if (!factory)
             return std::unexpected{ GLT::asset::import_error::not_supported };
 
-        asset_writer_impl writer;                                               // run the factory (NO lock held - this is the parallel part)
-        auto import_res = factory->import(source, target_type, opts, writer);
+        asset_writer_impl writer;                       // run the factory (NO lock held - this is the parallel part)
+        auto import_res = factory->import(abs_source, target_type, opts, writer);
         if (!import_res)
             return std::unexpected{ import_res.error() };
 
         GLT::asset::factory::import_result& result = *import_res;
 
-        const std::filesystem::path final_path =
-            is_valid_file(out_path)             ? out_path :                                    // prefer the given output_path
-            is_valid_file(result.output_path)   ? result.output_path :                          // use result as backup
-                                                  default_output_path(source, target_type);     // default as last resort
+        // resolve output (project-relative) ---------------------------------------------------------------------------
 
-        // compose + write the file (still no lock)
-        const auto composed_file = compose_asset_file(result.id, target_type, result.payload_hash, source, writer);
-        if (!write_blob(final_path, composed_file.bytes))
+        std::filesystem::path out_rel;
+        if (is_valid_file(out_path)) {
+
+            out_rel = GLT::project::to_content_relative(out_path);
+            if (out_rel.empty())
+                return std::unexpected{ GLT::asset::import_error::io_failure };
+
+        } else if (is_valid_file(result.output_path)) {
+
+            out_rel = GLT::project::to_content_relative(result.output_path);
+            if (out_rel.empty())
+                return std::unexpected{ GLT::asset::import_error::io_failure };
+
+        } else {
+
+            // default_output_path now yields a project-relative path because abs_source is under PROJECT_CONTENT_DIR.
+            out_rel = GLT::project::to_content_relative(default_output_path(abs_source, target_type));
+            if (out_rel.empty())
+                return std::unexpected{ GLT::asset::import_error::io_failure };
+        }
+
+        // compose + write (prefix the VFS call) -----------------------------------------------------------------------
+
+        const auto composed = compose_asset_file(result.id, target_type, result.payload_hash, out_rel, writer);
+        if (!write_blob(PROJECT_CONTENT_DIR / out_rel, composed.bytes))
             return std::unexpected{ GLT::asset::import_error::io_failure };
 
-        {                                                                       // remember source->asset for the watcher
+        // source index keyed by project-relative source ---------------------------------------------------------------
+
+        std::filesystem::path source_rel = GLT::project::to_content_relative(abs_source);
+
+        // If source lives outside the content dir, keep it absolute — it's an external file the watcher needs to monitor,
+        // and it can never be loaded back as an asset anyway.
+
+        {
             std::unique_lock lock(m_mutex);
-            m_source_index[source.generic_string()] = source_record {
+            m_source_index[source_rel.generic_string()] = source_record{
                 .id = result.id,
-                .output = final_path,
+                .output = out_rel,
                 .source_hash = result.source_hash,
                 .payload_hash = result.payload_hash,
             };
         }
 
-        auto handle_res = load(final_path);                                     // load it so the editor gets a handle back
-        VALIDATE(handle_res, return std::unexpected{ GLT::asset::import_error::handler_rejected }, "", 
-            "import: finalize ok but load failed for [{}]", final_path.generic_string())
-        
+        auto handle_res = load(out_rel);            // load() re-normalizes; harmless
+        VALIDATE(handle_res,
+            return std::unexpected{ GLT::asset::import_error::handler_rejected }, "",
+            "import: finalize ok but load failed for [{}]", out_rel.generic_string());
+
         return *handle_res;
     }
 
@@ -766,7 +882,7 @@ namespace GLT::asset::registry_default {
         } guard{ in_flight, key };
 
         // --- read the raw file ---
-        auto bytes_res = read_file(path);
+        auto bytes_res = read_file(PROJECT_CONTENT_DIR / path);
         if (!bytes_res)
             return std::unexpected{ bytes_res.error() };
 
@@ -794,8 +910,10 @@ namespace GLT::asset::registry_default {
             const char* z = std::find(p, e, '\0');
             return std::string(p, z);
         };
-        const std::string asset_name   = read_cstr(hdr.name_offset);
-        const std::string source_path  = read_cstr(hdr.source_path_offset);
+
+        // const std::string asset_name = read_cstr(hdr.name_offset);
+        const std::string asset_name = path.filename().replace_extension("");
+        const std::string source_path = read_cstr(hdr.source_path_offset);
 
         // --- dependency table (dependency_disk[]) ---
         //

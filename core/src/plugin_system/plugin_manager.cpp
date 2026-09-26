@@ -518,11 +518,10 @@ namespace GLT::plugin_manager {
 
     [[nodiscard]] ref<i_plugin> get_plugin_base(const std::string& name) {
 
-        for (auto& h : s_loaded_plugins) {
-            if (h.name == name && h.instance) {
+        for (auto& h : s_loaded_plugins)
+            if (h.name == name && h.instance)
                 return h.instance;
-            }
-        }
+
         return {};
     }
 
@@ -530,9 +529,9 @@ namespace GLT::plugin_manager {
     [[nodiscard]] ref<i_plugin> get_plugin_base(const interface targeted) {
 
         auto it = s_plugin_names_per_target_interface.find(targeted);
-        if (it != s_plugin_names_per_target_interface.end()) {
+        if (it != s_plugin_names_per_target_interface.end())
             return get_plugin_base(it->second);
-        }
+
         return {};
     }
 

@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include <plugin_system/i_world_plugin.h>
+#include <world/i_world.h>
 
 #include "world_asset_handler.h"
 #include "components.h"
@@ -65,7 +65,10 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] GLT::asset::handle world_handle() const noexcept override;
 
 
-        [[nodiscard]] std::expected<void, GLT::asset::load_error> save_world();
+        [[nodiscard]] std::expected<void, GLT::asset::load_error> save_world() override;
+
+    
+        [[nodiscard]] std::expected<void, GLT::asset::load_error> save_world_as(const std::filesystem::path& path) override;
 
         // --- entity lifecycle -----------------------------------------------------------------------------------------
 
@@ -193,7 +196,7 @@ namespace GLT::world::world_ecs_entt {
         };
 
     
-        entity_id entity_id_for(entt::entity e) const noexcept;
+        entity_id entity_id_for(entt::entity entity) const noexcept;
 
         // slot management ----------------------------------------------------------------------------------------------
 
@@ -228,6 +231,11 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] const hierarchy* hierarchy_of(entity_id id) const noexcept;
 
 
+        // Re-encode each active region's entities and call registry->save(region).
+        // Called from save_world / save_world_as before touching the world asset.
+        [[nodiscard]] std::expected<void, GLT::asset::load_error> flush_regions();
+
+
         entt::registry                                      m_registry;
         entity_codec                                        m_codec;
         world_asset_handler                                 m_asset_handler;
@@ -239,6 +247,11 @@ namespace GLT::world::world_ecs_entt {
         glm::vec3                                           m_streaming_anchor{ 0.f };
         f32                                                 m_streaming_radius{ 0.f };
         component_registry                                  m_components{ *this };
+
+        // Region that receives entities spawned at runtime. Set on world load to the first declared region (preferring one with
+        // the always_loaded flag), or created on demand by save_world_as(). Empty UUID means "no default"
+        // spawned entities are orphaned until a region exists.
+        GLT::UUID                                           m_default_region_id{};
     };
 
 }

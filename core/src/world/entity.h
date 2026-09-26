@@ -44,8 +44,8 @@ namespace GLT::world {
 namespace std {
 
     template<> struct hash<GLT::world::entity_id> {
-        size_t operator()(const GLT::world::entity_id& e) const noexcept {
-            return (static_cast<size_t>(e.generation) << 32) | e.index;
+        size_t operator()(const GLT::world::entity_id& entity) const noexcept {
+            return (static_cast<size_t>(entity.generation) << 32) | entity.index;
         }
     };
 

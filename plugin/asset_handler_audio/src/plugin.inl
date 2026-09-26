@@ -1,6 +1,6 @@
 #pragma once
 
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_registry.h>
 
 
 

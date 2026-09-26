@@ -3,7 +3,7 @@
 
 #include "util/ui/pannel_collection.h"
 
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <asset/i_asset_registry.h>
 
 
 
@@ -43,12 +43,6 @@ namespace GLT::editor {
 
     std::string display_name_for(GLT::asset::type t);
 
-    std::vector<std::filesystem::path> list_subdirs(const std::filesystem::path& dir);
-
-    bool draw_directory_picker(const char* id, std::filesystem::path& in_out, const std::filesystem::path& root);
-
-    bool draw_dir_tree(const std::filesystem::path& dir, const std::filesystem::path& current, std::filesystem::path& out_selected);
-
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
@@ -62,107 +56,6 @@ namespace GLT::editor {
                 return std::string(n);
         }
         return std::to_string(t.value);
-    }
-
-
-    std::vector<std::filesystem::path> list_subdirs(const std::filesystem::path& dir) {
-
-        std::vector<std::filesystem::path> out;
-        std::error_code error{};
-        auto it = GLT::vfs::directory_iterator(dir, error);
-        if (error)
-            return out;
-
-        for (auto& e : it) {
-            if (!e.is_directory(error))
-                continue;
-
-            const auto name = e.path().filename().string();
-            if (!name.empty() && name.front() == '.')
-                continue;
-
-            out.push_back(e.path());
-        }
-        std::sort(out.begin(), out.end());
-        return out;
-    }
-
-
-    bool draw_dir_tree(const std::filesystem::path& dir, const std::filesystem::path& current, std::filesystem::path& out_selected) {
-
-        bool picked = false;
-        const auto sub = list_subdirs(dir);
-
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-
-        if (dir == current)
-            flags |= ImGuiTreeNodeFlags_Selected;
-
-        if (sub.empty())
-            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-
-        if (!current.empty() && current != dir) {
-            for (auto p = current.parent_path(); !p.empty(); p = p.parent_path()) {
-                if (p == dir) {
-                    flags |= ImGuiTreeNodeFlags_DefaultOpen;
-                    break;
-                }
-                if (p == p.root_path())
-                    break;
-            }
-        }
-
-        ImGui::PushID(dir.string().c_str());
-
-        const std::string label = dir.filename().empty() ? dir.generic_string() : dir.filename().string();
-        const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
-
-        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-            out_selected = dir;
-            picked = true;
-        }
-
-        if (open && !sub.empty()) {
-            for (const auto& s : sub)
-                if (draw_dir_tree(s, current, out_selected))
-                    picked = true;
-            ImGui::TreePop();
-        }
-
-        ImGui::PopID();
-        return picked;
-    }
-
-
-    bool draw_directory_picker(const char* id, std::filesystem::path& in_out, const std::filesystem::path& root) {
-
-        bool changed = false;
-        ImGui::PushID(id);
-
-        if (ImGui::Button(in_out.generic_string().c_str(), ImVec2(-FLT_MIN, 0)))
-            ImGui::OpenPopup("##picker");
-
-        if (ImGui::BeginPopup("##picker")) {
-
-            if (ImGui::BeginChild("##tree_scroll", ImVec2(440.0f, 300.0f), true)) {
-
-                if (root.empty()) {
-                    ImGui::TextDisabled("(no content root configured)");
-                } else {
-                    std::filesystem::path selected;
-                    if (draw_dir_tree(root, in_out, selected)) {
-                        in_out  = selected;
-                        changed = true;
-                        ImGui::CloseCurrentPopup();
-                    }
-                }
-            }
-            ImGui::EndChild();
-            ImGui::EndPopup();
-        }
-
-        ImGui::PopID();
-        return changed;
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -229,7 +122,7 @@ namespace GLT::editor {
         ImGui::TextUnformatted("Import into:");
         ImGui::SameLine(120.0f);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        draw_directory_picker("##target_dir", m_target_dir, PROJECT_CONTENT_DIR);
+        GLT::UI::draw_directory_picker("##target_dir", m_target_dir, PROJECT_CONTENT_DIR);
 
         // ---- override toggle -------------------------------------------------------------------
         ImGui::Checkbox("Override existing files", &m_override_existing);

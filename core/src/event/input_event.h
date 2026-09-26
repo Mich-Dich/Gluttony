@@ -76,19 +76,25 @@ namespace GLT {
         key_event(key_code code, key_state state, i32 mods = 0)
             : m_key_code(code), m_key_state(state), m_modifiers(mods) {}
 
-        DEFAULT_GETTER_C(key_code, key_code)
-        DEFAULT_GETTER_C(key_state, key_state)
-        DEFAULT_GETTER_C(i32, modifiers)
+        DEFAULT_GETTER_C(key_code,          key_code)
+        DEFAULT_GETTER_C(key_state,         key_state)
+        DEFAULT_GETTER_C(i32,               modifiers)
 
         [[nodiscard]] FORCE_INLINE std::string to_string() const override {
-            return std::format("key [{}] state [{}] mods [{}]",
-                static_cast<u16>(m_key_code), static_cast<u16>(m_key_state), m_modifiers);
+            return std::format("key [{}] state [{}] mods [{}]", static_cast<u16>(m_key_code), static_cast<u16>(m_key_state), m_modifiers);
         }
 
+        FORCE_INLINE_R bool is_key_code(const key_code code) const { return m_key_code == code; }
+
+        FORCE_INLINE_R bool is_key_state(const key_state code) const { return m_key_state == code; }
+        
+        FORCE_INLINE_R bool is(const key_code code, const key_state state) const { return m_key_code == code && m_key_state == state; }
+
     private:
-        key_code m_key_code;
-        key_state m_key_state;
-        i32 m_modifiers;
+
+        key_code                            m_key_code;
+        key_state                           m_key_state;
+        i32                                 m_modifiers;
     };
 
 

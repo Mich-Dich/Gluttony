@@ -6,8 +6,8 @@
 #include <event/event_bus.h>
 #include <event/application_event.h>
 #include <plugin_system/plugin_manager.h>
-#include <plugin_system/i_window_plugin.h>
-#include <plugin_system/i_renderer_plugin.h>
+#include <platform/i_window.h>
+#include <render/i_renderer.h>
 #include <config/imgui_config.h>
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -413,13 +413,13 @@ namespace GLT::renderer_vk_ray {
 
     // uploaded mesh data ----------------------------------------------------------------------------------------------
 
-    bool renderer::load_mesh(const std::filesystem::path& path) {
+    bool renderer::load_mesh(const std::filesystem::path& content_relative_path) {
 
         auto registry = GLT::asset::registry::get_ref();
         ASSERT(registry, "", "No asset registry");
 
-        auto handle = registry->load(path);
-        VALIDATE(handle.has_value(), return false, "", "Failed to load mesh [{}]", path.generic_string());
+        auto handle = registry->load(content_relative_path);
+        VALIDATE(handle.has_value(), return false, "", "Failed to load mesh [{}]", content_relative_path.generic_string());
 
         return load_mesh(*handle);
     }
@@ -720,9 +720,8 @@ namespace GLT::renderer_vk_ray {
         auto registry = GLT::asset::registry::get_ref();
         ASSERT(registry, "", "Failed to get asset registry");
 
-        const auto content_dir = std::filesystem::path(PROJECT_CONTENT_DIR);
         const std::filesystem::path mesh_paths[] = {
-            content_dir / "mesh" / "stealth_ship.glt_mesh",
+            std::filesystem::path("mesh") / "stealth_ship.glt_mesh",
         };
 
         for (const auto& path : mesh_paths) {
@@ -1200,7 +1199,8 @@ namespace GLT::renderer_vk_ray {
             m_material_capacity = std::max(need_m, m_material_capacity + std::max(m_material_capacity / 2, MATERIAL_HEADROOM_MIN));
             grew = true;
         }
-        if (!grew) return false;
+        if (!grew)
+            return false;
 
         // Grow: create new buffers, copy old, then swap. Because device addresses change, every BLAS that reads them is invalid — caller must rebuild them.
         const auto as_input = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer;

@@ -3,7 +3,7 @@
 
 #include <window/base_window.h>
 #include <asset/type.h>
-#include <plugin_system/i_asset_factory_plugin.h>
+#include <asset/i_asset_factory.h>
 
 
 

@@ -5,9 +5,9 @@
 #include <vk_ray/vk_ray.h>
 #include <vk_ray/builders/builders.h>
 
-#include <plugin_system/i_renderer_plugin.h>
-#include <plugin_system/i_window_plugin.h>
-#include <plugin_system/i_asset_registry_plugin.h>
+#include <render/i_renderer.h>
+#include <platform/i_window.h>
+#include <asset/i_asset_registry.h>
 #include <asset/mesh.h>
 #include <world/object/camera.h>
 #include <render/image.h>
@@ -126,7 +126,7 @@ namespace GLT::renderer_vk_ray {
 
         // uploaded mesh data ------------------------------------------------------------------------------------------
         
-        bool load_mesh(const std::filesystem::path& path) override;
+        bool load_mesh(const std::filesystem::path& content_relative_path) override;
         
         
         bool load_mesh(const GLT::asset::handle handle) override;
@@ -144,15 +144,15 @@ namespace GLT::renderer_vk_ray {
 
         struct mesh_slot {
 
-            GLT::asset::handle                                      asset{};
-            u32                                                     vertex_offset = 0;      // in vertices
-            u32                                                     vertex_count = 0;
-            u32                                                     index_offset = 0;      // in indices
-            u32                                                     index_count = 0;
-            u32                                                     material_offset = 0;      // in gpu_material entries
-            u32                                                     material_count = 0;
-            vr::blas_handle                                         blas{};
-            bool                                                    alive = false;
+            GLT::asset::handle                                  asset{};
+            u32                                                 vertex_offset = 0;      // in vertices
+            u32                                                 vertex_count = 0;
+            u32                                                 index_offset = 0;      // in indices
+            u32                                                 index_count = 0;
+            u32                                                 material_offset = 0;      // in gpu_material entries
+            u32                                                 material_count = 0;
+            vr::blas_handle                                     blas{};
+            bool                                                alive = false;
         };
 
         void init_vulkan();

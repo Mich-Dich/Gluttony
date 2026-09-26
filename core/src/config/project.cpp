@@ -2,6 +2,8 @@
 #include "util/pch.h"
 #include "project.h"
 
+#include "application.h"
+
 #include "util/io/serializer_yaml.h"
 #include "util/io/directory_iterator.h"
 
@@ -84,7 +86,6 @@ namespace GLT {
     }
 
 
-
     std::filesystem::path project::extract_path_from_project_dir(const std::filesystem::path& full_path) {
 
         std::string full_path_str = full_path.string();
@@ -103,21 +104,54 @@ namespace GLT {
     }
 
 
-    std::filesystem::path project::extract_path_from_project_content_dir(const std::filesystem::path& full_path) {
+    std::filesystem::path project::to_content_relative(const std::filesystem::path& path) {
 
+        if (path.empty())
+            return {};
+
+        if (!path.has_root_path())                                                        // Already project-relative
+            return path.lexically_normal();
+
+        auto relative = GLT::project::extract_path_from_project_content_dir(path);        // Absolute. use project helper
+        if (relative.empty())
+            return {};
+
+        return relative.lexically_normal();
+    }
+
+
+    std::filesystem::path project::extract_path_from_project_content_dir(const std::filesystem::path& full_path, const bool current_project) {
+
+        if (current_project) {
+
+            const auto project_path = GLT::application::get().get_project_path();
+            const auto expected_prefix = project_path / GLT::config::CONTENT_DIR;
+
+            // Purely lexical: full_path must live under <project_path>/<CONTENT_DIR>
+            const auto rel = full_path.lexically_relative(expected_prefix);
+
+            // empty -> different root (e.g. absolute vs relative)
+            // ".." lead -> path escapes expected_prefix
+            if (rel.empty() || *rel.begin() == "..")
+                return {};                                  // caller can treat this as "not our project's content"
+
+            return rel;
+        }
+
+        // Fallback: strip everything up to and including CONTENT_DIR
         std::filesystem::path result;
         bool start_adding = false;
-
         for (const auto& part : full_path) {
 
             if (start_adding)
-                result /= part;  // Add the part to the result path
+                result /= part;
 
-            if (part == std::string(GLT::config::CONTENT_DIR))
+            if (part == GLT::config::CONTENT_DIR)
                 start_adding = true;
         }
         return result;
     }
+
 
     // CLASS IMPLEMENTATION ============================================================================================
 

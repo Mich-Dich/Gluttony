@@ -3,7 +3,7 @@
 
 #include "asset/type.h"
 #include "asset/header.h"
-#include "plugin_system/i_asset_handler_plugin.h"
+#include "asset/i_asset_handler.h"
 
 
 
