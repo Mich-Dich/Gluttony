@@ -14,7 +14,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::world::world_ecs_entt {
+namespace GLT::world::world_ecs_entt::component {
 
     // CONSTANTS =======================================================================================================
 
@@ -40,13 +40,15 @@ namespace GLT::world::world_ecs_entt {
 
     void register_no_inherit_transform_descriptor(component_registry& reg);
 
+    void register_camera_descriptor(component_registry& reg);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
     void register_transform_descriptor(component_registry& reg) {
 
-        reg.register_component<GLT::world::world_ecs_entt::transform>("transform", "Core",
+        reg.register_component<GLT::world::world_ecs_entt::component::transform>("transform", "Core",
 
             [](entity_id id) {
 
@@ -56,7 +58,7 @@ namespace GLT::world::world_ecs_entt {
                 if (!plugin)
                     return;
 
-                auto& transform = plugin->registry().get<GLT::world::world_ecs_entt::transform>(plugin->entt_of(id));
+                auto& transform = plugin->registry().get<GLT::world::world_ecs_entt::component::transform>(plugin->entt_of(id));
 
                 ImGui::PushID("transform");
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
@@ -73,7 +75,7 @@ namespace GLT::world::world_ecs_entt {
                 if (!plugin)
                     return std::string{};
 
-                const auto& transform = plugin->registry().get<GLT::world::world_ecs_entt::transform>(plugin->entt_of(id));
+                const auto& transform = plugin->registry().get<GLT::world::world_ecs_entt::component::transform>(plugin->entt_of(id));
                 char buf[64];
                 std::snprintf(buf, sizeof(buf), "(%.1f, %.1f, %.1f)", transform.position.x, transform.position.y, transform.position.z);
                 return std::string(buf);
@@ -83,7 +85,7 @@ namespace GLT::world::world_ecs_entt {
 
     void register_mesh_renderer_descriptor(component_registry& reg) {
 
-        reg.register_component<mesh_renderer>("mesh", "Rendering",
+        reg.register_component<component::mesh>("mesh", "Rendering",
 
             [](entity_id id) {
 
@@ -91,9 +93,9 @@ namespace GLT::world::world_ecs_entt {
                 if (!plugin)
                     return;
 
-                auto& mr = plugin->registry().get<mesh_renderer>(plugin->entt_of(id));
+                auto& mr = plugin->registry().get<component::mesh>(plugin->entt_of(id));
 
-                ImGui::PushID("mesh_renderer");
+                ImGui::PushID("mesh");
                 
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
                 GLT::UI::table_row_asset_picker("Mesh", mr.mesh, GLT::asset::core_types::static_mesh);
@@ -102,13 +104,18 @@ namespace GLT::world::world_ecs_entt {
                 GLT::UI::end_table();
 
                 ImGui::PopID();
-            });
+            },
+
+            {},     // no summary
+
+            // mesh has no meaning without a transform to place it in the world
+            { component_name_hash("transform") });
     }
 
 
     void register_name_descriptor(component_registry& reg) {
 
-        reg.register_component<name_component>("name", "Core",
+        reg.register_component<component::name>("name", "Core",
 
             [](entity_id id) {
 
@@ -116,14 +123,14 @@ namespace GLT::world::world_ecs_entt {
                 if (!plugin)
                     return;
 
-                auto& name_comp = plugin->registry().get<name_component>(plugin->entt_of(id));
+                auto& name_comp = plugin->registry().get<component::name>(plugin->entt_of(id));
                 static bool enable_input = false;
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
                 GLT::UI::table_row("name", name_comp.name, enable_input);
                 GLT::UI::end_table();
             });
 
-        // [name_component] is structural — the outliner needs it. Prevent removal from the UI (It can still be removed programmatically.)
+        // [name] is structural - the outliner uses it. Prevent removal from the UI (It can still be removed programmatically.)
         // The helper sets can_remove to true; override it directly here
     }
 
@@ -155,7 +162,7 @@ namespace GLT::world::world_ecs_entt {
 
     void register_audio_source_descriptor(component_registry& reg) {
 
-        reg.register_component<audio_source>("audio source", "Audio",
+        reg.register_component<component::audio_source>("audio source", "Audio",
 
             [](entity_id id) {
 
@@ -163,7 +170,7 @@ namespace GLT::world::world_ecs_entt {
                 if (!plugin)
                     return;
 
-                auto& audio = plugin->registry().get<audio_source>(plugin->entt_of(id));
+                auto& audio = plugin->registry().get<component::audio_source>(plugin->entt_of(id));
 
                 ImGui::PushID("audio_source");
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
@@ -190,11 +197,64 @@ namespace GLT::world::world_ecs_entt {
 
     void register_no_inherit_transform_descriptor(component_registry& /*reg*/) {  }
 
+
+    void register_camera_descriptor(component_registry& reg) {
+
+        reg.register_component<component::camera>("camera", "Rendering",
+
+            [](entity_id id) {
+
+                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
+                if (!plugin)
+                    return;
+
+                auto& cam = plugin->registry().get<component::camera>(plugin->entt_of(id));
+
+                ImGui::PushID("camera");
+                GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
+                GLT::UI::table_row("fov", cam.fov, 0.5f, 1.f, 179.f);
+                GLT::UI::table_row("near plane", cam.near_plane, 0.01f, 0.001f, 100.f);
+                GLT::UI::table_row("far plane", cam.far_plane, 1.f, 0.01f, 100000.f);
+
+                // "Active camera" is a selection on the world, not a stored flag on the component. Expose it as a checkbox that
+                // routes through i_world_scene. Shows only if the concrete plugin implements the scene interface (it always does today,
+                // but keep the guard so headless / stripped world plugins don't crash the editor).
+                if (auto* scene = plugin->as<GLT::world::i_world_scene>()) {
+
+                    bool is_active = (scene->get_active_camera() == id);
+                    if (GLT::UI::table_row("active camera", is_active))
+                        scene->set_active_camera(is_active ? id : INVALID_ENTITY);
+                }
+
+                GLT::UI::end_table();
+                ImGui::PopID();
+
+                // Keep the near/far invariant consistent regardless of which row the user dragged. Same pattern as the audio descriptor's
+                // min/max-distance clamp.
+                cam.near_plane = GLT::math::clamp(cam.near_plane, 0.001f, cam.far_plane);
+            },
+
+            [](entity_id id) {
+
+                // One-line preview for the outliner. Short is the point.
+                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
+                if (!plugin)
+                    return std::string{};
+
+                const auto& cam = plugin->registry().get<component::camera>(plugin->entt_of(id));
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "fov %.0f", cam.fov);
+                return std::string(buf);
+            },
+
+            // A camera is meaningless without a transform to position it —
+            // identical reasoning to mesh_renderer's required list.
+            { component_name_hash("transform") });
+    }
+
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
-
-    // ---- top-level entry point --------------------------------------------------------------------
 
     void register_all_component_descriptors(component_registry& reg) {
 
@@ -204,6 +264,7 @@ namespace GLT::world::world_ecs_entt {
         register_mesh_renderer_descriptor(reg);
         register_audio_source_descriptor(reg);
         register_no_inherit_transform_descriptor(reg);
+        register_camera_descriptor(reg);
     }
 
     // CLASS IMPLEMENTATION ============================================================================================

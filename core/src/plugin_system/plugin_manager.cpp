@@ -375,7 +375,7 @@ namespace GLT::plugin_manager {
 
             } else {
 
-                // Not the preferred one — buffer it as a candidate fallback, only first is kept; others are dropped silently.
+                // Not the preferred one - buffer it as a candidate fallback, only first is kept; others are dropped silently.
                 first_candidate_per_interface.try_emplace(iface, std::move(info));
             }
         }

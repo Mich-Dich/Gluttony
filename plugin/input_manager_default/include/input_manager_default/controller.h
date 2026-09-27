@@ -137,7 +137,7 @@ namespace GLT::input::input_manager_default {
 
         [[nodiscard]] action_slot* find(::handle handle);
 
-        // Event handlers — never mark events as handled; other subscribers
+        // Event handlers - never mark events as handled; other subscribers
         // (debug overlays, replay recorders, …) may still want them.
         void on_key_event(GLT::key_event& event);
 

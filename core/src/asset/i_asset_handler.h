@@ -56,15 +56,15 @@ namespace GLT::asset {
         virtual void write_chunk(chunk_id id, std::span<const std::byte> data, u32 compression = 0) = 0;
 
 
-        // ID form — caller already knows the target asset's UUID.
+        // ID form - caller already knows the target asset's UUID.
         virtual void declare_dependency(const UUID id) = 0;
 
 
-        // Path form — resolved by the registry on finalize. Used by importers.
+        // Path form - resolved by the registry on finalize. Used by importers.
         virtual void declare_dependency(std::string_view virtual_path, GLT::asset::type target_type) = 0;
 
 
-        // Full form — preserve both. Used by save(): the loader shortcuts by id
+        // Full form - preserve both. Used by save(): the loader shortcuts by id
         // when the dep is already resident, and falls back to the path on cold
         // start. Pass an empty path for "id-only".
         virtual void declare_dependency(const UUID id, std::string_view virtual_path, GLT::asset::type target_type) = 0;

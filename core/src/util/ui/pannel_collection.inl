@@ -345,7 +345,7 @@ namespace GLT::UI {
 
 
 	// Enum-array overload: takes the result of GLT::util::enum_values<E>. Partial ordering prefers this over the generic Container
-	// overload for std::array<E, N>, so no ambiguity — and no constraining of the other overloads is needed.
+	// overload for std::array<E, N>, so no ambiguity - and no constraining of the other overloads is needed.
 	template <typename E, std::size_t N>
 	requires std::is_enum_v<E>
 	bool table_row(std::string_view label, E& current_value, const std::array<E, N>& options, const char* desc, std::function<void(E)> on_changed) {

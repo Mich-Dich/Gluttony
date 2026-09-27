@@ -9,7 +9,6 @@
 #include <platform/i_window.h>
 #include <asset/i_asset_registry.h>
 #include <asset/mesh.h>
-#include <world/object/camera.h>
 #include <render/image.h>
 #include <application.h>
 
@@ -119,20 +118,34 @@ namespace GLT::renderer_vk_ray {
         [[nodiscard]] debug::render_stats get_render_stats() const;
 
 
-        void set_active_camera(ref<GLT::world::camera> active_camera) override;
+        void set_active_camera(const GLT::world::camera_snapshot& camera) override;
 
 
         void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
         // uploaded mesh data ------------------------------------------------------------------------------------------
         
+        // load a mesh asset by pyth (must be a content relative path!)
+        // the renderer remembers the uploaded meshes and skips if mesh already loaded
         bool load_mesh(const std::filesystem::path& content_relative_path) override;
         
         
+        // the renderer remembers the uploaded meshes and skips if mesh already loaded
         bool load_mesh(const GLT::asset::handle handle) override;
 
 
+        // the renderer remembers the uploaded meshes and skips if mesh not loaded
         void unload_mesh(GLT::asset::handle handle) override;
+
+        // scene management --------------------------------------------------------------------------------------------
+    
+        void submit_scene(std::span<const GLT::asset::mesh::instance> instances) override;
+
+
+        void retain_mesh(GLT::asset::handle mesh) override;
+
+
+        void release_mesh(GLT::asset::handle mesh) override;
 
     private:
 
@@ -212,7 +225,7 @@ namespace GLT::renderer_vk_ray {
         bool reserve_mesh_space(u32 v, u32 i, u32 m);
 
 
-        void rebuild_tlas_if_dirty();
+        // void rebuild_tlas_if_dirty();
 
 
         void build_blas_for_slot(mesh_slot& slot);
@@ -222,6 +235,20 @@ namespace GLT::renderer_vk_ray {
 
 
         void upload_mesh_slice(mesh_slot& slot, GLT::asset::mesh::mesh_asset& mesh);
+
+
+        FORCE_INLINE_R mesh_slot* find_slot(GLT::asset::handle h) noexcept;
+
+
+        FORCE_INLINE_R const mesh_slot* find_slot(GLT::asset::handle h) const noexcept;
+
+
+        // Deferred load / unload - runs at a frame boundary, never mid-record
+        void process_pending_meshes();
+
+
+        // TLAS rebuilt from submitted instances
+        void rebuild_tlas_from_scene();
 
 
         glm::ivec2                                              m_render_size{ 300, 400};
@@ -272,7 +299,7 @@ namespace GLT::renderer_vk_ray {
 
         handle                                                  m_framebuffer_resize_sub{};
         glm::vec4                                               m_clear_color{0.09f, 0.09f, 0.09f, 1.f};
-        ref<GLT::world::camera>                                 m_active_camera{};
+        // ref<GLT::world::camera>                                 m_active_camera{};
 
 		vk::Fence										        m_immediate_submit_fence{};
 		vk::CommandBuffer								        m_immediate_submit_command_buffer{};
@@ -298,22 +325,30 @@ namespace GLT::renderer_vk_ray {
         vr::allocated_buffer                                    m_vertex_buffer{};
         vr::allocated_buffer                                    m_index_buffer{};
         vr::allocated_buffer                                    m_material_buffer{};
-        u32                                                     m_vertex_capacity = 0;    // in vertices
-        u32                                                     m_index_capacity = 0;    // in indices
+        u32                                                     m_vertex_capacity = 0;      // in vertices
+        u32                                                     m_index_capacity = 0;       // in indices
         u32                                                     m_material_capacity = 0;    // in gpu_material entries
         u32                                                     m_vertex_used = 0;
         u32                                                     m_index_used = 0;
         u32                                                     m_material_used = 0;
 
         std::vector<mesh_slot>                                  m_mesh_slots{};
-        std::vector<u32>                                        m_free_slots{};               // indices into m_mesh_slots
+        std::vector<u32>                                        m_free_slots{};             // indices into m_mesh_slots
 
         vr::tlas_handle                                         m_tlas_handle{};
         vr::tlas_build_info                                     m_tlas_build_info{};        // kept, not local
         vr::allocated_buffer                                    m_tlas_instance_buffer{};   // sized for TLAS_MAX_INSTANCES
-        bool                                                    m_tlas_dirty = false;
+        std::vector<vk::AccelerationStructureInstanceKHR>       m_tlas_instances;           // scratch, reused
+        // bool                                                    m_tlas_dirty = false;
 
-        std::vector<vk::AccelerationStructureInstanceKHR>       m_tlas_instances;  // scratch, reused
+        // --- scene (populated by submit_scene from the world layer) --------------------------------------------------
+        std::vector<GLT::asset::mesh::instance>                 m_scene_instances{};
+        std::unordered_set<GLT::asset::handle>                  m_scene_meshes{};
+        std::unordered_set<GLT::asset::handle>                  m_retained_meshes{};
+        std::vector<GLT::asset::handle>                         m_pending_loads{};
+        std::vector<GLT::asset::handle>                         m_pending_unloads{};
+
+        GLT::world::camera_snapshot                             m_active_camera{};
 
     };
 

@@ -45,8 +45,8 @@ namespace GLT::input::input_manager_default {
     struct source {
 
         source_payload                                  payload = source_key{};
-        f32                                             scale   = 1.f;
-        bool                                            negate  = false;
+        f32                                             scale = 1.f;
+        bool                                            negate = false;
 
         static source key(GLT::key_code code, f32 scale = 1.f, bool negate = false) { return { source_key{code}, scale, negate }; }
         static source mouse_button(GLT::key_code code)                              { return { source_mouse_btn{code}, 1.f, false }; }

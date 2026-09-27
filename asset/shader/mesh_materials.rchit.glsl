@@ -41,7 +41,7 @@ const float AO_RADIUS     = 30.0;     // world-space occlusion radius
 const float AO_RAY_BIAS   = 0.005;    // push origin off the surface
 
 // ---------------------------------------------------------------------------------------
-// Tiny hash-based RNG — good enough for AO. Not cryptographic, not high quality,
+// Tiny hash-based RNG - good enough for AO. Not cryptographic, not high quality,
 // but cheap and deterministic per-pixel.
 // ---------------------------------------------------------------------------------------
 uint pcg_hash(uint state) {
@@ -95,9 +95,12 @@ void main() {
         bary.y * vec3(v1.nx, v1.ny, v1.nz) +
         bary.z * vec3(v2.nx, v2.ny, v2.nz);
 
-    // For now our transforms are identity; if you later add per-instance rotation/scale,
-    // normal-matrix-transform this: normalize(mat3(transpose(inverse(gl_ObjectToWorldEXT))) * n_local)
-    const vec3 N = normalize(n_local);
+    // Normals are stored in object space. Transform them to world space with the
+    // inverse-transpose of the object→world matrix. gl_WorldToObjectEXT is the
+    // inverse the driver already provides, so transposing it gives us the
+    // inverse-transpose without a matrix inversion in the shader.
+    const mat3 normal_matrix = transpose(mat3(gl_WorldToObjectEXT));
+    const vec3 N = normalize(normal_matrix * n_local);
 
     // --- world-space hit point ----------------------------------------------------------
     const vec3 hit_world =

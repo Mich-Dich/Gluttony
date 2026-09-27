@@ -19,7 +19,7 @@ namespace GLT::world::world_ecs_entt {
     // TYPES ===========================================================================================================
 
     // One row in CHUNK_WORLD_REGIONS. Runtime-only fields (asset handle,
-    // is_active) are deliberately absent — they're reconstructed by the
+    // is_active) are deliberately absent - they're reconstructed by the
     // handler from `info.dependencies` in region-declaration order.
     //
     // NOTE: these disk structs ultimately belong in asset/world.h and

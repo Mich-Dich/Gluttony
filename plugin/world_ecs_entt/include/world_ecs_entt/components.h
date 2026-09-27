@@ -12,7 +12,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::world::world_ecs_entt {
+namespace GLT::world::world_ecs_entt::component {
 
     // CONSTANTS =======================================================================================================
 
@@ -23,6 +23,7 @@ namespace GLT::world::world_ecs_entt {
     // Per-entity local transform. World transform is computed by walking the hierarchy on demand (see ecs_world_plugin::world_transform).
     struct transform {
 
+        // glm::mat4                                   transform{ 1.f };
         glm::vec3                                   position{ 0.f };
         glm::vec3                                   rotation{ 0.f };   // euler, radians
         glm::vec3                                   scale{ 1.f };
@@ -33,11 +34,11 @@ namespace GLT::world::world_ecs_entt {
 
 
     // Editor-visible display name. Non-trivial (std::string), so it goes through the codec's custom serializer path.
-    struct name_component {
+    struct name {
 
         std::string                                 name;
     };
-    static_assert(sizeof(name_component) == 32);
+    static_assert(sizeof(name) == 32);
 
 
 
@@ -52,15 +53,27 @@ namespace GLT::world::world_ecs_entt {
 
 
     // Renders a single mesh. material_override may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference.
-    struct mesh_renderer {
+    struct mesh {
 
         GLT::asset::handle                          mesh{};
         GLT::asset::handle                          material_override{};
         bool                                        visible{ true };
         u8                                          _pad[7]{};
     };
-    static_assert(sizeof(mesh_renderer) == 24);
-    static_assert(std::is_trivially_copyable_v<mesh_renderer>);
+    static_assert(sizeof(mesh) == 24);
+    static_assert(std::is_trivially_copyable_v<mesh>);
+
+
+    // Makes this entity a camera. Position + rotation come from `transform` (like mesh_renderer); this holds only the projection parameters
+    // A world can have many cameras; the active one is chosen via i_world_scene::set_active_camera()
+    struct camera {
+        f32                                         fov{ 45.f };
+        f32                                         near_plane{ 0.1f };
+        f32                                         far_plane{ 100.f };
+        u8                                          _pad[4]{};
+    };
+    static_assert(sizeof(camera) == 16);
+    static_assert(std::is_trivially_copyable_v<camera>);
 
 
     // Plays a single clip. Looping / attenuation / etc. live in `config` so the entity doesn't need to copy them on spawn.

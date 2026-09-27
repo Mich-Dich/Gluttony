@@ -39,30 +39,42 @@ namespace GLT::world::world_ecs_entt {
 
     entity_builder& entity_builder::named(std::string name) {
 
-        name_component n{ std::move(name) };
-        return add_or_replace<name_component>(std::move(n));
+        component::name n{ std::move(name) };
+        return add_or_replace<component::name>(std::move(n));
     }
 
 
-    entity_builder& entity_builder::set_transform(const transform& t) { return add_or_replace<transform>(transform{ t }); }
+    entity_builder& entity_builder::set_transform(const component::transform& transform) { 
+
+        return add_or_replace<component::transform>(component::transform{ transform });
+    }
 
 
     entity_builder& entity_builder::set_mesh(GLT::asset::handle mesh, bool visible) {
 
-        mesh_renderer mesh_comp{};
-        mesh_comp.mesh = mesh;
+        auto& reg = m_plugin->registry();
+        const auto e = m_plugin->entt_of(m_id);
+
+        // Invariant: every [component::mesh] has a transform. emplace() returns the existing component if one is already present, 
+        // so this is a no-op when the user already set a transform
+        if (!reg.all_of<component::transform>(e))
+            reg.emplace<component::transform>(e);
+
+        component::mesh mesh_comp{};
+        mesh_comp.mesh    = mesh;
         mesh_comp.visible = visible;
-        return add_or_replace<mesh_renderer>(std::move(mesh_comp));
+        reg.emplace_or_replace<component::mesh>(e, std::move(mesh_comp));
+        return *this;
     }
 
 
     entity_builder& entity_builder::set_audio(GLT::asset::handle clip, const GLT::asset::audio::source_config& cfg, bool autoplay) {
 
-        audio_source audio_comp{};
+        component::audio_source audio_comp{};
         audio_comp.clip = clip;
         audio_comp.config = cfg;
         audio_comp.autoplay = autoplay;
-        return add_or_replace<audio_source>(std::move(audio_comp));
+        return add_or_replace<component::audio_source>(std::move(audio_comp));
     }
 
 

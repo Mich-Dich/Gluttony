@@ -301,7 +301,7 @@ namespace GLT::editor {
                 if (m_override_existing) {
                     ImGui::TextColored(HINT_WARN, "Existing file will be overwritten.");
                 } else {
-                    ImGui::TextColored(HINT_ERROR, "Name conflict — rename or tick \"Override existing files\".");
+                    ImGui::TextColored(HINT_ERROR, "Name conflict - rename or tick \"Override existing files\".");
                 }
             }
 
@@ -449,7 +449,7 @@ namespace GLT::editor {
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("(%zu file%s)%s",
             m_items.size(), m_items.size() == 1 ? "" : "s",
-            m_importing ? "  — importing..." : "");
+            m_importing ? "  - importing..." : "");
 
         // Right side: buttons, right-aligned.
         ImGui::SameLine();
@@ -573,7 +573,7 @@ namespace GLT::editor {
             const auto target_path = resolved_target_path(item);
             std::error_code error{};
             if ((GLT::vfs::exists(target_path, error) && !error) && !m_override_existing) {
-                item.status = "Target already exists — skipped.";
+                item.status = "Target already exists - skipped.";
                 continue;
             }
 

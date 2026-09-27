@@ -1229,7 +1229,7 @@ namespace GLT::UI {
 	}
 
 
-	void table_row(std::string_view label, bool& value) {
+	bool table_row(std::string_view label, bool& value) {
 
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
@@ -1237,7 +1237,7 @@ namespace GLT::UI {
 
 		ImGui::TableSetColumnIndex(1);
 
-		ImGui::Checkbox((std::string("##") + label.data()).c_str(), &value);
+		return ImGui::Checkbox((std::string("##") + label.data()).c_str(), &value);
 	}
 
 

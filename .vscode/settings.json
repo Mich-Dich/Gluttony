@@ -29,6 +29,7 @@
     "instrumentor",
     "miniaudio",
     "outliner",
+    "renderable",
     "reparent",
     "rolloff",
     "soloud",

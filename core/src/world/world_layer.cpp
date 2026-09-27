@@ -3,8 +3,9 @@
 #include "world_layer.h"
 
 #include "event/event_bus.h"
-#include "world/object/camera.h"
 #include "world/i_world.h"
+#include "world/i_world_scene.h"
+#include "render/i_renderer.h"
 #include "asset/i_asset_registry.h"
 
 
@@ -54,10 +55,31 @@ namespace GLT::world {
         if (!m_world)
             return;
 
-        if (m_editor_camera)        // The editor camera is the streaming anchor FOR NOW
-            m_world->set_streaming_anchor(m_editor_camera->get_position());
+        auto* scene = m_world->as<GLT::world::i_world_scene>();
+
+        // Sample the camera before the world tick so the streaming pass (which
+        // runs inside m_world->update) sees this frame's anchor.
+        GLT::world::camera_snapshot cam{};
+        const bool has_camera = scene && scene->get_camera_view(cam);
+
+        if (has_camera)
+            m_world->set_streaming_anchor(cam.position);
 
         m_world->update(delta_time);
+
+        if (!scene)
+            return;
+
+        scene->gather_scene(m_scene_buffer);
+
+        auto renderer = GLT::render::renderer::get_ref();
+        if (!renderer)
+            return;
+
+        renderer->submit_scene(m_scene_buffer);
+
+        if (has_camera)
+            renderer->set_active_camera(cam);
     }
 
 
@@ -68,21 +90,6 @@ namespace GLT::world {
 
         VALIDATE(world, return, "", "Provided world plugin is invalid")
         m_world = std::move(world);
-    }
-
-
-    void world_layer::create_editor_camera(const glm::vec3 position, const glm::vec3 rotation) {
-
-        m_editor_camera = GLT::create_ref<GLT::world::camera>();
-        m_editor_camera->set_position(position);
-        m_editor_camera->rotate(rotation);
-    }
-
-
-    void world_layer::soft_create_editor_camera(const glm::vec3 position, const glm::vec3 rotation) {
-
-        if (!m_editor_camera)
-            create_editor_camera(position, rotation);
     }
 
 

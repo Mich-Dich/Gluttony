@@ -37,6 +37,8 @@ namespace GLT::editor {
     // CONSTANTS =======================================================================================================
 
     constexpr const char*                   MAIN_MENU_BAR_POPUP = "MAIN_MENU_BAR_POPUP";
+        
+    constexpr size_t                        MAX_NOTIFICATIONS = 6;
 
     // MACROS ==========================================================================================================
 
@@ -140,13 +142,10 @@ namespace GLT::editor {
         m_key_sub_handle = GLT::event_bus::subscribe<key_event>(std::bind_front(&editor_layer::on_key_event, this));
         m_save_sub_handle = GLT::event_bus::subscribe<GLT::save_event>(std::bind_front(&editor_layer::on_save_event, this));
         m_save_as_sub_handle = GLT::event_bus::subscribe<save_as_request_event>(std::bind_front(&editor_layer::on_save_as_request_event, this));
+        m_notification_sub_handle = GLT::event_bus::subscribe<notification_event>(std::bind_front(&editor_layer::on_notification_event, this));
 
-        if (auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>()) {
-
-            world_layer->soft_create_editor_camera(glm::vec3{ 0.f }, glm::vec3{ 0.f });
-            world_layer->set_controller<GLT::editor::input::editor_controller>();                         // create controller
-            GLT::render::renderer::get_ref()->set_active_camera(world_layer->get_editor_camera());        // Update renderer camera
-        }
+        if (auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>())
+            world_layer->set_controller<GLT::editor::input::editor_controller>();                       // create controller
 
         // load the editor world
         const auto& editor_world_path = GLT::application::get().get_project().editor_start_world;
@@ -155,17 +154,20 @@ namespace GLT::editor {
             auto registry = GLT::asset::registry::get_ref();
             VALIDATE(registry, return, "", "Failed to get asset-registry");
 
-            const auto result = registry->load(editor_world_path);        // registry CAN find the editor world
+            const auto result = registry->load(editor_world_path);                                      // registry CAN find the editor world
             if (result) {
-                GLT::application::get().load_world(editor_world_path, true);               // load project world if none loaded
+                GLT::application::get().load_world(editor_world_path, true);                            // load project world if none loaded
             } else
-                GLT::application::get().get_project().editor_start_world = std::filesystem::path{};              // reset if asset was not found
+                GLT::application::get().get_project().editor_start_world = std::filesystem::path{};     // reset if asset was not found
         }
     }
 
 
     editor_layer::~editor_layer() {
 
+        GLT::event_bus::post(GLT::save_event());                // save before closing
+
+        GLT::event_bus::unsubscribe(m_notification_sub_handle);
         GLT::event_bus::unsubscribe(m_save_as_sub_handle);
         GLT::event_bus::unsubscribe(m_save_sub_handle);
         GLT::event_bus::unsubscribe(m_key_sub_handle);
@@ -195,7 +197,7 @@ namespace GLT::editor {
 
             std::snprintf(pending.filename, sizeof(pending.filename), "%s", pending.req.default_name.c_str());
 
-            // Picker and registry both speak project-relative — convert here so the modal opens with a path the picker can highlight in its tree
+            // Picker and registry both speak project-relative - convert here so the modal opens with a path the picker can highlight in its tree
             pending.directory = PROJECT_CONTENT_DIR;
             if (pending.directory.empty())
                 pending.directory = pending.req.default_dir;        // fallback: picker still accepts absolute
@@ -211,6 +213,10 @@ namespace GLT::editor {
         for (auto& event : m_asset_import_request_event_buffer)
             add_window<asset_import_window>(event.get_sources(), event.get_target_dir());
 
+        for (auto& event : m_notification_event_buffer)
+            add_notification(event);
+
+        m_notification_event_buffer.clear();
         m_asset_open_event_buffer.clear();
         m_asset_import_request_event_buffer.clear();
     }
@@ -230,7 +236,8 @@ namespace GLT::editor {
         if (m_show_style)          
             ImGui::ShowStyleEditor();
     
-        render_save_as_popup();         // after every other window
+        render_notifications(delta_time);
+        render_save_as_popup();                 // after every other window
     }
 
     // CLASS PROTECTED =================================================================================================
@@ -497,13 +504,13 @@ namespace GLT::editor {
         static bool shift_pressed = false;
         
         if (event.is_key_code(GLT::key_code::key_left_control) || event.is_key_code(GLT::key_code::key_right_control))
-            control_pressed = !event.is_key_state(GLT::key_state::release);              // For hold and pressed
+            control_pressed = !event.is_key_state(GLT::key_state::release);             // For hold and pressed
 
         if (event.is_key_code(GLT::key_code::key_left_alt) || event.is_key_code(GLT::key_code::key_right_alt))
-            alt_pressed = !event.is_key_state(GLT::key_state::release);                  // For hold and pressed
+            alt_pressed = !event.is_key_state(GLT::key_state::release);                 // For hold and pressed
 
         if (event.is_key_code(GLT::key_code::key_left_shift) || event.is_key_code(GLT::key_code::key_right_shift))
-            shift_pressed = !event.is_key_state(GLT::key_state::release);                  // For hold and pressed
+            shift_pressed = !event.is_key_state(GLT::key_state::release);               // For hold and pressed
 
         if (control_pressed && event.is(GLT::key_code::key_S, GLT::key_state::press))
             GLT::event_bus::post(GLT::save_event(shift_pressed));
@@ -532,37 +539,41 @@ namespace GLT::editor {
         const bool force_as = event.is_forced_save_as();
         if (has_handle && !force_as) {
 
-            if (auto result = world->save_world(); !result)
-                LOG(error, "save_world failed: error {}", GLT::util::enum_to_string(result.error()));
+            auto result = world->save_world();
+            if (result)
+                GLT::event_bus::post(GLT::notification_event("Saved", "World saved successfully", GLT::logger::severity::info));
+            else {
+
+                const auto description = std::format("Failed to save World [{}]", GLT::util::enum_to_string(result.error()));
+                GLT::event_bus::post(GLT::notification_event("Saved", description, GLT::logger::severity::warn));
+            }
             return;
         }
 
         // need a location from the user
-        GLT::save_as_request_event::request req{};
-        req.title = "Save World As";
-        req.default_name = has_handle
-            ? std::string(GLT::asset::registry::get_ref()->info(world->world_handle()).name)
-            : std::string("untitled_world");
-        req.default_dir = PROJECT_CONTENT_DIR / "world";
-        req.extension = std::string(GLT::asset::extension_for_type(GLT::asset::core_types::world));
-        req.on_resolved = [world](const std::filesystem::path& chosen) {
-
-            if (chosen.empty())
-                return;                                     // cancelled
-
-            if (auto result = world->save_world_as(chosen); !result)
-                LOG(error, "save_world_as failed: error {}", static_cast<int>(result.error()));
+        GLT::save_as_request_event::request req{
+            .title = "Save World As",
+            .default_name = has_handle
+                ? std::string(GLT::asset::registry::get_ref()->info(world->world_handle()).name)
+                : std::string("untitled_world"),
+            .default_dir = PROJECT_CONTENT_DIR / "world",
+            .extension = std::string(GLT::asset::extension_for_type(GLT::asset::core_types::world)),
+            .on_resolved = [world](const std::filesystem::path& chosen) {
+    
+                if (chosen.empty())
+                    return;                                     // cancelled
+    
+                if (auto result = world->save_world_as(chosen); !result)
+                    LOG(error, "save_world_as failed: error {}", static_cast<int>(result.error()));
+            },
         };
 
         GLT::event_bus::post(GLT::save_as_request_event(std::move(req)));
     }
 
 
-    void editor_layer::on_save_as_request_event(const save_as_request_event& event) {
-
-        // Buffered so we don't mutate the queue while someone else is iterating - update() drains this into m_save_as_queue
-        m_save_as_event_buffer.push_back(event);
-    }
+    // Buffered so we don't mutate the queue while someone else is iterating - update() drains this into m_save_as_queue
+    void editor_layer::on_save_as_request_event(const save_as_request_event& event) { m_save_as_event_buffer.push_back(event); }
 
 
     void editor_layer::register_core_editors() {
@@ -621,7 +632,7 @@ namespace GLT::editor {
 
         auto& pending = m_save_as_queue.front();
 
-        // Always centered in the main viewport — no ImGuiCond_Appearing.
+        // Always centered in the main viewport - no ImGuiCond_Appearing.
         const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSizeConstraints(ImVec2(560, 0), ImVec2(FLT_MAX, FLT_MAX));
@@ -727,6 +738,173 @@ namespace GLT::editor {
         auto callback = std::move(pending.req.on_resolved);
         if (callback)
             callback(resolved);
+    }
+    
+    // notification ----------------------------------------------------------------------------------------------------
+
+    // Buffered: the event can fire from anywhere in the frame, we only mutate the stack during our update pass.
+    void editor_layer::on_notification_event(const notification_event& event) { m_notification_event_buffer.push_back(event); }
+
+
+    void editor_layer::add_notification(const notification_event& event) {
+
+        notification notif{
+            .title = event.get_title(),
+            .description = event.get_description(),
+            .severity = event.get_severity(),
+            .lifetime = display_time_for(notif.severity),      // < 0 => persistent
+            .initial_lifetime = notif.lifetime,
+            .id = m_next_notification_id++,
+            .dismissed = false,
+        };
+        m_notifications.push_back(std::move(notif));
+
+        // Hard cap the visible stack - drop the oldest first (front of the vector).
+        if (m_notifications.size() > MAX_NOTIFICATIONS)
+            m_notifications.erase(m_notifications.begin(), m_notifications.begin() + (m_notifications.size() - MAX_NOTIFICATIONS));
+    }
+
+
+    f32 editor_layer::display_time_for(GLT::logger::severity sev) {
+
+        using sev_t = GLT::logger::severity;
+        switch (sev) {
+            case sev_t::trace:      return  2.0f;
+            case sev_t::debug:      return  3.0f;
+            case sev_t::info:       return  4.5f;
+            case sev_t::warn:       return  6.5f;
+            case sev_t::error:      return  9.0f;
+            case sev_t::fatal:      return -1.0f;   // never auto-dismiss
+            default:                return  4.5f;
+        }
+    }
+
+
+    ImVec4 editor_layer::color_for(GLT::logger::severity sev) {
+
+        using sev_t = GLT::logger::severity;
+        switch (sev) {
+            case sev_t::trace:      return ImVec4(.65f, .65f, .65f, 1.f);
+            case sev_t::debug:      return ImVec4(.55f, .75f, .95f, 1.f);
+            case sev_t::info:       return ImVec4(.40f, .85f, .50f, 1.f);
+            case sev_t::warn:       return ImVec4(.95f, .80f, .30f, 1.f);
+            case sev_t::error:      return ImVec4(.95f, .40f, .35f, 1.f);
+            case sev_t::fatal:      return ImVec4(.85f, .20f, .60f, 1.f);
+            default:                return ImVec4( 1.f,  1.f,  1.f, 1.f);
+        }
+    }
+
+
+    void editor_layer::render_notifications(const f32 delta_time) {
+
+        // ---- tick lifetimes ------------------------------------------------------------
+        for (auto& notif : m_notifications)
+            if (notif.lifetime >= 0.0f)
+                notif.lifetime -= (delta_time / 1000.f);
+
+        std::erase_if(m_notifications, [](const notification& n) { return n.dismissed || n.lifetime <= 0.0f; });
+
+        if (m_notifications.empty())
+            return;
+
+        // ---- anchor to bottom-right of the main viewport -------------------------------
+        constexpr f32 margin = 12.0f;
+        constexpr f32 notif_width = 340.0f;
+
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        const ImVec2 anchor(vp->WorkPos.x + vp->WorkSize.x - margin, vp->WorkPos.y + vp->WorkSize.y - margin);
+
+        ImGui::SetNextWindowPos(anchor, ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(notif_width, 0.0f), ImVec2(notif_width, FLT_MAX));
+
+        constexpr ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoTitleBar
+            | ImGuiWindowFlags_NoResize
+            | ImGuiWindowFlags_NoMove
+            | ImGuiWindowFlags_NoScrollbar
+            | ImGuiWindowFlags_NoScrollWithMouse
+            | ImGuiWindowFlags_NoSavedSettings
+            | ImGuiWindowFlags_NoDocking
+            | ImGuiWindowFlags_NoNav
+            | ImGuiWindowFlags_NoFocusOnAppearing
+            | ImGuiWindowFlags_NoBringToFrontOnFocus
+            | ImGuiWindowFlags_AlwaysAutoResize;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 6.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
+
+        if (ImGui::Begin("##notifications_stack", nullptr, flags)) {
+
+            // Render oldest -> newest so that the newest sits at the bottom (window grows upward).
+            for (auto& notif : m_notifications) {
+
+                ImGui::PushID(static_cast<int>(notif.id));
+
+                const ImVec4 sev_col = color_for(notif.severity);
+                ImVec4 bg_col = sev_col;  bg_col.w *= 0.22f;
+                ImVec4 border_col = sev_col; border_col.w = 0.65f;
+
+                const f32 alpha = (notif.lifetime >= 0.0f) ? 1.0f : GLT::math::clamp(1.0f + notif.lifetime / 0.25f, 0.0f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_col);
+                ImGui::PushStyleColor(ImGuiCol_Border,  border_col);
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,   2.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,   ImVec2(10.0f, 8.0f));
+
+                if (ImGui::BeginChild("##notif", ImVec2(0, 0), 
+                    ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders,
+                    ImGuiWindowFlags_NoScrollbar)) {
+
+                    // ---- header: title (colored) + right-aligned close button ----
+                    ImGui::PushStyleColor(ImGuiCol_Text, sev_col);
+                    ImGui::TextUnformatted(notif.title.c_str());
+                    ImGui::PopStyleColor();
+
+                    const f32 btn_size = ImGui::GetFrameHeight();
+                    const f32 target_x = ImGui::GetWindowContentRegionMax().x - btn_size;
+                    ImGui::SameLine();
+                    if (ImGui::GetCursorPosX() < target_x)
+                        ImGui::SetCursorPosX(target_x);
+
+                    if (ImGui::SmallButton("x"))
+                        notif.dismissed = true;
+
+                    // ---- body ----
+                    if (!notif.description.empty()) {
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextUnformatted(notif.description.c_str());
+                        ImGui::PopTextWrapPos();
+                    }
+
+                    // ---- auto-dismiss progress ----
+                    if (notif.lifetime >= 0.0f && notif.initial_lifetime > 0.0f) {
+                        const f32 t = notif.lifetime / notif.initial_lifetime;
+                        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, sev_col);
+                        ImGui::ProgressBar(t, ImVec2(-FLT_MIN, 1.0f), "");
+                        ImGui::PopStyleColor();
+                    }
+                }
+                ImGui::EndChild();
+
+                ImGui::PopStyleVar(4);
+                ImGui::PopStyleColor(2);
+
+                ImGui::PopID();
+            }
+        }
+        ImGui::End();
+
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(4);
+
+        // Dock spaces and docked windows keep their z-order across frames, so the notification stack can end up behind them as
+        // soon as the user clicks any editor window. Force it to the top of the display list every frame.
+        if (ImGuiWindow* window = ImGui::FindWindowByName("##notifications_stack"))
+            ImGui::BringWindowToDisplayFront(window);
     }
 
 }

@@ -192,7 +192,7 @@ namespace GLT::asset::registry_default {
     }
 
 
-    // Cheap xxh3-ish placeholder — swap for whatever you actually use.
+    // Cheap xxh3-ish placeholder - swap for whatever you actually use.
     GLT::asset::content_hash hash_writer(const asset_writer_impl& w) {
 
         u64 h = 0xcbf29ce484222325ULL;
@@ -360,7 +360,7 @@ namespace GLT::asset::registry_default {
         writer.set_name(slot->asset_info.name);
 
         // Re-declare every dependency so the file stays self-describing
-        // Skip INVALID_HANDLE — those never resolved, so there's nothing to write; the slot's positional alignment is preserved regardless
+        // Skip INVALID_HANDLE - those never resolved, so there's nothing to write; the slot's positional alignment is preserved regardless
         for (GLT::asset::handle dep : slot->deps_storage) {
 
             const GLT::asset::registry_default::slot* dep_slot = slot_for(dep);
@@ -456,7 +456,7 @@ namespace GLT::asset::registry_default {
         if (m_by_path.contains(key))
             return std::unexpected{ GLT::asset::load_error::already_exists };
 
-        // The asset must have a handler — that's how save() will serialize it,
+        // The asset must have a handler - that's how save() will serialize it,
         // and how a future load() would reconstruct it.
         const GLT::asset::type asset_type = asset->type();
         auto hit = m_handlers.find(asset_type);
@@ -476,7 +476,7 @@ namespace GLT::asset::registry_default {
 
         slot->handler = hit->second;
         slot->canonical_path = path;
-        // slot->chunks_storage stays empty — no disk chunks yet.
+        // slot->chunks_storage stays empty - no disk chunks yet.
 
         GLT::asset::info& ai = slot->asset_info;
         ai.id = id;
@@ -678,7 +678,7 @@ namespace GLT::asset::registry_default {
 
         std::filesystem::path source_rel = GLT::project::to_content_relative(abs_source);
 
-        // If source lives outside the content dir, keep it absolute — it's an external file the watcher needs to monitor,
+        // If source lives outside the content dir, keep it absolute - it's an external file the watcher needs to monitor,
         // and it can never be loaded back as an asset anyway.
 
         {

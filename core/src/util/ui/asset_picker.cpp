@@ -128,7 +128,7 @@ namespace GLT::UI {
                             if (!entry.is_regular_file(error))
                                 continue;
 
-                            // Convert to project-relative at the boundary. Everything downstream — the cache, the popup, resolve_path
+                            // Convert to project-relative at the boundary. Everything downstream - the cache, the popup, resolve_path
                             // speaks the same language as the registry (which now stores virtual_path as project-relative).
                             const auto rel = GLT::project::to_content_relative(entry.path());
                             if (rel.empty())

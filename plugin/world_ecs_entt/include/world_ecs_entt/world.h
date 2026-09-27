@@ -2,6 +2,7 @@
 #pragma once
 
 #include <world/i_world.h>
+#include <world/i_world_scene.h>
 
 #include "world_asset_handler.h"
 #include "components.h"
@@ -41,20 +42,23 @@ namespace GLT::world::world_ecs_entt {
     // Does NOT own:
     //   - the region/world assets themselves (registry does)
     //   - asset refcounting (see notes at the bottom of the .cpp)
-    class ecs_world_plugin final : public GLT::world::i_world_plugin, public GLT::world::i_world_inspector {
+    class ecs_world_plugin final :
+        public GLT::world::i_world_plugin,
+        public GLT::world::i_world_inspector,
+        public GLT::world::i_world_scene {
     public:
 
         ecs_world_plugin();
         ~ecs_world_plugin() override;
 
-        // --- i_plugin -------------------------------------------------------------------------------------------------
+        // i_plugin ----------------------------------------------------------------------------------------------------
 
         void on_load() override;
 
 
         void on_unload() override;
 
-        // --- world lifecycle ------------------------------------------------------------------------------------------
+        // world lifecycle ---------------------------------------------------------------------------------------------
 
         [[nodiscard]] std::expected<void, GLT::asset::load_error> load_world(GLT::asset::handle world) override;
 
@@ -70,7 +74,7 @@ namespace GLT::world::world_ecs_entt {
     
         [[nodiscard]] std::expected<void, GLT::asset::load_error> save_world_as(const std::filesystem::path& path) override;
 
-        // --- entity lifecycle -----------------------------------------------------------------------------------------
+        // entity lifecycle --------------------------------------------------------------------------------------------
 
         [[nodiscard]] entity_id spawn() override;
 
@@ -80,7 +84,20 @@ namespace GLT::world::world_ecs_entt {
 
         [[nodiscard]] bool alive(entity_id id) const noexcept override;
 
-        // --- region queries -------------------------------------------------------------------------------------------
+        // transform ---------------------------------------------------------------------------------------------------
+
+        [[nodiscard]] glm::vec3 get_local_position(entity_id id) const override;
+
+
+        [[nodiscard]] glm::vec3 get_local_rotation(entity_id id) const override;
+
+
+        void translate_local(entity_id id, const glm::vec3& local_delta) override;
+
+
+        void rotate_local(entity_id id, const glm::vec3& euler_delta) override;
+
+        // region queries ----------------------------------------------------------------------------------------------
 
         [[nodiscard]] std::span<const GLT::asset::region::region> regions() const noexcept override;
 
@@ -93,7 +110,7 @@ namespace GLT::world::world_ecs_entt {
 
         void set_region_active(GLT::UUID id, bool active) override;
 
-        // --- streaming ------------------------------------------------------------------------------------------------
+        // streaming ---------------------------------------------------------------------------------------------------
 
         void set_streaming_anchor(const glm::vec3& position) override;
 
@@ -115,7 +132,7 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] std::vector<entity_id> root_entities() const override;
 
 
-        // Returns a copy — the underlying vector lives in the ECS and may be invalidated by any subsequent structural change.
+        // Returns a copy - the underlying vector lives in the ECS and may be invalidated by any subsequent structural change.
         [[nodiscard]] std::vector<entity_id> children_of(entity_id id) const override;
 
 
@@ -182,6 +199,22 @@ namespace GLT::world::world_ecs_entt {
 
         void copy_components(entity_id from, entity_id to) override;
 
+
+
+
+        // i_world_scene -----------------------------------------------------------------------------------------------
+
+        void gather_scene(std::vector<GLT::asset::mesh::instance>& out) const override;
+
+
+        [[nodiscard]] bool get_camera_view(GLT::world::camera_snapshot& out) const override;
+
+
+        void set_active_camera(entity_id id) override;
+
+
+        [[nodiscard]] entity_id get_active_camera() const noexcept override { return m_active_camera; }
+
     private:
 
         struct slot {
@@ -225,15 +258,21 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] GLT::asset::region::region* find_region(GLT::UUID id) noexcept;
 
 
-        [[nodiscard]] hierarchy* hierarchy_of(entity_id id) noexcept;
+        [[nodiscard]] component::hierarchy* hierarchy_of(entity_id id) noexcept;
 
 
-        [[nodiscard]] const hierarchy* hierarchy_of(entity_id id) const noexcept;
+        [[nodiscard]] const component::hierarchy* hierarchy_of(entity_id id) const noexcept;
 
 
         // Re-encode each active region's entities and call registry->save(region).
         // Called from save_world / save_world_as before touching the world asset.
         [[nodiscard]] std::expected<void, GLT::asset::load_error> flush_regions();
+
+
+        [[nodiscard]] glm::mat4 world_transform_of(entity_id id) const noexcept;
+
+
+        void sync_world_asset();
 
 
         entt::registry                                      m_registry;
@@ -247,6 +286,7 @@ namespace GLT::world::world_ecs_entt {
         glm::vec3                                           m_streaming_anchor{ 0.f };
         f32                                                 m_streaming_radius{ 0.f };
         component_registry                                  m_components{ *this };
+        entity_id                                           m_active_camera{ INVALID_ENTITY };
 
         // Region that receives entities spawned at runtime. Set on world load to the first declared region (preferring one with
         // the always_loaded flag), or created on demand by save_world_as(). Empty UUID means "no default"

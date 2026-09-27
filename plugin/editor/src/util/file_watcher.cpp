@@ -209,7 +209,7 @@ namespace GLT::editor::file_watcher {
     void dispatch(const inotify_event* ev) {
 
         // Copy the entry under lock, then release it before posting events or
-        // touching the maps again — subscribers may call watch()/unwatch().
+        // touching the maps again - subscribers may call watch()/unwatch().
         watch_entry entry;
         {
             std::lock_guard lock(s_mutex);

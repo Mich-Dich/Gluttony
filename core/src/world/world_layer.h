@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include "asset/mesh.h"
 #include "world/controller.h"
 #include "event/application_event.h"
 
@@ -57,12 +58,6 @@ namespace GLT::world {
         void set_controller(args&&... arguments);
 
 
-        void create_editor_camera(const glm::vec3 position = glm::vec3{ 0.f }, const glm::vec3 rotation = glm::vec3{ 0.f });
-        
-        
-        void soft_create_editor_camera(const glm::vec3 position = glm::vec3{ 0.f }, const glm::vec3 rotation = glm::vec3{ 0.f });
-
-
         void set_controller(ref<GLT::world::controller> ctrl);
 
     private:
@@ -74,6 +69,7 @@ namespace GLT::world {
         ref<GLT::world::camera>                                 m_editor_camera{};
         ref<GLT::world::i_world_plugin>                         m_world{};
         handle                                                  m_save_sub_handle{};
+        std::vector<GLT::asset::mesh::instance>                 m_scene_buffer{};
 
     };
 

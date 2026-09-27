@@ -84,6 +84,29 @@ namespace GLT {
     };
 
 
+    class notification_event : public event {
+    public:
+
+        notification_event(std::string title, GLT::logger::severity severity)
+            : m_title(std::move(title)), m_severity(severity) {}
+
+        notification_event(std::string title, std::string description, GLT::logger::severity severity)
+            : m_title(std::move(title)), m_description(std::move(description)), m_severity(severity) {}
+
+        [[nodiscard]] const std::string& get_title() const noexcept { return m_title; }
+        [[nodiscard]] const std::string& get_description() const noexcept { return m_description; }
+        [[nodiscard]] GLT::logger::severity get_severity() const noexcept { return m_severity; }
+
+        FORCE_INLINE_R std::string to_string() const override { return std::format("notification [{}] - {}", m_title, m_description); }
+
+    private:
+
+        std::string                         m_title;
+        std::string                         m_description;
+        GLT::logger::severity               m_severity;
+    };
+
+
     class window_resize_event : public event {
     public:
         window_resize_event(u32 width, u32 height) : m_width(width), m_height(height) {}

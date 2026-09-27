@@ -259,7 +259,7 @@ namespace GLT::UI {
 	// @brief Renders a table row with a label and a checkbox.
 	// @param [label] The label for the row.
 	// @param [value] A reference to the boolean value controlled by the checkbox.
-	void table_row(std::string_view label, bool& value);
+	bool table_row(std::string_view label, bool& value);
 
 
 	// @brief Renders a table row with a label and a non-editable text value.

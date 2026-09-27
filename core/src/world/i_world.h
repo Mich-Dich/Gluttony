@@ -86,6 +86,30 @@ namespace GLT::world {
 
         [[nodiscard]] virtual bool alive(entity_id id) const noexcept = 0;
 
+        // transform ---------------------------------------------------------------------------------------------------
+
+        // Generic, convention-owning way for any plugin to move entities. All of these operate on the entity's LOCAL transform;
+        // world transforms are derived (see world_transform_of) and never written.
+        // The entity's own frame uses the engine-wide convention:      +X = right, +Y = up, -Z = forward    (OpenGL / camera convention)
+        // Every method silently no-ops on a dead entity. Missing transform components are created on demand by the mutating calls,
+        // so a caller never has to prime the entity first.
+
+        // Read the entity's local position. Returns the identity value if the entity is dead or lacks a transform.
+        [[nodiscard]] virtual glm::vec3 get_local_position(entity_id id) const = 0;
+
+
+        // Read the entity's local rotation (euler, radians). Returns the identity value if the entity is dead or lacks a transform.
+        [[nodiscard]] virtual glm::vec3 get_local_rotation(entity_id id) const = 0;
+
+
+        // Add `local_delta` to the entity's position, rotated by the entity's own local rotation. So a controller asking
+        // for `{0, 0, -d}` moves the entity "forward" regardless of which way it currently faces.
+        virtual void translate_local(entity_id id, const glm::vec3& local_delta) = 0;
+
+
+        // Add `euler_delta` (radians) onto the entity's local rotation. Component order matches `transform::rotation`'s YXZ convention.
+        virtual void rotate_local(entity_id id, const glm::vec3& euler_delta) = 0;
+
         // region queries ----------------------------------------------------------------------------------------------
 
         [[nodiscard]] virtual std::span<const GLT::asset::region::region> regions() const noexcept = 0;
@@ -124,11 +148,11 @@ namespace GLT::world {
 
         // hierarchy ---------------------------------------------------------------------------------------------------
 
-        // Tree view over the world's entities. Not every world needs a hierarchy — a flat implementation can leave the defaults
+        // Tree view over the world's entities. Not every world needs a hierarchy - a flat implementation can leave the defaults
         // and the outliner will show a single-level list.
         // The editor consumes this; the world plugin does not know who's asking.
 
-        // Snapshot of every live entity that has no parent (or a parent that doesn't exist — orphans are treated as roots so they're always reachable).
+        // Snapshot of every live entity that has no parent (or a parent that doesn't exist - orphans are treated as roots so they're always reachable).
         [[nodiscard]] virtual std::vector<entity_id> root_entities() const { return {}; }
 
 

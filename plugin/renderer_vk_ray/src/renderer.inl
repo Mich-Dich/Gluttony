@@ -99,9 +99,10 @@ namespace GLT::renderer_vk_ray {
         mp_window = GLT::plugin_manager::get_plugin_ref<GLT::platform::i_window_plugin>(GLT::plugin_manager::interface::window);
         ASSERT(mp_window, "", "Failed to get window plugin")
 
-        // TODO: remove
-        m_active_camera = create_ref<GLT::world::camera>();
-        m_active_camera->set_position({0.0f, 0.0f, 80.f});
+        // Sensible default view until the world layer pushes a real camera.
+        m_active_camera.view = glm::lookAt(glm::vec3(0.f, 0.f, 80.f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
+        m_active_camera.position = glm::vec3(0.f, 0.f, 80.f);
+        m_active_camera.fov = 45.f;
 
         init_vulkan();
         create_base_resources();
@@ -191,7 +192,8 @@ namespace GLT::renderer_vk_ray {
             }
         }
 
-        rebuild_tlas_if_dirty();
+        process_pending_meshes();           // Pull new meshes in / old meshes out at the frame boundary
+        rebuild_tlas_from_scene();          // Rebuild the TLAS from the scene the world submitted during update
 
         // ---- reset per-frame counters ------------------------------------------------------
         m_frame_draw_calls    = 0;
@@ -226,15 +228,15 @@ namespace GLT::renderer_vk_ray {
 
         // Update camera + sun parameters
         {
-            m_active_camera->set_aspect_ratio((f32)m_render_size.x / (f32)m_render_size.y);
-            glm::mat4 proj = m_active_camera->get_projection_matrix();
-            glm::mat4 view = m_active_camera->get_view_matrix();
+            const f32 aspect = static_cast<f32>(m_render_size.x) / static_cast<f32>(m_render_size.y);
+            glm::mat4 proj = glm::perspective(glm::radians(m_active_camera.fov), aspect, m_active_camera.near_plane, m_active_camera.far_plane);
+            proj[1][1] *= -1;
 
             camera_ubo ubo{};
-            ubo.view_inv = glm::inverse(view);
+            ubo.view_inv = glm::inverse(m_active_camera.view);
             ubo.proj_inv = glm::inverse(proj);
             ubo.sun_direction = glm::vec4(glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f)), 0.0f);
-            ubo.sun_color = glm::vec4(1.0f, 0.95f, 0.85f, 3.0f);  // warm sun, intensity 3
+            ubo.sun_color = glm::vec4(1.0f, 0.95f, 0.85f, 3.0f);
 
             void* data = m_vr_dev->map_buffer(m_uniform_buffer);
             std::memcpy(data, &ubo, sizeof(ubo));
@@ -382,8 +384,8 @@ namespace GLT::renderer_vk_ray {
         };
     }
 
-        
-    void renderer::set_active_camera(ref<GLT::world::camera> active_camera) { m_active_camera = active_camera; }
+
+    void renderer::set_active_camera(const GLT::world::camera_snapshot& camera) { m_active_camera = camera; }
 
 
 	void renderer::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
@@ -430,9 +432,9 @@ namespace GLT::renderer_vk_ray {
         auto registry = GLT::asset::registry::get_ref();
         ASSERT(registry, "", "No asset registry");
 
-        for (const auto& slot : m_mesh_slots)
-            if (slot.asset == handle)
-                return true;                        // mesh already uploaded
+        // Reuse the shared lookup so "loaded" means the same thing everywhere
+        if (find_slot(handle))
+        return true;
 
         auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(handle);
         VALIDATE(mesh, return false, "", "Asset [{}] is not a mesh_asset", registry->info(handle).name);
@@ -459,7 +461,7 @@ namespace GLT::renderer_vk_ray {
                 LOG(info, "mesh: {} verts, {} indices, max index in array = {}", n_vtx, n_idx, global_max_idx);
 
                 if (global_max_idx >= n_vtx)
-                    LOG(fatal, "  !! mesh index {} >= vertex count {} — asset is corrupt", global_max_idx, n_vtx);
+                    LOG(fatal, "  !! mesh index {} >= vertex count {} - asset is corrupt", global_max_idx, n_vtx);
 
                 for (size_t si = 0; si < mesh->submeshes.size(); ++si) {
                     const auto& sm = mesh->submeshes[si];
@@ -487,7 +489,7 @@ namespace GLT::renderer_vk_ray {
             static_cast<u32>(mesh->indices.size()),
             live_submeshes);
         
-        // If buffers moved, every existing BLAS references a dead address — rebuild them all once, right here, not per-mesh
+        // If buffers moved, every existing BLAS references a dead address - rebuild them all once, right here, not per-mesh
         // This is the only path that touches other meshes
         if (grew)
             rebuild_all_blases();
@@ -520,7 +522,7 @@ namespace GLT::renderer_vk_ray {
         m_material_used += slot.material_count;
 
         build_blas_for_slot(slot);                                  // Build exactly one BLAS for this mesh
-        m_tlas_dirty = true;                                        // TLAS contents changed; the handle did not
+        // m_tlas_dirty = true;                                        // TLAS contents changed; the handle did not
 
         return true;
     }
@@ -528,31 +530,103 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::unload_mesh(GLT::asset::handle handle) {
 
-        u32 slot_idx = std::numeric_limits<u32>::max();
-        for (u32 i = 0; i < m_mesh_slots.size(); ++i)
-            if (m_mesh_slots[i].alive && m_mesh_slots[i].asset == handle) {
-                
-                slot_idx = i;
+        u32 slot_index = std::numeric_limits<u32>::max();
+        for (u32 index = 0; index < m_mesh_slots.size(); index++) {
+            if (m_mesh_slots[index].alive && m_mesh_slots[index].asset == handle) {
+                slot_index = index;
                 break;
             }
+        }
 
-        VALIDATE(slot_idx != std::numeric_limits<u32>::max(), return, "", "handle not loaded");
+        VALIDATE(slot_index != std::numeric_limits<u32>::max(), return, "", "handle not loaded");
 
-        mesh_slot& slot = m_mesh_slots[slot_idx];
+        mesh_slot& slot = m_mesh_slots[slot_index];
         slot.alive = false;
 
-        // BLAS destroy must not race in-flight frames. Easiest correct thing: wait for the GPU, then destroy. Load/unload is not a hot path.
         m_device.waitIdle();
         m_vr_dev->destroy_blas(slot.blas);
+        
+        // Reset everything. A dead slot must not carry residual identity
         slot.blas = {};
+        slot.asset = INVALID_HANDLE;
+        slot.vertex_offset = 0;
+        slot.vertex_count = 0;
+        slot.index_offset = 0;
+        slot.index_count = 0;
+        slot.material_offset = 0;
+        slot.material_count = 0;
 
-        // Leave the vertex/index/material ranges as holes for now. Adding a per-buffer free list is a follow-up if this ever matters.
-        m_free_slots.push_back(slot_idx);
-        m_tlas_dirty = true;
+        m_free_slots.push_back(slot_index);
+        // m_tlas_dirty = true;
+    }
 
-        // Drop the asset registry reference so the CPU-side mesh can be evicted too.
-        if (auto reg = GLT::asset::registry::get_ref())
-            reg->unload(handle);
+    // scene management ------------------------------------------------------------------------------------------------
+
+    void renderer::submit_scene(std::span<const GLT::asset::mesh::instance> instances) {
+
+        m_scene_instances.assign(instances.begin(), instances.end());
+        m_scene_meshes.clear();
+        m_scene_meshes.reserve(instances.size());
+        for (const auto& instance : instances)
+            if (instance.mesh != INVALID_HANDLE)
+                m_scene_meshes.insert(instance.mesh);
+
+        for (auto mesh : m_scene_meshes) {                              // needs loading
+
+            if (find_slot(mesh))
+                continue;
+
+            std::erase(m_pending_unloads, mesh);                        // The scene now wants it, so any pending unload is moot
+
+            if (std::ranges::contains(m_pending_loads, mesh))
+                continue;
+
+            m_pending_loads.push_back(mesh);
+        }
+
+        for (auto& slot : m_mesh_slots) {                               // needs unloading
+
+            if (!slot.alive)
+                continue;
+
+            if (m_scene_meshes.contains(slot.asset))
+                continue;
+
+            if (m_retained_meshes.contains(slot.asset))
+                continue;
+
+            std::erase(m_pending_loads, slot.asset);                    // Visible again this frame -> a stale pending load shouldn't resurrect it
+
+            if (std::ranges::contains(m_pending_unloads, slot.asset))
+                continue;
+
+            m_pending_unloads.push_back(slot.asset);
+        }
+    }
+
+
+    void renderer::retain_mesh(GLT::asset::handle mesh) {
+
+        if (mesh == INVALID_HANDLE)
+            return;
+
+        m_retained_meshes.insert(mesh);
+        std::erase(m_pending_unloads, mesh);        // Cancel a pending unload if there is one.
+
+        if (!find_slot(mesh))
+            m_pending_loads.push_back(mesh);
+    }
+
+
+    void renderer::release_mesh(GLT::asset::handle mesh) {
+
+        if (mesh == INVALID_HANDLE)
+            return;
+
+        m_retained_meshes.erase(mesh);
+
+        if (!m_scene_meshes.contains(mesh) && find_slot(mesh))
+            m_pending_unloads.push_back(mesh);
     }
 
     // CLASS PROTECTED =================================================================================================
@@ -695,7 +769,7 @@ namespace GLT::renderer_vk_ray {
 
         // Create the persistent TLAS ----------------------------------------------------------------------------------
         // Created once with a fixed max instance count. Its device address gets baked into the descriptor set inside 
-        // create_rt_pipeline(), so it must never move. Only its *contents* are rebuilt as the scene changes (rebuild_tlas_if_dirty).
+        // create_rt_pipeline(), so it must never move. Only its *contents* are rebuilt as the scene changes
         {
             vr::tlas_create_info tci{};
             tci.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
@@ -713,25 +787,6 @@ namespace GLT::renderer_vk_ray {
         //      isn't hit against default-constructed buffers on the very first call.
         //   b) Gives every load/unload thereafter room to fit without triggering a realloc.
         reserve_mesh_space(VERTEX_HEADROOM_MIN, INDEX_HEADROOM_MIN, MATERIAL_HEADROOM_MIN);
-
-        // Load the initial meshes through the asset registry ----------------------------------------------------------
-        // Each call: claims a slot, uploads its slice, builds one BLAS, marks the TLAS dirty. Existing meshes are never touched.
-        // This is the same code path that runtime callers hit.
-        auto registry = GLT::asset::registry::get_ref();
-        ASSERT(registry, "", "Failed to get asset registry");
-
-        const std::filesystem::path mesh_paths[] = {
-            std::filesystem::path("mesh") / "stealth_ship.glt_mesh",
-        };
-
-        for (const auto& path : mesh_paths) {
-
-            ASSERT(load_mesh(path), "", "Failed to load initial mesh [{}]", path.generic_string());
-        }
-
-        // Populate the TLAS with whatever we just loaded --------------------------------------------------------------
-        // The scene is now "ready" once create() returns, instead of waiting for the first begin_frame().
-        rebuild_tlas_if_dirty();
 
         // Deferred cleanup --------------------------------------------------------------------------------------------
         // BLASes now live on the slots, so walk those. Buffers and the TLAS are renderer-owned and go straight into the deletion queue.
@@ -801,12 +856,12 @@ namespace GLT::renderer_vk_ray {
         ASSERT(!closest_hit_spv.empty(), "", "Failed to load shader")
         auto closest_hit_shader_module = m_vr_dev->create_shader_from_spv(closest_hit_spv);
 
-        // AO hit group — writes 1.0 (occluded)
+        // AO hit group - writes 1.0 (occluded)
         auto ao_hit_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "mesh_ao.rchit.glsl");
         ASSERT(!ao_hit_spv.empty(), "", "Failed to load shader")
         auto ao_hit_shader_module = m_vr_dev->create_shader_from_spv(ao_hit_spv);
 
-        // AO miss — writes 0.0 (unoccluded)
+        // AO miss - writes 0.0 (unoccluded)
         auto ao_miss_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "mesh_ao.rmiss.glsl");
         ASSERT(!ao_miss_spv.empty(), "", "Failed to load shader")
         auto ao_miss_shader_module = m_vr_dev->create_shader_from_spv(ao_miss_spv);
@@ -880,9 +935,9 @@ namespace GLT::renderer_vk_ray {
     void renderer::update_descriptor_set() {
 
         // Called from two places:
-        //   1. reserve_mesh_space() when the shared buffers move — m_resource_desc_buffer already exists by then, we're just refreshing the resource handles.
+        //   1. reserve_mesh_space() when the shared buffers move - m_resource_desc_buffer already exists by then, we're just refreshing the resource handles.
         //   2. During init via reserve_mesh_space(), *before* create_rt_pipeline() has built m_resource_desc_buffer. 
-        //      Skip — create_rt_pipeline() will pick up the current m_resource_bindings state when it builds the descriptor buffer.
+        //      Skip - create_rt_pipeline() will pick up the current m_resource_bindings state when it builds the descriptor buffer.
         if (!m_resource_desc_buffer.buffer.buffer)
             return;
 
@@ -1202,7 +1257,7 @@ namespace GLT::renderer_vk_ray {
         if (!grew)
             return false;
 
-        // Grow: create new buffers, copy old, then swap. Because device addresses change, every BLAS that reads them is invalid — caller must rebuild them.
+        // Grow: create new buffers, copy old, then swap. Because device addresses change, every BLAS that reads them is invalid - caller must rebuild them.
         const auto as_input = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer;
 
         auto new_vb = m_vr_dev->create_buffer(m_vertex_capacity * sizeof(GLT::asset::mesh::vertex), as_input,
@@ -1219,7 +1274,7 @@ namespace GLT::renderer_vk_ray {
         m_vr_dev->unmap_buffer(new_ib);
         m_vr_dev->unmap_buffer(new_mb);
 
-        // Copy the used region from old to new. Only touch a buffer if it has data —
+        // Copy the used region from old to new. Only touch a buffer if it has data -
         // an unpopulated slot (e.g. right after the initial pre-reservation) was never mapped, so calling unmap on it would trip VMA's assertion.
         if (m_vertex_used) {
             const void* src = m_vr_dev->map_buffer(m_vertex_buffer);
@@ -1258,54 +1313,6 @@ namespace GLT::renderer_vk_ray {
 
         update_descriptor_set();
         return true;
-    }
-
-
-    void renderer::rebuild_tlas_if_dirty() {
-
-        if (!m_tlas_dirty)
-            return;
-        m_tlas_dirty = false;
-
-        m_tlas_instances.clear();
-        m_tlas_instances.reserve(m_mesh_slots.size());
-
-        for (const auto& slot : m_mesh_slots) {
-
-            if (!slot.alive)
-                continue;
-
-            // layout (whatever you want, e.g. layout N by 2.5 units along X)
-            const f32 x = (static_cast<f32>(m_tlas_instances.size()) - 0.5f * (static_cast<f32>(m_mesh_slots.size()) - 1.0f)) * 2.5f;
-            VkTransformMatrixKHR xform = { 1,0,0,x,  0,1,0,0,  0,0,1,0 };
-
-            m_tlas_instances.push_back(
-                vk::AccelerationStructureInstanceKHR()
-                    .setTransform(xform)
-                    .setInstanceCustomIndex(slot.material_offset)
-                    .setAccelerationStructureReference(slot.blas.buffer.dev_address)
-                    .setFlags(vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable)
-                    .setMask(0xFF)
-                    .setInstanceShaderBindingTableRecordOffset(0));
-        }
-
-        if (!m_tlas_instances.empty()) {
-            m_vr_dev->update_buffer(m_tlas_instance_buffer, m_tlas_instances.data(),
-                sizeof(vk::AccelerationStructureInstanceKHR) * m_tlas_instances.size());
-        }
-
-        auto scratch = m_vr_dev->create_scratch_buffer_from_build_info(m_tlas_build_info);
-        auto cmd = m_device.allocateCommandBuffers(vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
-        cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-        m_vr_dev->build_tlas(m_tlas_build_info, m_tlas_instance_buffer, static_cast<u32>(m_tlas_instances.size()), cmd);
-        cmd.end();
-
-        auto si = vk::SubmitInfo().setCommandBufferCount(1).setPCommandBuffers(&cmd);
-        m_queues.graphics_queue.submit(si, nullptr);
-        m_device.waitIdle();
-
-        m_vr_dev->destroy_buffer(scratch);
-        m_device.freeCommandBuffers(m_graphics_pool, cmd);
     }
 
 
@@ -1371,7 +1378,7 @@ namespace GLT::renderer_vk_ray {
             m_vr_dev->unmap_buffer(m_index_buffer);
         }
 
-        // Materials — one entry per submesh.
+        // Materials - one entry per submesh.
         {
             auto* dst = static_cast<gpu_material*>(m_vr_dev->map_buffer(m_material_buffer));
 
@@ -1417,6 +1424,97 @@ namespace GLT::renderer_vk_ray {
             slot.blas = {};
             build_blas_for_slot(slot);
         }
+    }
+
+    // scene management ------------------------------------------------------------------------------------------------
+
+    renderer::mesh_slot* renderer::find_slot(GLT::asset::handle h) noexcept {
+
+        for (auto& s : m_mesh_slots)
+            if (s.alive && s.asset == h)
+                return &s;
+
+        return nullptr;
+    }
+
+
+    const renderer::mesh_slot* renderer::find_slot(GLT::asset::handle h) const noexcept {
+
+        for (const auto& s : m_mesh_slots)
+            if (s.alive && s.asset == h)
+                return &s;
+
+        return nullptr;
+    }
+
+
+    void renderer::process_pending_meshes() {
+
+        // Unloads first so we free slots before claiming new ones.
+        for (auto mesh : m_pending_unloads)
+            unload_mesh(mesh);          // existing implementation
+
+        m_pending_unloads.clear();
+
+        for (auto mesh : m_pending_loads) {
+
+            if (find_slot(mesh))        // raced a retain, fine
+                continue;
+
+            load_mesh(mesh);            // existing implementation (sync for now)
+        }
+        m_pending_loads.clear();
+    }
+
+
+    void renderer::rebuild_tlas_from_scene() {
+
+        m_tlas_instances.clear();
+        m_tlas_instances.reserve(std::min<size_t>(m_scene_instances.size(), TLAS_MAX_INSTANCES));
+
+        for (const auto& inst : m_scene_instances) {
+
+            if (m_tlas_instances.size() >= TLAS_MAX_INSTANCES)
+                break;                                 // TODO: split across multiple TLASes
+
+            const mesh_slot* slot = find_slot(inst.mesh);
+            if (!slot || !slot->alive)
+                continue;                              // skipped this frame; will resolve next
+
+            // glm::mat4 -> VkTransformMatrixKHR (row-major 3x4)
+            VkTransformMatrixKHR xform{};
+            const glm::mat4& m = inst.transform;
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 4; ++c)
+                    xform.matrix[r][c] = m[c][r];      // glm is column-major
+
+            m_tlas_instances.push_back(
+                vk::AccelerationStructureInstanceKHR()
+                    .setTransform(xform)
+                    .setInstanceCustomIndex(slot->material_offset)
+                    .setAccelerationStructureReference(slot->blas.buffer.dev_address)
+                    .setFlags(vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable)
+                    .setMask(0xFF)
+                    .setInstanceShaderBindingTableRecordOffset(0));
+        }
+
+        if (!m_tlas_instances.empty())
+            m_vr_dev->update_buffer(m_tlas_instance_buffer, m_tlas_instances.data(),
+                sizeof(vk::AccelerationStructureInstanceKHR) * m_tlas_instances.size());
+
+        auto scratch = m_vr_dev->create_scratch_buffer_from_build_info(m_tlas_build_info);
+        auto cmd = m_device.allocateCommandBuffers(vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
+
+        cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+        m_vr_dev->build_tlas(m_tlas_build_info, m_tlas_instance_buffer, static_cast<u32>(m_tlas_instances.size()), cmd);
+        cmd.end();
+
+        auto si = vk::SubmitInfo().setCommandBufferCount(1).setPCommandBuffers(&cmd);
+        m_queues.graphics_queue.submit(si, nullptr);
+        m_device.waitIdle();
+
+        m_vr_dev->destroy_buffer(scratch);
+        m_device.freeCommandBuffers(m_graphics_pool, cmd);
     }
 
 }

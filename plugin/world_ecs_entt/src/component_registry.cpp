@@ -22,9 +22,31 @@ namespace GLT::world::world_ecs_entt {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
+    // Adds every component in [required] that the entity doesn't already have, existing instances are left alone
+    void ensure_required(const std::vector<GLT::world::component_descriptor>& descriptors, const std::vector<u64>& required, entity_id id);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
+    void ensure_required(const std::vector<GLT::world::component_descriptor>& descriptors, const std::vector<u64>& required, entity_id id) {
+
+        for (const u64 req_hash : required) {
+
+            const GLT::world::component_descriptor* req = nullptr;
+            for (const auto& d : descriptors)
+                if (d.hash == req_hash) {
+                    req = &d;
+                    break;
+                }
+
+            if (!req || !req->add || !req->has)
+                continue;
+
+            if (!req->has(id))
+                req->add(id);
+        }
+    }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
@@ -67,6 +89,9 @@ namespace GLT::world::world_ecs_entt {
             return false;
         if (d->has(id))
             return false;                          // already present
+
+        ensure_required(m_descriptors, d->required, id);
+
         d->add(id);
         return true;
     }
@@ -87,8 +112,12 @@ namespace GLT::world::world_ecs_entt {
     void component_registry::copy(entity_id from, entity_id to) {
 
         for (const auto* d : on(from)) {
-            if (d->add && !d->has(to))
-                d->add(to);
+
+            if (!d->add || d->has(to))
+                continue;
+
+            ensure_required(m_descriptors, d->required, to);
+            d->add(to);
         }
     }
 

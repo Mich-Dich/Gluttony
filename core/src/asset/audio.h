@@ -97,7 +97,8 @@ namespace GLT::asset::audio {
         f32                                     rolloff_factor = 1.0f;
         attenuation_model                       attenuation = attenuation_model::inverse_distance;
     };
-
+    static_assert(std::is_trivially_copyable_v<GLT::asset::audio::source_config>, 
+        "[source_config] must stay trivially copyable for the audio_source codec to be safe");
 
     struct listener_config {
 

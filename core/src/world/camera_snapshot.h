@@ -1,25 +1,28 @@
 
 #pragma once
 
-#include <world/i_world.h>
-#include <world/controller.h>
-#include <input_manager_default/controller.h>
-
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
 namespace GLT::world {
-    class camera;
-}
-
-namespace GLT::editor::input {
 
     // CONSTANTS =======================================================================================================
 
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
+
+    // Per-frame, copyable snapshot of the active camera. Produced by the world (from the active camera entity's transform + `camera` component)
+    // and consumed by the renderer. Contains no references; safe to hold across the update/draw boundary
+    struct camera_snapshot {
+
+        glm::mat4                           view{ 1.f };            // world -> view space (i.e. inverse(world))
+        glm::vec3                           position{ 0.f };        // world-space camera position
+        f32                                 fov{ 45.f };            // vertical, degrees
+        f32                                 near_plane{ 0.1f };
+        f32                                 far_plane{ 100.f };
+    };
 
     // STATIC VARIABLES ================================================================================================
 
@@ -28,24 +31,5 @@ namespace GLT::editor::input {
     // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================
-
-    class editor_controller final : public GLT::input::input_manager_default::controller {
-    public:
-
-        editor_controller();
-        ~editor_controller();
-
-        void update(const f32 delta_time) override;
-
-    private:
-
-        f32                                             m_move_speed = 0.15f;               // scroll-adjustable
-        f32                                             m_look_sensitivity = 0.01f;         // degrees per input unit
-        handle                                          m_move_action_handle = INVALID_HANDLE;
-        handle                                          m_look_action_handle = INVALID_HANDLE;
-        handle                                          m_scroll_action_handle = INVALID_HANDLE;
-        GLT::ref<GLT::world::i_world_plugin>            m_world{};
-
-    };
 
 }

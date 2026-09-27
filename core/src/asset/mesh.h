@@ -50,6 +50,19 @@ namespace GLT::asset::mesh {
     };
     static_assert(sizeof(submesh) == 12);
 
+
+    // A single renderable instance of a mesh asset. 
+    // [transform] is a full world-space 4x4
+    // [material_override] may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference
+    struct instance {
+        GLT::asset::handle      mesh{ INVALID_HANDLE };
+        GLT::asset::handle      material_override{ INVALID_HANDLE };
+        glm::mat4               transform{ 1.0f };
+        u32                     flags{ 0 };                     // reserved (frustum-cull bits, etc.)
+    };
+    static_assert(std::is_trivially_copyable_v<instance>);
+    static_assert(sizeof(instance) == 88);
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================

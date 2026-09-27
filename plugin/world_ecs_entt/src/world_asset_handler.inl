@@ -128,7 +128,7 @@ namespace GLT::world::world_ecs_entt {
         // required chunks ---------------------------------------------------------------------------------------------
 
         // An empty (or missing) region chunk is a valid "world with no regions yet". A fresh world saved before any region was added
-        // will have exactly this shape, and there's no reason to reject it — the plugin will create a default region on the next edit
+        // will have exactly this shape, and there's no reason to reject it - the plugin will create a default region on the next edit
         const auto disks = reader.get_as<region_disk>(GLT::asset::world::CHUNK_WORLD_REGIONS);
 
         // positional dependency invariant -----------------------------------------------------------------------------
@@ -166,6 +166,11 @@ namespace GLT::world::world_ecs_entt {
 
         if (const auto settings = reader.get(GLT::asset::world::CHUNK_WORLD_SETTINGS); !settings.empty())
             asset->settings.assign(settings.begin(), settings.end());
+
+        if (const auto cam = reader.get_as<u32>(GLT::asset::world::CHUNK_WORLD_ACTIVE_CAMERA); cam.size() == 2) {
+            asset->active_camera_index = cam[0];
+            asset->active_camera_generation = cam[1];
+        }
 
         LOG(info, "loaded world [{}] - {} region(s)", info.name, asset->region_index.size());
 
@@ -234,6 +239,19 @@ namespace GLT::world::world_ecs_entt {
 
         if (!asset.settings.empty())
             out.write_chunk(GLT::asset::world::CHUNK_WORLD_SETTINGS, std::span<const std::byte>(asset.settings));
+
+        // Active camera is optional. Absent chunk == "no active camera", which is already the default of world_asset
+        if (asset.active_camera_index != 0xFFFFFFFFu) {
+
+            struct active_camera_disk {
+                u32 index;
+                u32 generation;
+            } cam{
+                asset.active_camera_index,
+                asset.active_camera_generation
+            };
+            write_chunk_as(out, GLT::asset::world::CHUNK_WORLD_ACTIVE_CAMERA, cam);
+        }
 
         return {};
     }

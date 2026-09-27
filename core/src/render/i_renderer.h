@@ -12,6 +12,7 @@
 #include "debug/profiler.h"
 #include "plugin_system/plugin_manager.h"
 #include "asset/mesh.h"
+#include "world/camera_snapshot.h" 
 
 
 
@@ -46,7 +47,7 @@ namespace GLT::render {
         uv,                 // texture coordinates
         wireframe,
         overdraw,           // number of shading invocations per pixel
-        count,              // sentinel — not a real mode
+        count,              // sentinel - not a real mode
     };
     inline constexpr u32 count = static_cast<u32>(GLT::render::mode::count);
 
@@ -294,20 +295,40 @@ namespace GLT::render {
 
         [[nodiscard]] virtual debug::render_stats get_render_stats() const = 0;
 
-
-        virtual void set_active_camera(ref<GLT::world::camera> active_camera) = 0;
-
-
         // uploaded mesh data ------------------------------------------------------------------------------------------
 
         // load a mesh asset by pyth (must be a content relative path!)
+        // the renderer remembers the uploaded meshes and skips if mesh already loaded
         virtual bool load_mesh(const std::filesystem::path& content_relative_path) = 0;
 
 
+        // the renderer remembers the uploaded meshes and skips if mesh already loaded
         virtual bool load_mesh(const GLT::asset::handle handle) = 0;
 
 
+        // the renderer remembers the uploaded meshes and skips if mesh not loaded
         virtual void unload_mesh(GLT::asset::handle handle) = 0;
+
+        // --- scene submission (called from the world layer during update) --------
+
+        // Replace the renderer's view of the scene. The renderer copies the span. Thread-safe: may be called from a worker thread.
+        // Meshes referenced by the submitted instances are automatically retained; meshes that are no longer referenced
+        // (and not externally retained via retain_mesh) are queued for unload at the next safe point.
+        virtual void submit_scene(std::span<const GLT::asset::mesh::instance> instances) = 0;
+
+
+        // Explicitly keep a mesh resident regardless of the submitted scene. Use for global assets (skybox, debug gizmos). Idempotent
+        virtual void retain_mesh(GLT::asset::handle mesh) = 0;
+
+
+        // Drop a retain_mesh() reference. The mesh is unloaded once it's neither retained nor referenced by the current scene.
+        virtual void release_mesh(GLT::asset::handle mesh) = 0;
+
+
+        // Push the active camera for the upcoming frame. Called by the world layer during update; the renderer copies the snapshot
+        // and uses it in begin_frame.
+        virtual void set_active_camera(const GLT::world::camera_snapshot& camera) = 0;
+
     };
 
 }

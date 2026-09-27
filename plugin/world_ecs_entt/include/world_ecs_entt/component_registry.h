@@ -42,10 +42,8 @@ namespace GLT::world::world_ecs_entt {
 
 
         template<typename T>
-        void register_component(std::string_view name, std::string_view category, 
-            std::function<void(entity_id)> draw, // may be empty (runtime-only)
-            std::function<std::string(entity_id)> summary = {});
-
+        void register_component(std::string_view name, std::string_view category, std::function<void(entity_id)> draw, // may be empty (runtime-only)
+            std::function<std::string(entity_id)> summary = {}, std::vector<u64> required = {});
 
         // Descriptor access -------------------------------------------------------------------------------------------
 

@@ -126,7 +126,8 @@ namespace GLT {
         
         auto world = world_layer->get_world();
         VALIDATE(world, return, "", "Failed to get world from world layer")
-        
+
+        // TODO: check the world for real and 
         if (!override_current)                         // already set, dont override
             return;
 

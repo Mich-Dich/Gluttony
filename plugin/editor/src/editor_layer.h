@@ -62,7 +62,19 @@ namespace GLT::editor {
             save_as_request_event::request              req;
             char                                        filename[256]{};
             std::filesystem::path                       directory{};
-            std::string                                 error_message;      // empty = ok
+            std::string                                 error_message;                  // empty = ok
+        };
+
+
+        struct notification {
+
+            std::string                                 title;
+            std::string                                 description;
+            GLT::logger::severity                       severity{ GLT::logger::severity::info };
+            f32                                         lifetime{ 0.0f };               // seconds remaining; < 0 = persistent
+            f32                                         initial_lifetime{ 0.0f };       // for progress bar
+            u32                                         id{ 0 };
+            bool                                        dismissed{ false };
         };
 
 
@@ -111,6 +123,22 @@ namespace GLT::editor {
         void resolve_save_as_request(bool confirmed);
 
 
+        void on_notification_event(const notification_event& event);
+
+
+        void add_notification(const notification_event& event);
+
+
+        // Draws the bottom-right notification stack. Call at the end of render_imgui, before modals.
+        void render_notifications(const f32 delta_time);
+
+
+        [[nodiscard]] static f32 display_time_for(GLT::logger::severity sev);
+
+
+        [[nodiscard]] static ImVec4 color_for(GLT::logger::severity sev);
+
+
         GLT::unique_ref<GLT::render::image>             m_logo{};
         std::vector<GLT::unique_ref<base_window>>       m_windows{};
 
@@ -135,6 +163,10 @@ namespace GLT::editor {
         handle                                          m_save_as_sub_handle{};
         handle                                          m_save_sub_handle{};
 
+        handle                                          m_notification_sub_handle{};
+        u32                                             m_next_notification_id{ 0 };
+        std::vector<notification>                       m_notifications{};
+        std::vector<notification_event>                 m_notification_event_buffer{};   // buffered - event may fire mid-draw
     };
 
 }

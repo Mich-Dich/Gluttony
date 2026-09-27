@@ -42,7 +42,7 @@ namespace GLT::world::world_ecs_entt {
 
             // Tag component (e.g. no_inherit_transform): presence is the payload.
             // EnTT's get<T>() returns void for empty types, so we can't take its
-            // address or memcpy it — the wire format is simply "zero bytes".
+            // address or memcpy it - the wire format is simply "zero bytes".
             register_custom_component<T>(name,
                 [](const entt::registry&, entt::entity, std::vector<std::byte>&) { /*no payload*/ },
                 [](entt::registry& registry, entt::entity entity, std::span<const std::byte>) { registry.emplace_or_replace<T>(entity); });

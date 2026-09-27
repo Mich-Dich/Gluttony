@@ -5,7 +5,7 @@
 #include <layer/layer_stack.h>
 #include <application.h>
 #include <world/world_layer.h>
-#include <world/object/camera.h>
+#include <world/i_world_scene.h>
 
 #include "util/context.h"
 
@@ -41,33 +41,32 @@ namespace GLT::editor::input {
 
         using namespace GLT::input::input_manager_default;
 
-        auto* world = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>();
-        m_camera = world->get_editor_camera();
-        ASSERT(m_camera, "", "World layer does not have editor")
+        m_world = GLT::world::manager::get_ref();
+        ASSERT(m_world, "", "editor_controller: world plugin not available")
 
         action move{
             .name = "move",                       // debug only now
             .type = value_type::axis3d,
             .bindings = {
-                // W -> +Y
+                // W -> +X
                 { source::key(GLT::key_code::key_W),
                     { },
                     { trigger::key_down() }
                 },
 
-                // S -> -Y
+                // S -> -X
                 { source::key(key_code::key_S),
                     { modifier::invert() },
                     { trigger::key_down() }
                 },
 
-                // A -> -X
+                // A -> -Y
                 { source::key(key_code::key_A),
                     { modifier::axis(1), modifier::invert() },
                     { trigger::key_down() }
                 },
 
-                // D -> +X
+                // D -> +Y
                 { source::key(key_code::key_D),
                     { modifier::axis(1) },
                     { trigger::key_down() }
@@ -91,16 +90,14 @@ namespace GLT::editor::input {
         action look{
             .name = "look",
             .type = value_type::axis2d,
-            .bindings = {
-                // x/y mouse -> x/y rotation camera
-                { source::mouse_move(),
+            .bindings = {                               // x/y mouse -> x/y rotation camera
+                { source::mouse_move(-1),               // invert both axis
                     { },
                     { }
                 },
             }
         };
         m_look_action_handle = add_action(std::move(look));
-
 
         action scroll{
             .name = "scroll",
@@ -127,6 +124,17 @@ namespace GLT::editor::input {
         if (!GLT::editor::context::get().get_viewport_interacted())
             return;
 
+        if (!m_world)
+            return;
+
+        auto* scene = m_world->as<GLT::world::i_world_scene>();                 // Resolve the active camera
+        if (!scene)
+            return;
+
+        const GLT::world::entity_id camera_entity = scene->get_active_camera();
+        if (!camera_entity.is_valid())
+            return;
+
         const f32 scroll = get_axis(m_scroll_action_handle);
         if (scroll != 0.0f) {
 
@@ -135,12 +143,22 @@ namespace GLT::editor::input {
         }
 
         const glm::vec3 move = get_axis3d(m_move_action_handle);
-        if (glm::length(move) > 0.f)
-            m_camera->move(glm::vec3(move.x * m_move_speed, move.y * m_move_speed, move.z * m_move_speed));
+        if (glm::length(move) > 0.f) {
+
+            const glm::vec3 local_delta{move.y * m_move_speed, move.z * m_move_speed, -move.x * m_move_speed};
+            m_world->translate_local(camera_entity, local_delta);
+        }
 
         const glm::vec2 look = get_axis2d(m_look_action_handle);
-        if (glm::length(look) > 0.f)
-            m_camera->rotate(look.y, look.x, 0.0f);
+        if (glm::length(look) > 0.f) {
+
+            const glm::vec3 euler_delta{
+                glm::radians(look.y * m_look_sensitivity),  // pitch around +X
+                glm::radians(look.x * m_look_sensitivity),  // yaw around +Y
+                0.f
+            };
+            m_world->rotate_local(camera_entity, euler_delta);
+        }
     }
 
     // CLASS PROTECTED =================================================================================================

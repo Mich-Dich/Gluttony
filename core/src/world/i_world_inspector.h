@@ -33,8 +33,8 @@ namespace GLT::world {
     struct component_descriptor {
 
         u64                                             hash{ 0 };              // same FNV-1a used by the codec
-        std::string_view                                name;                  // "Transform", "Mesh Renderer", ...
-        std::string_view                                category;              // "Core", "Rendering", "Audio", ...
+        std::string_view                                name;                   // "Transform", "Mesh Renderer", ...
+        std::string_view                                category;               // "Core", "Rendering", "Audio", ...
 
         // Present on an entity? Called per-frame by the details panel; must be cheap.
         std::function<bool(entity_id)>                  has;
@@ -42,23 +42,25 @@ namespace GLT::world {
         // Default-construct and attach. Called from the "Add Component" menu.
         std::function<void(entity_id)>                  add;
 
-        // Detach. Called from the "..." context menu.
-        std::function<void(entity_id)>                  remove;
-
-        // Renders the component's editor UI. Empty = "this component is
-        // runtime-only" (no panel shown, but it still appears in the "has"
-        // list for debugging). The editor does not wrap this in any child,
-        // separator, or header - the callback owns its own presentation.
+        // Renders the component's editor UI. Empty = "this component is runtime-only" (no panel shown, but it still appears in the "has"
+        // list for debugging). The editor does not wrap this in any child, separator, or header - the callback owns its own presentation.
         std::function<void(entity_id)>                  draw;
 
-        // Optional: can this component be removed? Defaults to true. Some
-        // components are structural (hierarchy) and shouldn't be yanked out
+        // can this component be removed? Defaults to true. Some components are structural (hierarchy) and shouldn't be yanked out
         // from under the outliner.
         std::function<bool(entity_id)>                  can_remove;
+
+        // Detach. Called from the "..." context menu.
+        std::function<void(entity_id)>                  remove;
 
         // Optional: return a short one-line preview for the outliner
         // (e.g. "1.5 KB" or "body_lod1"). Empty = nothing shown.
         std::function<std::string(entity_id)>           summary;
+
+
+        // Hashes of components that must exist alongside this one. Applied by component_registry::add()/copy()
+        // missing ones are created (without overwriting an existing instance), present ones are left untouched
+        std::vector<u64>                                required;
     };
 
     // STATIC VARIABLES ================================================================================================

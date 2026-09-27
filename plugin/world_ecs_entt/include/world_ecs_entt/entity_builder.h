@@ -31,7 +31,7 @@ namespace GLT::world::world_ecs_entt {
     // CLASS DECLARATION ===============================================================================================
 
     // Fluent editor/spawn API. The target entity is created (or looked up) by ecs_world_plugin::make_entity() / edit();
-    // every method returns *this so calls can be chained. The builder is a thin wrapper — no internal state beyond the plugin + entity_id.
+    // every method returns *this so calls can be chained. The builder is a thin wrapper - no internal state beyond the plugin + entity_id.
     //
     // Lifetime: a builder is a transient handle. Do NOT store it. Once the underlying entity is despawned, any live builder for it becomes UB.
     class entity_builder {
@@ -69,7 +69,7 @@ namespace GLT::world::world_ecs_entt {
         entity_builder& named(std::string name);
 
 
-        entity_builder& set_transform(const transform& t);
+        entity_builder& set_transform(const component::transform& t);
 
 
         entity_builder& set_mesh(GLT::asset::handle mesh, bool visible = true);

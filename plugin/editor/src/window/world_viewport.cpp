@@ -158,7 +158,7 @@ namespace GLT::editor {
                 GLT::editor::context::get().set_viewport_interacted(true);
             }
 
-            // release RMB. MUST NOT depend on hover — once captured, ImGui reports the virtual cursor at the window center
+            // release RMB. MUST NOT depend on hover - once captured, ImGui reports the virtual cursor at the window center
             if (m_cursor_captured && !right_down) {
 
                 set_cursor_captured(false);
@@ -248,7 +248,7 @@ namespace GLT::editor {
 
         if (ImGui::BeginPopup("##add_comp")) {
 
-            // Optional filter box — the popup gets long fast.
+            // Optional filter box - the popup gets long fast.
             static char filter[64] = "";
             ImGui::InputTextWithHint("##filter", "Search...", filter, sizeof(filter));
             ImGui::Separator();
