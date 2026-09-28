@@ -24,6 +24,8 @@
 #include "window/audio_viewer.h"
 #include "window/plugin_wizard.h"
 #include "window/asset_import.h"
+#include "window/asset_create.h"
+#include "window/material_viewer.h"
 #include "util/asset_editor_registry.h"
 #include "util/file_watcher.h"
 #include "input/editor_controller.h"
@@ -143,6 +145,7 @@ namespace GLT::editor {
         m_save_sub_handle = GLT::event_bus::subscribe<GLT::save_event>(std::bind_front(&editor_layer::on_save_event, this));
         m_save_as_sub_handle = GLT::event_bus::subscribe<save_as_request_event>(std::bind_front(&editor_layer::on_save_as_request_event, this));
         m_notification_sub_handle = GLT::event_bus::subscribe<notification_event>(std::bind_front(&editor_layer::on_notification_event, this));
+        m_asset_create_request_event_sub_handle = GLT::event_bus::subscribe<asset_create_request_event>(std::bind_front(&editor_layer::on_asset_create_request_event, this));
 
         if (auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>())
             world_layer->set_controller<GLT::editor::input::editor_controller>();                       // create controller
@@ -167,6 +170,7 @@ namespace GLT::editor {
 
         GLT::event_bus::post(GLT::save_event());                // save before closing
 
+        GLT::event_bus::unsubscribe(m_asset_create_request_event_sub_handle);
         GLT::event_bus::unsubscribe(m_notification_sub_handle);
         GLT::event_bus::unsubscribe(m_save_as_sub_handle);
         GLT::event_bus::unsubscribe(m_save_sub_handle);
@@ -216,6 +220,10 @@ namespace GLT::editor {
         for (auto& event : m_notification_event_buffer)
             add_notification(event);
 
+        for (auto& event : m_asset_create_request_event_buffer)
+            add_window<asset_create_window>(event.get_target_dir());
+
+        m_asset_create_request_event_buffer.clear();
         m_notification_event_buffer.clear();
         m_asset_open_event_buffer.clear();
         m_asset_import_request_event_buffer.clear();
@@ -587,6 +595,7 @@ namespace GLT::editor {
         // ADD_ASSET_EDITOR(GLT::asset::core_types::texture2D,     texture_viewer_window)       // TODO: fix image viewer implementation
         // ADD_ASSET_EDITOR(GLT::asset::core_types::texture3D,     texture_viewer_window)
         // ADD_ASSET_EDITOR(GLT::asset::core_types::cube_map,      texture_viewer_window)
+        ADD_ASSET_EDITOR(GLT::asset::core_types::material,      material_viewer_window)
         ADD_ASSET_EDITOR(GLT::asset::core_types::audio,         audio_viewer_window)
 
         #undef ADD_ASSET_EDITOR
@@ -739,7 +748,7 @@ namespace GLT::editor {
         if (callback)
             callback(resolved);
     }
-    
+
     // notification ----------------------------------------------------------------------------------------------------
 
     // Buffered: the event can fire from anywhere in the frame, we only mutate the stack during our update pass.
@@ -762,36 +771,6 @@ namespace GLT::editor {
         // Hard cap the visible stack - drop the oldest first (front of the vector).
         if (m_notifications.size() > MAX_NOTIFICATIONS)
             m_notifications.erase(m_notifications.begin(), m_notifications.begin() + (m_notifications.size() - MAX_NOTIFICATIONS));
-    }
-
-
-    f32 editor_layer::display_time_for(GLT::logger::severity sev) {
-
-        using sev_t = GLT::logger::severity;
-        switch (sev) {
-            case sev_t::trace:      return  2.0f;
-            case sev_t::debug:      return  3.0f;
-            case sev_t::info:       return  4.5f;
-            case sev_t::warn:       return  6.5f;
-            case sev_t::error:      return  9.0f;
-            case sev_t::fatal:      return -1.0f;   // never auto-dismiss
-            default:                return  4.5f;
-        }
-    }
-
-
-    ImVec4 editor_layer::color_for(GLT::logger::severity sev) {
-
-        using sev_t = GLT::logger::severity;
-        switch (sev) {
-            case sev_t::trace:      return ImVec4(.65f, .65f, .65f, 1.f);
-            case sev_t::debug:      return ImVec4(.55f, .75f, .95f, 1.f);
-            case sev_t::info:       return ImVec4(.40f, .85f, .50f, 1.f);
-            case sev_t::warn:       return ImVec4(.95f, .80f, .30f, 1.f);
-            case sev_t::error:      return ImVec4(.95f, .40f, .35f, 1.f);
-            case sev_t::fatal:      return ImVec4(.85f, .20f, .60f, 1.f);
-            default:                return ImVec4( 1.f,  1.f,  1.f, 1.f);
-        }
     }
 
 
@@ -905,6 +884,42 @@ namespace GLT::editor {
         // soon as the user clicks any editor window. Force it to the top of the display list every frame.
         if (ImGuiWindow* window = ImGui::FindWindowByName("##notifications_stack"))
             ImGui::BringWindowToDisplayFront(window);
+    }
+
+
+    f32 editor_layer::display_time_for(GLT::logger::severity sev) {
+
+        using sev_t = GLT::logger::severity;
+        switch (sev) {
+            case sev_t::trace:      return  2.0f;
+            case sev_t::debug:      return  3.0f;
+            case sev_t::info:       return  4.5f;
+            case sev_t::warn:       return  6.5f;
+            case sev_t::error:      return  9.0f;
+            case sev_t::fatal:      return -1.0f;   // never auto-dismiss
+            default:                return  4.5f;
+        }
+    }
+
+
+    ImVec4 editor_layer::color_for(GLT::logger::severity sev) {
+
+        using sev_t = GLT::logger::severity;
+        switch (sev) {
+            case sev_t::trace:      return ImVec4(.65f, .65f, .65f, 1.f);
+            case sev_t::debug:      return ImVec4(.55f, .75f, .95f, 1.f);
+            case sev_t::info:       return ImVec4(.40f, .85f, .50f, 1.f);
+            case sev_t::warn:       return ImVec4(.95f, .80f, .30f, 1.f);
+            case sev_t::error:      return ImVec4(.95f, .40f, .35f, 1.f);
+            case sev_t::fatal:      return ImVec4(.85f, .20f, .60f, 1.f);
+            default:                return ImVec4( 1.f,  1.f,  1.f, 1.f);
+        }
+    }
+
+
+    void editor_layer::on_asset_create_request_event(const asset_create_request_event& event) { 
+
+        m_asset_create_request_event_buffer.push_back(event);
     }
 
 }

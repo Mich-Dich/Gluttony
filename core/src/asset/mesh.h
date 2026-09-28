@@ -32,11 +32,12 @@ namespace GLT::asset::mesh {
 
     // Interleaved vertex. Keep this POD and 16-byte aligned for GPU upload.
     struct vertex {
-        glm::vec3   position;           // 12
-        glm::vec3   normal;             // 12
-        glm::vec4   tangent;            // 16, xyz = tangent, w = bitangent sign
-        glm::vec2   uv0;                //  8
-        glm::vec2   _pad{};             //  8  → total 56 bytes, 16-aligned
+
+        glm::vec3                                       position;           // 12
+        glm::vec3                                       normal;             // 12
+        glm::vec4                                       tangent;            // 16, xyz = tangent, w = bitangent sign
+        glm::vec2                                       uv0;                //  8
+        glm::vec2                                       _pad{};             //  8  → total 56 bytes, 16-aligned
     };
     static_assert(sizeof(vertex) == 56);
     static_assert(alignof(vertex) == 4);
@@ -44,9 +45,9 @@ namespace GLT::asset::mesh {
 
     struct submesh {
 
-        u32         first_index;
-        u32         index_count;
-        u32         material_slot;      // index into the (future) material table
+        u32                                             first_index;
+        u32                                             index_count;
+        u32                                             material_slot;      // index into the (future) material table
     };
     static_assert(sizeof(submesh) == 12);
 
@@ -55,10 +56,11 @@ namespace GLT::asset::mesh {
     // [transform] is a full world-space 4x4
     // [material_override] may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference
     struct instance {
-        GLT::asset::handle      mesh{ INVALID_HANDLE };
-        GLT::asset::handle      material_override{ INVALID_HANDLE };
-        glm::mat4               transform{ 1.0f };
-        u32                     flags{ 0 };                     // reserved (frustum-cull bits, etc.)
+
+        GLT::asset::handle                              mesh{ INVALID_HANDLE };
+        GLT::asset::handle                              material_override{ INVALID_HANDLE };
+        glm::mat4                                       transform{ 1.0f };
+        u32                                             flags{ 0 };                     // reserved (frustum-cull bits, etc.)
     };
     static_assert(std::is_trivially_copyable_v<instance>);
     static_assert(sizeof(instance) == 88);
@@ -98,8 +100,8 @@ namespace GLT::asset::mesh {
         FORCE_INLINE_R u64 memory_usage() const noexcept override {
 
             return sizeof(*this)
-                + vertices.capacity()  * sizeof(GLT::asset::mesh::vertex)
-                + indices.capacity()   * sizeof(u32)
+                + vertices.capacity() * sizeof(GLT::asset::mesh::vertex)
+                + indices.capacity() * sizeof(u32)
                 + submeshes.capacity() * sizeof(GLT::asset::mesh::submesh)
                 + material_handles.capacity() * sizeof(GLT::asset::handle);
         }

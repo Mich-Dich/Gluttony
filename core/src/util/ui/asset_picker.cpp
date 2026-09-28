@@ -233,6 +233,13 @@ namespace GLT::UI {
 
         ImGui::SetNextItemWidth(field_w);
         ImGui::InputText("##value", display_buf, sizeof(display_buf), ImGuiInputTextFlags_ReadOnly);
+
+        // Capture the field's screen-space rect so the popup can be anchored
+        // directly beneath it and sized to match its on-screen width.
+        const ImVec2 field_min = ImGui::GetItemRectMin();
+        const ImVec2 field_max = ImGui::GetItemRectMax();
+        const f32 field_screen_w = field_max.x - field_min.x;
+
         if (ImGui::IsItemClicked())
             ImGui::OpenPopup("##picker_popup");
 
@@ -248,7 +255,12 @@ namespace GLT::UI {
             }
         }
 
-        // ---- popup (unchanged from your current version) ----
+        if (ImGui::IsPopupOpen("##picker_popup")) {
+            ImGui::SetNextWindowPos(ImVec2(field_min.x, field_max.y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(field_screen_w, 0.0f), ImGuiCond_Always);
+        }
+
+        // popup
         ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(720, 560));
         if (ImGui::BeginPopup("##picker_popup")) {
 

@@ -76,5 +76,20 @@ namespace GLT::editor {
         std::filesystem::path                                       m_target_dir{};
 
     };
-    
+
+
+    class asset_create_request_event : public GLT::event {
+    public:
+
+        explicit asset_create_request_event(std::filesystem::path target_dir) : m_target_dir(std::move(target_dir)) {}
+
+        DEFAULT_GETTER_C(std::filesystem::path,                     target_dir)
+
+        FORCE_INLINE_R std::string to_string() const override { return std::format("asset create request event for [{}]",
+            m_target_dir.generic_string()); }
+
+    private:
+        std::filesystem::path                                       m_target_dir{};
+    };
+
 }

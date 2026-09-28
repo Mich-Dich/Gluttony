@@ -5,10 +5,13 @@
 
 #include <event/event_bus.h>
 #include <event/application_event.h>
+#include <asset/material.h>
 #include <plugin_system/plugin_manager.h>
 #include <platform/i_window.h>
 #include <render/i_renderer.h>
 #include <config/imgui_config.h>
+
+
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -36,15 +39,31 @@ namespace GLT::renderer_vk_ray {
 
     // TYPES ===========================================================================================================
 
-    // Matches the layout declared in mesh_materials.rchit.glsl (std430).
+    // Matches the layout declared in mesh_materials.rchit.glsl
     struct gpu_material {
-        glm::vec4                   base_color{ 1.0f };
-        f32                         roughness{ 0.5f };
-        f32                         metallic{ 0.0f };
-        u32                         vertex_base{ 0 };     // mesh vertex offset (in vertices)
-        u32                         index_base{ 0 };      // submesh index offset (in indices)
+
+        glm::vec4                                   base_color{1.0f};
+        glm::vec3                                   emissive{0.0f};
+        f32                                         roughness{0.5f};
+        f32                                         metallic{0.0f};
+        f32                                         reflectance{0.5f};
+        f32                                         normal_scale{1.0f};
+        f32                                         occlusion_strength{1.0f};
+        std::array<u32, TEXTURE_SLOT_COUNT>         textures{};     // bindless texture indices, 0xFFFFFFFF = none
+        u32                                         flags{0};
+        u32                                         _pad[1];
     };
-    static_assert(sizeof(gpu_material) == 32);
+    static_assert(sizeof(gpu_material) == 80);
+
+
+    struct gpu_geometry {
+
+        u32                             vertex_base;
+        u32                             index_base;
+        u32                             material_index;
+        u32                             _pad;
+    };
+    static_assert(sizeof(gpu_geometry) == 16);
 
 
     struct camera_ubo {
@@ -111,6 +130,9 @@ namespace GLT::renderer_vk_ray {
         update_descriptor_set();
         imgui_init();
 
+        // TODO: only enable if needed (disable in release build)
+        create_material_preview_resources();
+
         IGNORE_UNUSED_VARIABLE_START
         const void* unused_buffer = m_output_image->get_descriptor_set();        // ensure descriptor is available
         IGNORE_UNUSED_VARIABLE_STOP
@@ -141,6 +163,7 @@ namespace GLT::renderer_vk_ray {
         }
 
         m_output_image.reset();
+        m_preview_image.reset();
         imgui_shutdown();
 
         // Destroy swapchain resources
@@ -242,10 +265,20 @@ namespace GLT::renderer_vk_ray {
             std::memcpy(data, &ubo, sizeof(ubo));
             m_vr_dev->unmap_buffer(m_uniform_buffer);
         }
-        
-        // Bind descriptor buffer
-        m_vr_dev->bind_descriptor_buffer({m_resource_desc_buffer}, current_cmd);
-        m_vr_dev->bind_descriptor_set(m_pipeline_layout, 0, 0, 0, current_cmd);
+
+        {   // Descriptor buffer binding for the main pass
+            // --- preview pass (before the main scene) ---
+            if (m_preview_ready && m_preview_queued) {
+
+                upload_preview_data();
+                dispatch_material_preview(current_cmd);
+                m_preview_queued = false;
+            }
+
+            // --- main scene ---
+            m_vr_dev->bind_descriptor_buffer({ m_resource_desc_buffer }, current_cmd);
+            m_vr_dev->bind_descriptor_set(m_pipeline_layout, 0, 0, 0, current_cmd);
+        }
 
         transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eTransferDstOptimal);
         clear_output_image(current_cmd, m_clear_color);
@@ -255,7 +288,7 @@ namespace GLT::renderer_vk_ray {
         current_cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, m_rt_pipeline);
         m_vr_dev->dispatch_rays(m_rt_pipeline, m_sbt_buffer, m_render_size.x, m_render_size.y, 1, current_cmd);
 
-        m_frame_draw_calls    += 1;     // one RT dispatch
+        m_frame_draw_calls += 1;        // one RT dispatch
         m_frame_render_passes += 1;     // the RT dispatch is the scene's only "pass"
 
         // // Blit from output image to swapchain image
@@ -412,222 +445,6 @@ namespace GLT::renderer_vk_ray {
 
         VK_CHECK_S(m_device.waitForFences(m_immediate_submit_fence, VK_TRUE, UINT64_MAX));
 	}
-
-    // uploaded mesh data ----------------------------------------------------------------------------------------------
-
-    bool renderer::load_mesh(const std::filesystem::path& content_relative_path) {
-
-        auto registry = GLT::asset::registry::get_ref();
-        ASSERT(registry, "", "No asset registry");
-
-        auto handle = registry->load(content_relative_path);
-        VALIDATE(handle.has_value(), return false, "", "Failed to load mesh [{}]", content_relative_path.generic_string());
-
-        return load_mesh(*handle);
-    }
-
-
-    bool renderer::load_mesh(const GLT::asset::handle handle) {
-
-        auto registry = GLT::asset::registry::get_ref();
-        ASSERT(registry, "", "No asset registry");
-
-        // Reuse the shared lookup so "loaded" means the same thing everywhere
-        if (find_slot(handle))
-        return true;
-
-        auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(handle);
-        VALIDATE(mesh, return false, "", "Asset [{}] is not a mesh_asset", registry->info(handle).name);
-       
-        // reserve buffer space. May grow the shared buffers
-        u32 live_submeshes = 0;
-        for (const auto& sm : mesh->submeshes)
-            if (sm.index_count >= 3)
-                live_submeshes++;
-
-        // DEBUG-ONLY: -------------------------------------------------------------------------------------------------
-        #define SANITY_CHECK_ON_THE_DECODED_MESH 0
-        #if SANITY_CHECK_ON_THE_DECODED_MESH
-            {
-                LOG(info, "count supplied to reserve_mesh_space(): [{}], count in mesh asset [{}]", live_submeshes, mesh->submeshes.size())
-
-                const size_t n_idx = mesh->indices.size();
-                const size_t n_vtx = mesh->vertices.size();
-
-                u32 global_max_idx = 0;
-                for (u32 i : mesh->indices)
-                    global_max_idx = std::max(global_max_idx, i);
-
-                LOG(info, "mesh: {} verts, {} indices, max index in array = {}", n_vtx, n_idx, global_max_idx);
-
-                if (global_max_idx >= n_vtx)
-                    LOG(fatal, "  !! mesh index {} >= vertex count {} - asset is corrupt", global_max_idx, n_vtx);
-
-                for (size_t si = 0; si < mesh->submeshes.size(); ++si) {
-                    const auto& sm = mesh->submeshes[si];
-
-                    const u64 end = u64(sm.first_index) + u64(sm.index_count);
-                    if (end > n_idx) {
-                        LOG(fatal, "  submesh[{}]: first={} count={} -> end={} OVERFLOWS index array size {}",
-                            si, sm.first_index, sm.index_count, end, n_idx);
-                        continue;
-                    }
-
-                    u32 sub_max_idx = 0;
-                    for (u32 k = 0; k < sm.index_count; ++k)
-                        sub_max_idx = std::max(sub_max_idx, mesh->indices[sm.first_index + k]);
-
-                    LOG(info, "  submesh[{}]: first={} count={} max_vertex_idx={}{}",
-                        si, sm.first_index, sm.index_count, sub_max_idx,
-                        (sub_max_idx >= n_vtx ? "  <-- OOB VERTEX" : ""));
-                }
-            }
-        #endif
-
-        const bool grew = reserve_mesh_space(
-            static_cast<u32>(mesh->vertices.size()),
-            static_cast<u32>(mesh->indices.size()),
-            live_submeshes);
-        
-        // If buffers moved, every existing BLAS references a dead address - rebuild them all once, right here, not per-mesh
-        // This is the only path that touches other meshes
-        if (grew)
-            rebuild_all_blases();
-
-        u32 slot_idx;
-        if (!m_free_slots.empty()) {                                // claim a slot
-        
-            slot_idx = m_free_slots.back();
-            m_free_slots.pop_back();
-        
-        } else {
-        
-            slot_idx = static_cast<u32>(m_mesh_slots.size());
-            m_mesh_slots.emplace_back();
-        }
-
-        mesh_slot& slot = m_mesh_slots[slot_idx];
-        slot.asset = handle;
-        slot.vertex_offset = m_vertex_used;
-        slot.vertex_count = static_cast<u32>(mesh->vertices.size());
-        slot.index_offset = m_index_used;
-        slot.index_count = static_cast<u32>(mesh->indices.size());
-        slot.material_offset = m_material_used;
-        slot.material_count = live_submeshes;
-        slot.alive = true;
-
-        upload_mesh_slice(slot, *mesh);                             // Upload just this mesh's slice
-        m_vertex_used += slot.vertex_count;
-        m_index_used += slot.index_count;
-        m_material_used += slot.material_count;
-
-        build_blas_for_slot(slot);                                  // Build exactly one BLAS for this mesh
-        // m_tlas_dirty = true;                                        // TLAS contents changed; the handle did not
-
-        return true;
-    }
-
-
-    void renderer::unload_mesh(GLT::asset::handle handle) {
-
-        u32 slot_index = std::numeric_limits<u32>::max();
-        for (u32 index = 0; index < m_mesh_slots.size(); index++) {
-            if (m_mesh_slots[index].alive && m_mesh_slots[index].asset == handle) {
-                slot_index = index;
-                break;
-            }
-        }
-
-        VALIDATE(slot_index != std::numeric_limits<u32>::max(), return, "", "handle not loaded");
-
-        mesh_slot& slot = m_mesh_slots[slot_index];
-        slot.alive = false;
-
-        m_device.waitIdle();
-        m_vr_dev->destroy_blas(slot.blas);
-        
-        // Reset everything. A dead slot must not carry residual identity
-        slot.blas = {};
-        slot.asset = INVALID_HANDLE;
-        slot.vertex_offset = 0;
-        slot.vertex_count = 0;
-        slot.index_offset = 0;
-        slot.index_count = 0;
-        slot.material_offset = 0;
-        slot.material_count = 0;
-
-        m_free_slots.push_back(slot_index);
-        // m_tlas_dirty = true;
-    }
-
-    // scene management ------------------------------------------------------------------------------------------------
-
-    void renderer::submit_scene(std::span<const GLT::asset::mesh::instance> instances) {
-
-        m_scene_instances.assign(instances.begin(), instances.end());
-        m_scene_meshes.clear();
-        m_scene_meshes.reserve(instances.size());
-        for (const auto& instance : instances)
-            if (instance.mesh != INVALID_HANDLE)
-                m_scene_meshes.insert(instance.mesh);
-
-        for (auto mesh : m_scene_meshes) {                              // needs loading
-
-            if (find_slot(mesh))
-                continue;
-
-            std::erase(m_pending_unloads, mesh);                        // The scene now wants it, so any pending unload is moot
-
-            if (std::ranges::contains(m_pending_loads, mesh))
-                continue;
-
-            m_pending_loads.push_back(mesh);
-        }
-
-        for (auto& slot : m_mesh_slots) {                               // needs unloading
-
-            if (!slot.alive)
-                continue;
-
-            if (m_scene_meshes.contains(slot.asset))
-                continue;
-
-            if (m_retained_meshes.contains(slot.asset))
-                continue;
-
-            std::erase(m_pending_loads, slot.asset);                    // Visible again this frame -> a stale pending load shouldn't resurrect it
-
-            if (std::ranges::contains(m_pending_unloads, slot.asset))
-                continue;
-
-            m_pending_unloads.push_back(slot.asset);
-        }
-    }
-
-
-    void renderer::retain_mesh(GLT::asset::handle mesh) {
-
-        if (mesh == INVALID_HANDLE)
-            return;
-
-        m_retained_meshes.insert(mesh);
-        std::erase(m_pending_unloads, mesh);        // Cancel a pending unload if there is one.
-
-        if (!find_slot(mesh))
-            m_pending_loads.push_back(mesh);
-    }
-
-
-    void renderer::release_mesh(GLT::asset::handle mesh) {
-
-        if (mesh == INVALID_HANDLE)
-            return;
-
-        m_retained_meshes.erase(mesh);
-
-        if (!m_scene_meshes.contains(mesh) && find_slot(mesh))
-            m_pending_unloads.push_back(mesh);
-    }
 
     // CLASS PROTECTED =================================================================================================
 
@@ -798,10 +615,11 @@ namespace GLT::renderer_vk_ray {
             }
             m_mesh_slots.clear();
 
-            if (m_vertex_buffer.buffer)        m_vr_dev->destroy_buffer(m_vertex_buffer);
-            if (m_index_buffer.buffer)         m_vr_dev->destroy_buffer(m_index_buffer);
-            if (m_material_buffer.buffer)      m_vr_dev->destroy_buffer(m_material_buffer);
-            if (m_tlas_instance_buffer.buffer) m_vr_dev->destroy_buffer(m_tlas_instance_buffer);
+            if (m_vertex_buffer.buffer)             m_vr_dev->destroy_buffer(m_vertex_buffer);
+            if (m_index_buffer.buffer)              m_vr_dev->destroy_buffer(m_index_buffer);
+            if (m_material_buffer.buffer)           m_vr_dev->destroy_buffer(m_material_buffer);
+            if (m_geometry_buffer.buffer)           m_vr_dev->destroy_buffer(m_geometry_buffer);  
+            if (m_tlas_instance_buffer.buffer)      m_vr_dev->destroy_buffer(m_tlas_instance_buffer);
 
             m_vr_dev->destroy_tlas(m_tlas_handle);
         });
@@ -829,6 +647,15 @@ namespace GLT::renderer_vk_ray {
                 vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_vertex_buffer),
             vr::descriptor_item(5, vk::DescriptorType::eStorageBuffer,
                 vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_index_buffer),
+
+            // bindless textures support
+            // Bindless texture array. No dynamic_array_size -> fixed-size array,
+            // every element is written in create_default_texture() and per-element on load.
+            vr::descriptor_item(6, vk::DescriptorType::eCombinedImageSampler, vk::ShaderStageFlagBits::eClosestHitKHR,
+                BINDLESS_TEXTURE_MAX, m_texture_descriptors.data()),
+
+            vr::descriptor_item(7, vk::DescriptorType::eStorageBuffer,
+                vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_geometry_buffer),
         };
 
         // create a descriptor set layout, for the ray tracing pipeline
@@ -909,7 +736,8 @@ namespace GLT::renderer_vk_ray {
         m_sbt_buffer = m_vr_dev->create_sbt(m_rt_pipeline, sbtInfo);
 
         // create a descriptor buffer for the ray tracing pipeline
-        m_resource_desc_buffer = m_vr_dev->create_descriptor_buffer(m_resource_descriptor_layout, m_resource_bindings, vr::descriptor_buffer_type::resource);
+        m_resource_desc_buffer = m_vr_dev->create_descriptor_buffer(m_resource_descriptor_layout, m_resource_bindings,
+            vr::descriptor_buffer_type::combined);      // sampler | resource
 
         m_live_buffer_count += 1;           // m_resource_desc_buffer.buffer
         m_live_pipeline_count += 1;         // m_rt_pipeline
@@ -932,6 +760,84 @@ namespace GLT::renderer_vk_ray {
     }
 
 
+    void renderer::create_base_resources() {
+
+        vk::CommandPoolCreateInfo command_pool_CI = vk::CommandPoolCreateInfo()
+            .setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
+
+        m_immediate_submit_command_pool = m_device.createCommandPool(command_pool_CI);
+
+        vk::CommandBufferAllocateInfo cmd_alloc_I = vk::CommandBufferAllocateInfo()
+            .setCommandPool(m_immediate_submit_command_pool)
+            .setLevel(vk::CommandBufferLevel::ePrimary)
+            .setCommandBufferCount(1);
+        std::vector<vk::CommandBuffer> command_buffer_result = m_device.allocateCommandBuffers(cmd_alloc_I);
+        VALIDATE(command_buffer_result.size() > 0, , "", "Failed to allocate command buffer")
+        m_immediate_submit_command_buffer = command_buffer_result[0];
+
+        vk::FenceCreateInfo fence_CI = vk::FenceCreateInfo().setFlags(vk::FenceCreateFlagBits::eSignaled);
+        m_immediate_submit_fence = m_device.createFence(fence_CI);
+
+        m_output_image = GLT::create_ref<image>();
+
+        // samplers + white 1x1 fallback texture (slot 0) -------------------------
+        // Must run before the default material is written, because it initialises m_texture_descriptors[] which the descriptor buffer reads
+        create_default_texture();
+
+        // default material (gpu_material slot 0) ----------------------------------------------------------------------
+        reserve_material_space(1);
+        gpu_material default_mat{};
+        default_mat.base_color = { 0.8f, 0.8f, 0.8f, 1.0f };
+        default_mat.roughness  = 0.7f;
+        default_mat.textures.fill(0);       // white fallback index
+        auto* dst = static_cast<gpu_material*>(m_vr_dev->map_buffer(m_material_buffer));
+        dst[0] = default_mat;
+        m_vr_dev->unmap_buffer(m_material_buffer);
+        m_material_used = 1;
+
+        // camera UBO --------------------------------------------------------------------------------------------------
+        m_uniform_buffer = m_vr_dev->create_buffer(
+            sizeof(camera_ubo),
+            vk::BufferUsageFlagBits::eUniformBuffer,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        m_live_buffer_count += 1;
+
+        m_deletion_queue.push_func([&]() {
+
+            if (m_uniform_buffer.buffer)
+                m_vr_dev->destroy_buffer(m_uniform_buffer);
+
+            if (m_immediate_submit_fence)
+                m_device.destroyFence(m_immediate_submit_fence);
+
+            if (m_immediate_submit_command_pool)
+                m_device.destroyCommandPool(m_immediate_submit_command_pool);
+
+            // Tear down GPU textures. Slot 0 is the white fallback and is destroyed too.
+            for (auto& slot : m_texture_slots) {
+                if (!slot.alive)
+                    continue;
+
+                if (slot.view)
+                    m_device.destroyImageView(slot.view);
+
+                vr::allocated_image img{};
+                img.image = slot.image;
+                img.allocation = slot.allocation;
+                if (img.image)
+                    m_vr_dev->destroy_image(img);
+            }
+            m_texture_slots.clear();
+
+            if (m_default_sampler_linear)
+                m_device.destroySampler(m_default_sampler_linear);
+
+            if (m_default_sampler_nearest)
+                m_device.destroySampler(m_default_sampler_nearest);
+        });
+    }
+
+
     void renderer::update_descriptor_set() {
 
         // Called from two places:
@@ -949,572 +855,6 @@ namespace GLT::renderer_vk_ray {
         // so we can just update the resource values here
         // if we want to update the descriptor set with a new item, we can just reassign the vr::descriptor_item::p*** with new items and update the descriptor set
         m_vr_dev->update_descriptor_buffer(m_resource_desc_buffer, m_resource_bindings, vr::descriptor_buffer_type::resource);
-    }
-
-
-    void renderer::clear_output_image(vk::CommandBuffer cmd, const glm::vec4& color) {
-
-        // Clear the image
-        vk::ClearColorValue clear_color;
-        clear_color.setFloat32({color.r, color.g, color.b, color.a});
-        cmd.clearColorImage(
-            m_swapchain.swapchain_images[m_current_swapchain_image],
-            vk::ImageLayout::eTransferDstOptimal,
-            clear_color,
-            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)
-        );
-    }
-
-    // ----- SWAPCHAIN -------------------------------------------------------------------------------------------------
-
-	void renderer::create_swapchain(const glm::ivec2 size) {
-
-        // create a swapchain
-        m_swapchain_builder = vr::swapchain_builder(m_device, m_physical_device, m_surface, m_queues.graphics_index, m_queues.present_index);
-        m_swapchain_builder.width = static_cast<u32>(size.x);
-        m_swapchain_builder.height = static_cast<u32>(size.y);
-        m_swapchain_builder.back_buffer_count = 2;
-        m_swapchain_builder.image_usage = vk::ImageUsageFlagBits::eTransferDst;
-        m_swapchain_builder.desired_format = vk::Format::eB8G8R8A8Unorm;
-        m_swapchain_builder.present_mode = mp_window->get_vsync() ? vk::PresentModeKHR::eFifo : vk::PresentModeKHR::eMailbox;
-        LOG(trace, "Creating swapchain with dimensions: {}x{}", m_swapchain_builder.width, m_swapchain_builder.height);
-
-        try {
-
-            m_swapchain = m_swapchain_builder.build_swapchain();
-
-        } catch (const std::exception &exception) {
-
-            LOG(fatal, "Failed to create initial swapchain: [{}]", exception.what());
-            throw;
-        }
-	}
-
-
-	void renderer::destroy_swapchain() {
-
-        m_swapchain_builder.destroy_swapchain(m_device, m_swapchain);
-	}
-
-
-	void renderer::resize_swapchain(const glm::ivec2 size) {
-
-        VALIDATE(m_target_framebuffer_size.x > 0 && m_target_framebuffer_size.y > 0,
-            return , "", "Cant resize if one dimension is to small");
-
-		vkDeviceWaitIdle(m_device);
-		destroy_swapchain();
-		create_swapchain(size);
-        // m_output_image->resize(glm::uvec3{m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height, 1});
-
-        // re‑initialise layout tracking
-        m_image_count = static_cast<u32>(m_swapchain.swapchain_images.size());
-        m_swapchain_images_layout.assign(m_image_count, vk::ImageLayout::eUndefined);
-        
-        // override imgui framebuffers
-        m_imgui_framebuffers.resize(m_swapchain.swapchain_images.size());
-        for (size_t x = 0; x < m_swapchain.swapchain_images.size(); x++) {
-
-            vk::ImageView attachments[] = { m_swapchain.swapchain_image_views[x] };
-            vk::FramebufferCreateInfo fb_info = {};
-            fb_info.renderPass = m_imgui_render_pass;
-            fb_info.attachmentCount = 1;
-            fb_info.pAttachments = attachments;
-            fb_info.width = m_swapchain.swapchain_extent.width;
-            fb_info.height = m_swapchain.swapchain_extent.height;
-            fb_info.layers = 1;
-
-            try {
-                m_imgui_framebuffers[x] = m_device.createFramebuffer(fb_info);
-            } catch (const vk::SystemError& e) {
-                LOG(error, "Failed to create ImGui framebuffer: [{}]", e.what());
-                throw;
-            }
-        }
-	}
-
-
-    void renderer::create_base_resources() {
-
-        vk::CommandPoolCreateInfo command_pool_CI = vk::CommandPoolCreateInfo()
-            .setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
-		m_immediate_submit_command_pool = m_device.createCommandPool(command_pool_CI);
-
-		vk::CommandBufferAllocateInfo cmd_alloc_I = vk::CommandBufferAllocateInfo()
-            .setCommandPool(m_immediate_submit_command_pool)
-            .setLevel(vk::CommandBufferLevel::ePrimary)
-            .setCommandBufferCount(1);
-        std::vector<vk::CommandBuffer> command_buffer_result = m_device.allocateCommandBuffers(cmd_alloc_I);
-        VALIDATE(command_buffer_result.size() > 0, , "", "Failed to allocate command buffer")
-        m_immediate_submit_command_buffer = command_buffer_result[0];
-
-        vk::FenceCreateInfo fence_CI = vk::FenceCreateInfo()
-            .setFlags(vk::FenceCreateFlagBits::eSignaled);
-		m_immediate_submit_fence = m_device.createFence(fence_CI);
-
-        // m_deletion_queue.push_pointer(m_immediate_submit_command_pool);
-		// m_deletion_queue.push_pointer(m_immediate_submit_fence);
-
-        m_output_image = GLT::create_ref<image>();
-
-        // create a uniform buffer
-        u32 uniform_buffer_size = sizeof(f32) * 4 * 4 * 2; // two 4x4 matrix
-        uniform_buffer_size += sizeof(f32) * 4;            // pass time, and 3 floats for padding or whatever else in the future
-
-        // we will be writing to this buffer on the CPU
-        m_uniform_buffer = m_vr_dev->create_buffer(
-            sizeof(camera_ubo),
-            vk::BufferUsageFlagBits::eUniformBuffer,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        m_live_buffer_count += 1;
-
-        m_deletion_queue.push_func([&]() {
-
-            if (m_uniform_buffer.buffer)
-                m_vr_dev->destroy_buffer(m_uniform_buffer);
-        });
-    }
-
-
-    void renderer::transition_image_layout(vk::CommandBuffer command_buffer, const image_type type, 
-        const vk::ImageLayout new_layout) {
-
-        switch (type) {
-
-            case image_type::swapchain: {
-
-                // Define the image subresource range for swapchain images
-                vk::ImageSubresourceRange swapchain_range(
-                    vk::ImageAspectFlagBits::eColor,                // Color aspect
-                    0,                                              // Base mip level
-                    1,                                              // Level count
-                    0,                                              // Base array layer
-                    1                                               // Layer count
-                );
-
-                m_vr_dev->transition_image_layout(
-                    command_buffer,
-                    m_swapchain.swapchain_images[m_current_swapchain_image],
-                    m_swapchain_images_layout[m_current_swapchain_image],
-                    new_layout,
-                    swapchain_range,                                // Image subresource range
-                    vk::PipelineStageFlagBits::eAllCommands,        // Source stage
-                    vk::PipelineStageFlagBits::eAllCommands         // Destination stage
-                );
-                m_swapchain_images_layout[m_current_swapchain_image] = new_layout;
-
-            } break;
-
-            case image_type::render: {
-
-                // Define the image subresource range for render images
-                vk::ImageSubresourceRange render_range(
-                    vk::ImageAspectFlagBits::eColor,                // Color aspect
-                    0,                                              // Base mip level
-                    1,                                              // Level count
-                    0,                                              // Base array layer
-                    1                                               // Layer count
-                );
-
-                m_vr_dev->transition_image_layout(
-                    command_buffer,
-                    m_output_image->get_allocated_image_ref().image,
-                    m_output_image->get_accessible_image_ref().layout,
-                    new_layout,
-                    render_range,                                   // Image subresource range
-                    vk::PipelineStageFlagBits::eAllCommands ,       // Source stage
-                    vk::PipelineStageFlagBits::eAllCommands         // Destination stage
-                );
-                m_output_image->get_accessible_image_ref().layout = new_layout;
-
-            } break;
-        }
-    }
-
-    // ----- IMGUI -----------------------------------------------------------------------------------------------------
-
-    void renderer::imgui_init() {
-
-        ImGui::SetCurrentContext(imgui_config::get_context_imgui());
-        // ImGuiIO& io = ImGui::GetIO();
-        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
-        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;        // Enable Gamepad Controls
-        // io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
-        // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
-
-        mp_window->imgui_init(GLT::render::backend_api::vulkan);
-
-        ASSERT(ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_4,
-            [](const char* function_name, void* user_data) -> PFN_vkVoidFunction {
-
-                vk::Instance* instance = static_cast<vk::Instance*>(user_data);
-                return vkGetInstanceProcAddr(static_cast<VkInstance>(*instance), function_name);
-            },
-            &m_instance.instance_handle
-        ), "", "Failed to load Vulkan functions for ImGui");
-
-        create_imgui_resources();
-
-        LOG(trace, "ImGui initialized");
-    }
-
-
-    void renderer::imgui_shutdown() {
-
-        mp_window->imgui_shutdown();
-        destroy_imgui_resources();
-        LOG(trace, "ImGui shutdown");
-    }
-
-
-    void renderer::create_imgui_resources() {
-
-        utils::create_imgui_resources(m_imgui_descriptor_pool, m_device, m_swapchain, m_imgui_render_pass,
-            m_instance, m_physical_device, m_queues, m_imgui_framebuffers, m_imgui_initialized);
-    }
-
-
-    void renderer::destroy_imgui_resources() {
-
-        utils::destroy_imgui_resources(m_device, m_imgui_framebuffers, m_imgui_render_pass, 
-            m_imgui_descriptor_pool, m_imgui_initialized);
-    }
-
-
-    void renderer::begin_imgui_frame(vk::CommandBuffer& current_cmd) {
-
-        VALIDATE_INIT
-
-        // Transition the swapchain image to COLOR_ATTACHMENT_OPTIMAL for ImGui
-        transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eColorAttachmentOptimal);
-
-        ImGui::SetCurrentContext(imgui_config::get_context_imgui());
-        ImGui_ImplVulkan_NewFrame();                                                    // Start ImGui frame (no command buffer needed)
-        mp_window->begin_imgui_frame();
-        ImGui::NewFrame();
-    }
-
-
-    void renderer::end_imgui_frame(vk::CommandBuffer& current_cmd) {
-
-        VALIDATE_INIT
-
-        ImGui::EndFrame();
-        ImGui::Render();                                                                // Finalize ImGui draw data
-
-        // ---- stats ------------------------------------------------------------------------
-        m_frame_draw_calls    += count_imgui_draw_calls(ImGui::GetDrawData());
-        m_frame_render_passes += 1;     // ImGui uses one render pass
-
-        vk::RenderPassBeginInfo rp_info{};                                              // Begin render pass (clears background to dark blue)
-        rp_info.renderPass = m_imgui_render_pass;
-        rp_info.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
-        rp_info.renderArea.offset = vk::Offset2D{};
-        rp_info.renderArea.extent = m_swapchain.swapchain_extent;
-
-        std::array<vk::ClearValue, 1> clear_values{};                                   // Clear colour (dark blue)
-        clear_values[0].color = {m_clear_color.x, m_clear_color.y, m_clear_color.z, m_clear_color.w};
-        rp_info.clearValueCount = static_cast<u32>(clear_values.size());
-        rp_info.pClearValues = clear_values.data();
-
-        current_cmd.beginRenderPass(rp_info, vk::SubpassContents::eInline);
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), current_cmd);
-        current_cmd.endRenderPass();
-
-        // After the render pass, the image layout is PRESENT_SRC_KHR (set in render pass)
-        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;
-        
-        // Update and Render additional Platform Windows
-        ImGuiIO& io = ImGui::GetIO();
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-            ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
-        }
-    }
-
-    // mesh handling ---------------------------------------------------------------------------------------------------
-
-    bool renderer::reserve_mesh_space(u32 v, u32 i, u32 m) {
-
-        const u32 need_v = m_vertex_used + v;
-        const u32 need_i = m_index_used + i;
-        const u32 need_m = m_material_used + m;
-
-        bool grew = false;
-
-        if (need_v > m_vertex_capacity) {
-            m_vertex_capacity = std::max(need_v, m_vertex_capacity + std::max(m_vertex_capacity / 2, VERTEX_HEADROOM_MIN));
-            grew = true;
-        }
-        if (need_i > m_index_capacity) {
-            m_index_capacity  = std::max(need_i, m_index_capacity + std::max(m_index_capacity / 2, INDEX_HEADROOM_MIN));
-            grew = true;
-        }
-        if (need_m > m_material_capacity) {
-            m_material_capacity = std::max(need_m, m_material_capacity + std::max(m_material_capacity / 2, MATERIAL_HEADROOM_MIN));
-            grew = true;
-        }
-        if (!grew)
-            return false;
-
-        // Grow: create new buffers, copy old, then swap. Because device addresses change, every BLAS that reads them is invalid - caller must rebuild them.
-        const auto as_input = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer;
-
-        auto new_vb = m_vr_dev->create_buffer(m_vertex_capacity * sizeof(GLT::asset::mesh::vertex), as_input,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        auto new_ib = m_vr_dev->create_buffer(m_index_capacity * sizeof(u32), as_input,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        auto new_mb = m_vr_dev->create_buffer(m_material_capacity * sizeof(gpu_material), vk::BufferUsageFlagBits::eStorageBuffer,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-
-        std::memset(m_vr_dev->map_buffer(new_vb), 0, m_vertex_capacity * sizeof(GLT::asset::mesh::vertex));
-        std::memset(m_vr_dev->map_buffer(new_ib), 0, m_index_capacity  * sizeof(u32));
-        std::memset(m_vr_dev->map_buffer(new_mb), 0, m_material_capacity * sizeof(gpu_material));
-        m_vr_dev->unmap_buffer(new_vb);
-        m_vr_dev->unmap_buffer(new_ib);
-        m_vr_dev->unmap_buffer(new_mb);
-
-        // Copy the used region from old to new. Only touch a buffer if it has data -
-        // an unpopulated slot (e.g. right after the initial pre-reservation) was never mapped, so calling unmap on it would trip VMA's assertion.
-        if (m_vertex_used) {
-            const void* src = m_vr_dev->map_buffer(m_vertex_buffer);
-            void*       dst = m_vr_dev->map_buffer(new_vb);
-            std::memcpy(dst, src, m_vertex_used * sizeof(GLT::asset::mesh::vertex));
-            m_vr_dev->unmap_buffer(m_vertex_buffer);
-            m_vr_dev->unmap_buffer(new_vb);
-        }
-
-        if (m_index_used) {
-            const void* src = m_vr_dev->map_buffer(m_index_buffer);
-            void*       dst = m_vr_dev->map_buffer(new_ib);
-            std::memcpy(dst, src, m_index_used * sizeof(u32));
-            m_vr_dev->unmap_buffer(m_index_buffer);
-            m_vr_dev->unmap_buffer(new_ib);
-        }
-
-        if (m_material_used) {
-            const void* src = m_vr_dev->map_buffer(m_material_buffer);
-            void*       dst = m_vr_dev->map_buffer(new_mb);
-            std::memcpy(dst, src, m_material_used * sizeof(gpu_material));
-            m_vr_dev->unmap_buffer(m_material_buffer);
-            m_vr_dev->unmap_buffer(new_mb);
-        }
-
-        std::swap(m_vertex_buffer, new_vb);
-        std::swap(m_index_buffer, new_ib);
-        std::swap(m_material_buffer, new_mb);
-
-        m_device.waitIdle();
-
-        // After the swap, new_* hold the *old* buffers (possibly default-constructed).
-        if (new_vb.buffer) m_vr_dev->destroy_buffer(new_vb);
-        if (new_ib.buffer) m_vr_dev->destroy_buffer(new_ib);
-        if (new_mb.buffer) m_vr_dev->destroy_buffer(new_mb);
-
-        update_descriptor_set();
-        return true;
-    }
-
-
-    void renderer::build_blas_for_slot(mesh_slot& slot) {
-
-        auto* mesh = GLT::asset::registry::get_ref()->data_as<GLT::asset::mesh::mesh_asset>(slot.asset);
-        ASSERT(mesh, "", "slot has no mesh");
-
-        vr::blas_create_info bci{};
-        bci.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
-
-        const vk::DeviceAddress base_vertex_addr = m_vertex_buffer.dev_address + slot.vertex_offset * sizeof(GLT::asset::mesh::vertex);
-        const vk::DeviceAddress base_index_addr = m_index_buffer.dev_address  + slot.index_offset  * sizeof(u32);
-
-        for (const auto& sm : mesh->submeshes) {
-            if (sm.index_count < 3)
-                continue;
-
-            vr::geometry_data gd{};
-            gd.vertex_format = vk::Format::eR32G32B32Sfloat;
-            gd.stride = sizeof(GLT::asset::mesh::vertex);
-            gd.index_format = vk::IndexType::eUint32;
-            gd.primitive_count = sm.index_count / 3;
-            gd.data_addresses.vertex_dev_address = base_vertex_addr;
-            gd.data_addresses.index_dev_address  = base_index_addr + sm.first_index * sizeof(u32);
-            bci.geometries.push_back(gd);
-        }
-
-        auto [handle, build_info] = m_vr_dev->create_blas(bci);
-        slot.blas = handle;
-
-        std::vector<vr::blas_build_info> infos = { build_info };
-        auto scratch = m_vr_dev->create_scratch_buffer_from_build_infos(infos);
-        auto cmd = m_device.allocateCommandBuffers(vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
-        
-        cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-        m_vr_dev->build_blas(infos, cmd);
-        m_vr_dev->add_acceleration_build_barrier(cmd);
-        cmd.end();
-
-        auto si = vk::SubmitInfo().setCommandBufferCount(1).setPCommandBuffers(&cmd);
-        m_queues.graphics_queue.submit(si, nullptr);
-        m_device.waitIdle();
-
-        m_vr_dev->destroy_buffer(scratch);
-        m_device.freeCommandBuffers(m_graphics_pool, cmd);
-    }
-
-
-    void renderer::upload_mesh_slice(mesh_slot& slot, GLT::asset::mesh::mesh_asset& mesh) {
-
-        // Vertices
-        {
-            auto* dst = static_cast<GLT::asset::mesh::vertex*>(m_vr_dev->map_buffer(m_vertex_buffer));
-            std::memcpy(dst + slot.vertex_offset, mesh.vertices.data(), mesh.vertices.size() * sizeof(GLT::asset::mesh::vertex));
-            m_vr_dev->unmap_buffer(m_vertex_buffer);
-        }
-
-        // Indices
-        {
-            auto* dst = static_cast<u32*>(m_vr_dev->map_buffer(m_index_buffer));
-            std::memcpy(dst + slot.index_offset, mesh.indices.data(), mesh.indices.size() * sizeof(u32));
-            m_vr_dev->unmap_buffer(m_index_buffer);
-        }
-
-        // Materials - one entry per submesh.
-        {
-            auto* dst = static_cast<gpu_material*>(m_vr_dev->map_buffer(m_material_buffer));
-
-            u32 mat_off = slot.material_offset;
-            for (const auto& sm : mesh.submeshes) {
-                if (sm.index_count < 3)
-                    continue;                 // must match build_blas_for_slot
-
-                const f32 t = static_cast<f32>(mat_off) / static_cast<f32>(std::max(1u, m_material_used + slot.material_count));
-
-                gpu_material mat{};
-                mat.base_color = glm::vec4(
-                    0.5f + 0.5f * std::cos(6.2831853f * (t + 0.00f)),
-                    0.5f + 0.5f * std::cos(6.2831853f * (t + 0.33f)),
-                    0.5f + 0.5f * std::cos(6.2831853f * (t + 0.67f)),
-                    1.0f);
-                mat.roughness   = 0.6f;
-                mat.metallic    = 0.0f;
-                mat.vertex_base = slot.vertex_offset;
-                mat.index_base  = slot.index_offset + sm.first_index;
-
-                dst[mat_off++] = mat;
-            }
-            m_vr_dev->unmap_buffer(m_material_buffer);
-        }
-    }
-
-
-    void renderer::rebuild_all_blases() {
-
-        // Called after the shared vertex/index/material buffers moved. Every BLAS
-        // baked a device address into its build; they are all stale now.
-        m_device.waitIdle();
-
-        for (auto& slot : m_mesh_slots) {
-
-            if (!slot.alive)
-                continue;
-
-            if (slot.blas.buffer.buffer)          // guard against a default-constructed handle
-                m_vr_dev->destroy_blas(slot.blas);
-                
-            slot.blas = {};
-            build_blas_for_slot(slot);
-        }
-    }
-
-    // scene management ------------------------------------------------------------------------------------------------
-
-    renderer::mesh_slot* renderer::find_slot(GLT::asset::handle h) noexcept {
-
-        for (auto& s : m_mesh_slots)
-            if (s.alive && s.asset == h)
-                return &s;
-
-        return nullptr;
-    }
-
-
-    const renderer::mesh_slot* renderer::find_slot(GLT::asset::handle h) const noexcept {
-
-        for (const auto& s : m_mesh_slots)
-            if (s.alive && s.asset == h)
-                return &s;
-
-        return nullptr;
-    }
-
-
-    void renderer::process_pending_meshes() {
-
-        // Unloads first so we free slots before claiming new ones.
-        for (auto mesh : m_pending_unloads)
-            unload_mesh(mesh);          // existing implementation
-
-        m_pending_unloads.clear();
-
-        for (auto mesh : m_pending_loads) {
-
-            if (find_slot(mesh))        // raced a retain, fine
-                continue;
-
-            load_mesh(mesh);            // existing implementation (sync for now)
-        }
-        m_pending_loads.clear();
-    }
-
-
-    void renderer::rebuild_tlas_from_scene() {
-
-        m_tlas_instances.clear();
-        m_tlas_instances.reserve(std::min<size_t>(m_scene_instances.size(), TLAS_MAX_INSTANCES));
-
-        for (const auto& inst : m_scene_instances) {
-
-            if (m_tlas_instances.size() >= TLAS_MAX_INSTANCES)
-                break;                                 // TODO: split across multiple TLASes
-
-            const mesh_slot* slot = find_slot(inst.mesh);
-            if (!slot || !slot->alive)
-                continue;                              // skipped this frame; will resolve next
-
-            // glm::mat4 -> VkTransformMatrixKHR (row-major 3x4)
-            VkTransformMatrixKHR xform{};
-            const glm::mat4& m = inst.transform;
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < 4; ++c)
-                    xform.matrix[r][c] = m[c][r];      // glm is column-major
-
-            m_tlas_instances.push_back(
-                vk::AccelerationStructureInstanceKHR()
-                    .setTransform(xform)
-                    .setInstanceCustomIndex(slot->material_offset)
-                    .setAccelerationStructureReference(slot->blas.buffer.dev_address)
-                    .setFlags(vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable)
-                    .setMask(0xFF)
-                    .setInstanceShaderBindingTableRecordOffset(0));
-        }
-
-        if (!m_tlas_instances.empty())
-            m_vr_dev->update_buffer(m_tlas_instance_buffer, m_tlas_instances.data(),
-                sizeof(vk::AccelerationStructureInstanceKHR) * m_tlas_instances.size());
-
-        auto scratch = m_vr_dev->create_scratch_buffer_from_build_info(m_tlas_build_info);
-        auto cmd = m_device.allocateCommandBuffers(vk::CommandBufferAllocateInfo(m_graphics_pool, vk::CommandBufferLevel::ePrimary, 1))[0];
-
-        cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-        m_vr_dev->build_tlas(m_tlas_build_info, m_tlas_instance_buffer, static_cast<u32>(m_tlas_instances.size()), cmd);
-        cmd.end();
-
-        auto si = vk::SubmitInfo().setCommandBufferCount(1).setPCommandBuffers(&cmd);
-        m_queues.graphics_queue.submit(si, nullptr);
-        m_device.waitIdle();
-
-        m_vr_dev->destroy_buffer(scratch);
-        m_device.freeCommandBuffers(m_graphics_pool, cmd);
     }
 
 }

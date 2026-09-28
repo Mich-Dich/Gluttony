@@ -5,7 +5,8 @@ sudo chown -R mich:mich ~/workspace/Gluttony
 
 
 # TODO
-- application creates a lot a textures -> add some tracking mechanics OR runtime diagnostic
+- ensure asset registry is thread save
+- renderer: shift mesh loading to thread pool (should also load needed material from registry)
 
 
 

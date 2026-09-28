@@ -392,7 +392,7 @@ namespace GLT::editor {
 
         m_time_axis.push_back(m_elapsed_time_s);
 
-        m_frame_time_history.push_back(ImGui::GetIO().DeltaTime * 1000.f);
+        m_frame_time_history.push_back(stats.frame_time_ms);
         m_gpu_time_history.push_back(stats.render.gpu_time_ms);
         m_cpu_time_history.push_back(stats.cpu_time_ms);
 

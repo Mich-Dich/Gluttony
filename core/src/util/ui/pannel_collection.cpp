@@ -824,30 +824,76 @@ namespace GLT::UI {
     }
 
 
-    bool draw_directory_picker(const char* id, std::filesystem::path& in_out, const std::filesystem::path& root) {
+	bool draw_directory_picker(const char* id, std::filesystem::path& in_out, const std::filesystem::path& root) {
 
         bool changed = false;
         ImGui::PushID(id);
 
-        if (ImGui::Button(in_out.generic_string().c_str(), ImVec2(-FLT_MIN, 0)))
+        const ImGuiStyle& style = ImGui::GetStyle();
+
+        // ---- display: content-relative when under `root`, otherwise the full path ----
+        std::string display;
+        if (!root.empty()) {
+
+            std::filesystem::path rel = in_out.lexically_relative(root);
+
+            // Empty -> different root name (e.g. relative vs. absolute). Leading ".."
+            // -> the path escapes root; show the full path instead of a ../../ chain.
+            if (!rel.empty() && *rel.begin() != "..")
+                display = rel.generic_string();
+            else
+                display = in_out.generic_string();
+        }
+        else
+            display = in_out.generic_string();
+
+        if (display.empty())
+            display = ".";
+
+        // ---- button: fills its column / parent width ----
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        if (ImGui::Button(display.c_str(), ImVec2(width, 0)))
             ImGui::OpenPopup("##picker");
 
-        if (ImGui::BeginPopup("##picker")) {
+        // Capture the button rect now - the item will be gone by the time we draw the popup.
+        const ImVec2 btn_min = ImGui::GetItemRectMin();
+        const ImVec2 btn_max = ImGui::GetItemRectMax();
+        const f32 btn_w   = btn_max.x - btn_min.x;
 
-            if (ImGui::BeginChild("##tree_scroll", ImVec2(440.0f, 300.0f), true)) {
+        // ---- popup: dropdown anchored beneath the button, same width ----
+        if (ImGui::IsPopupOpen("##picker")) {
 
-                if (root.empty()) {
-                    ImGui::TextDisabled("(no content root configured)");
-                } else {
+            // Flip above if there's not enough room below the button.
+            const ImGuiViewport* vp = ImGui::GetWindowViewport();
+            const f32 popup_h = 300.0f;
+            const bool flip_up = (vp->Pos.y + vp->Size.y - btn_max.y) < popup_h;
+
+            ImGui::SetNextWindowPos(flip_up ? ImVec2(btn_min.x, btn_min.y) : ImVec2(btn_min.x, btn_max.y),
+                ImGuiCond_Always, flip_up ? ImVec2(0.f, 1.f) : ImVec2(0.f, 0.f));
+
+            // Force exactly the button width; let the height auto-fit up to 400px.
+            ImGui::SetNextWindowSizeConstraints(ImVec2(btn_w, 0.f), ImVec2(btn_w, 400.f));
+        }
+
+        if (ImGui::BeginPopup("##picker", ImGuiWindowFlags_NoMove)) {
+
+            if (root.empty()) {
+                ImGui::TextDisabled("(no content root configured)");
+            } else {
+
+                if (ImGui::BeginChild("##tree_scroll", ImVec2(0, 300), true)) {
+
                     std::filesystem::path selected;
                     if (draw_dir_tree(root, in_out, selected)) {
-                        in_out  = selected;
+
+						in_out = selected;
                         changed = true;
                         ImGui::CloseCurrentPopup();
                     }
                 }
+                ImGui::EndChild();
             }
-            ImGui::EndChild();
+
             ImGui::EndPopup();
         }
 
@@ -1277,6 +1323,35 @@ namespace GLT::UI {
 	}
 
 
+	bool table_row(std::string_view label, std::filesystem::path& in_out, const std::filesystem::path& root, const char* desc) {
+
+        ImGui::TableNextRow();
+
+        // ---- column 0: label + optional help marker ----
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text("%s", label.data());
+
+        if (desc) {
+            ImGui::SameLine();
+            UI::shift_cursor_pos(ImGui::GetContentRegionAvail().x - 12.f, 0.f);
+            help_marker(desc);
+        }
+
+        // ---- column 1: the picker ----
+        ImGui::TableSetColumnIndex(1);
+
+        ImGui::PushID(label.data());
+        ImGui::PushID(&in_out);
+
+        const bool changed = draw_directory_picker("##dir", in_out, root);
+
+        ImGui::PopID();
+        ImGui::PopID();
+
+        return changed;
+    }
+
+
 	void table_row_progressbar(std::string_view label, const char* progress_bar_text, const f32 percent, const bool auto_resize, const f32 progressbar_size_x, const f32 progressbar_size_y) {
 
 
@@ -1292,6 +1367,39 @@ namespace GLT::UI {
 				column_width = table->Columns[1].WidthGiven;
 		
 		UI::progressbar_with_text("", progress_bar_text, percent, 0.0f, column_width, progressbar_size_y);
+	}
+
+
+	bool table_row_color(std::string_view label, glm::vec4& color, const f32 min_value, const f32 max_value) {
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::TextUnformatted(label.data());
+		ImGui::TableSetColumnIndex(1);
+
+		std::string loc_label = "##";
+		loc_label += label.data();
+
+		const f32 avail = ImGui::GetContentRegionAvail().x;
+		ImGui::SetNextItemWidth(avail);
+		return ImGui::ColorEdit4(loc_label.c_str(), &color.x,
+			ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_Float);
+	}
+
+
+	bool table_row_color(std::string_view label, glm::vec3& color, const f32 min_value, const f32 max_value) {
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::TextUnformatted(label.data());
+		ImGui::TableSetColumnIndex(1);
+
+		std::string loc_label = "##";
+		loc_label += label.data();
+
+		const f32 avail = ImGui::GetContentRegionAvail().x;
+		ImGui::SetNextItemWidth(avail);
+		return ImGui::ColorEdit3(loc_label.c_str(), &color.x, ImGuiColorEditFlags_Float);
 	}
 
 

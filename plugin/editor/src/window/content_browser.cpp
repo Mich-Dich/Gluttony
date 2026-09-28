@@ -8,6 +8,7 @@
 #include <config/imgui_config.h>
 #include <event/event_bus.h>
 #include <asset/i_asset_registry.h>
+#include <asset/material.h>
 
 #include "util/event/asset_event.h"
 #include "util/ui/pannel_collection.h"
@@ -691,17 +692,11 @@ namespace GLT::editor {
 
     void content_browser_window::draw_background_context_menu() {
 
-        if (ImGui::MenuItem("New Folder")) {
+        if (ImGui::MenuItem("Create Asset..."))
+            GLT::event_bus::post(GLT::editor::asset_create_request_event(m_current_dir));
 
-            std::error_code error{};
-            std::filesystem::path candidate = m_current_dir / "New Folder";
-            int suffix = 1;
-            while (GLT::vfs::exists(candidate, error) && !error)
-                candidate = m_current_dir / ("New Folder " + std::to_string(suffix++));
-
-            GLT::vfs::create_directory(candidate, error);
-            m_entries_dirty = true;
-        }
+        if (ImGui::MenuItem("New Folder"))
+            create_folder();
 
         if (ImGui::MenuItem("Refresh"))
             m_entries_dirty = true;
@@ -1015,6 +1010,83 @@ namespace GLT::editor {
 
         LOG(info, "{}", event.to_string());
         m_entries_dirty = true;
+    }
+
+
+    void content_browser_window::create_folder() {
+
+        std::error_code error{};
+        std::filesystem::path candidate = m_current_dir / "New Folder";
+        for (u32 suffix = 1; GLT::vfs::exists(candidate, error) && !error; ++suffix)
+            candidate = m_current_dir / ("New Folder " + std::to_string(suffix));
+
+        GLT::vfs::create_directory(candidate, error);
+        VALIDATE(!error, return, "", "content_browser: failed to create folder [{}]", candidate.generic_string())
+
+        m_entries_dirty = true;
+    }
+
+
+    void content_browser_window::create_material() {
+
+        auto registry = GLT::asset::registry::get_ref();
+        VALIDATE(registry, return, "", "content_browser: no asset registry")
+
+        // The picker speaks project-relative paths; m_current_dir is absolute. extract_path_from_project_content_dir gives us the registry's dialect
+        const std::string stem = "New Material";
+        const std::string ext  = "." + std::string(GLT::asset::extension_for_type(GLT::asset::core_types::material));
+
+        std::filesystem::path relative_target{};
+        std::error_code error{};
+        for (u32 suffix = 0; suffix < 1024; ++suffix) {
+
+            const std::string filename = (suffix == 0) ? stem + ext : stem + " " + std::to_string(suffix) + ext;
+            const auto candidate_abs = m_current_dir / filename;
+            if (!GLT::vfs::exists(candidate_abs, error) && !error) {
+                relative_target = GLT::project::extract_path_from_project_content_dir(candidate_abs);
+                break;
+            }
+        }
+
+        VALIDATE(!relative_target.empty(), return, "",
+            "content_browser: could not find a free filename for a new material in [{}]", m_current_dir.generic_string())
+
+        // ---- build the in-memory material ---------------------------------------
+        auto asset = GLT::create_unique_ref<GLT::asset::material::material_asset>();
+        asset->asset_type = GLT::asset::core_types::material;
+        asset->params.base_color = { 0.8f, 0.8f, 0.8f, 1.0f };
+        asset->params.roughness = 0.5f;
+        asset->params.metallic = 0.0f;
+        asset->params.reflectance = 0.5f;
+        asset->params.normal_scale = 1.0f;
+        asset->params.occlusion_strength = 1.0f;
+        asset->params.flags = 0;
+        asset->textures.fill(INVALID_HANDLE);
+        asset->name = relative_target.stem().string();
+
+        // ---- register + persist -------------------------------------------------
+        auto registered = registry->register_runtime(std::move(asset), relative_target, relative_target.stem().string());
+
+        VALIDATE(registered.has_value(), return, "", "content_browser: register_runtime failed for [{}]",
+            relative_target.generic_string())
+
+        auto save_result = registry->save(*registered);
+        if (!save_result) {
+
+            LOG(error, "content_browser: failed to write new material [{}] (error {})",
+                relative_target.generic_string(), static_cast<int>(save_result.error()));
+
+            // The slot exists only in memory; drop it so a retry doesn't collide
+            registry->unload(*registered);
+            return;
+        }
+
+        LOG(info, "content_browser: created new material [{}]", relative_target.generic_string());
+
+        m_entries_dirty = true;
+
+        // Open the editor. Same event the double-click path uses, so the registry lookup, docking, and editor dispatch all stay consistent
+        GLT::event_bus::post(asset_open_event{ GLT::asset::core_types::material, relative_target });
     }
 
 }

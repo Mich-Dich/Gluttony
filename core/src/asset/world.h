@@ -37,8 +37,8 @@ namespace GLT::asset::world {
         std::vector<GLT::asset::region::region>         region_index;
         std::vector<std::byte>                          settings;       // opaque, plugin-defined
 
-        // Chosen entity that drives the renderer's view. 0xFFFFFFFF == "no active camera". Stored as raw index/generation
-        // so asset/world.h doesn't have to know about world/entity.h's entity_id layout.
+        // Chosen entity that drives the renderer's view. 0xFFFFFFFF == "no active camera".
+        // Stored as raw index/generation so asset/world.h doesn't have to know about world/entity.h's entity_id layout.
         u32                                             active_camera_index{ 0xFFFFFFFFu };
         u32                                             active_camera_generation{ 0u };
 

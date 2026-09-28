@@ -9,6 +9,7 @@
 #include <platform/i_window.h>
 #include <asset/i_asset_registry.h>
 #include <asset/mesh.h>
+#include <asset/material.h> 
 #include <render/image.h>
 #include <application.h>
 
@@ -39,6 +40,16 @@ namespace GLT::renderer_vk_ray {
     static constexpr u32                                        INDEX_HEADROOM_MIN   = 128 * 1024;      // 128k indices
 
     static constexpr u32                                        MATERIAL_HEADROOM_MIN = 1024;
+
+    static constexpr size_t                                     TEXTURE_SLOT_COUNT = static_cast<size_t>(GLT::asset::material::texture_slot::count);
+
+    static constexpr u32                                        BINDLESS_TEXTURE_MAX = 1024;
+
+    static constexpr u32                                        PREVIEW_IMAGE_SIZE = 420;
+
+    static constexpr u32                                        PREVIEW_SPHERE_SEGMENTS = 32;
+
+    static constexpr u32                                        PREVIEW_SPHERE_RINGS = 16;
 
     // MACROS ==========================================================================================================
 
@@ -121,6 +132,10 @@ namespace GLT::renderer_vk_ray {
         void set_active_camera(const GLT::world::camera_snapshot& camera) override;
 
 
+        [[nodiscard]] void* render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
+            const glm::vec3& camera_pos) override;
+
+
         void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
         // uploaded mesh data ------------------------------------------------------------------------------------------
@@ -168,6 +183,28 @@ namespace GLT::renderer_vk_ray {
             bool                                                alive = false;
         };
 
+
+        struct material_slot {
+
+            GLT::asset::handle                                  asset{};
+            u32                                                 gpu_index{};          // into m_material_buffer
+            std::array<GLT::asset::handle, TEXTURE_SLOT_COUNT>  textures{};           // for ref-count release
+            bool                                                alive{ false };
+        };
+
+
+        struct texture_slot {
+
+            GLT::asset::handle                                  asset{};
+            vk::Image                                           image{};
+            VmaAllocation                                       allocation{};         // or whatever your image wrapper holds
+            vk::ImageView                                       view{};
+            vk::Sampler                                         sampler{};
+            u32                                                 ref_count{ 0 };
+            u32                                                 bindless_index{ UINT32_MAX };
+            bool                                                alive{ false };
+        };
+
         void init_vulkan();
 
 
@@ -197,9 +234,6 @@ namespace GLT::renderer_vk_ray {
 
         // Clear the output image to a background colour (e.g., dark blue)
         void clear_output_image(vk::CommandBuffer cmd, const glm::vec4& color);
-
-
-        vk::DescriptorSet create_imgui_texture(vr::accessible_image& img);
 
         // --- IMGUI ---------------------------------------------------------------------------------------------------
 
@@ -249,6 +283,30 @@ namespace GLT::renderer_vk_ray {
 
         // TLAS rebuilt from submitted instances
         void rebuild_tlas_from_scene();
+
+
+        // material slots
+        bool reserve_material_space(u32 count);
+        material_slot* find_material_slot(GLT::asset::handle h) noexcept;
+        const material_slot* find_material_slot(GLT::asset::handle h) const noexcept;
+        bool load_material(GLT::asset::handle handle);
+        void unload_material(GLT::asset::handle handle);
+
+        // texture slots (bindless)
+        void create_default_texture();
+        bool reserve_geometry_space(u32 count);
+        u32 load_texture(GLT::asset::handle handle);       // returns bindless index, ref-counted
+        void unload_texture(GLT::asset::handle handle);
+        u32 find_texture_index(GLT::asset::handle handle) const noexcept;
+
+        // preview -----------------------------------------------------------------------------------------------------
+
+        void  create_material_preview_resources();
+
+        void  upload_preview_data();
+
+        void  dispatch_material_preview(vk::CommandBuffer cmd);
+
 
 
         glm::ivec2                                              m_render_size{ 300, 400};
@@ -324,7 +382,7 @@ namespace GLT::renderer_vk_ray {
 
         vr::allocated_buffer                                    m_vertex_buffer{};
         vr::allocated_buffer                                    m_index_buffer{};
-        vr::allocated_buffer                                    m_material_buffer{};
+        // vr::allocated_buffer                                    m_material_buffer{};
         u32                                                     m_vertex_capacity = 0;      // in vertices
         u32                                                     m_index_capacity = 0;       // in indices
         u32                                                     m_material_capacity = 0;    // in gpu_material entries
@@ -348,7 +406,59 @@ namespace GLT::renderer_vk_ray {
         std::vector<GLT::asset::handle>                         m_pending_loads{};
         std::vector<GLT::asset::handle>                         m_pending_unloads{};
 
+        vr::allocated_buffer                                    m_material_buffer{};        // gpu_material[]
+        vr::allocated_buffer                                    m_geometry_buffer{};        // gpu_geometry[]
+        vr::allocated_buffer                                    m_texture_buffer{};         // not needed if using descriptor indexing
+
         GLT::world::camera_snapshot                             m_active_camera{};
+
+
+        // ---- materials -------------------------------------------------------------
+        std::vector<material_slot>                              m_material_slots{};
+        std::vector<u32>                                        m_free_material_slots{};
+
+        // ---- textures (bindless) ---------------------------------------------------
+        std::vector<texture_slot>                               m_texture_slots{};         // indexed by bindless_index
+        std::vector<u32>                                        m_free_texture_slots{};
+
+        // Descriptor-side mirror of m_texture_slots. Every element is initialised to
+        // the white fallback in create_default_texture() and overwritten per-element
+        // as textures load. Fixed size, so .data() is stable across the renderer's life.
+        std::array<vr::accessible_image, BINDLESS_TEXTURE_MAX>  m_texture_descriptors{};
+
+        // Shared samplers, created once in create_default_texture().
+        vk::Sampler                                             m_default_sampler_linear{};
+        vk::Sampler                                             m_default_sampler_nearest{};
+
+        // ---- geometry (per-instance, per-submesh) ----------------------------------
+        u32                                                     m_geometry_used = 0;
+        u32                                                     m_geometry_capacity = 0;
+
+        // ---- scene materials (mirrors the mesh bookkeeping) ------------------------
+        std::unordered_set<GLT::asset::handle>                  m_scene_materials{};
+        std::unordered_set<GLT::asset::handle>                  m_retained_materials{};
+        std::vector<GLT::asset::handle>                         m_pending_material_loads{};
+        std::vector<GLT::asset::handle>                         m_pending_material_unloads{};
+
+        // preview -----------------------------------------------------------------------------------------------------
+
+        bool                                                    m_preview_ready = false;
+        GLT::ref<image>                                         m_preview_image{};
+        vr::allocated_buffer                                    m_preview_vertex_buffer{};
+        vr::allocated_buffer                                    m_preview_index_buffer{};
+        vr::allocated_buffer                                    m_preview_instance_buffer{};
+        vr::allocated_buffer                                    m_preview_material_buffer{};
+        vr::allocated_buffer                                    m_preview_geometry_buffer{};
+        vr::allocated_buffer                                    m_preview_camera_ubo{};
+        vr::blas_handle                                         m_preview_sphere_blas{};
+        vr::tlas_handle                                         m_preview_tlas{};
+        vr::tlas_build_info                                     m_preview_tlas_build_info{};
+        std::vector<vr::descriptor_item>                        m_preview_bindings{};
+        vr::descriptor_buffer                                   m_preview_desc_buffer{};
+        bool                                                    m_preview_queued = false;
+        GLT::asset::handle                                      m_preview_material = INVALID_HANDLE;
+        GLT::asset::material::material_params                   m_preview_params{};
+        glm::vec3                                               m_preview_camera_pos{ 0.0f, 0.0f, 3.0f };
 
     };
 
@@ -456,5 +566,12 @@ namespace GLT::renderer_vk_ray {
 #include "image.inl"
 #include "plugin.inl"
 #include "renderer.inl"
+#include "renderer_util.inl"
+#include "renderer_swapchain.inl"
+#include "renderer_imgui.inl"
+#include "renderer_material_texture.inl"
+#include "renderer_mesh.inl"
+#include "renderer_scene.inl"
+#include "renderer_preview.inl"
 
 EXPORT_PLUGIN_CLASS(GLT::renderer_vk_ray::renderer, GLT::renderer_vk_ray::descriptor)

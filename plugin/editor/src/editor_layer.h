@@ -139,6 +139,10 @@ namespace GLT::editor {
         [[nodiscard]] static ImVec4 color_for(GLT::logger::severity sev);
 
 
+        void on_asset_create_request_event(const asset_create_request_event& event);
+
+
+
         GLT::unique_ref<GLT::render::image>             m_logo{};
         std::vector<GLT::unique_ref<base_window>>       m_windows{};
 
@@ -159,6 +163,9 @@ namespace GLT::editor {
         std::vector<save_as_request_event>              m_save_as_event_buffer{};
         std::deque<pending_save_request>                m_save_as_queue{};
         bool                                            m_save_as_open{ false };
+
+        handle                                          m_asset_create_request_event_sub_handle{};
+        std::vector<asset_create_request_event>         m_asset_create_request_event_buffer{};
 
         handle                                          m_save_as_sub_handle{};
         handle                                          m_save_sub_handle{};

@@ -114,6 +114,8 @@ namespace GLT::editor {
 
         void import_files(const std::vector<std::filesystem::path>& paths);
         void on_file_event(const file_event& event);
+        void create_folder();
+        void create_material();
 
         std::filesystem::path                                       m_content_dir{};    // Immutable root of the content tree.
         std::filesystem::path                                       m_current_dir{};    // Directory currently shown on the right.

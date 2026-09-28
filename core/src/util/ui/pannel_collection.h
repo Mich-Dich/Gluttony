@@ -275,6 +275,12 @@ namespace GLT::UI {
 	bool table_row(glm::mat4& value, const bool display_in_degree = false);
 
 
+	// @brief Renders a table row with a label and a directory picker.
+	// The picker displays `in_out` relative to `root` when possible, and opens its popup as a dropdown anchored beneath the button (matching its width)
+	// @returns true if the selection changed this frame.
+	bool table_row(std::string_view label, std::filesystem::path& in_out, const std::filesystem::path& root, const char* desc = nullptr);
+
+
 	// @brief Renders a table row with a label and a progress bar.
 	// @param [label] The label for the row.
 	// @param [progress_bar_text] The text to display alongside the progress bar.
@@ -284,6 +290,12 @@ namespace GLT::UI {
 	// @param [progressbar_size_y] The height of the progress bar.
 	void table_row_progressbar(std::string_view label, const char* progress_bar_text, const f32 percent, 
 		const bool auto_resize = true, const f32 progressbar_size_x = 50.f, const f32 progressbar_size_y = 1.f);
+
+
+	bool table_row_color(std::string_view label, glm::vec4& color, const f32 min_value = 0.f, const f32 max_value = 0.f);
+
+
+	bool table_row_color(std::string_view label, glm::vec3& color, const f32 min_value = 0.f, const f32 max_value = 0.f);
 
 
 	// @brief Begins a collapsible header section with an indent.
@@ -366,7 +378,7 @@ namespace GLT::UI {
 	// 
 	// @return true if the value was changed by the slider, false otherwise.
 	template<typename T>
-	bool table_row_slider(std::string_view label, T& value, f32 min_value = 0.f, f32 max_value = 0.f, 
+	bool table_row_slider(std::string_view label, T& value, f32 min_value = 0.f, f32 max_value = 0.f,
 		ImGuiInputTextFlags flags = ImGuiInputTextFlags_None);
 	
 	
