@@ -79,6 +79,7 @@ namespace GLT {
 
         platform::window_attributes attributes = mp_window->get_window_attributes();
         platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::save);
+        m_project.serialize_projects_data(GLT::serializer::option::save);
         mp_window->destroy();
 
         imgui_config::shutdown();

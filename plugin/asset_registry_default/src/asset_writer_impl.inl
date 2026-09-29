@@ -29,7 +29,7 @@ namespace GLT::asset::registry_default {
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    void asset_writer_impl::write_chunk(GLT::asset::chunk_id id, std::span<const std::byte> data, u32 compression) {
+    void asset_writer_impl::write_chunk(GLT::asset::chunk_id id, const std::span<const std::byte> data, u32 compression) {
 
         record_chunk chunk{};
         chunk.id = id;

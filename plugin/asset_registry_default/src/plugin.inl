@@ -254,11 +254,16 @@ namespace GLT::asset::registry_default {
         define(bvh,                 "bvh");
         define(volume,              "volume");
 
+        // Bulk save is the registry's job; "save as" is UI-driven and lives in the editor layer
+        m_save_subscription = GLT::event_bus::subscribe<GLT::save_event>([this](GLT::save_event& e) { on_save_event(e); });
+
         LOG_LOADED
     }
 
 
     void plugin::on_unload() {
+
+        GLT::event_bus::unsubscribe(m_save_subscription);
 
         std::unique_lock lock(m_mutex);
 
@@ -292,8 +297,8 @@ namespace GLT::asset::registry_default {
         if (relative.empty())
             return std::unexpected{ GLT::asset::load_error::not_found };
 
-        std::unique_lock lock(m_mutex);
-        std::unordered_set<std::string> in_flight;
+            std::unique_lock lock(m_mutex);
+            std::unordered_set<std::string> in_flight;
         return load_unlocked(relative, in_flight);
     }
 
@@ -333,56 +338,63 @@ namespace GLT::asset::registry_default {
 
     std::expected<void, GLT::asset::load_error> plugin::save_as(GLT::asset::handle h, const std::filesystem::path& new_path) {
 
-        std::unique_lock lock(m_mutex);
+        // We deliberately do NOT hold m_mutex across handler->serialize(). Handlers are allowed to call back into the registry
 
-        GLT::asset::registry_default::slot* slot = slot_for(h);
-        if (!slot)
-            return std::unexpected{ GLT::asset::load_error::not_found };
-
-        if (!slot->handler || !slot->data)
-            return std::unexpected{ GLT::asset::load_error::not_found };
-
-        // resolve target (project-relative) ---------------------------------------------------------------------------
-
-        std::filesystem::path target;
-        if (new_path.empty()) {
-            target = slot->canonical_path;
-        } else {
-            auto relative = GLT::project::to_content_relative(new_path);
-            if (relative.empty())
-                return std::unexpected{ GLT::asset::load_error::not_found };
-            target = relative;
-        }
-
-        // build the writer --------------------------------------------------------------------------------------------
-
+        GLT::asset::info info_snap{};
         asset_writer_impl writer;
-        writer.set_name(slot->asset_info.name);
+        std::filesystem::path target;
+        GLT::asset::i_runtime_asset* asset_ptr = nullptr;
+        GLT::asset::i_asset_handler* handler_ptr = nullptr;
 
-        // Re-declare every dependency so the file stays self-describing
-        // Skip INVALID_HANDLE - those never resolved, so there's nothing to write; the slot's positional alignment is preserved regardless
-        for (GLT::asset::handle dep : slot->deps_storage) {
+        {
+            std::unique_lock lock(m_mutex);
 
-            const GLT::asset::registry_default::slot* dep_slot = slot_for(dep);
-            if (!dep_slot)
-                continue;
+            GLT::asset::registry_default::slot* slot = slot_for(h);
+            if (!slot)
+                return std::unexpected{ GLT::asset::load_error::not_found };
 
-            std::error_code error{};
-            const auto rel = std::filesystem::relative(dep_slot->canonical_path, slot->canonical_path.parent_path(), error);
-            const std::string path_str = error ? dep_slot->canonical_path.generic_string() : rel.generic_string();
+            if (!slot->handler || !slot->data)
+                return std::unexpected{ GLT::asset::load_error::not_found };
 
-            writer.declare_dependency(dep_slot->asset_info.id, path_str, dep_slot->asset_info.asset_type);
+            // resolve target (project-relative) -----------------------------------------------------------------------
+            if (new_path.empty()) {
+                target = slot->canonical_path;
+            } else {
+                auto relative = GLT::project::to_content_relative(new_path);
+                if (relative.empty())
+                    return std::unexpected{ GLT::asset::load_error::not_found };
+                target = relative;
+            }
+
+            // seed the writer -----------------------------------------------------------------------------------------
+            writer.set_name(slot->asset_info.name);
+
+            // Re-declare every dependency so the file stays self-describing
+            for (GLT::asset::handle dep : slot->deps_storage) {
+
+                const GLT::asset::registry_default::slot* dep_slot = slot_for(dep);
+                if (!dep_slot)
+                    continue;
+
+                std::error_code error{};
+                const auto rel = std::filesystem::relative(dep_slot->canonical_path, slot->canonical_path.parent_path(), error);
+                const std::string path_str = error ? dep_slot->canonical_path.generic_string() : rel.generic_string();
+
+                writer.declare_dependency(dep_slot->asset_info.id, path_str, dep_slot->asset_info.asset_type);
+            }
+
+            info_snap = slot->asset_info;
+            asset_ptr = slot->data.get();
+            handler_ptr = slot->handler;
         }
 
-        // let the handler emit chunks ---------------------------------------------------------------------------------
+        // handler serialize + compose + write (no lock held) ----------------------------------------------------------
 
-        if (auto result = slot->handler->serialize(slot->asset_info, *slot->data, writer); !result)
+        if (auto result = handler_ptr->serialize(info_snap, *asset_ptr, writer); !result)
             return std::unexpected{ result.error() };
 
-        // compose + atomic write --------------------------------------------------------------------------------------
-
         const GLT::asset::content_hash new_hash = hash_writer(writer);
-        auto composed = compose_asset_file(slot->asset_info.id, slot->asset_info.asset_type, new_hash, slot->asset_info.source_path, writer);
+        auto composed = compose_asset_file(info_snap.id, info_snap.asset_type, new_hash, info_snap.source_path, writer);
 
         const std::filesystem::path abs_target = PROJECT_CONTENT_DIR / target;
         const std::filesystem::path abs_tmp = PROJECT_CONTENT_DIR / (target.string() + ".tmp");
@@ -397,14 +409,20 @@ namespace GLT::asset::registry_default {
             return std::unexpected{ GLT::asset::load_error::out_of_memory };
         }
 
-        // repair the slot so it matches what we just wrote ------------------------------------------------------------
+        // Re-acquire the lock and repair the slot to match what we wrote ----------------------------------------------
+
+        std::unique_lock lock(m_mutex);
+
+        GLT::asset::registry_default::slot* slot = slot_for(h);
+        if (!slot)
+            return std::unexpected{ GLT::asset::load_error::not_found };    // slot disappeared under us
 
         const std::string old_key = slot->canonical_path.generic_string();
         const std::string new_key = target.generic_string();
 
         slot->canonical_path = target;
         slot->chunks_storage = std::move(composed.chunks);
-        slot->asset_info.chunks = slot->chunks_storage;             // re-anchor the span
+        slot->asset_info.chunks = slot->chunks_storage;                   // re-anchor the span
         slot->asset_info.hash = new_hash;
         slot->asset_info.last_modified = std::chrono::system_clock::now();
 
@@ -529,25 +547,26 @@ namespace GLT::asset::registry_default {
 
     void plugin::register_handler(GLT::asset::i_asset_handler* handler) {
 
-        if (!handler) 
+        if (!handler)
             return;
-            
+
         std::unique_lock lock(m_mutex);
         for (GLT::asset::type t : handler->types()) {
 
+            LOG(info, "register_handler: [{}] -> handler {:#x}", GLT::asset::type_to_string(t), reinterpret_cast<uintptr_t>(handler));
             auto [it, inserted] = m_handlers.try_emplace(t, handler);
-            VALIDATE(inserted || it->second == handler, it->second = handler, "", 
-                "type {} already has a handler - overriding", t.value);
+            VALIDATE(inserted || it->second == handler, it->second = handler, "", "type {} already has a handler - overriding", t.value);
         }
     }
 
 
     void plugin::unregister_handler(GLT::asset::i_asset_handler* handler) noexcept {
 
-        if (!handler) 
+        if (!handler)
             return;
-            
         std::unique_lock lock(m_mutex);
+        LOG(info, "unregister_handler: handler {:#x}", reinterpret_cast<uintptr_t>(handler));
+
         // Drop any loaded assets owned by this handler before it goes away.
         for (auto& s : m_slots) {
             if (s.alive && s.handler == handler) {
@@ -818,11 +837,11 @@ namespace GLT::asset::registry_default {
         if (idx >= m_slots.size()) 
             return nullptr;
         
-        slot& s = m_slots[idx];
-        if (!s.alive || s.generation != gen) 
+        GLT::asset::registry_default::slot& slot = m_slots[idx];
+        if (!slot.alive || slot.generation != gen) 
             return nullptr;
 
-        return &s;
+        return &slot;
     }
 
 
@@ -850,6 +869,52 @@ namespace GLT::asset::registry_default {
     }
 
 
+    void plugin::on_save_event(GLT::save_event& event) {
+
+        // "Save as" is a single-asset, dialog-driven request handled by the editor. The registry only cares about the bulk engine-save path
+        if (event.is_forced_save_as())
+            return;
+
+        // Snapshot handles under the shared lock. save_as() re-acquires m_mutex on its own, so we must release before dispatching
+        // otherwise the first worker would deadlock against us the moment it calls into the registry
+        std::vector<GLT::asset::handle> handles;
+        {
+            std::shared_lock lock(m_mutex);
+            LOG(info, "on_save_event: m_handlers.size()={}, static_mesh present={}",
+                m_handlers.size(), m_handlers.contains(GLT::asset::core_types::static_mesh));
+
+            for (u32 index = 0; index < (u32)m_slots.size(); ++index) {
+                const slot& s = m_slots[index];
+
+                const auto asset_type = info(make_handle(index, s.generation)).asset_type;
+
+                LOG(info, "slot[{}] alive[{}] type[{}] handler={:#x} data={}", 
+                    index, s.alive, GLT::asset::type_to_string(asset_type),
+                    reinterpret_cast<uintptr_t>(s.handler), (const void*)s.data.get());
+            }
+
+            handles.reserve(m_slots.size());
+            for (u32 index = 0; index < static_cast<u32>(m_slots.size()); ++index) {
+                const slot& slot = m_slots[index];
+                if (slot.alive)
+                    handles.push_back(make_handle(index, slot.generation));
+            }
+        }
+
+        VALIDATE(!handles.empty(), return, "queueing {} asset(s) for background save", "nothing to save", handles.size())
+
+        // save_as() already keeps the heavy work (serialize + compose + write) outside the lock, so per-asset tasks actually parallelize
+        // The write-back section serializes briefly, which is fine
+        for (GLT::asset::handle handle : handles) {
+            GLT::thread_pool::push([this, handle]() {
+                if (auto res = save(handle); !res) {
+                    LOG(warn, "asset [{}] failed to persist [{}]", info(handle).name, GLT::util::enum_to_string(res.error()));
+                }
+            });
+        }
+    }
+
+
     void plugin::release_slot(GLT::asset::handle h) noexcept {
 
         slot* s = slot_for(h);
@@ -869,11 +934,9 @@ namespace GLT::asset::registry_default {
 
         const std::string key = path.generic_string();
 
-        if (auto it = m_by_path.find(key); it != m_by_path.end())                   // Already resident?
-            return it->second;
+        if (auto it = m_by_path.find(key); it != m_by_path.end())   return it->second;
 
-        if (!in_flight.insert(key).second)                                          // Cycle guard.
-            return std::unexpected{ GLT::asset::load_error::cyclic_dependency };
+        if (!in_flight.insert(key).second)                          return std::unexpected{ GLT::asset::load_error::cyclic_dependency };
 
         struct flight_guard {
             std::unordered_set<std::string>& set;
@@ -881,37 +944,26 @@ namespace GLT::asset::registry_default {
             ~flight_guard() { set.erase(key); }
         } guard{ in_flight, key };
 
-        // --- read the raw file ---
         auto bytes_res = read_file(PROJECT_CONTENT_DIR / path);
-        if (!bytes_res)
-            return std::unexpected{ bytes_res.error() };
+        if (!bytes_res)                                             return std::unexpected{ bytes_res.error() };
 
         std::vector<std::byte>& bytes = *bytes_res;
-        if (bytes.size() < sizeof(header))
-            return std::unexpected{ GLT::asset::load_error::corrupt_header };
+        if (bytes.size() < sizeof(header))                          return std::unexpected{ GLT::asset::load_error::corrupt_header };
 
-        // --- header ---
         header hdr{};
         std::memcpy(&hdr, bytes.data(), sizeof(header));
+        if (hdr.magic != header::MAGIC)                             return std::unexpected{ GLT::asset::load_error::corrupt_header };
+        if (hdr.format_version > header::CURRENT_VERSION)           return std::unexpected{ GLT::asset::load_error::unsupported_version };
 
-        if (hdr.magic != header::MAGIC)
-            return std::unexpected{ GLT::asset::load_error::corrupt_header };
-
-        if (hdr.format_version > header::CURRENT_VERSION)
-            return std::unexpected{ GLT::asset::load_error::unsupported_version };
-
-        // --- string table (name + source path, NUL-terminated blobs) ---
         auto read_cstr = [&](u64 off) -> std::string {
             if (off >= bytes.size())
                 return {};
-
             const char* p = reinterpret_cast<const char*>(bytes.data() + off);
             const char* e = reinterpret_cast<const char*>(bytes.data() + bytes.size());
             const char* z = std::find(p, e, '\0');
             return std::string(p, z);
         };
 
-        // const std::string asset_name = read_cstr(hdr.name_offset);
         const std::string asset_name = path.filename().replace_extension("");
         const std::string source_path = read_cstr(hdr.source_path_offset);
 
@@ -931,8 +983,7 @@ namespace GLT::asset::registry_default {
         if (hdr.dependency_count > 0) {
 
             const u64 need = sizeof(GLT::asset::dependency_disk) * hdr.dependency_count;
-            if (hdr.dependency_table_offset + need > bytes.size())
-                return std::unexpected{ GLT::asset::load_error::corrupt_header };
+            if (hdr.dependency_table_offset + need > bytes.size())  return std::unexpected{ GLT::asset::load_error::corrupt_header };
 
             std::vector<GLT::asset::dependency_disk> dep_disk(hdr.dependency_count);
             std::memcpy(dep_disk.data(), bytes.data() + hdr.dependency_table_offset, need);
@@ -947,22 +998,24 @@ namespace GLT::asset::registry_default {
 
                 // slow path - resolve by path relative to the importing asset
                 if (d.path_offset == 0) {
+                    LOG(warn, "[{}] dependency id={:#x} has no path and is not resident", key, static_cast<unsigned long long>(d.id));
                     resolved_deps.push_back(INVALID_HANDLE);
                     continue;
                 }
 
                 const std::string dep_path = read_cstr(d.path_offset);
                 if (dep_path.empty()) {
+                    LOG(warn, "[{}] dependency id={:#x} has an empty path", key, static_cast<unsigned long long>(d.id));
                     resolved_deps.push_back(INVALID_HANDLE);
                     continue;
                 }
 
+                // recurse
                 const std::filesystem::path abs_dep = path.parent_path() / dep_path;
 
                 auto child = load_unlocked(abs_dep, in_flight);
                 if (!child) {
-                    // A missing/broken dependency is not fatal - hand back an
-                    // unresolved slot so the handler can substitute a fallback.
+                    LOG(warn, "[{}] dependency [{}] failed to load (error={})", key, dep_path, static_cast<int>(child.error()));
                     resolved_deps.push_back(INVALID_HANDLE);
                     continue;
                 }
@@ -970,30 +1023,27 @@ namespace GLT::asset::registry_default {
             }
         }
 
-        // chunk table
+        // chunk table ------------------------------------------------------------------------------
         std::vector<chunk_entry> chunks(hdr.chunk_count);
         if (hdr.chunk_count > 0) {
 
             const u64 need = sizeof(chunk_entry) * hdr.chunk_count;
-            if (hdr.chunk_table_offset + need > bytes.size())
-                return std::unexpected{ GLT::asset::load_error::corrupt_header };
+            if (hdr.chunk_table_offset + need > bytes.size())       return std::unexpected{ GLT::asset::load_error::corrupt_header };
 
             std::memcpy(chunks.data(), bytes.data() + hdr.chunk_table_offset, need);
         }
 
-        // handler lookup
+        // handler lookup ---------------------------------------------------------------------------
         GLT::asset::i_asset_handler* handler = nullptr;
         if (auto it = m_handlers.find(GLT::asset::type{ hdr.asset_type }); it != m_handlers.end())
             handler = it->second;
 
-        if (!handler)
-            return std::unexpected{ GLT::asset::load_error::no_handler };
+        if (!handler)                                               return std::unexpected{ GLT::asset::load_error::no_handler };
 
-        // claim a slot and populate info
+        // claim slot + populate info ---------------------------------------------------------------
         const GLT::asset::handle handle = acquire_slot();
         slot* s = slot_for(handle);
-        if (!s)
-            return std::unexpected{ GLT::asset::load_error::out_of_memory };
+        if (!s)                                                     return std::unexpected{ GLT::asset::load_error::out_of_memory };
 
         s->handler = handler;
         s->canonical_path = path;
@@ -1015,7 +1065,7 @@ namespace GLT::asset::registry_default {
         ai.dependents = s->dependents_storage;
         ai.last_loaded = std::chrono::system_clock::now();
 
-        // handler decodes
+        // handler decodes --------------------------------------------------------------------------
         chunk_reader_impl reader{ std::span<const std::byte>(bytes), s->chunks_storage };
         auto decoded = handler->deserialize(ai, reader);
         if (!decoded) {
@@ -1026,12 +1076,10 @@ namespace GLT::asset::registry_default {
         s->data = std::move(*decoded);
         ai.bytes_resident = s->data ? s->data->memory_usage() : 0;
 
-        // commit
+        // commit -----------------------------------------------------------------------------------
         m_by_path.emplace(key, handle);
         m_by_id.emplace(hdr.id, handle);
 
-        // Wire dependency edges both ways. INVALID_HANDLE entries in
-        // s->deps_storage simply don't match any live slot, so they're skipped.
         for (GLT::asset::handle dep : s->deps_storage) {
             if (slot* d = slot_for(dep)) {
                 d->dependents_storage.push_back(handle);

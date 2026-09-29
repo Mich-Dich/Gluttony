@@ -133,7 +133,7 @@ namespace GLT::renderer_vk_ray {
 
 
         [[nodiscard]] void* render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
-            const glm::vec3& camera_pos) override;
+            std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) override;
 
 
         void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
@@ -458,6 +458,7 @@ namespace GLT::renderer_vk_ray {
         bool                                                    m_preview_queued = false;
         GLT::asset::handle                                      m_preview_material = INVALID_HANDLE;
         GLT::asset::material::material_params                   m_preview_params{};
+        std::array<GLT::asset::handle, TEXTURE_SLOT_COUNT>      m_preview_textures{};
         glm::vec3                                               m_preview_camera_pos{ 0.0f, 0.0f, 3.0f };
 
     };

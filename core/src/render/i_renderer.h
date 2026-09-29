@@ -340,7 +340,7 @@ namespace GLT::render {
         // The handle is stable across calls and valid until the renderer is destroyed. The first call returns a blank image; 
         // subsequent calls show the previous frame's render.
         [[nodiscard]] virtual void* render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
-            const glm::vec3& camera_pos) = 0;
+            std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) = 0;
 
     };
 

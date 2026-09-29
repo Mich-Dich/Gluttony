@@ -80,7 +80,7 @@ namespace GLT {
 
     void project::serialize_projects_data(const std::filesystem::path& project_dir_path, const GLT::serializer::option option) {
 
-        VALIDATE(is_valid_project_path(project_dir_path), return, "", "Provided path is not valid project path [{}]", project_dir_path)
+        VALIDATE(is_valid_project_path(project_dir_path), return, "", "Provided path is not valid project path [{}]", project_dir_path.generic_string())
         project_path = project_dir_path;
         serialize_projects_data(option);
     }

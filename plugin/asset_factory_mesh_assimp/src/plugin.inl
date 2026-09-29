@@ -37,8 +37,7 @@ namespace GLT::asset::factory::mesh_assimp {
     };
 
 
-    // Mirror of the values carried in opts.type_specific. Populated by
-    // parse_type_specific() using the SAME order as option_schema().
+    // Mirror of the values carried in opts.type_specific. Populated by parse_type_specific() using the SAME order as option_schema()
     struct parsed_options {
 
         f32                             scale = 1.0f;                                       // uniform post-import scale
@@ -58,28 +57,26 @@ namespace GLT::asset::factory::mesh_assimp {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
-    // Read whole file through the VFS. Import-only - factories run in the
-    // editor / build tools, so a synchronous read here is fine.
+    // Read whole file through the VFS. Import-only - factories run in the editor / build tools, so a synchronous read here is fine
     [[nodiscard]] std::expected<std::vector<std::byte>, GLT::asset::import_error> read_source(const std::filesystem::path& path);
 
 
-    // FNV-1a 64. Placeholder for xxh3 - swap when you have a wrapper.
+    // FNV-1a 64. Placeholder for xxh3 - swap when you have a wrapper
     [[nodiscard]] constexpr u64 hash_bytes(std::span<const std::byte> data) noexcept;
 
 
-    // Bake the accumulated node transform into a position.
+    // Bake the accumulated node transform into a position
     FORCE_INLINE_R glm::vec3 to_glm(const aiVector3D& v) noexcept;
 
 
     FORCE_INLINE_R glm::mat4 to_glm(const aiMatrix4x4& m) noexcept;
 
 
-    // Assemble the post-process flag mask from the parsed options.
+    // Assemble the post-process flag mask from the parsed options
     [[nodiscard]] constexpr unsigned int build_assimp_flags(const parsed_options& opt) noexcept;
 
 
-    // Unpack opts.type_specific into parsed_options. Empty / truncated blob is
-    // NOT an error - headless import passes {} and gets the schema defaults.
+    // Unpack opts.type_specific into parsed_options. Empty / truncated blob is NOT an error - headless import passes {} and gets the schema defaults
     [[nodiscard]] parsed_options parse_type_specific(std::span<const std::byte> blob) noexcept;
 
 
@@ -316,7 +313,9 @@ namespace GLT::asset::factory::mesh_assimp {
             };
             submeshes.push_back(sm);
 
-            // --- material path (best-effort) ---
+            // material path (best-effort) -----------------------------------------------------------------------------
+            // Leave the slot empty when the heuristic path doesn't resolve to a real file. The importer turns an empty
+            // path into an invalid dependency id, which the runtime interprets as "no material bound to this slot"
             std::string mat_path;
             if (mesh->mMaterialIndex < scene->mNumMaterials) {
 
@@ -324,10 +323,15 @@ namespace GLT::asset::factory::mesh_assimp {
                 aiString name;
                 if (mat->Get(AI_MATKEY_NAME, name) == AI_SUCCESS && name.length > 0) {
 
-                    // Heuristic: <source_dir>/<material_name>.glt_material
-                    std::filesystem::path p = source_dir / name.C_Str();
-                    p.replace_extension(".glt_material");
-                    mat_path = p.generic_string();
+                    std::filesystem::path path = source_dir / name.C_Str();
+                    path.replace_extension(".glt_material");
+
+                    std::error_code error{};
+                    if (GLT::vfs::exists(path, error) && !error)
+                        mat_path = path.generic_string();
+                    else
+                        LOG(debug, "mesh_assimp: material [{}] not found for mesh [{}] - binding invalid",
+                            path.generic_string(), mesh->mName.C_Str());
                 }
             }
             material_paths.push_back(std::move(mat_path));
@@ -367,7 +371,6 @@ namespace GLT::asset::factory::mesh_assimp {
 
         static constexpr GLT::asset::factory::binding b[] = {
             { "fbx",    GLT::asset::core_types::static_mesh },
-            { "fbx",    GLT::asset::core_types::skeletal_mesh },
             { "obj",    GLT::asset::core_types::static_mesh },
             { "gltf",   GLT::asset::core_types::static_mesh },
             { "glb",    GLT::asset::core_types::static_mesh },
@@ -377,9 +380,8 @@ namespace GLT::asset::factory::mesh_assimp {
     }
 
 
-    // Schema order here MUST stay in lockstep with parse_type_specific().
-    // Changing a field's type or position invalidates every editor session
-    // that already has a pending import open.
+    // Schema order here MUST stay in lockstep with parse_type_specific()
+    // Changing a field's type or position invalidates every editor session that already has a pending import open
     [[nodiscard]] std::span<const GLT::asset::factory::i_asset_factory_plugin::option_descriptor>
         plugin::option_schema(const GLT::asset::type& target_type) const noexcept {
 
@@ -557,14 +559,16 @@ namespace GLT::asset::factory::mesh_assimp {
         out.write_chunk(GLT::asset::mesh::CHUNK_SUBMESHES, std::as_bytes(std::span{ submeshes }));
         out.write_chunk(GLT::asset::mesh::CHUNK_BOUNDS, std::as_bytes(std::span{ &bounds, 1 }));
 
-        // Dependencies: one per submesh, in submesh order so material_slot
-        // lines up with info.dependencies[N] on load.
+        // Dependencies: one per submesh, in submesh order so material_slot lines up with info.dependencies[N] on load
+        //
+        // An empty path here means the factory could not resolve the slot to a real material file. Emit a nil UUID + empty path
+        // so the runtime can distinguish "no material bound" from "material still loading" - the former should render with the
+        // default material and never trigger a hot-reload watcher.
         for (const std::string& mat_path : material_paths) {
-            if (mat_path.empty()) {
-                out.declare_dependency("", GLT::asset::core_types::material);
-            } else {
+            if (mat_path.empty())
+                out.declare_dependency(GLT::UUID{}, std::string_view{}, GLT::asset::core_types::material);
+            else
                 out.declare_dependency(mat_path, GLT::asset::core_types::material);
-            }
         }
 
         // Cheap payload hash: mix vertex bytes, index bytes and submesh bytes.

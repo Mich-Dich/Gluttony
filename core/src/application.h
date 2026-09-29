@@ -56,7 +56,8 @@ namespace GLT {
         DEFAULT_GETTER_CC(f32,                          delta_time)
         DEFAULT_GETTER_CC(util::interval_controller,    fps_controller)
         DEFAULT_SETTER(f32,                             delta_time)
-        DEFAULT_GETTER(project,                         project)
+        DEFAULT_GETTER_C(project,                       project)
+        DEFAULT_GETTER_REF(project,                     project)
         GETTER(std::filesystem::path,                   project_path,   m_project.project_path)
 
         FORCE_INLINE_R static application& get()	    { return *s_instance; }

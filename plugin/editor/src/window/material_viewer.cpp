@@ -498,7 +498,7 @@ namespace GLT::editor {
         void* tex = nullptr;
         if (m_has_material && m_asset_handle != INVALID_HANDLE) {
             if (auto renderer = GLT::render::renderer::get_ref())
-                tex = renderer->render_material_preview(m_asset_handle, m_edit, m_preview_camera_pos);
+                tex = renderer->render_material_preview(m_asset_handle, m_edit, m_edit_textures, m_preview_camera_pos);
         }
 
         if (tex) {

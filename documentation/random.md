@@ -2,6 +2,11 @@
 
 sudo chown -R mich:mich ~/workspace/Gluttony
 
+validate SSH:
+```bash
+ssh -T git@github.com
+```
+
 
 
 # TODO

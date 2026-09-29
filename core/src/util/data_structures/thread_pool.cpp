@@ -40,13 +40,15 @@ namespace GLT::thread_pool {
 
 	// INTERNAL FUNCTION DECLARATION ===================================================================================
 
-	static void worker_loop();
+	static void worker_loop(const u32 index = 0);
 
 	// INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
 	// INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-    static void worker_loop() {
+    static void worker_loop(const u32 index) {
+
+        GLT::logger::register_label_for_thread(std::string("thread pool worker " + index));
 
         for (;;) {
 
@@ -57,8 +59,7 @@ namespace GLT::thread_pool {
                     return s_stopping.load() || !s_worker_queue.empty();
                 });
 
-                // Drain remaining tasks before exiting so a shutdown() mid-
-                // frame doesn't silently drop work.
+                // Drain remaining tasks before exiting so a shutdown() mid-frame doesn't silently drop work
                 if (s_stopping.load() && s_worker_queue.empty())
                     return;
 
@@ -67,15 +68,13 @@ namespace GLT::thread_pool {
                 ++s_active_tasks;
             }
 
-            // Run the task outside the lock. Exceptions are the caller's
-            // problem - a task that throws takes the whole worker down unless
-            // the task wraps its own body in try/catch. That is deliberate:
-            // silently swallowing exceptions in a worker hides bugs.
+            // Run the task outside the lock. Exceptions are the caller's problem - a task that throws takes the whole worker down unless
+            // the task wraps its own body in try/catch. That is deliberate: silently swallowing exceptions in a worker hides bugs
             current();
 
             {
                 std::unique_lock lock(s_worker_mutex);
-                --s_active_tasks;
+                s_active_tasks--;
                 if (s_worker_queue.empty() && s_active_tasks == 0)
                     s_all_idle.notify_all();
             }
@@ -101,8 +100,8 @@ namespace GLT::thread_pool {
         s_stopping.store(false);
 
         s_workers.reserve(thread_count);
-        for (u32 i = 0; i < thread_count; ++i)
-            s_workers.emplace_back(worker_loop);
+        for (u32 index = 0; index < thread_count; index++)
+            s_workers.emplace_back(worker_loop, index);
     }
 
 
@@ -142,8 +141,7 @@ namespace GLT::thread_pool {
 
         if (!fn) return;
 
-        // If the pool isn't up (early startup, after shutdown, unit tests),
-        // run inline so the caller still gets its work done.
+        // If the pool isn't up (early startup, after shutdown, unit tests), run inline so the caller still gets its work done
         if (!s_initialized.load()) {
             fn();
             return;
@@ -168,8 +166,7 @@ namespace GLT::thread_pool {
 
     void pump_main_thread() {
 
-        // Swap the queue into a local so we don't hold the lock while running callbacks 
-		// a callback may call push_main() again, and a worker may be pushing concurrently.
+        // Swap the queue into a local so we don't hold the lock while running callbacks a callback may call push_main() again, and a worker may be pushing concurrently
         std::deque<task> local;
         {
             std::unique_lock lock(s_main_mutex);

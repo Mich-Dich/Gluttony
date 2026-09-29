@@ -90,7 +90,7 @@ namespace GLT::renderer_vk_ray {
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
     void* renderer::render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
-        const glm::vec3& camera_pos) {
+        std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) {
 
         if (!m_preview_ready)
             return nullptr;
@@ -98,8 +98,13 @@ namespace GLT::renderer_vk_ray {
         m_preview_material = material;
         m_preview_params = params;
         m_preview_camera_pos = camera_pos;
-        m_preview_queued = true;
 
+        m_preview_textures.fill(INVALID_HANDLE);
+        const std::size_t count = std::min(textures.size(), m_preview_textures.size());
+        for (std::size_t index = 0; index < count; ++index)
+            m_preview_textures[index] = textures[index];
+
+        m_preview_queued = true;
         return m_preview_image->get_descriptor_set();
     }
 
@@ -262,11 +267,18 @@ namespace GLT::renderer_vk_ray {
         gpu.textures.fill(0);                       // checkerboard fallback
 
         if (m_preview_material != INVALID_HANDLE) {
-            if (auto* mat = registry->data_as<GLT::asset::material::material_asset>(m_preview_material)) {
-                for (size_t i = 0; i < TEXTURE_SLOT_COUNT; ++i) {
-                    const GLT::asset::handle tex = mat->textures[i];
-                    if (tex != INVALID_HANDLE)
-                        gpu.textures[i] = load_texture(tex);
+            if (registry->data_as<GLT::asset::material::material_asset>(m_preview_material)) {
+                for (size_t index = 0; index < TEXTURE_SLOT_COUNT; index++) {
+
+                    const GLT::asset::handle tex = m_preview_textures[index];
+                    if (tex == INVALID_HANDLE)
+                        continue;
+
+                    u32 idx = find_texture_index(tex);
+                    if (idx == UINT32_MAX)
+                        idx = load_texture(tex);        // registers ref_count = 1, one shot
+
+                    gpu.textures[index] = idx;
                 }
             }
         }

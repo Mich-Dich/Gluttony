@@ -53,14 +53,8 @@ namespace GLT::asset::handler::mesh {
 
     FORCE_INLINE_R std::span<const GLT::asset::type> plugin::types() const noexcept {
 
-        // NOTE: deliberately NOT claiming skeletal_mesh, procedural_mesh,
-        // dynamic_mesh or mesh_collection. This handler can't decode skeletal
-        // chunks, and silently loading a skinned mesh as a static one is a
-        // bug that shows up as a T-pose in production. Add those types when
-        // the corresponding chunk decoding exists.
-        static constexpr GLT::asset::type t[] = {
-            GLT::asset::core_types::static_mesh,
-        };
+        // deliberately NOT claiming skeletal_mesh, procedural_mesh, dynamic_mesh or mesh_collection
+        static constexpr GLT::asset::type t[] = { GLT::asset::core_types::static_mesh, };
         return t;
     }
 

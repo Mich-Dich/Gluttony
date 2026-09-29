@@ -33,40 +33,68 @@ namespace GLT::renderer_vk_ray {
 
         m_scene_instances.assign(instances.begin(), instances.end());
         m_scene_meshes.clear();
+        m_scene_materials.clear();
         m_scene_meshes.reserve(instances.size());
-        for (const auto& instance : instances)
-            if (instance.mesh != INVALID_HANDLE)
-                m_scene_meshes.insert(instance.mesh);
 
-        for (auto mesh : m_scene_meshes) {                              // needs loading
+        auto registry = GLT::asset::registry::get_ref();
 
-            if (find_slot(mesh))
-                continue;
+        // Collect every mesh AND every material the scene actually references.
+        for (const auto& instance : instances) {
 
-            std::erase(m_pending_unloads, mesh);                        // The scene now wants it, so any pending unload is moot
+            if (instance.mesh == INVALID_HANDLE)                                continue;
+            m_scene_meshes.insert(instance.mesh);
 
-            if (std::ranges::contains(m_pending_loads, mesh))
-                continue;
+            if (instance.material_override != INVALID_HANDLE)
+                m_scene_materials.insert(instance.material_override);
 
+            if (auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(instance.mesh)) {
+                for (auto mat : mesh->material_handles)
+                    if (mat != INVALID_HANDLE)
+                        m_scene_materials.insert(mat);
+            }
+        }
+
+        // Schedule loads ----------------------------------------------------------
+
+        for (auto mat : m_scene_materials) {
+
+            if (find_material_slot(mat))                                        continue;
+            std::erase(m_pending_material_unloads, mat);
+
+            if (std::ranges::contains(m_pending_material_loads, mat))           continue;
+            m_pending_material_loads.push_back(mat);
+        }
+
+        for (auto mesh : m_scene_meshes) {                                      // needs loading
+
+            if (find_slot(mesh))                                                continue;
+            std::erase(m_pending_unloads, mesh);                                // The scene now wants it, so any pending unload is moot
+
+            if (std::ranges::contains(m_pending_loads, mesh))                   continue;
             m_pending_loads.push_back(mesh);
         }
 
-        for (auto& slot : m_mesh_slots) {                               // needs unloading
+        // Schedule unloads --------------------------------------------------------
 
-            if (!slot.alive)
-                continue;
+        for (auto& s : m_material_slots) {
 
-            if (m_scene_meshes.contains(slot.asset))
-                continue;
+            if (!s.alive)                                                       continue;
+            if (m_scene_materials.contains(s.asset))                            continue;
+            if (m_retained_materials.contains(s.asset))                         continue;
+            std::erase(m_pending_material_loads, s.asset);
 
-            if (m_retained_meshes.contains(slot.asset))
-                continue;
+            if (std::ranges::contains(m_pending_material_unloads, s.asset))     continue;
+            m_pending_material_unloads.push_back(s.asset);
+        }
 
-            std::erase(m_pending_loads, slot.asset);                    // Visible again this frame -> a stale pending load shouldn't resurrect it
+        for (auto& slot : m_mesh_slots) {                                       // needs unloading
 
-            if (std::ranges::contains(m_pending_unloads, slot.asset))
-                continue;
+            if (!slot.alive)                                                    continue;
+            if (m_scene_meshes.contains(slot.asset))                            continue;
+            if (m_retained_meshes.contains(slot.asset))                         continue;
+            std::erase(m_pending_loads, slot.asset);                            // Visible again this frame -> a stale pending load shouldn't resurrect it
 
+            if (std::ranges::contains(m_pending_unloads, slot.asset))           continue;
             m_pending_unloads.push_back(slot.asset);
         }
     }

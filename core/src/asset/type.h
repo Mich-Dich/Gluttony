@@ -39,6 +39,14 @@ namespace GLT::asset {
     };
 
 
+    // Structural element for reflection: const char* is structural, string_view is not.
+    struct type_entry {
+
+        const char* name;
+        type        value;
+    };
+
+
     // Core-reserved range: [0, 1024) Plugin range: [1024, ...). Registry hands these out.
     // Plugin calls registry->reserve_type("mygame.weapon") once at on_load().
     namespace core_types {
@@ -183,8 +191,33 @@ namespace GLT::asset {
         return "glt_asset";
     }
 
+    // Engine-reserved lookup (uses core_types by default) -------------------------------------------------------------
+
+    FORCE_INLINE_R constexpr std::string_view type_to_string(const type& t) noexcept;
+
+
+    FORCE_INLINE_R constexpr std::optional<type> string_to_type(std::string_view str) noexcept;
+
     // TEMPLATE DECLARATION ============================================================================================
 
+    // Reflect every variable of type `type` inside a given namespace.
+    template <auto Namespace>
+    FORCE_INLINE_R consteval auto make_type_entries();
+
+
+    template <auto Namespace>
+    inline constexpr auto type_entries = make_type_entries<Namespace>();
+
+
+    // type  ->  name
+    template <auto Namespace = ^^core_types>
+    FORCE_INLINE_R constexpr std::string_view type_to_string(const type& t);
+
+
+    // name  ->  type
+    template <auto Namespace = ^^core_types>
+    FORCE_INLINE_R constexpr std::optional<type> string_to_type(std::string_view str);
+    
     // CLASS DECLARATION ===============================================================================================
 
     class i_runtime_asset {
@@ -213,3 +246,5 @@ namespace std {
     };
 
 }
+
+#include "type.inl"

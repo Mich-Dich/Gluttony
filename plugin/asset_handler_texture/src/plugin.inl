@@ -55,9 +55,7 @@ namespace GLT::asset::handler::texture {
 
         // Only texture2D for now. Add texture3D / cube_map here when the
         // factory grows support and the chunk layout can express them.
-        static constexpr GLT::asset::type t[] = {
-            GLT::asset::core_types::texture2D,
-        };
+        static constexpr GLT::asset::type t[] = { GLT::asset::core_types::texture2D, };
         return t;
     }
 

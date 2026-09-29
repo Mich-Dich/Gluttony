@@ -536,6 +536,11 @@ namespace GLT::editor {
 
     void editor_layer::on_save_event(const GLT::save_event& event) {
 
+
+        // save project data -------------------------------------------------------------------------------------------
+        GLT::application::get().get_project_ref().serialize_projects_data(GLT::serializer::option::save);
+
+
         // save world --------------------------------------------------------------------------------------------------
         auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>();
         VALIDATE(world_layer, return, "", "Failed to get world layer");
@@ -559,24 +564,38 @@ namespace GLT::editor {
         }
 
         // need a location from the user
+        const auto world_name = GLT::asset::registry::get_ref()->info(world->world_handle()).name;
         GLT::save_as_request_event::request req{
             .title = "Save World As",
-            .default_name = has_handle
-                ? std::string(GLT::asset::registry::get_ref()->info(world->world_handle()).name)
-                : std::string("untitled_world"),
+            .default_name = has_handle ? world_name : "untitled_world",
             .default_dir = PROJECT_CONTENT_DIR / "world",
             .extension = std::string(GLT::asset::extension_for_type(GLT::asset::core_types::world)),
             .on_resolved = [world](const std::filesystem::path& chosen) {
     
                 if (chosen.empty())
                     return;                                     // cancelled
-    
-                if (auto result = world->save_world_as(chosen); !result)
+
+                if (auto result = world->save_world_as(chosen); !result) {
+
                     LOG(error, "save_world_as failed: error {}", static_cast<int>(result.error()));
+                    return;
+                }
+
+                // if the project settings dont have a world defined -> save the newly created world
+                std::error_code error{};
+                auto& project = GLT::application::get().get_project_ref();
+                if (project.start_world.empty()
+                    || (!GLT::vfs::exists(PROJECT_CONTENT_DIR / project.start_world, error) && !error))
+                    project.start_world = GLT::project::to_content_relative(chosen);
+
+                if (project.editor_start_world.empty()
+                    || (!GLT::vfs::exists(PROJECT_CONTENT_DIR / project.editor_start_world, error) && !error))
+                    project.editor_start_world = GLT::project::to_content_relative(chosen);
             },
         };
 
         GLT::event_bus::post(GLT::save_as_request_event(std::move(req)));
+        // event.set_handled(true);
     }
 
 

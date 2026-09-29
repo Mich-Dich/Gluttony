@@ -5,6 +5,10 @@
 #include <asset/i_asset_registry.h>
 #include <asset/i_asset_handler.h>
 
+#include <event/event_bus.h>
+#include <event/application_event.h>
+#include <util/data_structures/thread_pool.h>
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -65,7 +69,7 @@ namespace GLT::asset::registry_default {
     class asset_writer_impl final : public GLT::asset::asset_writer {
     public:
 
-        void write_chunk(GLT::asset::chunk_id id, std::span<const std::byte> data, u32 compression = 0) override;
+        void write_chunk(GLT::asset::chunk_id id, const std::span<const std::byte> data, u32 compression = 0) override;
 
 
         void declare_dependency(const UUID id);
@@ -272,8 +276,13 @@ namespace GLT::asset::registry_default {
         void release_slot(GLT::asset::handle h) noexcept;
 
 
+        // Fired on the main thread when the application broadcasts a save. Queues one background job per live asset onto the thread pool
+        void on_save_event(GLT::save_event& event);
+
+
         // Parses header + tables into out_params; recurses into deps.
-        [[nodiscard]] std::expected<GLT::asset::handle, GLT::asset::load_error> load_unlocked(const std::filesystem::path& path, 
+        // @param pruned_handles accumulates every handle whose on-disk dep list must be rewritten because at least one dependency failed to resolve
+        [[nodiscard]] std::expected<GLT::asset::handle, GLT::asset::load_error> load_unlocked(const std::filesystem::path& path,
             std::unordered_set<std::string>& in_flight);
 
 
@@ -281,6 +290,7 @@ namespace GLT::asset::registry_default {
 
 
         struct source_record {
+
             UUID                                                                id{};
             std::filesystem::path                                               output{};
             GLT::asset::content_hash                                            source_hash{};
@@ -291,7 +301,6 @@ namespace GLT::asset::registry_default {
 
         std::deque<slot>                                                        m_slots{};             // stable addresses
         std::vector<u32>                                                        m_free_indices{};      // recycled slots
-
         std::unordered_map<std::string, GLT::asset::handle>                     m_by_path{};
         std::unordered_map<GLT::asset::type, GLT::asset::i_asset_handler*>      m_handlers;
 
@@ -310,6 +319,10 @@ namespace GLT::asset::registry_default {
         std::vector<GLT::asset::factory::i_asset_factory_plugin*>               m_factories{};
         mutable std::vector<GLT::asset::factory::binding>                       m_candidate_cache{};
         std::unordered_map<std::string, source_record>                          m_source_index{};
+
+        // event subscriptions -----------------------------------------------------------------------------------------
+
+        handle                                                                  m_save_subscription{};
 
     };
 
