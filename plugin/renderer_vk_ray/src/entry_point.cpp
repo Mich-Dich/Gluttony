@@ -421,10 +421,15 @@ namespace GLT::renderer_vk_ray {
         std::vector<texture_slot>                               m_texture_slots{};         // indexed by bindless_index
         std::vector<u32>                                        m_free_texture_slots{};
 
-        // Descriptor-side mirror of m_texture_slots. Every element is initialised to
-        // the white fallback in create_default_texture() and overwritten per-element
-        // as textures load. Fixed size, so .data() is stable across the renderer's life.
+        // Descriptor-side mirror of m_texture_slots
+        // Every element is initialised to the white fallback in create_default_texture() and overwritten per-element as textures load
+        // Fixed size, so .data() is stable across the renderer's life
         std::array<vr::accessible_image, BINDLESS_TEXTURE_MAX>  m_texture_descriptors{};
+
+        // Preview's own mirror. Same layout, independent backing array
+        // Exists so that per-element descriptor writes targeting one descriptor buffer can never alias the other's bindless array
+        // Slot 0 is the shared checkerboard fallback and is never recycled (the free list starts at index 1)
+        std::array<vr::accessible_image, BINDLESS_TEXTURE_MAX>  m_preview_texture_descriptors{};
 
         // Shared samplers, created once in create_default_texture().
         vk::Sampler                                             m_default_sampler_linear{};
@@ -505,7 +510,7 @@ namespace GLT::renderer_vk_ray {
 
     private:
 
-	    void allocate_memory(const void* data, const glm::uvec3 size, 
+	    void allocate_memory(const void* data, const glm::uvec3 size,
             const GLT::render::image_format format = GLT::render::image_format::RGBA, const bool mipmapped = true);
 
 

@@ -10,8 +10,11 @@ ssh -T git@github.com
 
 
 # TODO
-- ensure asset registry is thread save
-- renderer: shift mesh loading to thread pool (should also load needed material from registry)
+[ ] ensure asset registry is thread save
+[ ] renderer: shift mesh loading to thread pool (should also load needed material from registry)
+[x] bring already open asset editor to front instead of opening anew one for the asset!
+[ ] update the asset path reference of an editor if the asset is moved
+[ ] let CMake compile even without internet connection (currently it fails)
 
 
 
@@ -167,25 +170,6 @@ Wizard that scaffolds a new plugin: `.h`, `.cpp`, `descriptor`, CMake entries. M
 
 **Command palette**
 Ctrl+P style fuzzy search over every registered editor action ("open image viewer", "reload renderer", "toggle checkerboard"). This is what makes the whole editor feel cohesive once you have 15+ windows.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# project management
-## on creation
 
 
 

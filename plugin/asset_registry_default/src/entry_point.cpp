@@ -32,9 +32,10 @@ namespace GLT::asset::registry_default {
         std::filesystem::path                                   canonical_path;
 
         info                                                    asset_info;
-        std::vector<chunk_entry>                                chunks_storage;       // info.chunks
-        std::vector<GLT::asset::handle>                         deps_storage;         // info.dependencies
-        std::vector<GLT::asset::handle>                         dependents_storage;   // info.dependents
+        std::vector<chunk_entry>                                chunks_storage;         // info.chunks
+        std::vector<GLT::asset::handle>                         deps_storage;           // info.dependencies
+        std::vector<UUID>                                       dep_ids_storage;        // info.dependency_ids
+        std::vector<GLT::asset::handle>                         dependents_storage;     // info.dependents
 
         GLT::unique_ref<i_runtime_asset>                        data;
         GLT::asset::i_asset_handler*                            handler{ nullptr };

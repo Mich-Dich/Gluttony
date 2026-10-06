@@ -163,6 +163,14 @@ namespace GLT::asset {
         std::span<const GLT::asset::handle>         dependencies;
         std::span<const GLT::asset::handle>         dependents;
 
+        // Parallel to `dependencies`: the UUID that each resolved handle came from Entries for INVALID_HANDLE rows are
+        // still present (that's the UUID the registry failed to resolve), so positional alignment is preserved
+        //
+        // Handlers MUST use this when they need to map a serialized UUID back to a live handle
+        // Do NOT call registry->info(handle).id from deserialize() -  the registry holds its lock while invoking handlers
+        // so any callback into the registry self-deadlocks
+        std::span<const UUID>                       dependency_ids;
+
         // runtime bookkeeping (never serialized) ----------------------------------------------------------------------
         u64                                         bytes_resident{ 0 };
         std::chrono::system_clock::time_point       last_loaded{};

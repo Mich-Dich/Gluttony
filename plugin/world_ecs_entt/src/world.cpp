@@ -251,7 +251,7 @@ namespace GLT::world::world_ecs_entt {
 
 
         // hierarchy: parent pointer only. children lists are rebuilt after load by rebuild_hierarchy() so we don't duplicate
-        // the tree in every blob.
+        // the tree in every blob
         m_codec.register_custom_component<component::hierarchy>("glt.hierarchy",
 
             [](const entt::registry& r, entt::entity entity, std::vector<std::byte>& out) {
@@ -267,7 +267,7 @@ namespace GLT::world::world_ecs_entt {
             });
 
 
-        // Editor-side registrations (the UI side). May be empty in a runtime build; components still work, they just don't show a panel.
+        // Editor-side registrations (the UI side). May be empty in a runtime build; components still work, they just don't show a panel
         component::register_all_component_descriptors(m_components);
 
         LOG_LOADED
@@ -297,14 +297,14 @@ namespace GLT::world::world_ecs_entt {
 
         m_world = world;
 
-        // Copy the region index into our mutable runtime vector. The asset's copy is treated as a template; we only ever mutate ours.
+        // Copy the region index into our mutable runtime vector. The asset's copy is treated as a template; we only ever mutate ours
         m_regions = world_asset->region_index;
         m_region_states.clear();
         for (const auto& region : m_regions)
             m_region_states.try_emplace(region.id);
 
         // Pick a default region for runtime-spawned entities. Prefer the first region that's flagged always_loaded
-        // those are always active, so spawn() can safely put new entities there without checking stream state.
+        // those are always active, so spawn() can safely put new entities there without checking stream state
         m_default_region_id = {};
 
         for (const auto& region : m_regions) {
@@ -413,9 +413,8 @@ namespace GLT::world::world_ecs_entt {
 
             m_world = *handle_res;
 
-            // Serialize the region handles into the world's dependency table so
-            // reload can resolve them. Without this, deserialize_world leaves
-            // every region's `asset` at INVALID_HANDLE.
+            // Serialize the region handles into the world's dependency table so reload can resolve them
+            // Without this, deserialize_world leaves every region's `asset` at INVALID_HANDLE
             for (const auto& region : m_regions)
                 if (region.asset != INVALID_HANDLE)
                     registry->add_dependency(m_world, region.asset);
@@ -442,8 +441,8 @@ namespace GLT::world::world_ecs_entt {
 
         const entity_id id = alloc_slot();
 
-        // Route into the default region so flush_regions() will pick this entity up on save. 
-        // Orphaned entities (no default region yet) are still valid - they just won't persist.
+        // Route into the default region so flush_regions() will pick this entity up on save
+        // Orphaned entities (no default region yet) are still valid - they just won't persist
         if (m_default_region_id != GLT::UUID{}) {
 
             auto it = m_region_states.find(m_default_region_id);
@@ -575,7 +574,7 @@ namespace GLT::world::world_ecs_entt {
 
     void ecs_world_plugin::update(f32 /*delta_time*/) {
 
-        // The only engine-driven work here is streaming. Game systems run outside the plugin (the concrete world's own update path).
+        // The only engine-driven work here is streaming. Game systems run outside the plugin (the concrete world's own update path)
         stream_pass();
     }
 
@@ -593,8 +592,7 @@ namespace GLT::world::world_ecs_entt {
 
             const entity_id id{ i, m_slots[i].generation };
 
-            // Orphans count as roots so a corrupted parent link doesn't make
-            // an entity unreachable in the outliner.
+            // Orphans count as roots so a corrupted parent link doesn't make an entity unreachable in the outliner
             const component::hierarchy* h = hierarchy_of(id);
             if (!h || !h->parent.is_valid() || !alive(h->parent))
                 roots.push_back(id);
@@ -638,7 +636,7 @@ namespace GLT::world::world_ecs_entt {
         if (new_parent.is_valid() && !alive(new_parent))
             return;   // dead target
 
-        // Cycle guard: refuse if new_parent is a descendant of child.
+        // Cycle guard: refuse if new_parent is a descendant of child
         for (entity_id c = new_parent; c.is_valid(); c = parent_of(c))
             if (c == child)
                 return;
@@ -646,7 +644,7 @@ namespace GLT::world::world_ecs_entt {
         entt::entity ent = entt_of(child);
         component::hierarchy& h = m_registry.get_or_emplace<component::hierarchy>(ent);
 
-        // Detach from old parent's child list.
+        // Detach from old parent's child list
         if (h.parent.is_valid()) {
             if (auto* old = hierarchy_of(h.parent)) {
                 auto& children_vec = old->children;
@@ -654,7 +652,7 @@ namespace GLT::world::world_ecs_entt {
             }
         }
 
-        // Attach to new parent.
+        // Attach to new parent
         if (new_parent.is_valid()) {
             auto& p = m_registry.get_or_emplace<component::hierarchy>(entt_of(new_parent));
             if (std::find(p.children.begin(), p.children.end(), child) == p.children.end())
@@ -842,14 +840,14 @@ namespace GLT::world::world_ecs_entt {
 
         slot& slot = m_slots[preferred.index];
 
-        if (slot.handle == entt::null) {                   // Slot is free: honour the file'slot id verbatim.
+        if (slot.handle == entt::null) {                   // Slot is free: honour the file'slot id verbatim
 
             slot.generation = preferred.generation ? preferred.generation : 1;
             slot.handle = m_registry.create();
             return { { preferred.index, slot.generation }, slot.handle };
         }
 
-        // Slot in use: fall back to a fresh id. Cross-region references that pointed at `preferred` will dangle - that's the caller's problem.
+        // Slot in use: fall back to a fresh id. Cross-region references that pointed at `preferred` will dangle - that's the caller's problem
         const entity_id fresh = alloc_slot();
         return { fresh, m_slots[fresh.index].handle };
     }
@@ -885,7 +883,7 @@ namespace GLT::world::world_ecs_entt {
 
         auto registry = GLT::asset::registry::get_ref();
 
-        // We treat region.asset as already resolved (see notes at bottom).
+        // We treat region.asset as already resolved (see notes at bottom)
         VALIDATE(region.asset != INVALID_HANDLE, region.is_active = true; return, 
             "", "region asset handle is unresolved; skipping entity load")
 
@@ -902,8 +900,8 @@ namespace GLT::world::world_ecs_entt {
                 [this](entity_id saved) { return allocate_for_load(saved); });
         }
 
-        // The entity blob stores parent pointers only. Rebuild the children lists so queries and the editor's outliner see a consistent tree.
-        // Cheap: O(loaded entities) per activation, only when the region actually contains hierarchy components.
+        // The entity blob stores parent pointers only. Rebuild the children lists so queries and the editor's outliner see a consistent tree
+        // Cheap: O(loaded entities) per activation, only when the region actually contains hierarchy components
         if (!state.entities.empty()) {
 
             for (const entity_id child : state.entities) {
@@ -1009,7 +1007,7 @@ namespace GLT::world::world_ecs_entt {
         const auto* transform = m_registry.try_get<component::transform>(entity);
         glm::mat4 matrix = transform ? compose_transform(*transform) : glm::mat4(1.0f);
 
-        // Walk up the hierarchy. [no_inherit_transform] cuts the chain.
+        // Walk up the hierarchy. [no_inherit_transform] cuts the chain
         if (m_registry.all_of<component::no_inherit_transform>(entity))
             return matrix;
 

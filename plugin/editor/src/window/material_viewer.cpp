@@ -243,7 +243,10 @@ namespace GLT::editor {
 
         asset->params = m_edit;
         for (std::size_t i = 0; i < TEXTURE_SLOT_COUNT; ++i)
-            asset->textures[i] = m_edit_textures[i];
+            if (m_edit_textures[i] != INVALID_HANDLE) {
+                asset->textures[i] = m_edit_textures[i];
+                registry->add_dependency(m_asset_handle, m_edit_textures[i]);
+            }
 
         auto result = registry->save(m_asset_handle);
         if (!result) {

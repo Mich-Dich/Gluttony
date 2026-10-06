@@ -6,9 +6,12 @@
 #include <imgui_internal.h>
 
 #include <plugin_system/plugin_manager.h>
-#include <render/i_renderer.h>
 #include <platform/i_window.h>
+#include <asset/i_asset_registry.h>
 #include <render/image.h>
+#include <render/i_renderer.h>
+#include <world/i_world.h>
+#include <world/world_layer.h>
 
 #include "util/ui/pannel_collection.h"
 #include "resource_manager/icon_manager.h"
@@ -48,11 +51,16 @@ namespace GLT::editor {
         make_window_name("World Viewport");
         m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::render::i_renderer_plugin>(GLT::plugin_manager::interface::renderer);
         m_content_browsers.push_back(GLT::editor::content_browser_window());       // create first content browser
+
+        m_save_sub_handle = GLT::event_bus::subscribe<GLT::save_event>(std::bind_front(&world_viewport_window::on_save_event, this), 10);
+        m_save_as_sub_handle = GLT::event_bus::subscribe<save_as_request_event>(std::bind_front(&world_viewport_window::on_save_as_request_event, this));
     }
 
 
     world_viewport_window::~world_viewport_window() {
 
+        GLT::event_bus::unsubscribe(m_save_as_sub_handle);
+        GLT::event_bus::unsubscribe(m_save_sub_handle);
         m_content_browsers.clear();
         m_renderer.reset();
     }
@@ -67,7 +75,7 @@ namespace GLT::editor {
         apply_pending_dock();
 
         // A regular, dockable window. Its body hosts a nested dockspace for
-        // the Viewport / Details / Tools sub-panels. The outer editor_layer
+        // the Viewport / Details / Tools sub-panels. The outer world_viewport_window
         // docks this window by its full ImGui ID (m_window_id).
         ImGui::SetNextWindowSizeConstraints(ImVec2(600, 400), ImVec2(std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max()));
         ImGui::Begin(m_window_id.c_str(), &m_show_window);
@@ -85,12 +93,31 @@ namespace GLT::editor {
         for (auto& browsers : m_content_browsers)
             if (!browsers.should_close())
                 browsers.window(delta_time);
+
+        render_save_as_popup();                 // after every other window
     }
 
 
     void world_viewport_window::update(const f32 /*delta_time*/) {
 
         m_renderer->set_render_size({m_viewport_size.x, m_viewport_size.y});
+
+        // Move any events that arrived during the previous frame into the queue.
+        for (auto& ev : m_save_as_event_buffer) {
+
+            pending_save_request pending{};
+            pending.req = ev.get();
+
+            std::snprintf(pending.filename, sizeof(pending.filename), "%s", pending.req.default_name.c_str());
+
+            // Picker and registry both speak project-relative - convert here so the modal opens with a path the picker can highlight in its tree
+            pending.directory = PROJECT_CONTENT_DIR;
+            if (pending.directory.empty())
+                pending.directory = pending.req.default_dir;        // fallback: picker still accepts absolute
+
+            m_save_as_queue.push_back(std::move(pending));
+        }
+        m_save_as_event_buffer.clear();
     }
 
 
@@ -475,6 +502,203 @@ namespace GLT::editor {
         window->set_cursor_mode(captured
             ? GLT::platform::cursor_mode::cursor_disabled   // hidden + relative motion, frozen visually
             : GLT::platform::cursor_mode::cursor_normal);
+    }
+
+
+    void world_viewport_window::on_save_event(const GLT::save_event& event) {
+
+        // save project data -------------------------------------------------------------------------------------------
+        GLT::application::get().get_project_ref().serialize_projects_data(GLT::serializer::option::save);
+
+
+        // save world --------------------------------------------------------------------------------------------------
+        auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>();
+        VALIDATE(world_layer, return, "", "Failed to get world layer");
+
+        auto world = world_layer->get_world();
+        VALIDATE(world, return, "", "Failed to get world");
+
+        const bool has_handle = world->world_handle() != GLT::asset::handle{};
+        const bool force_as = event.is_forced_save_as();
+        if (has_handle && !force_as) {
+
+            auto result = world->save_world();
+            if (result)
+                GLT::event_bus::post(GLT::notification_event("Saved", "World saved successfully", GLT::logger::severity::info));
+            else {
+
+                const auto description = std::format("Failed to save World [{}]", GLT::util::enum_to_string(result.error()));
+                GLT::event_bus::post(GLT::notification_event("Saved", description, GLT::logger::severity::warn));
+            }
+            return;
+        }
+
+        // need a location from the user
+        const auto world_name = GLT::asset::registry::get_ref()->info(world->world_handle()).name;
+        GLT::save_as_request_event::request req{
+            .title = "Save World As",
+            .default_name = has_handle ? world_name : "untitled_world",
+            .default_dir = PROJECT_CONTENT_DIR / "world",
+            .extension = std::string(GLT::asset::extension_for_type(GLT::asset::core_types::world)),
+            .on_resolved = [world](const std::filesystem::path& chosen) {
+    
+                if (chosen.empty())
+                    return;                                     // cancelled
+
+                if (auto result = world->save_world_as(chosen); !result) {
+
+                    LOG(error, "save_world_as failed: error {}", static_cast<int>(result.error()));
+                    return;
+                }
+
+                // if the project settings dont have a world defined -> save the newly created world
+                std::error_code error{};
+                auto& project = GLT::application::get().get_project_ref();
+                if (project.start_world.empty()
+                    || (!GLT::vfs::exists(PROJECT_CONTENT_DIR / project.start_world, error) && !error))
+                    project.start_world = GLT::project::to_content_relative(chosen);
+
+                if (project.editor_start_world.empty()
+                    || (!GLT::vfs::exists(PROJECT_CONTENT_DIR / project.editor_start_world, error) && !error))
+                    project.editor_start_world = GLT::project::to_content_relative(chosen);
+            },
+        };
+
+        GLT::event_bus::post(GLT::save_as_request_event(std::move(req)));
+    }
+
+    // Buffered so we don't mutate the queue while someone else is iterating - update() drains this into m_save_as_queue
+    void world_viewport_window::on_save_as_request_event(const save_as_request_event& event) { m_save_as_event_buffer.push_back(event); }
+
+
+    void world_viewport_window::open_next_save_request() {
+
+        if (m_save_as_open)
+            return;                         // one at a time
+
+        if (m_save_as_queue.empty())
+            return;
+
+        m_save_as_open = true;
+        ImGui::OpenPopup("##save_as_modal");
+    }
+
+
+    void world_viewport_window::render_save_as_popup() {
+
+        open_next_save_request();
+
+        if (!m_save_as_open)
+            return;
+
+        auto& pending = m_save_as_queue.front();
+
+        // Always centered in the main viewport - no ImGuiCond_Appearing.
+        const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(560, 0), ImVec2(FLT_MAX, FLT_MAX));
+
+        bool keep_open = true;
+        if (ImGui::BeginPopupModal("##save_as_modal", &keep_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+
+            ImGui::TextUnformatted(pending.req.title.c_str());
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ---- directory ----
+            ImGui::TextUnformatted("Directory");
+            ImGui::SameLine(100.f);
+            GLT::UI::draw_directory_picker("##save_as_dir_picker", pending.directory, PROJECT_CONTENT_DIR);
+
+            // ---- filename ----
+            ImGui::TextUnformatted("Filename");
+            ImGui::SameLine(100.f);
+            const std::string ext_hint = "." + pending.req.extension;
+            const f32 ext_w = ImGui::CalcTextSize(ext_hint.c_str()).x + 8.f;
+            ImGui::SetNextItemWidth(-(ext_w + ImGui::GetStyle().ItemSpacing.x));
+            ImGui::InputText("##name", pending.filename, sizeof(pending.filename));
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", ext_hint.c_str());
+
+            ImGui::Spacing();
+
+            // ---- preview + validation ----
+            std::filesystem::path full = pending.directory / pending.filename;
+            if (full.extension() != std::filesystem::path(ext_hint))
+                full += ext_hint;
+
+            ImGui::TextDisabled("Will write to:");
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", full.generic_string().c_str());
+
+            pending.error_message.clear();
+            if (pending.directory.empty())
+                pending.error_message = "Directory is required.";
+            else if (pending.filename[0] == '\0')
+                pending.error_message = "Filename is required.";
+
+            if (!pending.error_message.empty()) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.f, 0.5f, 0.4f, 1.f), "%s", pending.error_message.c_str());
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ---- buttons ----
+            const bool can_confirm = pending.error_message.empty();
+
+            ImGui::BeginDisabled(!can_confirm);
+            if (ImGui::Button("Save", ImVec2(120, 0))) {
+                resolve_save_as_request(true);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                resolve_save_as_request(false);
+                ImGui::CloseCurrentPopup();
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                resolve_save_as_request(false);
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+
+        if (!keep_open && m_save_as_open)
+            resolve_save_as_request(false);
+    }
+
+
+    void world_viewport_window::resolve_save_as_request(bool confirmed) {
+
+        if (m_save_as_queue.empty()) {
+            m_save_as_open = false;
+            return;
+        }
+
+        pending_save_request pending = std::move(m_save_as_queue.front());
+        m_save_as_queue.pop_front();
+        m_save_as_open = false;
+
+        std::filesystem::path resolved{};
+
+        if (confirmed) {
+
+            resolved = pending.directory / pending.filename;
+            const std::string ext_hint = "." + pending.req.extension;
+            if (resolved.extension() != ext_hint)
+                resolved += ext_hint;
+        }
+
+        auto callback = std::move(pending.req.on_resolved);
+        if (callback)
+            callback(resolved);
     }
 
 }

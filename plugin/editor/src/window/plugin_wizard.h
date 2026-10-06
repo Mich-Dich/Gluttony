@@ -3,7 +3,7 @@
 
 #include <TextEditor.h>
 
-#include "window/base_window.h"
+#include "window/base/base_window.h"
 #include "plugin_system/i_plugin.h"
 
 

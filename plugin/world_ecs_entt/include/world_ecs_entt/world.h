@@ -264,8 +264,8 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] const component::hierarchy* hierarchy_of(entity_id id) const noexcept;
 
 
-        // Re-encode each active region's entities and call registry->save(region).
-        // Called from save_world / save_world_as before touching the world asset.
+        // Re-encode each active region's entities and call registry->save(region)
+        // Called from save_world / save_world_as before touching the world asset
         [[nodiscard]] std::expected<void, GLT::asset::load_error> flush_regions();
 
 
@@ -290,7 +290,7 @@ namespace GLT::world::world_ecs_entt {
 
         // Region that receives entities spawned at runtime. Set on world load to the first declared region (preferring one with
         // the always_loaded flag), or created on demand by save_world_as(). Empty UUID means "no default"
-        // spawned entities are orphaned until a region exists.
+        // spawned entities are orphaned until a region exists
         GLT::UUID                                           m_default_region_id{};
     };
 

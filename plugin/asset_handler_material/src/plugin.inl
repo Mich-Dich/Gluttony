@@ -87,10 +87,11 @@ namespace GLT::asset::handler::material {
         std::unordered_map<UUID, GLT::asset::handle> by_id;
         by_id.reserve(info.dependencies.size());
 
-        for (GLT::asset::handle dep : info.dependencies) {
+        for (size_t i = 0; i < info.dependencies.size(); ++i) {
+            const GLT::asset::handle dep = info.dependencies[i];
             if (dep == INVALID_HANDLE)
                 continue;
-            by_id.emplace(m_registry->info(dep).id, dep);
+            by_id.emplace(info.dependency_ids[i], dep);
         }
 
         for (const auto& ref : refs) {

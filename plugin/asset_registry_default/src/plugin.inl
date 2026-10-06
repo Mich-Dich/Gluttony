@@ -978,7 +978,9 @@ namespace GLT::asset::registry_default {
         // We keep a slot for every row even when the dep can't be resolved, because the handler indexes 
         // dependencies[submesh.material_slot] and relies on positional alignment.
         std::vector<GLT::asset::handle> resolved_deps;
+        std::vector<UUID> resolved_dep_ids;
         resolved_deps.reserve(hdr.dependency_count);
+        resolved_dep_ids.reserve(hdr.dependency_count);
 
         if (hdr.dependency_count > 0) {
 
@@ -989,6 +991,8 @@ namespace GLT::asset::registry_default {
             std::memcpy(dep_disk.data(), bytes.data() + hdr.dependency_table_offset, need);
 
             for (const GLT::asset::dependency_disk& d : dep_disk) {
+
+                resolved_dep_ids.push_back(d.id);        // ← always, even if resolution fails
 
                 // fast path - already resident by id
                 if (auto it = m_by_id.find(d.id); it != m_by_id.end()) {
@@ -1042,48 +1046,50 @@ namespace GLT::asset::registry_default {
 
         // claim slot + populate info ---------------------------------------------------------------
         const GLT::asset::handle handle = acquire_slot();
-        slot* s = slot_for(handle);
-        if (!s)                                                     return std::unexpected{ GLT::asset::load_error::out_of_memory };
+        GLT::asset::registry_default::slot* slot = slot_for(handle);
+        if (!slot)                                                     return std::unexpected{ GLT::asset::load_error::out_of_memory };
 
-        s->handler = handler;
-        s->canonical_path = path;
-        s->chunks_storage = std::move(chunks);
-        s->deps_storage = std::move(resolved_deps);
+        slot->handler = handler;
+        slot->canonical_path = path;
+        slot->chunks_storage = std::move(chunks);
+        slot->deps_storage = std::move(resolved_deps);
+        slot->dep_ids_storage  = std::move(resolved_dep_ids); 
 
-        GLT::asset::info& ai = s->asset_info;
-        ai.id = hdr.id;
-        ai.asset_type = hdr.asset_type;
-        ai.hash = hdr.hash;
-        ai.flag_bits = static_cast<GLT::asset::flags>(hdr.flags);
-        ai.format_version = hdr.format_version;
-        ai.engine_version = hdr.min_engine_version;
-        ai.virtual_path = path;
-        ai.source_path = source_path;
-        ai.name = asset_name;
-        ai.chunks = s->chunks_storage;
-        ai.dependencies = s->deps_storage;
-        ai.dependents = s->dependents_storage;
-        ai.last_loaded = std::chrono::system_clock::now();
+        GLT::asset::info& asset_info = slot->asset_info;
+        asset_info.id = hdr.id;
+        asset_info.asset_type = hdr.asset_type;
+        asset_info.hash = hdr.hash;
+        asset_info.flag_bits = static_cast<GLT::asset::flags>(hdr.flags);
+        asset_info.format_version = hdr.format_version;
+        asset_info.engine_version = hdr.min_engine_version;
+        asset_info.virtual_path = path;
+        asset_info.source_path = source_path;
+        asset_info.name = asset_name;
+        asset_info.chunks = slot->chunks_storage;
+        asset_info.dependencies = slot->deps_storage;
+        asset_info.dependency_ids = slot->dep_ids_storage;
+        asset_info.dependents = slot->dependents_storage;
+        asset_info.last_loaded = std::chrono::system_clock::now();
 
         // handler decodes --------------------------------------------------------------------------
-        chunk_reader_impl reader{ std::span<const std::byte>(bytes), s->chunks_storage };
-        auto decoded = handler->deserialize(ai, reader);
+        chunk_reader_impl reader{ std::span<const std::byte>(bytes), slot->chunks_storage };
+        auto decoded = handler->deserialize(asset_info, reader);
         if (!decoded) {
 
             release_slot(handle);
             return std::unexpected{ decoded.error() };
         }
-        s->data = std::move(*decoded);
-        ai.bytes_resident = s->data ? s->data->memory_usage() : 0;
+        slot->data = std::move(*decoded);
+        asset_info.bytes_resident = slot->data ? slot->data->memory_usage() : 0;
 
         // commit -----------------------------------------------------------------------------------
         m_by_path.emplace(key, handle);
         m_by_id.emplace(hdr.id, handle);
 
-        for (GLT::asset::handle dep : s->deps_storage) {
-            if (slot* d = slot_for(dep)) {
-                d->dependents_storage.push_back(handle);
-                d->asset_info.dependents = d->dependents_storage;
+        for (GLT::asset::handle dep : slot->deps_storage) {
+            if (GLT::asset::registry_default::slot* dep_slot = slot_for(dep)) {
+                dep_slot->dependents_storage.push_back(handle);
+                dep_slot->asset_info.dependents = dep_slot->dependents_storage;
             }
         }
 

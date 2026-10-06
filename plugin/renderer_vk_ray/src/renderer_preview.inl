@@ -112,8 +112,8 @@ namespace GLT::renderer_vk_ray {
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
-    // Called once from create(), after create_rt_pipeline() and imgui_init().
-    // Allocates every preview resource and writes the initial descriptor set.
+    // Called once from create(), after create_rt_pipeline() and imgui_init()
+    // Allocates every preview resource and writes the initial descriptor set
     void renderer::create_material_preview_resources() {
 
         // ---- preview image ----------------------------------------------------------
@@ -196,16 +196,20 @@ namespace GLT::renderer_vk_ray {
         m_preview_camera_ubo = m_vr_dev->create_buffer(sizeof(camera_ubo), vk::BufferUsageFlagBits::eUniformBuffer,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
-        // Single geometry entry: sphere's vertex/index offsets are zero.
-        gpu_geometry g{};
-        g.vertex_base = 0;
-        g.index_base = 0;
-        g.material_index = 0;
-        std::memcpy(m_vr_dev->map_buffer(m_preview_geometry_buffer), &g, sizeof(g));
+        // Single geometry entry: sphere's vertex/index offsets are zero
+        gpu_geometry geometry{};
+        geometry.vertex_base = 0;
+        geometry.index_base = 0;
+        geometry.material_index = 0;
+        std::memcpy(m_vr_dev->map_buffer(m_preview_geometry_buffer), &geometry, sizeof(geometry));
         m_vr_dev->unmap_buffer(m_preview_geometry_buffer);
 
+        // Initialise the preview's own descriptor mirror
+        // Everything starts at the checkerboard fallback, exactly like m_texture_descriptors did at init
+        m_preview_texture_descriptors = m_texture_descriptors;
+
         // ---- preview descriptor buffer ---------------------------------------------
-        // Same layout as the main one - only the contents differ. Bindings 4 and 5 are NOT the shared main vertex/index buffers.
+        // Same layout as the main one - only the contents differ. Bindings 4 and 5 are NOT the shared main vertex/index buffers
         // the sphere lives in its own buffers so a resize of the main geometry doesn't invalidate this set
         m_preview_bindings = {
             vr::descriptor_item(0, vk::DescriptorType::eAccelerationStructureKHR,
@@ -221,7 +225,7 @@ namespace GLT::renderer_vk_ray {
             vr::descriptor_item(5, vk::DescriptorType::eStorageBuffer,
                 vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_preview_index_buffer),
             vr::descriptor_item(6, vk::DescriptorType::eCombinedImageSampler,
-                vk::ShaderStageFlagBits::eClosestHitKHR, BINDLESS_TEXTURE_MAX, m_texture_descriptors.data()),
+                vk::ShaderStageFlagBits::eClosestHitKHR, BINDLESS_TEXTURE_MAX, m_preview_texture_descriptors.data()),
             vr::descriptor_item(7, vk::DescriptorType::eStorageBuffer,
                 vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_preview_geometry_buffer),
         };
@@ -248,8 +252,8 @@ namespace GLT::renderer_vk_ray {
     }
 
 
-    // Called at the top of begin_frame() when a preview is queued. Fills the
-    // per-frame buffers - everything here is host-side memcpy, no GPU work yet.
+    // Called at the top of begin_frame() when a preview is queued
+    // Fills the per-frame buffers - everything here is host-side memcpy, no GPU work yet
     void renderer::upload_preview_data() {
 
         // ---- material ---------------------------------------------------------------
@@ -322,8 +326,8 @@ namespace GLT::renderer_vk_ray {
     }
 
 
-    // Emits the preview pass into the current command buffer. Must be called after upload_preview_data() and after a TLAS
-    // rebuild has run for the preview's instance buffer
+    // Emits the preview pass into the current command buffer
+    // Must be called after upload_preview_data() and after a TLAS rebuild has run for the preview's instance buffer
     void renderer::dispatch_material_preview(vk::CommandBuffer cmd) {
 
         // Rebuild TLAS ---------------------------------------------------------------

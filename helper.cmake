@@ -17,12 +17,10 @@
 include_guard(GLOBAL)
 
 
-# Provides a reusable function to clone a Git repository into a vendor directory
-# and keep it in sync with a given ref on every configure. Accepts BRANCH or
-# TAG (mutually exclusive); if the one you pass doesn't match, it automatically
-# retries as the other kind of ref, so you don't have to know in advance which
-# one a given name is. Re-running this always fetches and hard-syncs to that
-# ref, so stale vendored checkouts (the original bug) can't happen.
+# Provides a reusable function to clone a Git repository into a vendor directory and keep it in sync with a given ref on every configure
+# Accepts BRANCH or TAG (mutually exclusive); if the one you pass doesn't match, it automatically retries as the other kind of ref,
+# so you don't have to know in advance which one a given name is. Re-running this always fetches and hard-syncs to that ref,
+# so stale vendored checkouts (the original bug) can't happen.
 function(git_clone_or_update REPO_URL TARGET_DIR)
     set(options)
     set(oneValueArgs DEPTH BRANCH TAG)
@@ -39,9 +37,7 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
 
     find_package(Git REQUIRED)
 
-    # Resolve the requested ref to an explicit refspec. Explicit refs/heads
-    # vs refs/tags paths avoid the ambiguity of a plain short name, which is
-    # what let a tag silently fail to resolve before.
+    # Resolve the requested ref to an explicit refspec.
     if(GCOU_TAG)
         set(GCOU_REF "${GCOU_TAG}")
         set(primary_refspec  "refs/tags/${GCOU_REF}")
@@ -53,14 +49,14 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
         set(fallback_refspec "refs/tags/${GCOU_REF}")
         set(ref_msg " (branch: ${GCOU_REF})")
     else()
-        # No ref requested: track whatever the remote's default branch is.
         set(GCOU_REF "HEAD")
         set(primary_refspec "HEAD")
         set(fallback_refspec "")
         set(ref_msg "")
     endif()
 
-    if(NOT EXISTS "${TARGET_DIR}")
+    # ---- Clone (only if there is no checkout yet) ----------------------------
+    if(NOT EXISTS "${TARGET_DIR}/.git")
         message(STATUS "Cloning ${REPO_URL}${ref_msg} into ${TARGET_DIR} ...")
         execute_process(
             COMMAND ${GIT_EXECUTABLE} clone --depth ${GCOU_DEPTH} "${REPO_URL}" "${TARGET_DIR}"
@@ -68,14 +64,18 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
             ERROR_VARIABLE  clone_error
         )
         if(NOT clone_result EQUAL 0)
-            message(FATAL_ERROR "Failed to clone ${REPO_URL}: ${clone_error}")
+            message(WARNING
+                "Could not clone ${REPO_URL} into ${TARGET_DIR}:\n"
+                "  ${clone_error}\n"
+                "If ${TARGET_DIR} is missing the build will fail when it tries to use it.")
+            return()
         endif()
         message(STATUS "Repository cloned successfully into ${TARGET_DIR}")
     else()
         message(STATUS "Repository already present in ${TARGET_DIR}")
     endif()
 
-    # --- Always sync to the requested ref, whether just-cloned or pre-existing.
+    # ---- Fetch ---------------------------------------------------------------
     message(STATUS "Fetching '${primary_refspec}'${ref_msg} for ${TARGET_DIR} ...")
     execute_process(
         COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" fetch --depth ${GCOU_DEPTH} --prune origin "${primary_refspec}"
@@ -83,8 +83,6 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
         ERROR_VARIABLE  fetch_error
     )
     if(NOT fetch_result EQUAL 0 AND fallback_refspec)
-        # BRANCH/TAG was guessed wrong (e.g. a name that's actually a tag was
-        # passed as BRANCH) - retry as the other kind of ref before failing.
         message(STATUS "'${primary_refspec}' not found on remote, retrying as '${fallback_refspec}' ...")
         execute_process(
             COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" fetch --depth ${GCOU_DEPTH} --prune origin "${fallback_refspec}"
@@ -92,24 +90,30 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
             ERROR_VARIABLE  fetch_error
         )
     endif()
+
     if(NOT fetch_result EQUAL 0)
-        message(FATAL_ERROR "Failed to fetch ref '${GCOU_REF}' (tried as both branch and tag) for ${TARGET_DIR}: ${fetch_error}")
+        message(WARNING
+            "Could not update ${TARGET_DIR} from ${REPO_URL}${ref_msg}:\n"
+            "  ${fetch_error}\n"
+            "Using the existing checkout as-is. It may be out of date.")
+        return()
     endif()
 
-    # Hard-reset onto whatever we just fetched. This is a detached HEAD by
-    # design (these are vendored deps, not repos you commit into), and it
-    # self-heals any drift - local edits, a previous checkout of the wrong
-    # ref, etc. `clean -fdx` also wipes stray untracked files left behind by
-    # a prior ref (e.g. files removed upstream between versions).
+    # ---- Checkout ------------------------------------------------------------
     execute_process(
         COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" checkout --force --detach FETCH_HEAD
         RESULT_VARIABLE checkout_result
         ERROR_VARIABLE  checkout_error
     )
     if(NOT checkout_result EQUAL 0)
-        message(FATAL_ERROR "Failed to checkout fetched ref '${GCOU_REF}' for ${TARGET_DIR}: ${checkout_error}")
+        message(WARNING
+            "Failed to checkout fetched ref '${GCOU_REF}' for ${TARGET_DIR}:\n"
+            "  ${checkout_error}\n"
+            "Keeping the existing checkout.")
+        return()
     endif()
 
+    # ---- Clean ---------------------------------------------------------------
     execute_process(
         COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" clean -fdx
         RESULT_VARIABLE clean_result

@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include <window/base_window.h>
+#include <window/base/base_window.h>
 #include <asset/type.h>
 #include <asset/i_asset_factory.h>
 

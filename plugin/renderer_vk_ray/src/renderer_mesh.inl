@@ -123,18 +123,13 @@ namespace GLT::renderer_vk_ray {
         slot.vertex_count = static_cast<u32>(mesh->vertices.size());
         slot.index_offset = m_index_used;
         slot.index_count = static_cast<u32>(mesh->indices.size());
-        // slot.material_offset = m_material_used;
-        // slot.material_count = live_submeshes;
         slot.alive = true;
 
         upload_mesh_slice(slot, *mesh);                             // Upload just this mesh's slice
         m_vertex_used += slot.vertex_count;
         m_index_used += slot.index_count;
-        // m_material_used += slot.material_count;
 
         build_blas_for_slot(slot);                                  // Build exactly one BLAS for this mesh
-        // m_tlas_dirty = true;                                        // TLAS contents changed; the handle did not
-
         return true;
     }
 

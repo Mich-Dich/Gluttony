@@ -7,7 +7,7 @@
 #include <event/input_event.h>
 #include <event/application_event.h>
 
-#include "window/base_window.h"
+#include "window/base/base_window.h"
 #include "util/event/asset_event.h"
 
 
@@ -57,15 +57,6 @@ namespace GLT::editor {
 
     private:
 
-        struct pending_save_request {
-
-            save_as_request_event::request              req;
-            char                                        filename[256]{};
-            std::filesystem::path                       directory{};
-            std::string                                 error_message;                  // empty = ok
-        };
-
-
         struct notification {
 
             std::string                                 title;
@@ -99,28 +90,13 @@ namespace GLT::editor {
         void on_key_event(const key_event& event);
 
 
-        void on_save_event(const save_event& event);
-
-
-        void on_save_as_request_event(const save_as_request_event& event);
-
-
         void register_core_editors();
 
 
         void open_asset_editor(const asset_open_event& event);
 
 
-        // Reads the head of the queue and opens the modal. No-op if a request is already being shown.
-        void open_next_save_request();
-
-
-        // Renders the modal if one is active. Call at the end of render_imgui, after every other window - modals must layer on top.
-        void render_save_as_popup();
-
-
-        // Confirms or discards the current request and dequeues it. Pops the next request off the queue if one is waiting.
-        void resolve_save_as_request(bool confirmed);
+        void on_save_event(const GLT::save_event& event);
 
 
         void on_notification_event(const notification_event& event);
@@ -160,14 +136,8 @@ namespace GLT::editor {
         std::vector<asset_open_event>                   m_asset_open_event_buffer{};
         std::vector<asset_import_request_event>         m_asset_import_request_event_buffer{};
 
-        std::vector<save_as_request_event>              m_save_as_event_buffer{};
-        std::deque<pending_save_request>                m_save_as_queue{};
-        bool                                            m_save_as_open{ false };
-
         handle                                          m_asset_create_request_event_sub_handle{};
         std::vector<asset_create_request_event>         m_asset_create_request_event_buffer{};
-
-        handle                                          m_save_as_sub_handle{};
         handle                                          m_save_sub_handle{};
 
         handle                                          m_notification_sub_handle{};

@@ -443,22 +443,27 @@ namespace GLT::renderer_vk_ray {
         slot.alive = true;
         m_texture_slots[idx] = slot;
 
-        m_texture_descriptors[idx] = {
+        const vr::accessible_image new_desc{
             view, m_default_sampler_linear, vk::ImageLayout::eShaderReadOnlyOptimal, nullptr
         };
+        m_texture_descriptors[idx] = new_desc;
 
-        // per-element descriptor update -------------------------------------------------------------------------------
-        // Find the binding 6 descriptor_item and update just this slot.
+        // Per-element update of the main descriptor buffer
         for (const auto& item : m_resource_bindings) {
+
             if (item.binding != 6)
                 continue;
             m_vr_dev->update_descriptor_buffer(m_resource_desc_buffer, item, idx, vr::descriptor_buffer_type::combined);
             break;
         }
 
-        // Mirror into the preview descriptor buffer if it exists.
+        // Mirror into the preview's own descriptor array + buffer
+        // Separate array means this write can never bleed into the main buffer (or vice versa)
         if (m_preview_ready) {
+
+            m_preview_texture_descriptors[idx] = new_desc;
             for (const auto& item : m_preview_bindings) {
+
                 if (item.binding != 6)
                     continue;
                 m_vr_dev->update_descriptor_buffer(m_preview_desc_buffer, item, idx, vr::descriptor_buffer_type::combined);
@@ -484,26 +489,37 @@ namespace GLT::renderer_vk_ray {
 
         m_device.waitIdle();
 
-        // Reset the descriptor to the white fallback before destroying anything.
-        const auto& white = m_texture_slots[0];
-        m_texture_descriptors[idx] = {
-            white.view, white.sampler, vk::ImageLayout::eShaderReadOnlyOptimal, nullptr
-        };
+        // Reset to the checkerboard fallback before destroying the image
+        // Each array's own slot 0 is the canonical fallback - pulling from each array keeps the two descriptors structurally identical
+        const vr::accessible_image fallback_main = m_texture_descriptors[0];
+        const vr::accessible_image fallback_preview = m_preview_texture_descriptors[0];
+
+        m_texture_descriptors[idx] = fallback_main;
 
         for (const auto& item : m_resource_bindings) {
             if (item.binding != 6)
                 continue;
-            m_vr_dev->update_descriptor_buffer(
-                m_resource_desc_buffer, item, idx,
+            m_vr_dev->update_descriptor_buffer(m_resource_desc_buffer, item, idx,
                 vr::descriptor_buffer_type::combined);
             break;
+        }
+
+        if (m_preview_ready) {
+            m_preview_texture_descriptors[idx] = fallback_preview;
+            for (const auto& item : m_preview_bindings) {
+                if (item.binding != 6)
+                    continue;
+                m_vr_dev->update_descriptor_buffer(m_preview_desc_buffer, item, idx,
+                    vr::descriptor_buffer_type::combined);
+                break;
+            }
         }
 
         if (slot.view)
             m_device.destroyImageView(slot.view);
 
         vr::allocated_image img{};
-        img.image      = slot.image;
+        img.image = slot.image;
         img.allocation = slot.allocation;
         if (img.image)
             m_vr_dev->destroy_image(img);
@@ -513,14 +529,14 @@ namespace GLT::renderer_vk_ray {
     }
 
 
-    u32 renderer::find_texture_index(GLT::asset::handle h) const noexcept {
+    u32 renderer::find_texture_index(GLT::asset::handle handle) const noexcept {
 
-        if (h == INVALID_HANDLE)
+        if (handle == INVALID_HANDLE)
             return UINT32_MAX;
 
-        for (const auto& s : m_texture_slots)
-            if (s.alive && s.asset == h)
-                return s.bindless_index;
+        for (const auto& slot : m_texture_slots)
+            if (slot.alive && slot.asset == handle)
+                return slot.bindless_index;
 
         return UINT32_MAX;
     }

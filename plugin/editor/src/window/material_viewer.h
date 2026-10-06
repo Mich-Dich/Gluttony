@@ -1,15 +1,12 @@
+
 #pragma once
 
 #include <imgui.h>
 
-#include <array>
-#include <filesystem>
-#include <string>
-
 #include <asset/type.h>
 #include <asset/material.h>
 
-#include "window/base_window.h"
+#include "window/base/asset_editor.h"
 
 
 
@@ -31,36 +28,35 @@ namespace GLT::editor {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // Dockable editor window that displays and edits a material asset.
+    // Dockable editor window that displays and edits a material asset
     //
     // Two construction modes:
-    //   - material_viewer_window()             -> opens an unsaved, in-memory
-    //                                             material with default params.
-    //   - material_viewer_window(path)         -> loads the .glt_material at
-    //                                             `path` through the asset registry.
+    //   - material_viewer_window()         -> opens an unsaved, in-memory material with default params
+    //   - material_viewer_window(path)     -> loads the .glt_material at [path] through the asset registry
     //
-    // The window edits a local copy of material_params (m_edit) plus a local copy
-    // of the texture handles. Nothing is written back to the underlying asset until
-    // save() is called, which copies the edit buffers into the asset and asks the
-    // registry to serialize it back to disk.
-    class material_viewer_window : public base_window {
+    // The window edits a local copy of material_params (m_edit) plus a local copy of the texture handles
+    // Nothing is written back to the underlying asset until save() is called, which copies the edit buffers into the asset
+    // and asks the registry to serialize it back to disk
+    class material_viewer_window : public asset_editor {
     public:
 
         material_viewer_window();
-        material_viewer_window(const std::filesystem::path& path);
+        material_viewer_window(const std::filesystem::path&     path);
         ~material_viewer_window();
 
-        DEFAULT_GETTER(GLT::asset::handle,          asset_handle)
-        DEFAULT_GETTER_C(std::filesystem::path,     material_path)
-        DEFAULT_GETTER(bool,                        dirty)
+        DEFAULT_GETTER(GLT::asset::handle,                      asset_handle)
+        DEFAULT_GETTER_C(std::filesystem::path,                 material_path)
+        DEFAULT_GETTER(bool,                                    dirty)
+
+        // from asset_editor
+        FORCE_INLINE_R const std::filesystem::path& get_asset_path() const noexcept override { return m_material_path; }
 
 
-        // Loads a material through the registry. An empty `path` opens a
-        // fresh in-memory material with default parameters.
+        // Loads a material through the registry. An empty [path] opens a fresh in-memory material with default parameters
         void open(const std::filesystem::path& path);
 
 
-        // Releases the currently bound material asset (registry-unload).
+        // Releases the currently bound material asset (registry-unload)
         void close_material();
 
 
@@ -73,19 +69,16 @@ namespace GLT::editor {
         bool serialize(const std::filesystem::path& project_file, GLT::serializer::option option) override;
 
 
-        // Writes the local edit buffers back through the registry. Returns
-        // false if the material has no file backing yet.
+        // Writes the local edit buffers back through the registry. Returns false if the material has no file backing yet
         bool save();
 
 
-        // Restores the local edit buffers to the material's baseline state.
+        // Restores the local edit buffers to the material's baseline state
         void revert();
-
 
     private:
 
-        static constexpr std::size_t TEXTURE_SLOT_COUNT =
-            static_cast<std::size_t>(GLT::asset::material::texture_slot::count);
+        static constexpr std::size_t TEXTURE_SLOT_COUNT = static_cast<std::size_t>(GLT::asset::material::texture_slot::count);
 
         using texture_handles = std::array<GLT::asset::handle, TEXTURE_SLOT_COUNT>;
 
@@ -118,25 +111,24 @@ namespace GLT::editor {
         void draw_preview_fallback(ImDrawList* draw, const ImVec2& min, const ImVec2& max);
 
 
-        std::filesystem::path                       m_material_path{};
-        GLT::asset::handle                          m_asset_handle = INVALID_HANDLE;
-        std::string                                 m_material_name{};
+        std::filesystem::path                                   m_material_path{};
+        GLT::asset::handle                                      m_asset_handle = INVALID_HANDLE;
+        std::string                                             m_material_name{};
 
-        bool                                        m_has_material = false;
-        bool                                        m_load_failed = false;
-        bool                                        m_dirty = false;
+        bool                                                    m_has_material = false;
+        bool                                                    m_load_failed = false;
+        bool                                                    m_dirty = false;
 
-        // Local edit buffers. The window edits these, never the asset directly.
-        GLT::asset::material::material_params       m_edit{};
-        GLT::asset::material::material_params       m_baseline{};
+        // Local edit buffers. The window edits these, never the asset directly
+        GLT::asset::material::material_params                   m_edit{};
+        GLT::asset::material::material_params                   m_baseline{};
 
-        texture_handles                             m_edit_textures{};
-        texture_handles                             m_baseline_textures{};
+        texture_handles                                         m_edit_textures{};
+        texture_handles                                         m_baseline_textures{};
 
-        // Preview camera. Position is free in world space; the renderer is
-        // handed `m_preview_camera_pos` and looks at `m_preview_target`.
-        glm::vec3                                   m_preview_camera_pos{ 0.0f, 0.0f, 3.0f };
-        glm::vec3                                   m_preview_target{ 0.0f, 0.0f, 0.0f };
+        // Preview camera. Position is free in world space; the renderer is handed [m_preview_camera_pos] and looks at [m_preview_target]
+        glm::vec3                                               m_preview_camera_pos{ 0.0f, 0.0f, 3.0f };
+        glm::vec3                                               m_preview_target{ 0.0f, 0.0f, 0.0f };
     };
 
 }

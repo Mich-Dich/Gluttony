@@ -11,7 +11,7 @@
 #include <asset/type.h>                 // GLT::asset::handle, INVALID_HANDLE
 #include <plugin_system/plugin_manager.h>
 
-#include "window/base_window.h"
+#include "window/base/base_window.h"
 
 
 
