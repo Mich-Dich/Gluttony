@@ -14,7 +14,7 @@ ssh -T git@github.com
 [ ] renderer: shift mesh loading to thread pool (should also load needed material from registry)
 [x] bring already open asset editor to front instead of opening anew one for the asset!
 [ ] update the asset path reference of an editor if the asset is moved
-[ ] let CMake compile even without internet connection (currently it fails)
+[x] let CMake compile even without internet connection (currently it fails)
 
 
 

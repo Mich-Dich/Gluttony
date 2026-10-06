@@ -39,7 +39,7 @@ git_clone_or_update("git@github.com:franko/stb_image.git"                       
 git_clone_or_update("https://github.com/KhronosGroup/Vulkan-Headers.git"                        "${VULKAN_HEADERS_DIR}" BRANCH "vulkan-sdk-1.4.357")
 git_clone_or_update("git@github.com:charles-lunarg/vk-bootstrap.git"                            "${VK_BOOTSTRAP_DIR}" TAG "v1.4.328")
 git_clone_or_update("https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"     "${VMA_DIR}")
-git_clone_or_update("git@github.com:Mich-Dich/vk_ray.git"                                       "${VK_RAY_DIR}")
+# git_clone_or_update("git@github.com:Mich-Dich/vk_ray.git"                                       "${VK_RAY_DIR}")
 
 target_include_directories(${PLUGIN_NAME}                               PRIVATE "${VK_STB_IMAGE_DIR}/include")
 target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${VK_STB_IMAGE_DIR}/include")

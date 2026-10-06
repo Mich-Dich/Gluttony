@@ -293,12 +293,12 @@ namespace GLT::asset::registry_default {
 
     std::expected<GLT::asset::handle, GLT::asset::load_error> plugin::load(std::filesystem::path path) {
 
-        auto relative = GLT::project::to_content_relative(path);
+        const auto relative = GLT::project::to_content_relative(path);
         if (relative.empty())
             return std::unexpected{ GLT::asset::load_error::not_found };
 
-            std::unique_lock lock(m_mutex);
-            std::unordered_set<std::string> in_flight;
+        std::unique_lock lock(m_mutex);
+        std::unordered_set<std::string> in_flight;
         return load_unlocked(relative, in_flight);
     }
 
@@ -823,6 +823,58 @@ namespace GLT::asset::registry_default {
             });
     }
 
+    // manage asset lifetime -------------------------------------------------------------------------------------------
+
+    void plugin::retain(GLT::asset::handle h) {
+
+        std::unique_lock lock(m_mutex);
+        if (slot* s = slot_for(h))
+            ++s->ref_count;
+    }
+
+
+    void plugin::release(GLT::asset::handle h) {
+
+        if (h == INVALID_HANDLE)
+            return;
+
+        std::vector<GLT::asset::handle> deps_to_release;
+        GLT::unique_ref<GLT::asset::i_runtime_asset> data_to_destroy;
+
+        {
+            std::unique_lock lock(m_mutex);
+
+            slot* s = slot_for(h);
+            if (!s)
+                return;
+
+            if (s->ref_count == 0) {
+                LOG(warn, "release() on asset with ref_count == 0");
+                return;
+            }
+
+            --s->ref_count;
+            if (s->ref_count > 0)
+                return;
+
+            // Last reference is gone. Pull data out so it is destroyed after unlock
+            deps_to_release = s->deps_storage;
+            data_to_destroy = std::move(s->data);
+
+            // Remove from indexes and free slot
+            m_by_path.erase(s->canonical_path.generic_string());
+            m_by_id.erase(s->asset_info.id);
+            release_slot(h);
+        }
+
+        // Destroying data may trigger asset_ref destructors
+        data_to_destroy.reset();
+
+        // Releasing dependencies may cascade unloads
+        for (GLT::asset::handle dep : deps_to_release)
+            release(dep);
+    }
+
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
@@ -862,10 +914,10 @@ namespace GLT::asset::registry_default {
             m_slots.emplace_back();
         }
 
-        GLT::asset::registry_default::slot& s = m_slots[idx];
-        s = GLT::asset::registry_default::slot{};                   // reset (bumps generation the first time)
-        s.alive = true;
-        return make_handle(idx, s.generation);
+        GLT::asset::registry_default::slot& slot = m_slots[idx];
+        slot = GLT::asset::registry_default::slot{};                   // reset (bumps generation the first time)
+        slot.alive = true;
+        return make_handle(idx, slot.generation);
     }
 
 
@@ -990,26 +1042,26 @@ namespace GLT::asset::registry_default {
             std::vector<GLT::asset::dependency_disk> dep_disk(hdr.dependency_count);
             std::memcpy(dep_disk.data(), bytes.data() + hdr.dependency_table_offset, need);
 
-            for (const GLT::asset::dependency_disk& d : dep_disk) {
+            for (const GLT::asset::dependency_disk& dep : dep_disk) {
 
-                resolved_dep_ids.push_back(d.id);        // ← always, even if resolution fails
+                resolved_dep_ids.push_back(dep.id);        // ← always, even if resolution fails
 
                 // fast path - already resident by id
-                if (auto it = m_by_id.find(d.id); it != m_by_id.end()) {
+                if (auto it = m_by_id.find(dep.id); it != m_by_id.end()) {
                     resolved_deps.push_back(it->second);
                     continue;
                 }
 
                 // slow path - resolve by path relative to the importing asset
-                if (d.path_offset == 0) {
-                    LOG(warn, "[{}] dependency id={:#x} has no path and is not resident", key, static_cast<unsigned long long>(d.id));
+                if (dep.path_offset == 0) {
+                    LOG(warn, "[{}] dependency id={:#x} has no path and is not resident", key, static_cast<unsigned long long>(dep.id));
                     resolved_deps.push_back(INVALID_HANDLE);
                     continue;
                 }
 
-                const std::string dep_path = read_cstr(d.path_offset);
+                const std::string dep_path = read_cstr(dep.path_offset);
                 if (dep_path.empty()) {
-                    LOG(warn, "[{}] dependency id={:#x} has an empty path", key, static_cast<unsigned long long>(d.id));
+                    LOG(warn, "[{}] dependency id={:#x} has an empty path", key, static_cast<unsigned long long>(dep.id));
                     resolved_deps.push_back(INVALID_HANDLE);
                     continue;
                 }
@@ -1047,7 +1099,7 @@ namespace GLT::asset::registry_default {
         // claim slot + populate info ---------------------------------------------------------------
         const GLT::asset::handle handle = acquire_slot();
         GLT::asset::registry_default::slot* slot = slot_for(handle);
-        if (!slot)                                                     return std::unexpected{ GLT::asset::load_error::out_of_memory };
+        if (!slot)                                                  return std::unexpected{ GLT::asset::load_error::out_of_memory };
 
         slot->handler = handler;
         slot->canonical_path = path;
@@ -1083,6 +1135,11 @@ namespace GLT::asset::registry_default {
         asset_info.bytes_resident = slot->data ? slot->data->memory_usage() : 0;
 
         // commit -----------------------------------------------------------------------------------
+
+        for (GLT::asset::handle dep : resolved_deps)                // retain all dependencies
+            if (dep != INVALID_HANDLE)
+                retain_unlocked(dep);
+
         m_by_path.emplace(key, handle);
         m_by_id.emplace(hdr.id, handle);
 
@@ -1116,6 +1173,13 @@ namespace GLT::asset::registry_default {
             "Failed to read file content")
 
         return file_content;
+    }
+
+
+    void plugin::retain_unlocked(GLT::asset::handle h) {
+
+        if (GLT::asset::registry_default::slot* slot = slot_for(h))
+            ++slot->ref_count;
     }
 
 }

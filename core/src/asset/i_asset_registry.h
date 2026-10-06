@@ -41,9 +41,9 @@ namespace GLT::asset {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // One-stop shop the engine core talks to. Owns: file format, chunk table,
+    // One-stop shop the engine core talks to. Owns: file format, chunk table
     // dependency graph, hot-reload watching, string table, caching. Knows nothing
-    // about meshes, textures, or audio - that is the handlers' job.
+    // about meshes, textures, or audio - that is the handlers' job
     class i_asset_registry_plugin : public plugin_manager::i_plugin {
     public:
 
@@ -57,14 +57,14 @@ namespace GLT::asset {
 
         // persistence -------------------------------------------------------------------------------------------------
 
-        // Persist the live asset back to its canonical path. No-op for handlers that haven't overridden serialize() (returns load_error::no_handler).
+        // Persist the live asset back to its canonical path. No-op for handlers that haven't overridden serialize() (returns load_error::no_handler)
         //
-        // The write is atomic: bytes go to `<path>.tmp`, then a rename swaps them in. A failed save never leaves a half-written file on disk.
+        // The write is atomic: bytes go to `<path>.tmp`, then a rename swaps them in. A failed save never leaves a half-written file on disk
         [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> save(GLT::asset::handle h) = 0;
 
 
         // Same as save(), but moves the asset to a new canonical path. The old path entry is dropped from the path index,
-        // the new one takes over. Useful for "Save As" in the editor.
+        // the new one takes over. Useful for "Save As" in the editor
         // @param new_path  CAUTION - this uses a content dir relative path (PROJECT_CONTENT_DIR / path)
         [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> save_as(GLT::asset::handle h, const std::filesystem::path& new_path) = 0;
 
@@ -79,13 +79,13 @@ namespace GLT::asset {
 
         // Persist an in-memory asset that has no backing file yet. The registry takes ownership of `asset`, mints a fresh UUID
         // unless one is provided, and installs it at `path`. The asset is NOT written to disk - call save(handle) afterwards to
-        // emit the first bytes.
+        // emit the first bytes
         //
         // Intended for: a plugin that builds runtime state (a fresh world, a procedural material) and wants the registry to
         // start tracking it so subsequent save() calls work. Most callers should expose a higher-level method on their own
-        // interface instead of calling this directly.
+        // interface instead of calling this directly
         //
-        // Fails with `already_exists` if `path` or `id` is already claimed.
+        // Fails with `already_exists` if `path` or `id` is already claimed
         [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::load_error> register_runtime(
             GLT::unique_ref<GLT::asset::i_runtime_asset> asset, const std::filesystem::path& path, std::string_view name = {},
             GLT::UUID id = {}) = 0;
@@ -124,14 +124,14 @@ namespace GLT::asset {
 
         // import (editor / build-time) --------------------------------------------------------------------------------
 
-        // Routes to whichever factory binds (source_extension, target_type).
-        // If out_path is empty, the registry derives one next to the source (or under a configured import root). 
-        // On success the imported asset is loaded and its handle returned - the editor basically always wants a preview right away.
+        // Routes to whichever factory binds (source_extension, target_type)
+        // If out_path is empty, the registry derives one next to the source (or under a configured import root)
+        // On success the imported asset is loaded and its handle returned - the editor basically always wants a preview right away
         [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::import_error> import(const std::filesystem::path& source, 
             GLT::asset::type target_type, const std::filesystem::path& out_path = {}, const GLT::asset::import_options& opts = {}) = 0;
 
 
-        // Cheap probe: which factories could handle this file? The editor uses this to populate the "Import as…" context menu.
+        // Cheap probe: which factories could handle this file? The editor uses this to populate the "Import as…" context menu
         [[nodiscard]] virtual std::span<const GLT::asset::factory::binding> candidate_imports(const std::filesystem::path& source) const = 0;
 
         // type registry (for game-defined types) ----------------------------------------------------------------------
@@ -149,11 +149,18 @@ namespace GLT::asset {
         virtual void add_dependency(GLT::asset::handle from, GLT::asset::handle to) = 0;
 
 
-        [[nodiscard]] virtual std::span<const GLT::asset::handle> dependencies(GLT::asset::handle h) const = 0;
+        [[nodiscard]] virtual std::span<const GLT::asset::handle> dependencies(GLT::asset::handle handle) const = 0;
 
         // async -------------------------------------------------------------------------------------------------------
 
         [[nodiscard]] virtual std::future<std::expected<GLT::asset::handle, GLT::asset::load_error>> load_async(std::filesystem::path path) = 0;
+
+        // manage asset lifetime ---------------------------------------------------------------------------------------
+
+        virtual void retain(GLT::asset::handle handle) = 0;
+
+
+        virtual void release(GLT::asset::handle handle) = 0;
 
     };
 

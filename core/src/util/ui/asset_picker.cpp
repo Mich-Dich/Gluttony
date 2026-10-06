@@ -172,6 +172,155 @@ namespace GLT::UI {
             return *loaded;
         }
 
+
+        // Access trait: abstracts “read the handle”, “write the handle”, “clear the handle” over both a raw handle and an asset_ref.
+        template<typename H>
+        struct picker_handle_access;
+
+
+        template<>
+        struct picker_handle_access<GLT::asset::handle> {
+            static GLT::asset::handle get(const GLT::asset::handle& h) noexcept { return h; }
+            static void set(GLT::asset::handle& h, GLT::asset::handle v) noexcept { h = v; }
+            static void clear(GLT::asset::handle& h) noexcept { h = INVALID_HANDLE; }
+        };
+
+
+        template<>
+        struct picker_handle_access<GLT::asset::asset_ref> {
+            static GLT::asset::handle get(const GLT::asset::asset_ref& h) noexcept { return h.get(); }
+            static void set(GLT::asset::asset_ref& h, GLT::asset::handle v) { h = GLT::asset::asset_ref{ v }; }
+            static void clear(GLT::asset::asset_ref& h) { h.reset(); }
+        };
+
+
+        template<typename H>
+        bool asset_picker_widget_impl(const asset_picker_options& opts, H& in_out, f32 available_width) {
+
+            using access = picker_handle_access<H>;
+
+            auto registry = GLT::asset::registry::get_ref();
+            if (!registry) {
+                ImGui::TextDisabled("no asset registry");
+                return false;
+            }
+
+            const std::filesystem::path root = opts.root.empty() ? get_asset_root() : opts.root;
+            const std::string ext = extension_for(opts.filter);
+
+            const GLT::asset::handle current = access::get(in_out);
+            const auto& info = registry->info(current);
+            const std::string display = (current == INVALID_HANDLE || info.name.empty())
+                ? std::string(opts.placeholder)
+                : info.name;
+
+            bool changed = false;
+
+            const ImGuiStyle& style = ImGui::GetStyle();
+            const f32 frame_h = ImGui::GetFrameHeight();
+            const f32 clear_w = (opts.allow_clear && current != INVALID_HANDLE) ? (frame_h + style.ItemSpacing.x) : 0.f;
+            const f32 field_w = available_width - clear_w - frame_h - style.ItemSpacing.x;
+
+            char display_buf[256];
+            std::snprintf(display_buf, sizeof(display_buf), "%s", display.c_str());
+
+            ImGui::SetNextItemWidth(field_w);
+            ImGui::InputText("##value", display_buf, sizeof(display_buf), ImGuiInputTextFlags_ReadOnly);
+
+            const ImVec2 field_min = ImGui::GetItemRectMin();
+            const ImVec2 field_max = ImGui::GetItemRectMax();
+            const f32 field_screen_w = field_max.x - field_min.x;
+
+            if (ImGui::IsItemClicked())
+                ImGui::OpenPopup("##picker_popup");
+
+            ImGui::SameLine();
+            if (ImGui::Button("...", ImVec2(frame_h, 0)))
+                ImGui::OpenPopup("##picker_popup");
+
+            if (opts.allow_clear && current != INVALID_HANDLE) {
+                ImGui::SameLine();
+                if (ImGui::Button("x", ImVec2(frame_h, 0))) {
+                    access::clear(in_out);
+                    changed = true;
+                }
+            }
+
+            if (ImGui::IsPopupOpen("##picker_popup")) {
+                ImGui::SetNextWindowPos(ImVec2(field_min.x, field_max.y), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(field_screen_w, 0.0f), ImGuiCond_Always);
+            }
+
+            ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(720, 560));
+            if (ImGui::BeginPopup("##picker_popup")) {
+
+                static char search_buf[128] = "";
+                if (ImGui::IsWindowAppearing())
+                    search_buf[0] = '\0';
+
+                const auto snap = picker_cache::instance().get(root, ext, std::chrono::seconds(10));
+
+                if (ImGui::Button("Refresh"))
+                    invalidate_asset_cache(root, ext);
+
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(220.f);
+                ImGui::InputTextWithHint("##search", "Filter...", search_buf, sizeof(search_buf));
+                const std::string_view needle{ search_buf };
+
+                ImGui::SameLine();
+                if (snap)
+                    ImGui::TextDisabled("%zu item%s", snap->paths.size(), snap->paths.size() == 1 ? "" : "s");
+                else
+                    ImGui::TextDisabled("scanning...");
+
+                ImGui::Separator();
+
+                if (snap) {
+                    const f32 row_h = ImGui::GetTextLineHeightWithSpacing();
+                    if (ImGui::BeginChild("##list", ImVec2(0, row_h * 14), true)) {
+
+                        for (const auto& path : snap->paths) {
+
+                            const std::string shown = (path.parent_path() / path.stem()).generic_string();
+
+                            if (!needle.empty() && shown.find(needle) == std::string::npos)
+                                continue;
+
+                            const GLT::asset::handle live = access::get(in_out);
+                            const bool selected = (live != INVALID_HANDLE) && registry->info(live).virtual_path == path;
+
+                            if (ImGui::Selectable(shown.c_str(), selected)) {
+                                if (auto h = resolve_path(registry, path)) {
+                                    if (*h != access::get(in_out)) {
+                                        access::set(in_out, *h);
+                                        changed = true;
+                                    }
+                                } else
+                                    LOG(warn, "load failed for [{}]", path.generic_string())
+
+                                ImGui::CloseCurrentPopup();
+                            }
+                        }
+                    }
+                    ImGui::EndChild();
+                }
+
+                if (opts.allow_clear && access::get(in_out) != INVALID_HANDLE) {
+                    ImGui::Separator();
+                    if (ImGui::Selectable("Clear")) {
+                        access::clear(in_out);
+                        changed = true;
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+
+                ImGui::EndPopup();
+            }
+
+            return changed;
+        }
+
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -208,130 +357,12 @@ namespace GLT::UI {
     // ---- widget (shared) --------------------------------------------------------------------------
 
     bool asset_picker_widget(const asset_picker_options& opts, GLT::asset::handle& in_out, f32 available_width) {
+        return asset_picker_widget_impl(opts, in_out, available_width);
+    }
 
-        auto registry = GLT::asset::registry::get_ref();
-        if (!registry) {
-            ImGui::TextDisabled("no asset registry");
-            return false;
-        }
 
-        const std::filesystem::path root = opts.root.empty() ? get_asset_root() : opts.root;
-        const std::string ext = extension_for(opts.filter);
-
-        const auto& info = registry->info(in_out);
-        const std::string display = (in_out == INVALID_HANDLE || info.name.empty()) ? std::string(opts.placeholder) : info.name;
-
-        bool changed = false;
-
-        const ImGuiStyle& style = ImGui::GetStyle();
-        const f32 frame_h = ImGui::GetFrameHeight();
-        const f32 clear_w = (opts.allow_clear && in_out != INVALID_HANDLE) ? (frame_h + style.ItemSpacing.x) : 0.f;
-        const f32 field_w = available_width - clear_w - frame_h - style.ItemSpacing.x;
-
-        char display_buf[256];
-        std::snprintf(display_buf, sizeof(display_buf), "%s", display.c_str());
-
-        ImGui::SetNextItemWidth(field_w);
-        ImGui::InputText("##value", display_buf, sizeof(display_buf), ImGuiInputTextFlags_ReadOnly);
-
-        // Capture the field's screen-space rect so the popup can be anchored
-        // directly beneath it and sized to match its on-screen width.
-        const ImVec2 field_min = ImGui::GetItemRectMin();
-        const ImVec2 field_max = ImGui::GetItemRectMax();
-        const f32 field_screen_w = field_max.x - field_min.x;
-
-        if (ImGui::IsItemClicked())
-            ImGui::OpenPopup("##picker_popup");
-
-        ImGui::SameLine();
-        if (ImGui::Button("...", ImVec2(frame_h, 0)))
-            ImGui::OpenPopup("##picker_popup");
-
-        if (opts.allow_clear && in_out != INVALID_HANDLE) {
-            ImGui::SameLine();
-            if (ImGui::Button("x", ImVec2(frame_h, 0))) {
-                in_out  = INVALID_HANDLE;
-                changed = true;
-            }
-        }
-
-        if (ImGui::IsPopupOpen("##picker_popup")) {
-            ImGui::SetNextWindowPos(ImVec2(field_min.x, field_max.y), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(field_screen_w, 0.0f), ImGuiCond_Always);
-        }
-
-        // popup
-        ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(720, 560));
-        if (ImGui::BeginPopup("##picker_popup")) {
-
-            static char search_buf[128] = "";
-            if (ImGui::IsWindowAppearing())
-                search_buf[0] = '\0';
-
-            const auto snap = picker_cache::instance().get(root, ext, std::chrono::seconds(10));
-
-            if (ImGui::Button("Refresh"))
-                invalidate_asset_cache(root, ext);
-
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(220.f);
-            ImGui::InputTextWithHint("##search", "Filter...", search_buf, sizeof(search_buf));
-            const std::string_view needle{ search_buf };
-
-            ImGui::SameLine();
-            if (snap)
-                ImGui::TextDisabled("%zu item%s", snap->paths.size(), snap->paths.size() == 1 ? "" : "s");
-            else
-                ImGui::TextDisabled("scanning...");
-
-            ImGui::Separator();
-
-            if (snap) {
-                const f32 row_h = ImGui::GetTextLineHeightWithSpacing();
-                if (ImGui::BeginChild("##list", ImVec2(0, row_h * 14), true)) {
-
-                    for (const auto& path : snap->paths) {
-
-                        // Paths are already project-relative. Strip the extension for display so the list reads "world/level01" 
-                        // instead of "world/level01.glt_world". The filter still operates on the shown form, so searching for "level01"
-                        // works; searching for "glt_world" is intentionally not supported.
-                        const std::string shown = (path.parent_path() / path.stem()).generic_string();
-
-                        if (!needle.empty() && shown.find(needle) == std::string::npos)
-                            continue;
-
-                        // Direct comparison works because virtual_path is now stored project-relative by load_unlocked().
-                        const bool selected = (in_out != INVALID_HANDLE) && registry->info(in_out).virtual_path == path;
-
-                        if (ImGui::Selectable(shown.c_str(), selected)) {
-                            if (auto h = resolve_path(registry, path)) {
-                                if (*h != in_out) {
-                                    in_out  = *h;
-                                    changed = true;
-                                }
-                            } else
-                                LOG(warn, "load failed for [{}]", path.generic_string())
-
-                            ImGui::CloseCurrentPopup();
-                        }
-                    }
-                }
-                ImGui::EndChild();
-            }
-
-            if (opts.allow_clear && in_out != INVALID_HANDLE) {
-                ImGui::Separator();
-                if (ImGui::Selectable("Clear")) {
-                    in_out  = INVALID_HANDLE;
-                    changed = true;
-                    ImGui::CloseCurrentPopup();
-                }
-            }
-
-            ImGui::EndPopup();
-        }
-
-        return changed;
+    bool asset_picker_widget(const asset_picker_options& opts, GLT::asset::asset_ref& in_out, f32 available_width) {
+        return asset_picker_widget_impl(opts, in_out, available_width);
     }
 
     // ---- standalone entry point -------------------------------------------------------------------
@@ -339,13 +370,22 @@ namespace GLT::UI {
     bool asset_picker(const asset_picker_options& opts, GLT::asset::handle& in_out) {
 
         ImGui::PushID(opts.label.data());
-
         ImGui::AlignTextToFramePadding();
         ImGui::Text("%s", opts.label.data());
         ImGui::SameLine();
-
         const bool changed = asset_picker_widget(opts, in_out, ImGui::GetContentRegionAvail().x);
+        ImGui::PopID();
+        return changed;
+    }
 
+
+    bool asset_picker(const asset_picker_options& opts, GLT::asset::asset_ref& in_out) {
+
+        ImGui::PushID(opts.label.data());
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("%s", opts.label.data());
+        ImGui::SameLine();
+        const bool changed = asset_picker_widget(opts, in_out, ImGui::GetContentRegionAvail().x);
         ImGui::PopID();
         return changed;
     }
@@ -355,7 +395,6 @@ namespace GLT::UI {
     bool table_row_asset_picker(std::string_view label, GLT::asset::handle& in_out, GLT::asset::type filter, const char* desc,
         bool allow_clear) {
 
-        // ---- column 0: label + help marker (matches table_row's layout) ----
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
 
@@ -369,12 +408,42 @@ namespace GLT::UI {
             GLT::UI::help_marker(desc);
         }
 
-        // ---- column 1: the widget ----
         ImGui::TableSetColumnIndex(1);
 
-        // Unique ID per row. Push the label's *contents* (matches your other
-        // table_row helpers) and the handle's address so two pickers with the
-        // same name in the same frame don't collide.
+        ImGui::PushID(label.data());
+        ImGui::PushID(&in_out);
+
+        asset_picker_options opts{};
+        opts.label = label;
+        opts.filter = filter;
+        opts.allow_clear = allow_clear;
+        const bool changed = asset_picker_widget(opts, in_out, ImGui::GetContentRegionAvail().x);
+
+        ImGui::PopID();
+        ImGui::PopID();
+
+        return changed;
+    }
+
+
+    bool table_row_asset_picker(std::string_view label, GLT::asset::asset_ref& in_out, GLT::asset::type filter, const char* desc,
+        bool allow_clear) {
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+
+        size_t pos = label.find("##");
+        std::string_view display = (pos != std::string_view::npos) ? label.substr(0, pos) : label;
+        ImGui::Text("%.*s", static_cast<int>(display.length()), display.data());
+
+        if (desc) {
+            ImGui::SameLine();
+            GLT::UI::shift_cursor_pos(ImGui::GetContentRegionAvail().x - 12.f, 0.f);
+            GLT::UI::help_marker(desc);
+        }
+
+        ImGui::TableSetColumnIndex(1);
+
         ImGui::PushID(label.data());
         ImGui::PushID(&in_out);
 

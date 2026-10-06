@@ -175,8 +175,9 @@ namespace GLT::world::world_ecs_entt {
                 auto& mesh_component = entity_registry.emplace_or_replace<component::mesh>(entity_handle);
 
                 size_t offset = 0;
-                mesh_component.mesh = read_asset_handle(asset_registry, in_bytes, offset);
-                mesh_component.material_override = read_asset_handle(asset_registry, in_bytes, offset);
+
+                mesh_component.mesh = GLT::asset::asset_ref{ read_asset_handle(asset_registry, in_bytes, offset) };
+                mesh_component.material_override = GLT::asset::asset_ref{ read_asset_handle(asset_registry, in_bytes, offset) };
 
                 // Trailing byte, optional for forward compatibility
                 mesh_component.visible = (in_bytes.size() > offset) ? (in_bytes[offset] != std::byte{ 0 }) : true;
@@ -209,7 +210,7 @@ namespace GLT::world::world_ecs_entt {
                 auto& audio_component = entity_registry.emplace_or_replace<component::audio_source>(entity_handle);
 
                 size_t offset = 0;
-                audio_component.clip = read_asset_handle(asset_registry, in_bytes, offset);
+                audio_component.clip = GLT::asset::asset_ref{ read_asset_handle(asset_registry, in_bytes, offset) };
 
                 // Config was written in full at save time. If it's missing or truncated the blob came from a different
                 // (or hand-edited) writer - leave the config at its default-constructed values rather than risk reading past the buffer.

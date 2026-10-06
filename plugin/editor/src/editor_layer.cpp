@@ -567,7 +567,7 @@ namespace GLT::editor {
     }
 
 
-    void editor_layer::on_save_event(const GLT::save_event& event) {
+    void editor_layer::on_save_event(const GLT::save_event& /*event*/) {
 
         GLT::application::get().get_project_ref().serialize_projects_data(GLT::serializer::option::save);
     }

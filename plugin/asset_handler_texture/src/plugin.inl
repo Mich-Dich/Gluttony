@@ -133,7 +133,7 @@ namespace GLT::asset::handler::texture {
             }
         }
 
-        LOG(info, "loaded [{}] - {}x{} ({}), {} mip(s), {} bytes", info.name, asset->format.width, asset->format.height, 
+        LOG(trace, "loaded [{}] - {}x{} ({}), {} mip(s), {} bytes", info.name, asset->format.width, asset->format.height, 
             static_cast<int>(asset->format.format), asset->format.mip_levels, asset->pixels.size());
 
         return GLT::unique_ref<GLT::asset::i_runtime_asset>(std::move(asset));

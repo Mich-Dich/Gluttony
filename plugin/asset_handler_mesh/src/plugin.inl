@@ -110,7 +110,7 @@ namespace GLT::asset::handler::mesh {
             }
         }
 
-        LOG(info, "loaded [{}] - {} verts, {} tris, {} submeshes", info.name, asset->vertices.size(), 
+        LOG(trace, "loaded [{}] - {} verts, {} tris, {} submeshes", info.name, asset->vertices.size(), 
             asset->indices.size() / 3, asset->submeshes.size());
 
         return GLT::unique_ref<GLT::asset::i_runtime_asset>(std::move(asset));

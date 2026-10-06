@@ -104,7 +104,7 @@ namespace GLT::asset::handler::audio {
             asset->loop.has_loop = 0;
         }
 
-        LOG(info, "loaded [{}] - {} frames, {} ch, {} Hz",
+        LOG(trace, "loaded [{}] - {} frames, {} ch, {} Hz",
             info.name, asset->format.frame_count, asset->format.channels, asset->format.sample_rate);
 
         return std::unique_ptr<GLT::asset::i_runtime_asset>(std::move(asset));

@@ -52,7 +52,7 @@ namespace GLT::asset::mesh {
     static_assert(sizeof(submesh) == 12);
 
 
-    // A single renderable instance of a mesh asset. 
+    // A single renderable instance of a mesh asset
     // [transform] is a full world-space 4x4
     // [material_override] may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference
     struct instance {
@@ -73,12 +73,10 @@ namespace GLT::asset::mesh {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // The runtime representation of a loaded mesh asset. Handlers own this
-    // type; the registry only ever sees it as `i_runtime_asset*`.
+    // The runtime representation of a loaded mesh asset. Handlers own this type; the registry only ever sees it as `i_runtime_asset*`
     //
-    // IMPORTANT: this struct OWNS the decoded geometry. The chunk_reader
-    // hands out spans into a buffer that dies when the registry's load
-    // function returns, so every handler must copy what it wants to keep.
+    // IMPORTANT: this struct OWNS the decoded geometry. The chunk_reader hands out spans into a buffer that dies when the registry's load
+    // function returns, so every handler must copy what it wants to keep
     class mesh_asset final : public GLT::asset::i_runtime_asset {
     public:
 
@@ -88,9 +86,8 @@ namespace GLT::asset::mesh {
         std::vector<GLT::asset::mesh::submesh>          submeshes;
         GLT::AABB                                       bounds{};
 
-        // Positional. material_handles[i] corresponds to submesh.material_slot == i.
-        // Entries may be INVALID_HANDLE when a material reference couldn't be
-        // resolved - the renderer is expected to substitute a fallback.
+        // Positional. material_handles[i] corresponds to submesh.material_slot == i
+        // Entries may be INVALID_HANDLE when a material reference couldn't be resolved - the renderer is expected to substitute a fallback
         std::vector<GLT::asset::handle>                 material_handles;
 
 

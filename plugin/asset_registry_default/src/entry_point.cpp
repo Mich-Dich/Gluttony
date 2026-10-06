@@ -21,13 +21,13 @@ namespace GLT::asset::registry_default {
 
     // TYPES ===========================================================================================================
 
-    // Everything the registry owns for one loaded asset. Lives in a deque so
-    // element addresses stay stable even as more assets are loaded (that's
-    // what `info.chunks`, `info.dependencies`, etc. point into).
+    // Everything the registry owns for one loaded asset. Lives in a deque so element addresses stay stable even as more
+    // assets are loaded (that's what `info.chunks`, `info.dependencies`, etc. point into)
     struct slot {
 
         u32                                                     generation{ 1 };
         bool                                                    alive{ false };
+        u32                                                     ref_count{ 0 };
 
         std::filesystem::path                                   canonical_path;
 
@@ -42,7 +42,7 @@ namespace GLT::asset::registry_default {
     };
 
 
-    // Concrete chunk_reader bound to one file's memory + chunk table.
+    // Concrete chunk_reader bound to one file's memory + chunk table
     class chunk_reader_impl final : public chunk_reader {
     public:
 
@@ -179,7 +179,7 @@ namespace GLT::asset::registry_default {
 
         // lifecycle ---------------------------------------------------------------------------------------------------
 
-        // the path supplied to the asset_registry should be inside the PROJECT_CONTENT_DIR.
+        // the path supplied to the asset_registry should be inside the PROJECT_CONTENT_DIR
         [[nodiscard]] std::expected<GLT::asset::handle, GLT::asset::load_error> load(std::filesystem::path path) override;
 
 
@@ -232,14 +232,14 @@ namespace GLT::asset::registry_default {
 
         // import (editor / build-time) --------------------------------------------------------------------------------
 
-        // Routes to whichever factory binds (source_extension, target_type).
-        // If out_path is empty, the registry derives one next to the source (or under a configured import root). 
-        // On success the imported asset is loaded and its handle returned - the editor basically always wants a preview right away.
+        // Routes to whichever factory binds (source_extension, target_type)
+        // If out_path is empty, the registry derives one next to the source (or under a configured import root)
+        // On success the imported asset is loaded and its handle returned - the editor basically always wants a preview right away
         [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::import_error> import(const std::filesystem::path& source, 
             GLT::asset::type target_type, const std::filesystem::path& out_path = {}, const GLT::asset::import_options& opts = {}) override;
 
 
-        // Cheap probe: which factories could handle this file? The editor uses this to populate the "Import as…" context menu.
+        // Cheap probe: which factories could handle this file? The editor uses this to populate the "Import as…" context menu
         [[nodiscard]] virtual std::span<const GLT::asset::factory::binding> candidate_imports(const std::filesystem::path& source) const override;
 
         // type registry -----------------------------------------------------------------------------------------------
@@ -263,6 +263,13 @@ namespace GLT::asset::registry_default {
 
         [[nodiscard]] std::future<std::expected<GLT::asset::handle, GLT::asset::load_error>> load_async(std::filesystem::path path) override;
 
+        // manage asset lifetime ---------------------------------------------------------------------------------------
+
+        void retain(GLT::asset::handle handle) override;
+
+
+        void release(GLT::asset::handle handle) override;
+
     private:
 
         [[nodiscard]] slot* slot_for(GLT::asset::handle h) noexcept;
@@ -281,13 +288,16 @@ namespace GLT::asset::registry_default {
         void on_save_event(GLT::save_event& event);
 
 
-        // Parses header + tables into out_params; recurses into deps.
+        // Parses header + tables into out_params; recurses into deps
         // @param pruned_handles accumulates every handle whose on-disk dep list must be rewritten because at least one dependency failed to resolve
         [[nodiscard]] std::expected<GLT::asset::handle, GLT::asset::load_error> load_unlocked(const std::filesystem::path& path,
             std::unordered_set<std::string>& in_flight);
 
 
         [[nodiscard]] std::expected<std::vector<std::byte>, GLT::asset::load_error> read_file(const std::filesystem::path& path) const;
+
+
+        void retain_unlocked(GLT::asset::handle handle);
 
 
         struct source_record {

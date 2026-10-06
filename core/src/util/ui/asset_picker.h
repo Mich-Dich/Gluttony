@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "asset/type.h"
+#include "asset/asset_ref.h"
 
 
 
@@ -60,6 +61,13 @@ namespace GLT::UI {
     [[nodiscard]] bool asset_picker_widget(const asset_picker_options& opts, GLT::asset::handle& in_out, f32 available_width);
 
 
+    // asset_ref overloads. Same widgets, but they own a registry reference:
+    // assigning through asset_ref::operator= releases the old handle and retains
+    // the new one, so the picker's normal "clear"/"pick" paths keep the refcount
+    // consistent without the caller doing anything.
+    [[nodiscard]] bool asset_picker_widget(const asset_picker_options& opts, GLT::asset::asset_ref& in_out, f32 available_width);
+
+
     // Draws a picker bound to `in_out`. Returns true if the selection changed this frame (so callers can snapshot for undo).
     //
     // The picker never asks the registry to enumerate anything. It walks the asset root for files matching extension_for_type(filter),
@@ -71,14 +79,27 @@ namespace GLT::UI {
     bool asset_picker(const asset_picker_options& opts, GLT::asset::handle& in_out);
 
 
+    bool asset_picker(const asset_picker_options& opts, GLT::asset::asset_ref& in_out);
+
+
     // Table row: emits the label into column 0 and the widget into column 1.
     // Matches the calling convention of GLT::UI::table_row* - you call it between begin_table() / end_table(), one call per row.
     bool table_row_asset_picker(std::string_view label, GLT::asset::handle& in_out, GLT::asset::type filter,
         const char* desc = nullptr, bool allow_clear = true);
 
 
+    bool table_row_asset_picker(std::string_view label, GLT::asset::asset_ref& in_out, GLT::asset::type filter, const char* desc = nullptr,
+        bool allow_clear = true);
+
+
     // Convenience overload: the (label, handle, type) form.
     inline bool asset_picker(std::string_view label, GLT::asset::handle& in_out, GLT::asset::type filter) {
+    
+        return asset_picker({ .label = label, .filter = filter }, in_out);
+    }
+
+
+    inline bool asset_picker(std::string_view label, GLT::asset::asset_ref& in_out, GLT::asset::type filter) {
     
         return asset_picker({ .label = label, .filter = filter }, in_out);
     }

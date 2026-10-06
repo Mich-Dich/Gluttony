@@ -3,9 +3,11 @@
 
 #include <glm/glm.hpp>
 
-#include "asset/type.h"
-#include "asset/audio.h"
-#include "world/entity.h"
+#include <asset/type.h>
+#include <asset/asset_ref.h>
+#include <asset/audio.h>
+#include <world/entity.h>
+
 #include "component_registry.h"
 
 
@@ -55,13 +57,10 @@ namespace GLT::world::world_ecs_entt::component {
     // Renders a single mesh. material_override may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference.
     struct mesh {
 
-        GLT::asset::handle                          mesh{};
-        GLT::asset::handle                          material_override{};
+        GLT::asset::asset_ref                       mesh{};
+        GLT::asset::asset_ref                       material_override{};
         bool                                        visible{ true };
-        u8                                          _pad[7]{};
     };
-    static_assert(sizeof(mesh) == 24);
-    static_assert(std::is_trivially_copyable_v<mesh>);
 
 
     // Makes this entity a camera. Position + rotation come from `transform` (like mesh_renderer); this holds only the projection parameters
@@ -70,22 +69,17 @@ namespace GLT::world::world_ecs_entt::component {
         f32                                         fov{ 45.f };
         f32                                         near_plane{ 0.1f };
         f32                                         far_plane{ 100.f };
-        u8                                          _pad[4]{};
     };
-    static_assert(sizeof(camera) == 16);
     static_assert(std::is_trivially_copyable_v<camera>);
 
 
     // Plays a single clip. Looping / attenuation / etc. live in `config` so the entity doesn't need to copy them on spawn.
     struct audio_source {
 
-        GLT::asset::handle                          clip{};
+        GLT::asset::asset_ref                       clip{};
         GLT::asset::audio::source_config            config{};
         bool                                        autoplay{ false };
-        u8                                          _pad[7]{};
     };
-    static_assert(sizeof(audio_source) == 80);
-    static_assert(std::is_trivially_copyable_v<audio_source>);
 
 
     // Marker: this entity's local transform is NOT combined with its parent's.
