@@ -68,6 +68,13 @@ namespace GLT::vfs {
     }
 
 
+    bool default_equivalent(const std::filesystem::path& abs_from, const std::filesystem::path& abs_to, std::error_code& error) {
+
+        return std::filesystem::equivalent(abs_from, abs_to, error);
+    }
+
+
+
     void default_create_file(const std::filesystem::path& path, std::error_code& error) noexcept {
 
         error.clear();
@@ -336,6 +343,7 @@ namespace GLT::vfs {
 
     static vfs_functions g_vfs = {
         default_exists,
+        default_equivalent,
         default_create_file,
         default_is_directory,
         default_is_regular_file,
@@ -376,6 +384,13 @@ namespace GLT::vfs {
 
         error.clear();
         return g_vfs.exists(path, error);
+    }
+
+
+    bool equivalent(const std::filesystem::path& abs_from, const std::filesystem::path& abs_to, std::error_code& error) {
+
+        error.clear();
+        return g_vfs.equivalent(abs_from, abs_to, error);
     }
 
 

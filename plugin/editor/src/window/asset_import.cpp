@@ -178,7 +178,7 @@ namespace GLT::editor {
 
         item.options.clear();
 
-        // Locate the factory that advertised this target_type.
+        // Locate the factory that advertised this target_type
         const GLT::asset::factory::i_asset_factory_plugin* factory = nullptr;
         for (const auto& b : item.candidates) {
             if (b.target_type == item.target_type && b.factory) {
@@ -445,13 +445,13 @@ namespace GLT::editor {
             }
         }
 
-        // Left side: batch status text.
+        // Left side: batch status text
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("(%zu file%s)%s",
             m_items.size(), m_items.size() == 1 ? "" : "s",
             m_importing ? "  - importing..." : "");
 
-        // Right side: buttons, right-aligned.
+        // Right side: buttons, right-aligned
         ImGui::SameLine();
 
         const auto& style = ImGui::GetStyle();
@@ -482,7 +482,7 @@ namespace GLT::editor {
     std::filesystem::path asset_import_window::resolved_target_path(const import_item& item) const {
 
         std::filesystem::path p = item.target_name;
-        p.replace_extension(std::string(".") + std::string(GLT::asset::extension_for_type(item.target_type)));
+        p.replace_extension(std::string(".") + std::string(GLT::asset::type_to_extension(item.target_type)));
         return m_target_dir / p;
     }
 
@@ -546,7 +546,7 @@ namespace GLT::editor {
 
         m_importing = true;
 
-        m_close_when_all_done = (only_index < 0);               // Batch behaviour only for "Import All".
+        m_close_when_all_done = (only_index < 0);               // Batch behaviour only for "Import All"
 
         struct job {
             std::filesystem::path           source;
@@ -564,7 +564,7 @@ namespace GLT::editor {
                 continue;
 
             auto& item = m_items[i];
-            item.status.clear();                                // Clear status only for the items we're actually submitting.
+            item.status.clear();                                // Clear status only for the items we're actually submitting
             if (item.candidates.empty()) {
                 item.status = "No import factory available.";
                 continue;
@@ -597,8 +597,8 @@ namespace GLT::editor {
 
         m_imports_pending = static_cast<u32>(jobs.size());
 
-        // NOTE: `this` is captured. The window lives as long as the editor layer (see event subscription), so this stays valid. 
-        // If windows ever become transient, swap in a weak handle.
+        // NOTE: `this` is captured. The window lives as long as the editor layer (see event subscription), so this stays valid
+        // If windows ever become transient, swap in a weak handle
         for (auto& j : jobs) {
 
             GLT::thread_pool::push([this, registry, j = std::move(j)]() {
@@ -616,8 +616,11 @@ namespace GLT::editor {
                             if (result) {
                                 it.status = "Imported.";
                                 it.imported = true;
-                            } else
-                                it.status = std::string("Failed (") + std::to_string(static_cast<int>(result.error())) + ")";
+                            } else {
+
+                                it.status = std::string("Failed the import: [") + GLT::util::enum_to_string(result.error()) + "]";
+                                LOG(warn, "{}", it.status)
+                            }
 
                             break;
                         }

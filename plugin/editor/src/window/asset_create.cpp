@@ -201,7 +201,7 @@ namespace GLT::editor {
                 [&]() {
 
                     std::string ext_hint = ".";
-                    ext_hint += GLT::asset::extension_for_type(m_target_type);
+                    ext_hint += GLT::asset::type_to_extension(m_target_type);
                     const f32 ext_w = ImGui::CalcTextSize(ext_hint.c_str()).x + 8.0f;
 
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ext_w - style.ItemSpacing.x);
@@ -225,7 +225,7 @@ namespace GLT::editor {
                     name_only.replace_extension("");
                     if (!name_only.empty()) {
                         name_only += ".";
-                        name_only += GLT::asset::extension_for_type(m_target_type);
+                        name_only += GLT::asset::type_to_extension(m_target_type);
                     }
                     const std::filesystem::path preview = m_target_dir / name_only;
 
@@ -265,7 +265,7 @@ namespace GLT::editor {
 
             std::string full = filename.generic_string();
             full += ".";
-            full += GLT::asset::extension_for_type(m_target_type);
+            full += GLT::asset::type_to_extension(m_target_type);
             filename = full;
 
             const std::filesystem::path abs_target = m_target_dir / filename;
@@ -359,7 +359,7 @@ namespace GLT::editor {
         std::filesystem::path filename = m_name_buffer;
         filename.replace_extension("");
         filename += ".";
-        filename += GLT::asset::extension_for_type(m_target_type);
+        filename += GLT::asset::type_to_extension(m_target_type);
 
         const std::filesystem::path abs_target = m_target_dir / filename;
         const std::filesystem::path rel_target = GLT::project::extract_path_from_project_content_dir(abs_target);

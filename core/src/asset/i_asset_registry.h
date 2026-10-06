@@ -75,6 +75,23 @@ namespace GLT::asset {
         // @param path  CAUTION - this uses a content dir relative path (PROJECT_CONTENT_DIR / path)
         [[nodiscard]] virtual GLT::asset::handle find(const std::filesystem::path& path) const = 0;
 
+        // relocation --------------------------------------------------------------------------------------------------
+
+        // Move a file OR directory tree within the content directory. If a loaded asset was registered at [from], its slot's canonical path,
+        // virtual_path, and the m_by_path index are updated atomically. Directory moves rewrite the canonical path of every loaded asset
+        // under [from], plus any matching m_source_index entries
+        //
+        // Callers that just want to rename a folder on disk should still route through here when a loaded asset might be inside it
+        // otherwise the registry will happily hand out stale handles that point at the old path
+        //
+        // NOTE: this does NOT re-serialize dependent assets. In-session, dependents resolve by ID (m_by_id fast path in load_unlocked) so
+        // nothing breaks. On cold start, a dependent's baked-in on-disk dep path will be stale; callers should re-save dependents
+        // (query them, or just fire a bulk save) if that matters
+        //
+        // @param from,to  CAUTION - content dir relative paths (PROJECT_CONTENT_DIR / p)
+        [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> move(const std::filesystem::path& from,
+            const std::filesystem::path& to) = 0;
+
         // persistence -------------------------------------------------------------------------------------------------
 
         // Persist an in-memory asset that has no backing file yet. The registry takes ownership of `asset`, mints a fresh UUID

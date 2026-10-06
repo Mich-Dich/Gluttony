@@ -70,7 +70,7 @@ namespace GLT::UI {
 
     // Draws a picker bound to `in_out`. Returns true if the selection changed this frame (so callers can snapshot for undo).
     //
-    // The picker never asks the registry to enumerate anything. It walks the asset root for files matching extension_for_type(filter),
+    // The picker never asks the registry to enumerate anything. It walks the asset root for files matching type_to_extension(filter),
     // shows them in a popup, and only calls registry->load(path) when the user confirms a pick. 
     // Loading can fail - on failure the handle is left untouched.
     //

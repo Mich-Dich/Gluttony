@@ -181,30 +181,22 @@ namespace GLT::asset {
 
     // FUNCTION DECLARATION ============================================================================================
 
-    [[nodiscard]] constexpr std::string_view extension_for_type(GLT::asset::type t) noexcept {
-
-        using namespace core_types;
-        if (t == static_mesh || t == procedural_mesh || t == dynamic_mesh || 
-            t == skeletal_mesh || t == mesh_collection)             return "glt_mesh";
-        if (t == texture2D || t == texture3D || t == cube_map)      return "glt_texture";
-        if (t == material || t == material_instance)                return "glt_material";
-        if (t == audio)                                             return "glt_audio";
-        if (t == anim)                                              return "glt_anim";
-        if (t == light)                                             return "glt_light";
-        if (t == bvh)                                               return "glt_bvh";
-        if (t == volume)                                            return "glt_volume";
-        if (t == world)                                             return "glt_world";
-        if (t == world)                                             return "glt_world";
-        if (t == region)                                            return "glt_region";
-        return "glt_asset";
-    }
-
     // Engine-reserved lookup (uses core_types by default) -------------------------------------------------------------
 
-    FORCE_INLINE_R constexpr std::string_view type_to_string(const type& t) noexcept;
+    FORCE_INLINE_R constexpr std::string_view type_to_string(const type& type) noexcept;
 
 
     FORCE_INLINE_R constexpr std::optional<type> string_to_type(std::string_view str) noexcept;
+
+    // general usage ---------------------------------------------------------------------------------------------------
+
+    FORCE_INLINE_R constexpr std::string_view type_to_extension(GLT::asset::type type) noexcept;
+
+
+    FORCE_INLINE_R constexpr GLT::asset::type extension_to_type(std::string_view extension) noexcept;
+
+
+    // FORCE_INLINE_R GLT::asset::type extension_to_type(std::string_view extension) noexcept;
 
     // TEMPLATE DECLARATION ============================================================================================
 
@@ -219,7 +211,7 @@ namespace GLT::asset {
 
     // type  ->  name
     template <auto Namespace = ^^core_types>
-    FORCE_INLINE_R constexpr std::string_view type_to_string(const type& t);
+    FORCE_INLINE_R constexpr std::string_view type_to_string(const type& type);
 
 
     // name  ->  type
@@ -250,7 +242,7 @@ namespace std {
 
     template<>
     struct hash<GLT::asset::type> {
-        size_t operator()(const GLT::asset::type& t) const noexcept { return std::hash<u32>{}(t.value); }
+        size_t operator()(const GLT::asset::type& type) const noexcept { return std::hash<u32>{}(type.value); }
     };
 
 }

@@ -67,13 +67,30 @@ namespace GLT::editor {
     // Maps a file extension to the icon that should represent it in the browser.
     icon_manager::icon extension_to_icon(const std::string& ext);
 
-    // Categorizes a file by extension for the accent strip.
-    asset_category categorize_extension(const std::string& ext);
+    // Resolve the .glt_* extension on a browser entry to a live asset type.
+    // Goes through the registry first so plugin-registered types resolve too;
+    // falls back to the compile-time core-type table otherwise.
+    GLT::asset::type resolve_entry_type(std::string_view ext);
 
-    // Accent color for a category, chosen to read well against both the neutral cell background and the selection highlight.
-    ImU32 category_accent_color(asset_category cat);
+    // Accent colour for one asset type, ready to hand to ImDrawList.
+    ImU32 type_to_color(GLT::asset::type t);
+
+    // HSV -> packed opaque RGBA. h in [0, 360), s and v in [0, 1].
+    ImU32 hsv_to_u32(f32 h, f32 s, f32 v);
 
     std::vector<std::filesystem::path> list_subdirectories(const std::filesystem::path& dir);
+
+    std::vector<std::filesystem::path> parse_drag_payload_impl(const ImGuiPayload* payload);
+
+    // Greedy 2-line wrap for a filename cell.
+    //
+    // Break points are the usual "word separator" characters: whitespace, and punctuation that people use to join words inside
+    // a single identifier ("my-long-asset", "wall_tile_01", "v2.3.4"). We pick the LAST break character whose prefix still fits
+    // on line 1 — that keeps line 1 as full as possible, and line 2 carries the leftover
+    //
+    // If no break character fits on line 1, we fall back to a hard character chop
+    // If line 2 still doesn't fit, it's truncated with a trailing "..."
+    void wrap_to_two_lines(std::string_view text, const f32 max_width, std::string& out_line1, std::string& out_line2);
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
@@ -94,77 +111,148 @@ namespace GLT::editor {
 
     icon_manager::icon extension_to_icon(const std::string& ext) {
 
-        switch (categorize_extension(ext)) {
+        // Fast path: this is a ".glt_*" asset file.
+        const GLT::asset::type t = resolve_entry_type(ext);
+        if (t != GLT::asset::core_types::invalid) {
 
-            case asset_category::image:     return icon_manager::icon::texture_big;
-            case asset_category::world:     return icon_manager::icon::world;
-            case asset_category::source:    return icon_manager::icon::script_big;
-            case asset_category::material:  return icon_manager::icon::material_big;
-            case asset_category::mesh:      return icon_manager::icon::mesh_asset_big;
-            case asset_category::config:    return icon_manager::icon::settings;
-            case asset_category::audio:     return icon_manager::icon::file_big;      // TODO: dedicated icon
-            default:                        return icon_manager::icon::file_big;
+            switch (t.value) {
+
+                case GLT::asset::core_types::texture2D.value:           [[fallthrough]];
+                case GLT::asset::core_types::texture3D.value:           [[fallthrough]];
+                case GLT::asset::core_types::cube_map.value:            return icon_manager::icon::texture_big;
+
+                case GLT::asset::core_types::world.value:               [[fallthrough]];
+                case GLT::asset::core_types::region.value:              return icon_manager::icon::world;
+
+                case GLT::asset::core_types::material.value:            [[fallthrough]];
+                case GLT::asset::core_types::material_instance.value:   return icon_manager::icon::material_big;
+
+                case GLT::asset::core_types::static_mesh.value:         [[fallthrough]];
+                case GLT::asset::core_types::procedural_mesh.value:     [[fallthrough]];
+                case GLT::asset::core_types::dynamic_mesh.value:        [[fallthrough]];
+                case GLT::asset::core_types::skeletal_mesh.value:       [[fallthrough]];
+                case GLT::asset::core_types::mesh_collection.value:     return icon_manager::icon::mesh_asset_big;
+
+                case GLT::asset::core_types::audio.value:               return icon_manager::icon::file_big;    // TODO: dedicated audio icon
+                default:                                                return icon_manager::icon::file_big;
+            }
         }
-    }
 
-
-    asset_category categorize_extension(const std::string& ext) {
-
-        // Images
-        if (ext == ".png"  || ext == ".jpg"  || ext == ".jpeg" ||
-            ext == ".bmp"  || ext == ".tga"  || ext == ".hdr"  ||
-            ext == ".psd"  || ext == ".gif"  || ext == ".pic"  || ext == ".pnm")
-            return asset_category::image;
-
-        // Worlds / levels
-        if (ext == ".world" || ext == ".scene" || ext == ".level" || ext == ".map")
-            return asset_category::world;
-
-        // Source code, shaders, scripts
+        // Not an asset — source code / shaders / scripts that live in the content dir but were never imported
+        // These still deserve a distinct icon
         if (ext == ".glsl" || ext == ".vert"  || ext == ".frag" || ext == ".comp" ||
             ext == ".cpp"  || ext == ".c"     || ext == ".h"    || ext == ".hpp"  ||
             ext == ".inl"  || ext == ".py"    || ext == ".cs"   || ext == ".lua")
-            return asset_category::source;
+            return icon_manager::icon::script_big;
 
-        // Materials
-        if (ext == ".mat" || ext == ".material" || ext == ".matinst")
-            return asset_category::material;
-
-        // Meshes
-        if (ext == ".gltf" || ext == ".glb"  || ext == ".obj" ||
-            ext == ".fbx"  || ext == ".dae"  || ext == ".ply" || ext == ".stl")
-            return asset_category::mesh;
-
-        // Config / data
-        if (ext == ".json" || ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
-            ext == ".xml"  || ext == ".ini"  || ext == ".cfg")
-            return asset_category::config;
-
-        // Audio
-        if (ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac")
-            return asset_category::audio;
-
-        return asset_category::other;
+        return icon_manager::icon::file_big;
     }
 
 
-    ImU32 category_accent_color(asset_category cat) {
+    GLT::asset::type resolve_entry_type(std::string_view ext) {
 
-        // Palette is deliberately desaturated: these hues need to sit
-        // quietly next to a thumbnail or a folder icon without competing
-        // for attention. Alphas are near-opaque so the strip stays legible
-        // on top of the selection highlight.
-        switch (cat) {
+        // Strip a leading '.' — the browser stores extensions with it, the registry's type_from_name() doesn't want it
+        if (!ext.empty() && ext.front() == '.')
+            ext.remove_prefix(1);
 
-            case asset_category::image:     return IM_COL32( 91, 155, 213, 100);  // soft blue
-            case asset_category::world:     return IM_COL32(224, 136,  64, 100);  // warm orange
-            case asset_category::source:    return IM_COL32(103, 194, 106, 100);  // fresh green
-            case asset_category::material:  return IM_COL32(176, 107, 216, 100);  // muted violet
-            case asset_category::mesh:      return IM_COL32( 77, 194, 194, 100);  // teal
-            case asset_category::config:    return IM_COL32(224, 192,  70, 100);  // amber
-            case asset_category::audio:     return IM_COL32(224, 122, 138, 100);  // salmon
-            default:                        return IM_COL32(140, 140, 140, 100);  // neutral gray
+        if (ext.size() <= 4 || ext.substr(0, 4) != "glt_")
+            return GLT::asset::core_types::invalid;
+
+        // Plugin types live in the registry's runtime name map, not in the
+        // compile-time reflection table. Ask it first, fall back to the constexpr core resolver
+        if (auto registry = GLT::asset::registry::get_ref()) {
+            if (auto t = registry->type_from_name(ext.substr(4)))
+                return *t;
         }
+
+        return GLT::asset::extension_to_type(ext);
+    }
+
+
+    ImU32 hsv_to_u32(const f32 h, const f32 s, const f32 v) {
+
+        const f32 c  = v * s;
+        const f32 hp = h / 60.0f;
+        const f32 x  = c * (1.0f - std::fabs(std::fmod(hp, 2.0f) - 1.0f));
+        const int i  = static_cast<int>(hp) % 6;
+
+        f32 r = 0.0f, g = 0.0f, b = 0.0f;
+        switch (i) {
+            case 0: r = c; g = x; break;
+            case 1: r = x; g = c; break;
+            case 2: g = c; b = x; break;
+            case 3: g = x; b = c; break;
+            case 4: r = x; b = c; break;
+            case 5: r = c; b = x; break;
+        }
+
+        const f32 m = v - c;
+        return IM_COL32(
+            static_cast<int>((r + m) * 255.0f + 0.5f),
+            static_cast<int>((g + m) * 255.0f + 0.5f),
+            static_cast<int>((b + m) * 255.0f + 0.5f),
+            255);
+    }
+
+
+    ImU32 type_to_color(const GLT::asset::type t) {
+
+        // Core types get a hand-tuned hue. Value is pinned at 1.0 (full brightness) and alpha at 255 (fully opaque)
+        // the accent strip is meant to be read, not blended into the background
+        //
+        // Saturation is kept moderate so no colour comes out neon. Adjacent flavours within a family (e.g. the five mesh variants)
+        // share a hue band but sit a few degrees apart so they're still distinguishable
+        if (t.value < GLT::asset::CUSTOM_TYPE_BEGIN) {
+
+            f32 h = 0.0f, s = 0.55f;
+
+            switch (t.value) {
+
+                // meshes — cyan / teal family
+                case GLT::asset::core_types::static_mesh.value:         h = 185.0f; s = 0.55f; break;
+                case GLT::asset::core_types::procedural_mesh.value:     h = 200.0f; s = 0.50f; break;
+                case GLT::asset::core_types::dynamic_mesh.value:        h = 215.0f; s = 0.55f; break;
+                case GLT::asset::core_types::skeletal_mesh.value:       h = 170.0f; s = 0.55f; break;
+                case GLT::asset::core_types::mesh_collection.value:     h = 155.0f; s = 0.50f; break;
+
+                // textures — blue family
+                case GLT::asset::core_types::texture2D.value:           h = 210.0f; s = 0.55f; break;
+                case GLT::asset::core_types::texture3D.value:           h = 225.0f; s = 0.55f; break;
+                case GLT::asset::core_types::cube_map.value:            h = 240.0f; s = 0.50f; break;
+
+                // materials — violet / purple family
+                case GLT::asset::core_types::material.value:            h = 280.0f; s = 0.50f; break;
+                case GLT::asset::core_types::material_instance.value:   h = 300.0f; s = 0.50f; break;
+
+                // worlds — warm orange family
+                case GLT::asset::core_types::world.value:               h =  30.0f; s = 0.65f; break;
+                case GLT::asset::core_types::region.value:              h =  45.0f; s = 0.60f; break;
+
+                // audio — pink / salmon
+                case GLT::asset::core_types::audio.value:               h = 340.0f; s = 0.55f; break;
+
+                // assorted
+                case GLT::asset::core_types::anim.value:                h = 120.0f; s = 0.55f; break;
+                case GLT::asset::core_types::light.value:               h =  55.0f; s = 0.60f; break;
+                case GLT::asset::core_types::bvh.value:                 h =   0.0f; s = 0.45f; break;
+                case GLT::asset::core_types::volume.value:              h = 130.0f; s = 0.45f; break;
+
+                // "invalid" and anything else in the reserved range: neutral grey. `s = 0` means the hue is irrelevant
+                default:                        h =   0.0f; s = 0.00f; break;
+            }
+
+            return hsv_to_u32(h, s, 1.0f);
+        }
+
+        // Plugin type. The registry hands out ids sequentially from CUSTOM_TYPE_BEGIN, so multiplying by the golden-ratio
+        // conjugate and taking the fractional part gives a low-discrepancy walk of the hue circle: consecutive ids land far
+        // apart, and ids that are powers of two apart also land far apart — no clustering like a plain hash can produce
+        constexpr f32 GOLDEN_CONJ = 0.6180339887498948f;
+
+        const f32 frac = static_cast<f32>(t.value) * GOLDEN_CONJ;
+        const f32 hue  = (frac - std::floor(frac)) * 360.0f;
+
+        return hsv_to_u32(hue, 0.55f, 1.0f);
     }
 
 
@@ -184,6 +272,156 @@ namespace GLT::editor {
         return out;
     }
 
+
+    std::vector<std::filesystem::path> parse_drag_payload_impl(const ImGuiPayload* payload) {
+
+        std::vector<std::filesystem::path> out;
+        if (!payload || !payload->Data || payload->DataSize <= 0)
+            return out;
+
+        const char* p = static_cast<const char*>(payload->Data);
+        const char* end = p + payload->DataSize;
+        const char* line_begin = p;
+        while (p < end) {
+
+            const char c = *p;
+            if (c == '\n' || c == '\0') {
+
+                if (p > line_begin)
+                    out.emplace_back(std::string(line_begin, p));
+                line_begin = p + 1;
+            }
+            p++;
+        }
+        if (line_begin < end)
+            out.emplace_back(std::string(line_begin, end));
+
+        return out;
+    }
+
+
+    // Greedy 2-line wrap for a filename cell.
+    //
+    // Break points are the usual "word separator" characters: whitespace, and punctuation that people use to join words inside
+    // a single identifier ("my-long-asset", "wall_tile_01", "v2.3.4"). We pick the LAST break character whose prefix still fits
+    // on line 1 — that keeps line 1 as full as possible, and line 2 carries the leftover
+    //
+    // If no break character fits on line 1, we fall back to a hard character chop
+    // If line 2 still doesn't fit, it's truncated with a trailing "..."
+    void wrap_to_two_lines(std::string_view text, const f32 max_width, std::string& out_line1, std::string& out_line2) {
+
+        out_line1.clear();
+        out_line2.clear();
+
+        if (text.empty())
+            return;
+
+        auto width_of = [](std::string_view s) {
+            return ImGui::CalcTextSize(s.data(), s.data() + s.size()).x;
+        };
+        auto fits = [&](std::string_view s) { return width_of(s) <= max_width; };
+
+        // Fast path: single line.
+        if (fits(text)) {
+            out_line1.assign(text);
+            return;
+        }
+
+        const f32 ellipsis_w = ImGui::CalcTextSize("...").x;
+
+        // Which characters count as a preferred break?
+        //
+        // Whitespace and "joining" punctuation are both fair game. We deliberately
+        // exclude '.' when it looks like a file extension? No — that heuristic
+        // would need the caller's knowledge of what's an extension and what isn't,
+        // and dropping a break on ".",  for names like "v2.3.4" would just fall
+        // through to the hard-chop path. Keeping '.' as a break char is the
+        // lesser evil.
+        auto is_break = [](char c) {
+            switch (c) {
+                case ' ':  case '\t':
+                case '-':  case '_':
+                case '.':  case ',':
+                case '/':  case '\\':
+                case ':':  case ';':
+                case '+':  case '&':
+                case '|':  case '@':
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        // Scan left-to-right, remembering the last break whose prefix fits.
+        // Stop at the first break whose prefix does NOT fit — anything further
+        // right can only be wider, so it can't fit either.
+        size_t best_break = std::string_view::npos;
+        for (size_t i = 0; i < text.size(); ++i) {
+
+            if (!is_break(text[i]))
+                continue;
+
+            if (fits(text.substr(0, i + 1)))
+                best_break = i;
+            else
+                break;
+        }
+
+        auto truncate_with_ellipsis = [&](std::string_view s, std::string& out) {
+            size_t n = s.size();
+            while (n > 0) {
+                const std::string_view candidate = s.substr(0, n);
+                if (width_of(candidate) + ellipsis_w <= max_width)
+                    break;
+                --n;
+            }
+            out.assign(s.substr(0, n));
+            if (n < s.size())
+                out += "...";
+        };
+
+        std::string_view rest;
+
+        if (best_break == std::string_view::npos) {
+
+            // No usable break point anywhere on line 1 — hard-chop to the widest
+            // prefix that fits and let the rest flow to line 2.
+            size_t n = text.size();
+            while (n > 1 && !fits(text.substr(0, n)))
+                --n;
+
+            out_line1.assign(text.substr(0, n));
+            rest = text.substr(n);
+
+        } else {
+
+            const char brk = text[best_break];
+            const bool is_whitespace = (brk == ' ' || brk == '\t');
+
+            // Whitespace breaks are "consumed" — we drop the trailing space from
+            // line 1 so it doesn't skew the centred layout. Other break chars
+            // (hyphen, underscore, dot, …) stay attached to line 1 so the two
+            // halves still read as a joined identifier: "my-long" / "asset-name"
+            // is clearer than "my" / "-long-asset-name".
+            const size_t line1_end = is_whitespace ? best_break : best_break + 1;
+
+            out_line1.assign(text.substr(0, line1_end));
+            rest = text.substr(best_break + 1);
+        }
+
+        // Strip any leading whitespace left over from the split, otherwise line 2
+        // inherits a stray gap that misaligns the centred render.
+        while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t'))
+            rest.remove_prefix(1);
+
+        if (rest.empty())
+            return;
+
+        if (fits(rest))
+            out_line2.assign(rest);
+        else
+            truncate_with_ellipsis(rest, out_line2);
+    }
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -495,6 +733,7 @@ namespace GLT::editor {
 
     void content_browser_window::draw_file_view() {
 
+        m_any_item_drop_target_active = false;
         const std::string filter = m_search_buffer;
         const f32 avail = ImGui::GetContentRegionAvail().x;
         const i32 columns = std::max(1, static_cast<i32>(std::floor(avail / CELL_WIDTH) - 1));
@@ -518,9 +757,27 @@ namespace GLT::editor {
         if (!any)
             ImGui::TextDisabled(filter.empty() ? "(empty)" : "(no matches)");
 
-        // Click on empty space (no item hovered) clears the selection.
-        // Modifier keys suppress this so Ctrl/Shift+click on empty space
-        // does nothing unexpected.
+        // Background drop target. We allocate the item only while a drag is in flight, so normal clicks fall through to the grid and
+        // the "click on empty space clears selection" path below still works
+        if (!m_any_item_drop_target_active && ImGui::GetDragDropPayload() != nullptr) {
+
+            const ImVec2 remaining = ImGui::GetContentRegionAvail();
+            if (remaining.x > 0.0f && remaining.y > 0.0f) {
+
+                ImGui::InvisibleButton("##cb_bg_drop", remaining);
+                if (ImGui::BeginDragDropTarget()) {
+
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(DRAG_PAYLOAD_ID)) {
+                        const auto sources = parse_drag_payload_impl(payload);
+                        move_assets_to(sources, m_current_dir);
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+            }
+        }
+
+        // Click on empty space (no item hovered) clears the selection
+        // Modifier keys suppress this so Ctrl/Shift+click on empty space does nothing unexpected
         const ImGuiIO& io = ImGui::GetIO();
         if (ImGui::IsWindowHovered() 
             && !ImGui::IsAnyItemHovered() 
@@ -531,7 +788,7 @@ namespace GLT::editor {
             clear_selection();
         }
 
-        // Right-click on empty space.
+        // Right-click on empty space
         if (ImGui::BeginPopupContextWindow("##cb_bg", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
 
             draw_background_context_menu();
@@ -552,9 +809,8 @@ namespace GLT::editor {
 
         if (interaction == UI::mouse_interation::left_double_clicked) {
 
-            // Double-click: reduce to a single selection, then act on it.
-            // We deliberately ignore Ctrl/Shift here - the second click of
-            // a double should not toggle the item back off or extend a range.
+            // Double-click: reduce to a single selection, then act on it
+            // We deliberately ignore Ctrl/Shift here - the second click of a double should not toggle the item back off or extend a range
             select_single(entry.path);
 
             if (entry.is_directory)
@@ -562,8 +818,6 @@ namespace GLT::editor {
 
             else {
 
-                // Ask the registry what a file with this extension actually maps to. If nothing does, fall back to 
-                // the informational category - the editor will log "no editor registered" rather than silently open the wrong thing.
                 GLT::asset::type resolved = GLT::asset::core_types::invalid;
                 const auto project_relative_path = GLT::project::extract_path_from_project_content_dir(entry.path);
                 if (auto registry = GLT::asset::registry::get_ref()) {
@@ -578,7 +832,7 @@ namespace GLT::editor {
 
         } else if(button) {
 
-            // Single click: apply the modifier-aware selection policy.
+            // Single click: apply the modifier-aware selection policy
             const ImGuiIO& io = ImGui::GetIO();
             const bool ctrl  = io.KeyCtrl;
             const bool shift = io.KeyShift;
@@ -603,12 +857,9 @@ namespace GLT::editor {
             draw->AddRectFilled(origin, cell_max, IM_COL32(90, 90, 90, 120), 4.0f);
 
         // file type accent --------------------------------------------------------------------------------------------
-        // A thin colored strip along the bottom edge of the cell identifies the
-        // file's category at a glance. Folders are skipped - their icon already
-        // communicates what they are, and striping them would just add noise.
         if (!entry.is_directory) {
 
-            const ImU32 accent = category_accent_color(categorize_extension(entry.extension));
+            const ImU32 accent = type_to_color(resolve_entry_type(entry.extension));
 
             constexpr f32 STRIP_HEIGHT  = 2.5f;
             constexpr f32 STRIP_INSET_X = 6.0f;
@@ -627,7 +878,6 @@ namespace GLT::editor {
             const auto thumb = icon_manager::get_thumbnail(entry.path);
             if (thumb.state == icon_manager::thumbnail_state::ready && thumb.image_size.x > 0.0f) {
 
-                // Fit the thumbnail into the icon render box, preserving aspect ratio.
                 const f32 scale = std::min(ICON_RENDER_SIZE / thumb.image_size.x, ICON_RENDER_SIZE / thumb.image_size.y);
                 const f32 draw_w = thumb.image_size.x * scale;
                 const f32 draw_h = thumb.image_size.y * scale;
@@ -659,23 +909,84 @@ namespace GLT::editor {
             }
         }
 
-        // filename, clipped to the cell -------------------------------------------------------------------------------
-        draw->PushClipRect(ImVec2(origin.x + 10.f, origin.y), ImVec2(cell_max.x - 10.f, cell_max.y), true);
-        const ImVec2 name_size = ImGui::CalcTextSize(entry.name.c_str());
-        const f32    name_x    = origin.x + std::max(2.0f, (cell_size.x - name_size.x) * 0.5f);
-        const f32    name_y    = origin.y + cell_size.y - LABEL_BOTTOM_MARGIN;
-        draw->AddText(ImVec2(name_x, name_y), IM_COL32_WHITE, entry.name.c_str());
+        // filename, wrapped to at most two lines ----------------------------------------------------------------------
+
+        // We do our own wrap so a long name renders as two centred lines ending in "..." rather than being silently clipped
+        // The clip rect keeps any accidental overhang inside the cell bounds
+        constexpr f32 NAME_PAD_X      = 8.0f;
+        constexpr f32 NAME_PAD_BOTTOM = 3.0f;
+
+        const f32 name_max_w = cell_size.x - 2.0f * NAME_PAD_X;
+        const f32 line_h     = ImGui::GetTextLineHeight();
+
+        std::string name_line1;
+        std::string name_line2;
+        wrap_to_two_lines(entry.name, name_max_w, name_line1, name_line2);
+
+        draw->PushClipRect(
+            ImVec2(origin.x + NAME_PAD_X, origin.y),
+            ImVec2(cell_max.x - NAME_PAD_X, cell_max.y),
+            true);
+
+        auto draw_line_centered = [&](const std::string& s, const f32 y) {
+            if (s.empty())
+                return;
+            const f32 w = ImGui::CalcTextSize(s.c_str()).x;
+            const f32 x = origin.x + std::max(2.0f, (cell_size.x - w) * 0.5f);
+            draw->AddText(ImVec2(x, y), IM_COL32_WHITE, s.c_str());
+        };
+
+        if (name_line2.empty()) {
+
+            // Single line: bottom-aligned as before
+            draw_line_centered(name_line1, cell_max.y - NAME_PAD_BOTTOM - line_h);
+
+        } else {
+
+            // Two lines: bottom-align the block so the pair stays pinned to the bottom of the cell regardless of text metrics
+            const f32 y1 = cell_max.y - NAME_PAD_BOTTOM - 2.0f * line_h;
+            const f32 y2 = y1 + line_h;
+            draw_line_centered(name_line1, y1);
+            draw_line_centered(name_line2, y2);
+        }
+
         draw->PopClipRect();
 
         // drag source -------------------------------------------------------------------------------------------------
-        // If the dragged item is part of the current multi-selection, drag
-        // only that item for now - see notes at the bottom of the message.
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
 
-            const std::string path_str = entry.path.string();
-            ImGui::SetDragDropPayload(DRAG_PAYLOAD_ID, path_str.c_str(), path_str.size() + 1); // include null terminator
-            ImGui::TextUnformatted(entry.name.c_str());
+            std::string payload;
+            const bool drag_multi = is_selected(entry.path) && m_selected_paths.size() > 1;
+
+            if (drag_multi) {
+                for (size_t i = 0; i < m_selected_paths.size(); ++i) {
+                    if (i) payload += '\n';
+                    payload += m_selected_paths[i].string();
+                }
+            } else {
+                payload = entry.path.string();
+            }
+
+            ImGui::SetDragDropPayload(DRAG_PAYLOAD_ID, payload.data(), payload.size());
+
+            if (drag_multi)
+                ImGui::Text("%zu items", m_selected_paths.size());
+            else
+                ImGui::TextUnformatted(entry.name.c_str());
+
             ImGui::EndDragDropSource();
+        }
+
+        // drop target (folders only) ----------------------------------------------------------------------------------
+        if (entry.is_directory && ImGui::BeginDragDropTarget()) {
+
+            m_any_item_drop_target_active = true;
+
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(DRAG_PAYLOAD_ID)) {
+                const auto sources = parse_drag_payload_impl(payload);
+                move_assets_to(sources, entry.path);
+            }
+            ImGui::EndDragDropTarget();
         }
 
         // per-item context menu ---------------------------------------------------------------------------------------
@@ -717,8 +1028,6 @@ namespace GLT::editor {
                 navigate_to(entry.path);
             else {
 
-                // Ask the registry what a file with this extension actually maps to. If nothing does, fall back to 
-                // the informational category - the editor will log "no editor registered" rather than silently open the wrong thing.
                 GLT::asset::type resolved = GLT::asset::core_types::invalid;
                 const auto project_relative_path = GLT::project::extract_path_from_project_content_dir(entry.path);
                 auto registry = GLT::asset::registry::get_ref();
@@ -738,6 +1047,8 @@ namespace GLT::editor {
             m_pending_rename_path = entry.path;
             std::snprintf(m_rename_buffer, sizeof(m_rename_buffer), "%s", entry.name.c_str());
             m_open_rename_popup = true;
+            m_rename_focus_pending = true;
+            m_rename_deletes_on_cancel  = false;
         }
 
         if (ImGui::MenuItem("Delete")) {
@@ -762,8 +1073,7 @@ namespace GLT::editor {
 
     void content_browser_window::draw_popups() {
 
-        // OpenPopup must be issued at the same ID-stack level as BeginPopupModal,
-        // so we defer it via flags set from the (deeper) context menus.
+        // OpenPopup must be issued at the same ID-stack level as BeginPopupModal, so we defer it via flags set from the (deeper) context menus
         if (m_open_rename_popup) {
             ImGui::OpenPopup("Rename##cb");
             m_open_rename_popup = false;
@@ -774,12 +1084,27 @@ namespace GLT::editor {
             m_open_delete_popup = false;
         }
 
+        // Both modals want to appear dead-centre of the main viewport. We recompute
+        // this every frame so a window resize (or docking change) re-centres them
+        // instead of leaving them stranded at their original screen pixel.
+        const ImVec2 viewport_center = ImGui::GetMainViewport()->GetCenter();
+
         // rename modal ------------------------------------------------------------------------------------------------
+        ImGui::SetNextWindowPos(viewport_center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Rename##cb", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 
             ImGui::TextUnformatted("New name:");
+
+            // One-shot focus grab. SetKeyboardFocusHere() applies to the next item in the same frame; AutoSelectAll selects
+            // the pre-filled text the moment focus lands
+            if (m_rename_focus_pending) {
+                ImGui::SetKeyboardFocusHere();
+                m_rename_focus_pending = false;
+            }
+
             ImGui::SetNextItemWidth(260.0f);
-            ImGui::InputText("##cb_rename", m_rename_buffer, sizeof(m_rename_buffer));
+            ImGui::InputText("##cb_rename", m_rename_buffer, sizeof(m_rename_buffer),
+                ImGuiInputTextFlags_AutoSelectAll);
 
             const bool confirm = ImGui::Button("OK", ImVec2(80, 0));
             ImGui::SameLine();
@@ -787,28 +1112,41 @@ namespace GLT::editor {
 
             if (confirm && m_rename_buffer[0] != '\0') {
 
-                std::error_code error{};
-                const auto target = m_pending_rename_path.parent_path() / m_rename_buffer;
-                if (!GLT::vfs::exists(target, error) && !error) {
-                    GLT::vfs::rename(m_pending_rename_path, target, error);
+                auto registry = GLT::asset::registry::get_ref();
+                if (registry) {
+                    const auto target = m_pending_rename_path.parent_path() / m_rename_buffer;
+                    if (auto res = registry->move(m_pending_rename_path, target); !res) {
+                        LOG(warn, "content_browser: rename [{}] -> [{}] failed (error {})",
+                            m_pending_rename_path.generic_string(), target.generic_string(), GLT::util::enum_to_string(res.error()));
+                    }
                 }
 
-                // If the renamed path was in the selection, drop it - the old
-                // path no longer refers to anything.
                 clear_selection();
-
                 m_pending_rename_path.clear();
+                m_rename_deletes_on_cancel = false;
                 m_entries_dirty = true;
                 ImGui::CloseCurrentPopup();
             }
+
             if (cancel) {
+
+                // If we're cancelling out of the modal that was auto-opened by create_folder(), take the placeholder with us so the user
+                // isn't left with a stray "New Folder"
+                if (m_rename_deletes_on_cancel) {
+                    std::error_code error{};
+                    GLT::vfs::remove_all(m_pending_rename_path, error);
+                    m_entries_dirty = true;
+                }
+
                 m_pending_rename_path.clear();
+                m_rename_deletes_on_cancel = false;
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
         }
 
         // delete modal ------------------------------------------------------------------------------------------------
+        ImGui::SetNextWindowPos(viewport_center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Delete##cb", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 
             const std::string name = m_pending_delete_path.filename().string();
@@ -977,7 +1315,7 @@ namespace GLT::editor {
 
             // TODO: create actual import wizard, currently just checking if file exits and the exiting -> need user input for the target location
             const std::filesystem::path target_path = m_current_dir / src.filename()
-                .replace_extension(std::string(".") + std::string(GLT::asset::extension_for_type(target)));
+                .replace_extension(std::string(".") + std::string(GLT::asset::type_to_extension(target)));
             std::error_code error{};
             VALIDATE(!GLT::vfs::exists(target_path, error) && !error, continue, 
                 "", "Asset under that name already exists [{}]", target_path.generic_string())
@@ -1024,6 +1362,14 @@ namespace GLT::editor {
         VALIDATE(!error, return, "", "content_browser: failed to create folder [{}]", candidate.generic_string())
 
         m_entries_dirty = true;
+
+        // Hand the freshly-created folder straight to the rename modal. The focus flag makes the input grab keyboard
+        // focus and pre-select the default name so the user can just start typing
+        m_pending_rename_path = candidate;
+        std::snprintf(m_rename_buffer, sizeof(m_rename_buffer), "%s", candidate.filename().string().c_str());
+        m_open_rename_popup = true;
+        m_rename_focus_pending = true;
+        m_rename_deletes_on_cancel  = true;
     }
 
 
@@ -1034,7 +1380,7 @@ namespace GLT::editor {
 
         // The picker speaks project-relative paths; m_current_dir is absolute. extract_path_from_project_content_dir gives us the registry's dialect
         const std::string stem = "New Material";
-        const std::string ext  = "." + std::string(GLT::asset::extension_for_type(GLT::asset::core_types::material));
+        const std::string ext  = "." + std::string(GLT::asset::type_to_extension(GLT::asset::core_types::material));
 
         std::filesystem::path relative_target{};
         std::error_code error{};
@@ -1087,6 +1433,69 @@ namespace GLT::editor {
 
         // Open the editor. Same event the double-click path uses, so the registry lookup, docking, and editor dispatch all stay consistent
         GLT::event_bus::post(asset_open_event{ GLT::asset::core_types::material, relative_target });
+    }
+
+
+    std::vector<std::filesystem::path> content_browser_window::parse_drag_payload(const ImGuiPayload* payload) { 
+
+        return parse_drag_payload_impl(payload); 
+    }
+
+
+    void content_browser_window::move_assets_to(const std::vector<std::filesystem::path>& sources, const std::filesystem::path& target_dir) {
+
+        if (sources.empty())
+            return;
+
+        auto registry = GLT::asset::registry::get_ref();
+        VALIDATE(registry, return, "", "content_browser: no asset registry");
+
+        bool any_moved = false;
+
+        for (const auto& src : sources) {
+
+            const auto name = src.filename();
+            if (name.empty())
+                continue;
+
+            const auto dst = target_dir / name;
+            if (paths_equal(src, dst))
+                continue;   // no-op
+
+            // Refuse moving a directory into its own subtree
+            std::error_code error{};
+            if (GLT::vfs::is_directory(src, error) && !error) {
+
+                const auto src_norm = src.lexically_normal();
+                const auto dst_norm = dst.lexically_normal();
+                auto si = src_norm.begin();
+                auto di = dst_norm.begin();
+                bool inside = true;
+                for (; si != src_norm.end(); ++si, ++di) {
+                    if (di == dst_norm.end() || *si != *di) {
+                        inside = false;
+                        break;
+                    }
+                }
+                if (inside)
+                    continue;
+            }
+
+            if (auto res = registry->move(src, dst); !res) {
+                LOG(warn, "content_browser: failed to move [{}] -> [{}] (error {})", src.generic_string(), dst.generic_string(), 
+                    static_cast<int>(res.error()));
+                continue;
+            }
+
+            LOG(info, "content_browser: moved [{}] -> [{}]", src.generic_string(), dst.generic_string());
+            any_moved = true;
+        }
+
+        if (any_moved) {
+            // Selection points at paths that no longer exist
+            clear_selection();
+            m_entries_dirty = true;
+        }
     }
 
 }

@@ -10,6 +10,8 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
+struct ImGuiPayload;
+
 namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
@@ -117,22 +119,26 @@ namespace GLT::editor {
         void create_folder();
         void create_material();
 
-        std::filesystem::path                                       m_content_dir{};    // Immutable root of the content tree.
-        std::filesystem::path                                       m_current_dir{};    // Directory currently shown on the right.
+        // Parse a drag payload produced by draw_file_item(). Newline-separated, null-terminated-or-not (we accept both)
+        static std::vector<std::filesystem::path> parse_drag_payload(const ImGuiPayload* payload);
 
-        // Fixed-size history buffer. Entries [0, m_history_size) are valid;
-        // m_history_index points at the "current" entry (the one m_current_dir
-        // matches). When the buffer is full, pushing a new entry drops the
-        // oldest by shifting.
+        // Move every path in `sources` into `target_dir` via the registry. Handles single files, folders, and the "self-nesting" guard
+        void move_assets_to(const std::vector<std::filesystem::path>& sources, const std::filesystem::path& target_dir);
+
+
+        std::filesystem::path                                       m_content_dir{};    // Immutable root of the content tree
+        std::filesystem::path                                       m_current_dir{};    // Directory currently shown on the right
+
+        // Fixed-size history buffer. Entries [0, m_history_size) are valid; m_history_index points at the "current" entry
+        // (the one m_current_dir matches). When the buffer is full, pushing a new entry drops the oldest by shifting
         std::array<std::filesystem::path, k_history_capacity>       m_history{};
         i32                                                         m_history_size = 0;
         i32                                                         m_history_index = -1;
 
-        std::vector<dir_entry>                                      m_entries{};        // Cached children of m_current_dir.
+        std::vector<dir_entry>                                      m_entries{};        // Cached children of m_current_dir
         bool                                                        m_entries_dirty = true;
 
-        // Selection state. m_selected_paths holds every selected path;
-        // m_selection_anchor is the item that Shift+click extends from.
+        // Selection state. m_selected_paths holds every selected path; m_selection_anchor is the item that Shift+click extends from
         std::vector<std::filesystem::path>                          m_selected_paths{};
         std::filesystem::path                                       m_selection_anchor{};
 
@@ -145,6 +151,18 @@ namespace GLT::editor {
         bool                                                        m_open_delete_popup = false;
 
         handle                                                      m_file_event_sub_handle{};
+
+        // Set by draw_file_item() when a folder cell's drop target is being hovered this frame. Used to keep the empty-space
+        // drop target from stealing the drop when the user actually released over a folder
+        bool                                                        m_any_item_drop_target_active = false;
+
+        // When the rename popup opens, grab keyboard focus and select-all on the first frame only
+        // Set to true by the creator, cleared by the modal
+        bool                                                        m_rename_focus_pending = false;
+
+        // True when the rename modal is fronting a just-created folder — Cancel then deletes the placeholder
+        // rather than leaving a "New Folder" behind
+        bool                                                        m_rename_deletes_on_cancel = false;
 
     };
 

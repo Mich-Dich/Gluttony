@@ -155,7 +155,7 @@ namespace GLT::UI {
         };
 
 
-        std::string extension_for(GLT::asset::type t) { return std::string(GLT::asset::extension_for_type(t)); }
+        std::string extension_for(GLT::asset::type t) { return std::string(GLT::asset::type_to_extension(t)); }
 
 
         // Resolve a chosen path to a handle, going through the registry so that hot-reload and refcounting stay consistent.

@@ -181,7 +181,7 @@ namespace GLT::asset::registry_default {
     std::filesystem::path default_output_path(const std::filesystem::path& source, GLT::asset::type target) {
 
         std::filesystem::path p = source;
-        p.replace_extension(std::string(".") + std::string(GLT::asset::extension_for_type(target)));
+        p.replace_extension(std::string(".") + std::string(GLT::asset::type_to_extension(target)));
         return p;
     }
 
@@ -455,7 +455,122 @@ namespace GLT::asset::registry_default {
 
         return it->second;
     }
-    
+
+    // relocation ------------------------------------------------------------------------------------------------------
+
+    std::expected<void, GLT::asset::load_error> plugin::move(const std::filesystem::path& from, const std::filesystem::path& to) {
+
+        // Normalize on both sides so the prefix match below is reliable.
+        auto from_rel = GLT::project::to_content_relative(from).lexically_normal();
+        auto to_rel   = GLT::project::to_content_relative(to).lexically_normal();
+        if (from_rel.empty() || to_rel.empty())
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
+        const auto abs_from = (PROJECT_CONTENT_DIR / from_rel).lexically_normal();
+        const auto abs_to = (PROJECT_CONTENT_DIR / to_rel).lexically_normal();
+
+        std::error_code error{};
+        if (!GLT::vfs::exists(abs_from, error) || error)
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
+        // Case-only rename on Windows: exists() is case-insensitive, so it reports the target as already present. equivalent() tells us it's the same file
+        bool target_claimed = GLT::vfs::exists(abs_to, error) && !error;
+        if (target_claimed) {
+            std::error_code eq_err{};
+            if (GLT::vfs::equivalent(abs_from, abs_to, eq_err) && !eq_err)
+                target_claimed = false;
+        }
+        if (target_claimed)
+            return std::unexpected{ GLT::asset::load_error::already_exists };
+
+        [[maybe_unused]] const bool is_dir = GLT::vfs::is_directory(abs_from, error);
+        if (error)
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
+        GLT::vfs::create_directories(abs_to.parent_path(), error);
+        if (error)
+            return std::unexpected{ GLT::asset::load_error::out_of_memory };
+
+        GLT::vfs::rename(abs_from, abs_to, error);
+        if (error)
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
+        // ---- in-memory bookkeeping, under the lock ---------------------------------------------------------------
+
+        std::unique_lock lock(m_mutex);
+
+        const std::string from_str = from_rel.generic_string();
+        const std::string to_str = to_rel.generic_string();
+        const std::string from_prefix = from_str + "/";
+        const std::string to_prefix = to_str + "/";
+
+        // Maps [from_str] -> [to_str], and any [<from_str>/...] -> [<to_str>/...]. Returns empty for unaffected paths
+        auto rewrite = [&](std::string_view old) -> std::string {
+            if (old == from_str)
+                return to_str;
+            if (old.size() > from_prefix.size() &&
+                old.compare(0, from_prefix.size(), from_prefix) == 0)
+                return to_prefix + std::string(old.substr(from_prefix.size()));
+            return {};
+        };
+
+        // m_by_path + slot paths. Can't mutate map keys in place, so collect first
+        {
+            std::vector<std::pair<std::string, GLT::asset::handle>> hits;
+            for (const auto& [key, h] : m_by_path)
+                if (!rewrite(key).empty())
+                    hits.emplace_back(key, h);
+
+            for (const auto& [old_key, h] : hits) {
+                slot* s = slot_for(h);
+                if (!s) { m_by_path.erase(old_key); continue; }
+
+                const std::string new_key = rewrite(old_key);
+                m_by_path.erase(old_key);
+
+                const std::filesystem::path new_path{ new_key };
+                s->canonical_path          = new_path;
+                s->asset_info.virtual_path = new_path;
+                m_by_path.emplace(new_key, h);
+            }
+        }
+
+        // m_source_index. BOTH the key (source path) and the value's output can be affected: a dropped .fbx inside the renamed dir
+        // moves its key, while the .glt_* it produced moves its output
+        {
+            struct pending { std::string old_key, new_key; source_record rec; };
+            std::vector<pending> todo;
+            todo.reserve(4);
+
+            for (const auto& [src_key, rec] : m_source_index) {
+                std::string new_key = rewrite(src_key);
+                std::string new_out = rewrite(rec.output.generic_string());
+
+                const bool key_moved = !new_key.empty();
+                const bool out_moved = !new_out.empty();
+                if (!key_moved && !out_moved)
+                    continue;
+
+                if (!key_moved)
+                    new_key = src_key;
+
+                if (!out_moved)
+                    new_out = rec.output.generic_string();
+
+                source_record updated = rec;
+                updated.output = std::filesystem::path{ std::move(new_out) };
+                todo.push_back(pending{ src_key, std::move(new_key), std::move(updated) });
+            }
+
+            for (auto& p : todo) {
+                m_source_index.erase(p.old_key);
+                m_source_index.emplace(std::move(p.new_key), std::move(p.rec));
+            }
+        }
+
+        return {};
+    }
+
     // persistence -----------------------------------------------------------------------------------------------------
 
     std::expected<GLT::asset::handle, GLT::asset::load_error>plugin::register_runtime(GLT::unique_ref<GLT::asset::i_runtime_asset> asset,
@@ -522,10 +637,10 @@ namespace GLT::asset::registry_default {
 
     // queries ---------------------------------------------------------------------------------------------------------
 
-    const info& plugin::info(GLT::asset::handle h) const {
+    const info& plugin::info(GLT::asset::handle handle) const {
 
         std::shared_lock lock(m_mutex);
-        if (const slot* s = slot_for(h)) 
+        if (const slot* s = slot_for(handle)) 
             return s->asset_info;
 
         static const GLT::asset::info empty{};
@@ -533,15 +648,15 @@ namespace GLT::asset::registry_default {
     }
 
 
-    GLT::asset::i_runtime_asset* plugin::data(GLT::asset::handle h) noexcept {
+    GLT::asset::i_runtime_asset* plugin::data(GLT::asset::handle handle) noexcept {
 
         std::shared_lock lock(m_mutex);
-        slot* s = slot_for(h);
+        slot* s = slot_for(handle);
         return s ? s->data.get() : nullptr;
     }
 
 
-    const GLT::asset::i_runtime_asset* plugin::data(GLT::asset::handle h) const noexcept { return const_cast<plugin*>(this)->data(h); }
+    const GLT::asset::i_runtime_asset* plugin::data(GLT::asset::handle handle) const noexcept { return const_cast<plugin*>(this)->data(handle); }
 
     // Handler registration --------------------------------------------------------------------------------------------
 

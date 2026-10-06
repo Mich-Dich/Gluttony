@@ -198,6 +198,11 @@ namespace GLT::asset::registry_default {
 
         [[nodiscard]] GLT::asset::handle find(const std::filesystem::path&) const override;
 
+        // relocation --------------------------------------------------------------------------------------------------
+
+        [[nodiscard]] std::expected<void, GLT::asset::load_error> move(
+            const std::filesystem::path& from, const std::filesystem::path& to) override;
+
         // persistence -------------------------------------------------------------------------------------------------
 
         [[nodiscard]] std::expected<GLT::asset::handle, GLT::asset::load_error> register_runtime(

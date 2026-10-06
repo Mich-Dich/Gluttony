@@ -539,7 +539,7 @@ namespace GLT::editor {
             .title = "Save World As",
             .default_name = has_handle ? world_name : "untitled_world",
             .default_dir = PROJECT_CONTENT_DIR / "world",
-            .extension = std::string(GLT::asset::extension_for_type(GLT::asset::core_types::world)),
+            .extension = std::string(GLT::asset::type_to_extension(GLT::asset::core_types::world)),
             .on_resolved = [world](const std::filesystem::path& chosen) {
     
                 if (chosen.empty())
