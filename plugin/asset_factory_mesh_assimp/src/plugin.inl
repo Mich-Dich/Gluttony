@@ -397,7 +397,7 @@ namespace GLT::asset::factory::mesh_assimp {
                 .type               = desc::kind::real,
                 .default_value      = "1.0",
                 .enumeration_values = "",
-                .tooltip            = "Uniform scale applied to all vertex positions after import. Use 0.01 for centimeters → meters, 0.0254 for inches → meters.",
+                .tooltip            = "Uniform scale applied to all vertex positions after import. Use 0.01 for centimeters -> meters, 0.0254 for inches -> meters.",
             },
             {   // 2
                 .key                = "use_file_units",
@@ -445,7 +445,7 @@ namespace GLT::asset::factory::mesh_assimp {
                 .type               = desc::kind::boolean,
                 .default_value      = "false",
                 .enumeration_values = "",
-                .tooltip            = "Swap U and V of UV0. Fixes textures that come in rotated 90° from certain exporters (Maya → glTF, some FBX presets).",
+                .tooltip            = "Swap U and V of UV0. Fixes textures that come in rotated 90° from certain exporters (Maya -> glTF, some FBX presets).",
             },
             {   // 8
                 .key                = "generate_lightmap_uvs",
@@ -584,7 +584,7 @@ namespace GLT::asset::factory::mesh_assimp {
             .payload_hash = hash,
         };
 
-        LOG(info, "mesh_assimp: [{}] → {} verts, {} tris, {} submeshes [scale={}, unit={}, weld={}, opt={}, nt={}, swap_uv={}, lmuv={}, q={}]",
+        LOG(info, "mesh_assimp: [{}] -> {} verts, {} tris, {} submeshes [scale={}, unit={}, weld={}, opt={}, nt={}, swap_uv={}, lmuv={}, q={}]",
             source.generic_string(), vertices.size(), indices.size() / 3, submeshes.size(),
             option.scale,
             option.use_file_units    ? "y" : "n",

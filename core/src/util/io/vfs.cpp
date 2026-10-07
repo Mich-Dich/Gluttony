@@ -88,7 +88,7 @@ namespace GLT::vfs {
                 return;
         }
 
-        // File does not exist → create it
+        // File does not exist -> create it
         std::FILE* f = std::fopen(path.c_str(), "wx");
         if (f) {
             std::fclose(f);
@@ -260,7 +260,7 @@ namespace GLT::vfs {
             std::FILE* creator = std::fopen(path.c_str(), "wx");            // Create the file exclusively (like 'wx'), then reopen with the original mode.
             if (creator) {
                 std::fclose(creator);
-                f = std::fopen(path.c_str(), mode_str);                     // Now the file exists → reopen with the desired mode
+                f = std::fopen(path.c_str(), mode_str);                     // Now the file exists -> reopen with the desired mode
                 if (f)
                     return reinterpret_cast<u64>(f);
             } else if (errno == EEXIST) {                                   // Reopen failed for some other reason – fall through to error

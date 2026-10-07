@@ -377,7 +377,7 @@ function(print_source_file_details)
                 list(APPEND detail_lines "  ${lc_padded} lines   ${fsize_padded}   ${rel}")
             endforeach()
 
-        else()   # fallback: no wc → size‑only list
+        else()   # fallback: no wc -> size‑only list
             if(NOT WC_EXECUTABLE)
                 set(fallback_note " (wc not found - showing sizes only)")
             else()

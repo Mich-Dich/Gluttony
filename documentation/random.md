@@ -55,10 +55,10 @@ Every engine has one. Sections: Editor (theme, fonts, keybindings, docking layou
 You have a plugin system with descriptors and dependency interfaces. A window that lists loaded plugins, their phase, target interface, dependencies, load status, and a "reload" button is high-value and near-zero risk. It also makes developing further plugins easier - which pays back immediately.
 
 **Dependency graph viewer**
-Visualize the plugin dependency graph (`i_window_plugin` → `i_renderer_plugin` etc.) as a node graph. Helpful once your plugin count grows past ~5.
+Visualize the plugin dependency graph (`i_window_plugin` -> `i_renderer_plugin` etc.) as a node graph. Helpful once your plugin count grows past ~5.
 
 **Keybinding editor**
-A table of actions → key combos, with conflict detection and per-context (editor / game / play-mode) profiles. Pairs with the input mapping editor below.
+A table of actions -> key combos, with conflict detection and per-context (editor / game / play-mode) profiles. Pairs with the input mapping editor below.
 
 **Theme / style editor**
 Edit ImGui colors, spacing, rounding, font sizes, and save named themes. `ImGui::ShowStyleEditor` is a starting point, but a first-class "Engine Theme" window with named presets is what shipping engines have.
@@ -76,10 +76,10 @@ A text editor (ImGui has `InputTextMultiline`) with a "compile" button that pipe
 A tree view of the config file plus a text pane. Since you have a serializer, you can round-trip: edit values in the tree, see the text update; edit the text, see the tree rebuild. This is the "Regedit for your engine" and it saves enormous time during debugging.
 
 **Input mapping editor**
-Action → key table with an interactive "press a key to bind" mode. If your engine has an input abstraction (likely, given a window plugin), this is a small wrapper around it.
+Action -> key table with an interactive "press a key to bind" mode. If your engine has an input abstraction (likely, given a window plugin), this is a small wrapper around it.
 
 **Localization / string table editor**
-A two-column view (key → localized text) with per-locale tabs, search, and missing-entry highlighting. Even before you have an asset system, a CSV or JSON-backed string table is trivial.
+A two-column view (key -> localized text) with per-locale tabs, search, and missing-entry highlighting. Even before you have an asset system, a CSV or JSON-backed string table is trivial.
 
 **Data table editor**
 Generic CSV/JSON-backed tabular editor. Useful for gameplay constants, item definitions, dialogue lines, etc. Completely asset-system-free - it's just a spreadsheet over a text file.

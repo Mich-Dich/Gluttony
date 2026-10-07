@@ -23,6 +23,7 @@
     "Dockable",
     "entt",
     "glfw",
+    "gltf",
     "hlsl",
     "imgui",
     "implot",

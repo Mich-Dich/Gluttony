@@ -110,7 +110,7 @@ namespace GLT::logger {
         // of log_msg_internal now pass std::string, and std::source_location converts
         // implicitly to owned_source_location.
         message_data(const GLT::logger::severity msg_sev,
-                    const std::source_location    location,      // implicit → owned_source_location
+                    const std::source_location    location,      // implicit -> owned_source_location
                     std::string                   module_name,
                     const std::thread::id         thread_id,
                     std::string                   message,

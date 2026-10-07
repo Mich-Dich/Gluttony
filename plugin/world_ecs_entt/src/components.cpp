@@ -99,7 +99,7 @@ namespace GLT::world::world_ecs_entt::component {
                 
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
                 GLT::UI::table_row_asset_picker("Mesh", mr.mesh, GLT::asset::core_types::static_mesh);
-                GLT::UI::table_row_asset_picker("Material Override", mr.material_override, GLT::asset::core_types::material_instance);
+                GLT::UI::table_row_asset_picker("Material Override", mr.material_override, GLT::asset::core_types::material);
                 GLT::UI::table_row("visible", mr.visible);
                 GLT::UI::end_table();
 

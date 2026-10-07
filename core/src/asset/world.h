@@ -12,6 +12,7 @@ namespace GLT::asset::world {
 
     // CONSTANTS =======================================================================================================
 
+    // Chunk IDs for the world_asset format
     inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_REGIONS = 0x0300;           // region_descriptor[] (required)
 
     inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_SETTINGS = 0x0301;          // opaque, plugin-defined
@@ -32,7 +33,13 @@ namespace GLT::asset::world {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // Runtime representation of a .glt_world asset.
+    // @brief Runtime representation of a [.glt_world] asset
+    //
+    // [region_index] is the full list of regions the world knows about, regardless of whether their assets are currently loaded
+    // [settings] is opaque to the engine and interpreted by the world plugin that owns this asset
+    //
+    // The active camera is stored as a raw index/generation pair (not an entity_id) so this header doesn't have to pull in
+    // world/entity.h's layout. 0xFFFFFFFF means "no active camera"
     class world_asset final : public GLT::asset::i_runtime_asset {
     public:
 
@@ -46,9 +53,11 @@ namespace GLT::asset::world {
         u32                                             active_camera_generation{ 0u };
 
 
+        // @brief Returns the asset-type tag used by the registry
         FORCE_INLINE_R GLT::asset::type type() const noexcept override { return asset_type; }
 
 
+        // @brief Approximate resident bytes, used by the profiler
         FORCE_INLINE_R u64 memory_usage() const noexcept override {
             return sizeof(*this) + region_index.capacity() * sizeof(GLT::asset::region::region) + settings.capacity();
         }

@@ -9,21 +9,30 @@ namespace GLT::asset {
 
     // CONSTANTS =======================================================================================================
 
+    // Name used to register the component-data lookup table with the reflection system
     constexpr const char*                           COMPONENT_DATA_TABLE_NAME = "COMPONENT_DATA_TABLE_NAME";
 
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
 
+    // Opaque asset identifier. Layout is defined by the registry implementation
     using handle = ::handle;
 
 
-    using content_hash = u64;                                               // xxh3 of the payload - hot-reload detection
+    // xxh3-style hash of an asset's payload - used for hot-reload detection
+    using content_hash = u64;
 
 
-    using chunk_id = u32;                                                   // handler-defined (mesh: "vertices", "indices", "bvh", ...)
+    // Handler-defined tag identifying a named blob inside an asset file (e.g. mesh: "vertices", "indices", "bvh", ...)
+    using chunk_id = u32;
 
 
+    // @brief Strongly-typed asset type tag
+    //
+    // Wraps a raw u32 so the reflection system can distinguish asset types from arbitrary integers at compile time
+    // values in [0, CUSTOM_TYPE_BEGIN) are reserved for the engine's core types (see [core_types])
+    // values at or above CUSTOM_TYPE_BEGIN are handed out by the registry via reserve_type()
     struct type {
 
         u32                                         value;
@@ -39,11 +48,14 @@ namespace GLT::asset {
     };
 
 
-    // Structural element for reflection: const char* is structural, string_view is not
+    // @brief One row of the compile-time type reflection table
+    //
+    // [name] must be a [const char*] (not a [string_view]) because the array is built in a [consteval] context
+    // and needs a structural element type
     struct type_entry {
 
-        const char* name;
-        type        value;
+        const char*                                 name;
+        type                                        value;
     };
 
 
@@ -54,7 +66,7 @@ namespace GLT::asset {
         inline constexpr type invalid               {  0 };
         inline constexpr type world                 {  1 };                 // Complete world/scene file
         inline constexpr type region                {  2 };                 // Sub-section of a world
-        inline constexpr type audio                 {  3 };                 // Generic audio asset (to be specialized later)
+        inline constexpr type audio                 {  3 };                 // Generic audio asset
 
 		// ------ mesh types ------
         inline constexpr type static_mesh           {  4 };                 // Non-animated mesh geometry
@@ -79,6 +91,7 @@ namespace GLT::asset {
     }
 
 
+    // @brief Per-file capability bits stored in the asset header's [flags] field
     enum class flags : u32 {
 
         none                                        = 0,
@@ -92,7 +105,9 @@ namespace GLT::asset {
     };
 
 
-    // Result of a load attempt; use std::expected everywhere so the registry can propagate "missing / corrupt / unsupported" without exceptions or nulls
+    // @brief Failure modes of a load() attempt
+    //
+    // Used with std::expected so the registry can propagate "missing / corrupt / unsupported" without exceptions or sentinel pointers
     enum class load_error : u8 {
 
         not_found = 0,
@@ -108,6 +123,7 @@ namespace GLT::asset {
     };
 
 
+    // @brief Failure modes of an import() attempt
     enum class import_error : u8 {
 
         not_supported = 0,
@@ -118,7 +134,9 @@ namespace GLT::asset {
     };
 
 
-    struct chunk_entry {                                                    // 32 bytes, alignas(8)
+    // @brief One entry of an asset file's chunk table. Describes where the raw bytes of a named blob live inside the file,
+    // and how to interpret them
+    struct chunk_entry {
 
         chunk_id                                    id{};
         u32                                         compression{};          // codec id, 0 = raw
@@ -128,7 +146,9 @@ namespace GLT::asset {
     };
 
 
-    // On-disk dependency row. Path is NUL-terminated in the string table; path_offset == 0 means "id-only" (resolved via the registry's id map)
+    // @brief On-disk dependency row
+    //
+    // Path is NUL-terminated in the string table; [path_offset == 0] means "id-only" (resolved via the registry's id map)
     struct dependency_disk {
 
         UUID                                        id{};
@@ -140,7 +160,11 @@ namespace GLT::asset {
     static_assert(sizeof(dependency_disk) == 24);
 
 
-    // General data that every asset file must have + custom data that is decided by the asset handler
+    // @brief Metadata the registry hands to a handler's deserialize(), plus bookkeeping it fills in for callers
+    //
+    // Combines identity (copied from the header), paths, the layout of the file (chunk table), and the resolved dependency graph
+    // Handlers read whatever they need from here; they should never reach back into the registry while deserialize() is
+    // running (the registry holds its lock during the call)
     struct info {
 
         // --- identity (copied from header) ---
@@ -163,7 +187,7 @@ namespace GLT::asset {
         std::span<const GLT::asset::handle>         dependencies;
         std::span<const GLT::asset::handle>         dependents;
 
-        // Parallel to `dependencies`: the UUID that each resolved handle came from Entries for INVALID_HANDLE rows are
+        // Parallel to [dependencies]: the UUID that each resolved handle came from Entries for INVALID_HANDLE rows are
         // still present (that's the UUID the registry failed to resolve), so positional alignment is preserved
         //
         // Handlers MUST use this when they need to map a serialized UUID back to a live handle
@@ -183,43 +207,82 @@ namespace GLT::asset {
 
     // Engine-reserved lookup (uses core_types by default) -------------------------------------------------------------
 
+    // @brief Maps a core asset type to its registered name
+    // @param type The type to look up
+    // @return The matching [type_entry::name], or "<unnamed>" if not registered
     FORCE_INLINE_R constexpr std::string_view type_to_string(const type& type) noexcept;
 
 
+    // @brief Maps a name back to its core asset type
+    // @param str The registered name to look up
+    // @return The matching type, or std::nullopt if no entry matches
     FORCE_INLINE_R constexpr std::optional<type> string_to_type(std::string_view str) noexcept;
 
     // general usage ---------------------------------------------------------------------------------------------------
 
+    // @brief Returns the on-disk extension for an asset type, including the leading "glt_"
+    // @param type The asset type
+    // @return The extension string (e.g. "glt_material")
     FORCE_INLINE_R constexpr std::string_view type_to_extension(GLT::asset::type type) noexcept;
 
 
+    // @brief Maps a file extension back to an asset type
+    //
+    // Accepts the extension with or without a leading '.'; anything that does
+    // not carry the "glt_" prefix is reported as [core_types::invalid] (this
+    // covers source files that live in the content dir but were never imported)
+    //
+    // @param extension The file extension to parse
+    // @return The matching core type, or [core_types::invalid]
     FORCE_INLINE_R constexpr GLT::asset::type extension_to_type(std::string_view extension) noexcept;
 
 
-    // FORCE_INLINE_R GLT::asset::type extension_to_type(std::string_view extension) noexcept;
+    // // Resolve [entry.extension] to a type and ask whether that type is known to carry a CHUNK_THUMBNAIL
+    // // Today that's just texture2d; later it'll grow
+    // FORCE_INLINE_R bool type_has_baked_thumbnail(GLT::asset::type t) noexcept {
+    //     switch (t.value) {
+    //         case GLT::asset::core_types::texture2d.value: return true;
+    //         // case GLT::asset::core_types::static_mesh.value: return true;
+    //         // case GLT::asset::core_types::material.value:    return true;
+    //         default: return false;
+    //     }
+    // }
 
     // TEMPLATE DECLARATION ============================================================================================
 
-    // Reflect every variable of type `type` inside a given namespace
+    // @brief Builds a compile-time table of every variable of type [type] inside [Namespace]
+    // @tparam Namespace The C++26 reflection value (e.g. [^^core_types]) to scan
+    // @return A static array of type_entry records
     template <auto Namespace>
     FORCE_INLINE_R consteval auto make_type_entries();
 
 
+    // @brief Compile-time table of [type_entry] records for [Namespace]
     template <auto Namespace>
     inline constexpr auto type_entries = make_type_entries<Namespace>();
 
 
-    // type  ->  name
+    // @brief Maps an asset type to its name via reflection over [Namespace]
+    // @tparam Namespace The namespace to search. Defaults to [^^core_types]
+    // @param type The type to look up
+    // @return The matching name, or "<unnamed>" if none matches
     template <auto Namespace = ^^core_types>
     FORCE_INLINE_R constexpr std::string_view type_to_string(const type& type);
 
 
-    // name  ->  type
+    // @brief Maps a name back to its asset type via reflection over [Namespace]
+    // @tparam Namespace The namespace to search. Defaults to [^^core_types]
+    // @param str The name to look up
+    // @return The matching type, or std::nullopt if no entry matches
     template <auto Namespace = ^^core_types>
     FORCE_INLINE_R constexpr std::optional<type> string_to_type(std::string_view str);
     
     // CLASS DECLARATION ===============================================================================================
 
+    // @brief Base class for every decoded asset
+    //
+    // The registry stores handlers' outputs behind this interface so it can own their lifetime without knowing their concrete type
+    // Handlers fill in [type()] and optionally [memory_usage()]
     class i_runtime_asset {
     public:
 
@@ -228,12 +291,15 @@ namespace GLT::asset {
         // Cheap tag for the registry / debug tooling. Handlers fill this in
         [[nodiscard]] virtual GLT::asset::type type() const noexcept = 0;
 
+
         // Approximate resident bytes, reported to the profiler
         [[nodiscard]] virtual u64 memory_usage() const noexcept { return 0; }
+
 
         // Called by the registry when this asset's dependents need to know it changed (hot-reload). Default: no-op
         virtual void on_reloaded() noexcept {}
     };
+
 
 }
 

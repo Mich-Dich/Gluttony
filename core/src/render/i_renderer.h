@@ -53,7 +53,7 @@ namespace GLT::render {
     inline constexpr u32 count = static_cast<u32>(GLT::render::mode::count);
 
 
-    // A plugin‑specific debug mode, `id` must be >= standard_render_mode::count and unique within the renderer
+    // A plugin‑specific debug mode, [id] must be >= standard_render_mode::count and unique within the renderer
     struct custom_render_mode {
         u32             id;
         const char*     name;           // shown in the debug dropdown
@@ -333,8 +333,8 @@ namespace GLT::render {
         // preview -----------------------------------------------------------------------------------------------------
 
         // Queues a material preview render for the next frame. The sphere is at world origin, radius 1; the camera orbits at
-        // radius |camera_pos| looking at origin. `params` is what gets rendered - pass an edit buffer to see unsaved changes
-        // `material` supplies the texture handles; pass INVALID_HANDLE for a texture-less preview
+        // radius |camera_pos| looking at origin. [params] is what gets rendered - pass an edit buffer to see unsaved changes
+        // [material] supplies the texture handles; pass INVALID_HANDLE for a texture-less preview
         //
         // Returns an ImGui-compatible texture handle (ImTextureID) for the internal 256x256 preview image. 
         // The handle is stable across calls and valid until the renderer is destroyed. The first call returns a blank image; 

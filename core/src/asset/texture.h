@@ -11,6 +11,7 @@ namespace GLT::asset::texture {
 
     // CONSTANTS =======================================================================================================
 
+    // Chunk IDs for the texture_asset format (any u32, stable once shipped)
     inline constexpr GLT::asset::chunk_id                   CHUNK_TEXTURE_FORMAT = 0x0200;   // texture::texture_format (required)
 
     inline constexpr GLT::asset::chunk_id                   CHUNK_PIXEL_DATA = 0x0201;   // raw pixel bytes (required)
@@ -19,25 +20,14 @@ namespace GLT::asset::texture {
 
     inline constexpr GLT::asset::chunk_id                   CHUNK_METADATA = 0x0203;   // utf-8 "key\0value\0" pairs (optional)
 
-    // ---- editor-only preview -----------------------------------------------------------------------
-
-    // The factory writes a small (max side <= THUMBNAIL_MAX_SIDE) RGBA8 image into this chunk on import. 
-    // The runtime handler never reads it, and it never enters the texture_asset. The editor's icon_manager fetches it directly
-    // through i_asset_registry_plugin::read_chunk(path, CHUNK_THUMBNAIL) and owns the GPU image
-    //
-    // Chunk payload layout:
-    //   [thumbnail_header]                     (8 bytes, trivially copyable)
-    //   [width * height * 4 bytes RGBA8]       row-major, tightly packed
-    inline constexpr GLT::asset::chunk_id                   CHUNK_THUMBNAIL = 0x0210;
-
-    inline constexpr u32                                    THUMBNAIL_MAX_SIDE = 256;
-
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
 
-    // On-disk pixel layout
-    // The factory normalises whatever STB decoded into one of these canonical forms so the handler never has to guess
+    // @brief On-disk pixel layout
+    //
+    // The factory normalises whatever the source codec decoded into one of these canonical forms so the runtime handler
+    // never has to guess. Block-compressed formats are reserved for a future compressor pass
     enum class pixel_format : u16 {
 
         unknown = 0,
@@ -75,7 +65,10 @@ namespace GLT::asset::texture {
     };
 
 
-    // Color space the samples are encoded in. Renderers need this to pick the right sRGB→linear conversion on sample
+    // @brief Color space the samples are encoded in
+    //
+    // Renderers need this to pick the right sRGB -> linear conversion at sample time, and the factory uses it
+    // to decide defaults per usage tag
     enum class color_space : u8 {
 
         linear = 0,
@@ -83,7 +76,9 @@ namespace GLT::asset::texture {
     };
 
 
-    // What kind of texture this is. The handler claims texture2d only for now, but the chunk format is forward-compatible
+    // @brief Topological kind of a texture
+    //
+    // The handler claims texture2d only for now, but the chunk format is forward-compatible with the other kinds
     enum class texture_kind : u8 {
 
         texture_2d = 0,
@@ -94,8 +89,10 @@ namespace GLT::asset::texture {
     };
 
 
-    // What the texture *represents*. Drives sensible defaults (linear vs sRGB) and, once block compression lands, 
-    // the codec choice (BC5 for normals, BC4 for masks, BC7 for albedo/UI, …)
+    // @brief Semantic role a texture plays
+    //
+    // Drives sensible defaults (linear vs sRGB) and, once block compression lands, the codec choice
+    // (BC5 for normals, BC4 for masks, BC7 for albedo/UI, BC6H for emission)
     enum class texture_usage : u8 {
 
         default_ = 0,                                       // "default": generic color data
@@ -107,6 +104,10 @@ namespace GLT::asset::texture {
     };
 
 
+    // @brief Fixed descriptor of the pixel data that follows
+    //
+    // The handler trusts this blindly, so the factory is expected to have written a layout consistent with
+    // CHUNK_PIXEL_DATA and (optionally) CHUNK_MIP_RANGES
     struct texture_format {
 
         u32                         width;                  // base level
@@ -125,7 +126,10 @@ namespace GLT::asset::texture {
     static_assert(std::is_trivially_copyable_v<texture_format>);
 
 
-    // One entry per mip level, in order. offset is into the concatenated pixel blob that CHUNK_PIXEL_DATA holds
+    // @brief One entry per mip level, in order
+    //
+    // [offset] is relative to the start of the concatenated pixel blob stored in CHUNK_PIXEL_DATA;
+    // [size] is the byte count of that level
     struct mip_range {
 
         u64                         offset{};
@@ -138,17 +142,6 @@ namespace GLT::asset::texture {
     static_assert(sizeof(mip_range) == 32);
     static_assert(std::is_trivially_copyable_v<mip_range>);
 
-    // ---- editor-only preview -----------------------------------------------------------------------
-
-    struct thumbnail_header {
-        u16                         width{};
-        u16                         height{};
-        u16                         format{};       // pixel_format — always u8_rgba today
-        u16                         _pad{};
-    };
-    static_assert(sizeof(thumbnail_header) == 8);
-    static_assert(std::is_trivially_copyable_v<thumbnail_header>);
-
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -157,11 +150,13 @@ namespace GLT::asset::texture {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // The runtime representation of a loaded texture asset
-    // Canonical form is whatever the factory wrote - the handler just copies it verbatim
+    // @brief Runtime representation of a loaded texture asset
     //
-    // IMPORTANT: this struct OWNS the decoded pixel data. The chunk_reader hands out spans into a buffer that dies when the
-    // registry's load function returns, so we copy what we want to keep
+    // Canonical form is whatever the factory wrote - the handler just copies it verbatim
+    // [pixels] holds every mip level concatenated end-to-end; the per-level offsets and sizes live in [mips]
+    //
+    // IMPORTANT: this struct OWNS the decoded pixel data. The chunk_reader hands out spans into a buffer that dies when
+    // the registry's load function returns, so we copy what we want to keep
     class texture_asset final : public GLT::asset::i_runtime_asset {
     public:
 
@@ -171,9 +166,11 @@ namespace GLT::asset::texture {
         std::vector<GLT::asset::texture::mip_range>     mips;           // one per mip level (empty = single level)
 
 
+        // @brief Returns the asset-type tag used by the registry
         FORCE_INLINE_R GLT::asset::type type() const noexcept override { return asset_type; }
 
 
+        // @brief Approximate resident bytes, used by the profiler
         FORCE_INLINE_R u64 memory_usage() const noexcept override {
 
             return sizeof(*this)
@@ -188,5 +185,6 @@ namespace GLT::asset::texture {
         FORCE_INLINE_R bool has_mips() const noexcept { return format.mip_levels > 1; }
 
     };
+
 
 }

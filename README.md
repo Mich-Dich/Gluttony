@@ -72,7 +72,7 @@ On startup it discovers plugins, initializes config/logging/crash handling, crea
 - **Core** – application lifecycle, plugin manager, event bus, layers, config, logging, crash handling, thread pool, and basic utilities.
 - **Plugin system** – phase-based loading, dependency resolution by name or interface, shared and static plugin variants.
 - **Game loop** – dedicated loop plugin that owns tick timing and drives the update/render cycle; the application no longer has to manage layers directly.
-- **Asset registry** – chunked, versioned `.glt_*` file format with a string table, dependency graph, path→handle index, hot-reload watching, and async load. Handlers and factories are separate plugins: handlers decode a type at runtime, factories convert external formats into our files. Shipped today:
+- **Asset registry** – chunked, versioned `.glt_*` file format with a string table, dependency graph, path->handle index, hot-reload watching, and async load. Handlers and factories are separate plugins: handlers decode a type at runtime, factories convert external formats into our files. Shipped today:
   - **mesh** – static mesh geometry (vertices, indices, submeshes, bounds).
   - **texture** – 2D textures.
   - **world / region** – world region index and region entity blobs.

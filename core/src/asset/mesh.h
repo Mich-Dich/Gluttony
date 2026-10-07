@@ -30,19 +30,25 @@ namespace GLT::asset::mesh {
 
     // TYPES ===========================================================================================================
 
-    // Interleaved vertex. Keep this POD and 16-byte aligned for GPU upload
+    // @brief Interleaved vertex, laid out for direct GPU upload
+    //
+    // Kept POD and 16-byte aligned. [_pad] exists only to round the struct up to 56 bytes so a vertex buffer of [N] of
+    // these has a stable stride
     struct vertex {
 
         glm::vec3                                       position;           // 12
         glm::vec3                                       normal;             // 12
         glm::vec4                                       tangent;            // 16, xyz = tangent, w = bitangent sign
         glm::vec2                                       uv0;                //  8
-        glm::vec2                                       _pad{};             //  8  → total 56 bytes, 16-aligned
+        glm::vec2                                       _pad{};             //  8  -> total 56 bytes, 16-aligned
     };
     static_assert(sizeof(vertex) == 56);
     static_assert(alignof(vertex) == 4);
 
 
+    // @brief One draw range inside the index buffer
+    //
+    // [material_slot] is a positional index into the mesh's material table (the runtime [mesh_asset::material_handles] array)
     struct submesh {
 
         u32                                             first_index;
@@ -52,9 +58,10 @@ namespace GLT::asset::mesh {
     static_assert(sizeof(submesh) == 12);
 
 
-    // A single renderable instance of a mesh asset
-    // [transform] is a full world-space 4x4
-    // [material_override] may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference
+    // @brief A single renderable instance of a mesh asset
+    //
+    // [transform] is a full world-space 4x4. [material_override] may be INVALID_HANDLE, in which case the renderer falls
+    // back to whatever the mesh's submeshes reference
     struct instance {
 
         GLT::asset::handle                              mesh{ INVALID_HANDLE };
@@ -73,10 +80,14 @@ namespace GLT::asset::mesh {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // The runtime representation of a loaded mesh asset. Handlers own this type; the registry only ever sees it as [i_runtime_asset*]
+    // @brief Runtime representation of a loaded mesh asset
     //
-    // IMPORTANT: this struct OWNS the decoded geometry. The chunk_reader hands out spans into a buffer that dies when the 
-    // registry's load function returns, so every handler must copy what it wants to keep
+    // Handlers own this type; the registry only ever sees it as [i_runtime_asset*]. [material_handles] is positional: entry [i]
+    // corresponds to whichever submesh has [material_slot == i]. Entries may be INVALID_HANDLE when a material reference
+    // couldn't be resolved - the renderer is expected to substitute a fallback
+    //
+    // IMPORTANT: this struct OWNS the decoded geometry. The chunk_reader hands out spans into a buffer that dies when
+    // the registry's load function returns, so every handler must copy what it wants to keep
     class mesh_asset final : public GLT::asset::i_runtime_asset {
     public:
 
@@ -87,13 +98,16 @@ namespace GLT::asset::mesh {
         GLT::AABB                                       bounds{};
 
         // Positional. material_handles[i] corresponds to submesh.material_slot == i
-        // Entries may be INVALID_HANDLE when a material reference couldn't be resolved - the renderer is expected to substitute a fallback
+        // Entries may be INVALID_HANDLE when a material reference couldn't be resolved
+        // the renderer is expected to substitute a fallback
         std::vector<GLT::asset::handle>                 material_handles;
 
 
+        // @brief Returns the asset-type tag used by the registry
         FORCE_INLINE_R GLT::asset::type type() const noexcept override { return asset_type; }
 
 
+        // @brief Approximate resident bytes, used by the profiler
         FORCE_INLINE_R u64 memory_usage() const noexcept override {
 
             return sizeof(*this)

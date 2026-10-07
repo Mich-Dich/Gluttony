@@ -1187,9 +1187,9 @@ namespace GLT::asset::registry_default {
         //
         // Each row carries the target asset's UUID AND (optionally) a NUL-terminated virtual path in the string table. 
         // Resolution order:
-        //   1. id already resident  → reuse the existing handle
-        //   2. path_offset != 0     → load_unlocked(path.parent_path() / path)
-        //   3. otherwise            → INVALID_HANDLE (unresolved slot)
+        //   1. id already resident  -> reuse the existing handle
+        //   2. path_offset != 0     -> load_unlocked(path.parent_path() / path)
+        //   3. otherwise            -> INVALID_HANDLE (unresolved slot)
         //
         // We keep a slot for every row even when the dep can't be resolved, because the handler indexes 
         // dependencies[submesh.material_slot] and relies on positional alignment.

@@ -13,7 +13,7 @@ namespace GLT::asset::region {
 
     // CONSTANTS =======================================================================================================
 
-    // Chunk IDs (any u32; stable once shipped). Region files reserve 0x02xx.
+    // Chunk IDs (any u32; stable once shipped). Region files reserve 0x02xx
     inline constexpr GLT::asset::chunk_id               CHUNK_REGION_BOUNDS = 0x0200;       // bounds (required)
 
     inline constexpr GLT::asset::chunk_id               CHUNK_REGION_ENTITIES = 0x0201;     // opaque blob (optional)
@@ -24,11 +24,13 @@ namespace GLT::asset::region {
 
     // TYPES ===========================================================================================================
 
-    // Live runtime state for one region. Owned by the world plugin; the registry never sees this
-    // `asset` is the handle to the backing region_asset - it is INVALID_HANDLE while the region is streamed out
+    // @brief Live runtime state for one region
     //
-    // Deliberately minimal: no entity list, no dependency list
-    // Those live inside the concrete plugin so the public struct stays cheap to copy and safe to hand out as a span
+    // Owned by the world plugin; the registry never sees this. [asset] is the handle to the backing region_asset
+    // it is INVALID_HANDLE while the region is streamed out
+    //
+    // Deliberately minimal: no entity list, no dependency list. Those live inside the concrete plugin so the public
+    // struct stays cheap to copy and safe to hand out as a span
     struct region {
 
         GLT::UUID                                       id = 0;
@@ -49,10 +51,11 @@ namespace GLT::asset::region {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // Runtime representation of a [.glt_region] asset. Handlers own this type; the registry only ever sees it as [i_runtime_asset*]
+    // @brief Runtime representation of a [.glt_region] asset
     //
-    // The entity blob is intentionally opaque. The world plugin that consumes it declares [entity_codec] and knows how
-    // to interpret the bytes. This is what keeps the asset handler ignorant of ECS vs inheritance-based worlds
+    // Handlers own this type; the registry only ever sees it as [i_runtime_asset*]. [entity_data] is intentionally opaque:
+    // the world plugin that consumes it declares [entity_codec] and knows how to interpret the bytes
+    // This is what keeps the asset handler ignorant of ECS vs inheritance-based worlds
     class region_asset final : public GLT::asset::i_runtime_asset {
     public:
 
@@ -63,9 +66,11 @@ namespace GLT::asset::region {
         std::vector<std::byte>                          entity_data;                // opaque, codec-defined
 
 
+        // @brief Returns the asset-type tag used by the registry
         FORCE_INLINE_R GLT::asset::type type() const noexcept override { return asset_type; }
 
 
+        // @brief Approximate resident bytes, used by the profiler
         FORCE_INLINE_R u64 memory_usage() const noexcept override { return sizeof(*this) + entity_data.capacity(); }
     };
 

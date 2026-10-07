@@ -110,7 +110,7 @@ namespace GLT::asset::factory::texture_stb {
     void renormalize_normal_map_rgba8(std::vector<std::byte>& pixels) noexcept;
 
 
-    // Map "auto|srgb|linear" → enum value. Empty / unknown → auto.
+    // Map "auto|srgb|linear" ->> enum value. Empty / unknown -> auto.
     [[nodiscard]] GLT::asset::texture::color_space resolve_color_space(u8 user_choice, GLT::asset::texture::texture_usage usage,
         GLT::asset::texture::color_space decoded) noexcept;
 
@@ -491,8 +491,8 @@ namespace GLT::asset::factory::texture_stb {
             return {};
 
         const u32 longest = std::max(sw, sh);
-        const f32 scale = (longest > GLT::asset::texture::THUMBNAIL_MAX_SIDE)
-            ? static_cast<f32>(GLT::asset::texture::THUMBNAIL_MAX_SIDE) / static_cast<f32>(longest)
+        const f32 scale = (longest > GLT::asset::THUMBNAIL_MAX_SIDE)
+            ? static_cast<f32>(GLT::asset::THUMBNAIL_MAX_SIDE) / static_cast<f32>(longest)
             : 1.0f;
 
         tw = std::max<u32>(1u, static_cast<u32>(static_cast<f32>(sw) * scale + 0.5f));
@@ -756,7 +756,7 @@ namespace GLT::asset::factory::texture_stb {
 
             if (!thumb_pixels.empty() && tw > 0 && th > 0) {
 
-                GLT::asset::texture::thumbnail_header thdr{};
+                GLT::asset::thumbnail_header thdr{};
                 thdr.width  = static_cast<u16>(tw);
                 thdr.height = static_cast<u16>(th);
                 thdr.format = static_cast<u16>(GLT::asset::texture::pixel_format::u8_rgba);
@@ -765,7 +765,7 @@ namespace GLT::asset::factory::texture_stb {
                 std::memcpy(chunk.data(), &thdr, sizeof(thdr));
                 std::memcpy(chunk.data() + sizeof(thdr), thumb_pixels.data(), thumb_pixels.size());
 
-                out.write_chunk(GLT::asset::texture::CHUNK_THUMBNAIL, std::span<const std::byte>{ chunk });
+                out.write_chunk(GLT::asset::CHUNK_THUMBNAIL, std::span<const std::byte>{ chunk });
             } else {
                 LOG(warn, "texture_stb: no thumbnail generated for [{}]", source.generic_string());
             }

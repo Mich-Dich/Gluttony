@@ -1339,9 +1339,9 @@ namespace GLT::editor {
             GLT::thread_pool::push([registry, src, target, target_path]() {
 
                 auto result = registry->import(src, target, target_path);
-                VALIDATE(result, return, "", "import [{}] → type {} failed", src.generic_string(), target.value);
+                VALIDATE(result, return, "", "import [{}] -> type {} failed", src.generic_string(), target.value);
                 const GLT::asset::handle h = *result;
-                LOG(info, "imported [{}] → [{}]", src.generic_string(), registry->info(h).virtual_path.generic_string());
+                LOG(info, "imported [{}] -> [{}]", src.generic_string(), registry->info(h).virtual_path.generic_string());
 
                 // Hop back to the main thread to touch ImGui / content browser state.
                 GLT::thread_pool::push_main([registry, h, src]() {

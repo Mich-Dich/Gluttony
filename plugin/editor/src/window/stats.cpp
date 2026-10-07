@@ -286,8 +286,8 @@ namespace GLT::editor {
 
         // ---- Build the cumulative series for the stacked view --------------------
         //
-        //   bottom band = CPU  →  fills [0          .. cpu]
-        //   top band    = GPU  →  fills [cpu        .. cpu + gpu]
+        //   bottom band = CPU  ->  fills [0          .. cpu]
+        //   top band    = GPU  ->  fills [cpu        .. cpu + gpu]
         //
         // The total (cpu + gpu) is also kept as its own array so we can draw a
         // crisp line on top of the stack - the shaded bands alone make the

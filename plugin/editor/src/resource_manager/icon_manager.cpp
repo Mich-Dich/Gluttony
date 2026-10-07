@@ -321,11 +321,11 @@ namespace GLT::editor::icon_manager {
             // The payload is (thumbnail_header | RGBA8 bytes) and may be up to THUMBNAIL_MAX_SIDE, which can exceed our atlas cell - so we downsample to fit.
             if (auto registry = GLT::asset::registry::get_ref()) {
 
-                auto chunk = registry->read_chunk(job.path, GLT::asset::texture::CHUNK_THUMBNAIL);
+                auto chunk = registry->read_chunk(job.path, GLT::asset::CHUNK_THUMBNAIL);
 
-                if (chunk && chunk->size() >= sizeof(GLT::asset::texture::thumbnail_header)) {
+                if (chunk && chunk->size() >= sizeof(GLT::asset::thumbnail_header)) {
 
-                    GLT::asset::texture::thumbnail_header thdr{};
+                    GLT::asset::thumbnail_header thdr{};
                     std::memcpy(&thdr, chunk->data(), sizeof(thdr));
 
                     const u32 sw = thdr.width;

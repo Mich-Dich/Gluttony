@@ -11,7 +11,7 @@ namespace GLT::asset::audio {
 
     // CONSTANTS =======================================================================================================
 
-    // Chunk IDs (any u32, stable once shipped).
+    // Chunk IDs (any u32, stable once shipped)
     inline constexpr GLT::asset::chunk_id               CHUNK_FORMAT = 0x0100;   // audio::format (required)
 
     inline constexpr GLT::asset::chunk_id               CHUNK_PCM_DATA = 0x0101;   // interleaved f32 samples (required)
@@ -24,8 +24,10 @@ namespace GLT::asset::audio {
 
     // TYPES ===========================================================================================================
 
-    // Canonical on-disk sample representation. The factory is expected to
-    // normalise whatever it decoded from the source into this.
+    // @brief Canonical on-disk sample representation
+    //
+    // The factory is expected to normalise whatever it decoded from the source into one of these before writing CHUNK_PCM_DATA
+    // The current miniaudio factory always emits [f32]
     enum class sample_kind : u16 {
 
         unknown = 0,
@@ -38,8 +40,10 @@ namespace GLT::asset::audio {
     };
 
 
-    // Fixed-layout descriptor of the PCM that follows. Never reinterpret
-    // samples without consulting this - the handler trusts it blindly.
+    // @brief Fixed-layout descriptor of the PCM that follows
+    //
+    // Never reinterpret samples without consulting this - the handler trusts it blindly. [frame_count] is the number of frames
+    // (not bytes, and not samples across all channels)
     struct format {
 
         u32                                     sample_rate;            // frames / second
@@ -53,6 +57,9 @@ namespace GLT::asset::audio {
     static_assert(std::is_trivially_copyable_v<format>);
 
 
+    // @brief Optional loop region for a sample
+    //
+    // Ignored unless [has_loop] is non-zero. Frames are inclusive of [loop_start_frame] and exclusive of [loop_end_frame]
     struct loop_points {
 
         u64                                     loop_start_frame;
@@ -64,6 +71,7 @@ namespace GLT::asset::audio {
     static_assert(std::is_trivially_copyable_v<loop_points>);
 
 
+    // @brief Distance-attenuation curve used when a source is spatialized
     enum class attenuation_model : u8 {
 
         none = 0,
@@ -73,6 +81,7 @@ namespace GLT::asset::audio {
     };
 
 
+    // @brief Playback state of a source
     enum class state : u8 {
 
         stopped = 0,
@@ -81,6 +90,10 @@ namespace GLT::asset::audio {
     };
 
 
+    // @brief Per-source playback configuration
+    //
+    // The 3D block is only consulted when [is_3d] is true. Layout is deliberately POD so it can be memcpy'd between the audio
+    // plugin and the source codec
     struct source_config {
 
         f32                                     volume = 1.0f;
@@ -100,6 +113,7 @@ namespace GLT::asset::audio {
     static_assert(std::is_trivially_copyable_v<GLT::asset::audio::source_config>, 
         "[source_config] must stay trivially copyable for the audio_source codec to be safe");
 
+    // @brief Global listener state for the 3D audio mix
     struct listener_config {
 
         glm::vec3                               position = { 0.0f, 0.0f, 0.0f };
@@ -116,11 +130,13 @@ namespace GLT::asset::audio {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // The runtime representation of a loaded audio asset. Canonical form is interleaved f32
-    // every backend (SoLoud, FMOD, miniaudio) accepts it without a conversion step.
+    // @brief Runtime representation of a loaded audio asset
     //
-    // IMPORTANT: this struct OWNS the decoded PCM. The chunk_reader hands out spans into a buffer that dies when the 
-    // registry's load function returns, so we copy what we want to keep.
+    // Canonical form is interleaved f32 - every backend (SoLoud, FMOD, miniaudio) accepts it without a conversion step
+    // [samples] is frame-major and holds [format.frame_count * format.channels] entries
+    //
+    // IMPORTANT: this struct OWNS the decoded PCM. The chunk_reader hands out spans into a buffer that dies when the
+    // registry's load function returns, so we copy what we want to keep
     class audio_asset final : public GLT::asset::i_runtime_asset {
     public:
 
@@ -130,9 +146,11 @@ namespace GLT::asset::audio {
         GLT::asset::audio::loop_points          loop{};
 
 
+        // @brief Returns the asset-type tag used by the registry
         FORCE_INLINE_R GLT::asset::type type() const noexcept override { return asset_type; }
 
 
+        // @brief Approximate resident bytes, used by the profiler
         FORCE_INLINE_R u64 memory_usage() const noexcept override { return sizeof(*this) + samples.capacity() * sizeof(f32); }
 
     };
