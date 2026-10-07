@@ -24,11 +24,11 @@ namespace GLT::asset::region {
 
     // TYPES ===========================================================================================================
 
-    // Live runtime state for one region. Owned by the world plugin; the registry never sees this.
-    // `asset` is the handle to the backing region_asset - it is INVALID_HANDLE while the region is streamed out.
+    // Live runtime state for one region. Owned by the world plugin; the registry never sees this
+    // `asset` is the handle to the backing region_asset - it is INVALID_HANDLE while the region is streamed out
     //
-    // Deliberately minimal: no entity list, no dependency list. Those live inside the concrete plugin so the public struct
-    // stays cheap to copy and safe to hand out as a span.
+    // Deliberately minimal: no entity list, no dependency list
+    // Those live inside the concrete plugin so the public struct stays cheap to copy and safe to hand out as a span
     struct region {
 
         GLT::UUID                                       id = 0;
@@ -49,10 +49,10 @@ namespace GLT::asset::region {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // Runtime representation of a .glt_region asset. Handlers own this type; the registry only ever sees it as `i_runtime_asset*`.
+    // Runtime representation of a [.glt_region] asset. Handlers own this type; the registry only ever sees it as [i_runtime_asset*]
     //
-    // The entity blob is intentionally opaque. The world plugin that consumes it declares `entity_codec` and knows how
-    // to interpret the bytes. This is what keeps the asset handler ignorant of ECS vs inheritance-based worlds.
+    // The entity blob is intentionally opaque. The world plugin that consumes it declares [entity_codec] and knows how
+    // to interpret the bytes. This is what keeps the asset handler ignorant of ECS vs inheritance-based worlds
     class region_asset final : public GLT::asset::i_runtime_asset {
     public:
 

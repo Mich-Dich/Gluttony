@@ -43,7 +43,7 @@ namespace GLT::asset::material {
         f32                                     reflectance = .5f;
         f32                                     normal_scale = 1.f;
         f32                                     occlusion_strength = 1.f;
-        u32                                     flags{0};                   // double-sided, alpha-test, etc.
+        u32                                     flags{0};                   // double-sided, alpha-test, etc
     };
     static_assert(sizeof(material_params) == 52);
     static_assert(std::is_trivially_copyable_v<material_params>);

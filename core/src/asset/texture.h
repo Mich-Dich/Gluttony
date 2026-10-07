@@ -19,12 +19,25 @@ namespace GLT::asset::texture {
 
     inline constexpr GLT::asset::chunk_id                   CHUNK_METADATA = 0x0203;   // utf-8 "key\0value\0" pairs (optional)
 
+    // ---- editor-only preview -----------------------------------------------------------------------
+
+    // The factory writes a small (max side <= THUMBNAIL_MAX_SIDE) RGBA8 image into this chunk on import. 
+    // The runtime handler never reads it, and it never enters the texture_asset. The editor's icon_manager fetches it directly
+    // through i_asset_registry_plugin::read_chunk(path, CHUNK_THUMBNAIL) and owns the GPU image
+    //
+    // Chunk payload layout:
+    //   [thumbnail_header]                     (8 bytes, trivially copyable)
+    //   [width * height * 4 bytes RGBA8]       row-major, tightly packed
+    inline constexpr GLT::asset::chunk_id                   CHUNK_THUMBNAIL = 0x0210;
+
+    inline constexpr u32                                    THUMBNAIL_MAX_SIDE = 256;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
 
-    // On-disk pixel layout. The factory normalises whatever STB decoded
-    // into one of these canonical forms so the handler never has to guess.
+    // On-disk pixel layout
+    // The factory normalises whatever STB decoded into one of these canonical forms so the handler never has to guess
     enum class pixel_format : u16 {
 
         unknown = 0,
@@ -62,8 +75,7 @@ namespace GLT::asset::texture {
     };
 
 
-    // Color space the samples are encoded in. Renderers need this to pick
-    // the right sRGB→linear conversion on sample.
+    // Color space the samples are encoded in. Renderers need this to pick the right sRGB→linear conversion on sample
     enum class color_space : u8 {
 
         linear = 0,
@@ -71,8 +83,7 @@ namespace GLT::asset::texture {
     };
 
 
-    // What kind of texture this is. The handler claims texture2D only for
-    // now, but the chunk format is forward-compatible.
+    // What kind of texture this is. The handler claims texture2d only for now, but the chunk format is forward-compatible
     enum class texture_kind : u8 {
 
         texture_2d = 0,
@@ -84,15 +95,15 @@ namespace GLT::asset::texture {
 
 
     // What the texture *represents*. Drives sensible defaults (linear vs sRGB) and, once block compression lands, 
-    // the codec choice (BC5 for normals, BC4 for masks, BC7 for albedo/UI, …).
+    // the codec choice (BC5 for normals, BC4 for masks, BC7 for albedo/UI, …)
     enum class texture_usage : u8 {
 
-        default_ = 0,               // "default": generic color data
-        normal_map,                 // tangent-space normal map - linear, BC5
-        mask,                       // single-channel data (roughness, AO, …) - linear, BC4
-        ui,                         // UI / cursor sprites - sRGB, no minification
-        albedo,                     // explicit albedo (sRGB, BC7)
-        emission,                   // emissive - linear HDR, BC6H
+        default_ = 0,                                       // "default": generic color data
+        normal_map,                                         // tangent-space normal map - linear, BC5
+        mask,                                               // single-channel data (roughness, AO, …) - linear, BC4
+        ui,                                                 // UI / cursor sprites - sRGB, no minification
+        albedo,                                             // explicit albedo (sRGB, BC7)
+        emission,                                           // emissive - linear HDR, BC6H
     };
 
 
@@ -114,8 +125,7 @@ namespace GLT::asset::texture {
     static_assert(std::is_trivially_copyable_v<texture_format>);
 
 
-    // One entry per mip level, in order. offset is into the concatenated
-    // pixel blob that CHUNK_PIXEL_DATA holds.
+    // One entry per mip level, in order. offset is into the concatenated pixel blob that CHUNK_PIXEL_DATA holds
     struct mip_range {
 
         u64                         offset{};
@@ -128,6 +138,17 @@ namespace GLT::asset::texture {
     static_assert(sizeof(mip_range) == 32);
     static_assert(std::is_trivially_copyable_v<mip_range>);
 
+    // ---- editor-only preview -----------------------------------------------------------------------
+
+    struct thumbnail_header {
+        u16                         width{};
+        u16                         height{};
+        u16                         format{};       // pixel_format — always u8_rgba today
+        u16                         _pad{};
+    };
+    static_assert(sizeof(thumbnail_header) == 8);
+    static_assert(std::is_trivially_copyable_v<thumbnail_header>);
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -136,16 +157,15 @@ namespace GLT::asset::texture {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // The runtime representation of a loaded texture asset. Canonical form is
-    // whatever the factory wrote - the handler just copies it verbatim.
+    // The runtime representation of a loaded texture asset
+    // Canonical form is whatever the factory wrote - the handler just copies it verbatim
     //
-    // IMPORTANT: this struct OWNS the decoded pixel data. The chunk_reader
-    // hands out spans into a buffer that dies when the registry's load
-    // function returns, so we copy what we want to keep.
+    // IMPORTANT: this struct OWNS the decoded pixel data. The chunk_reader hands out spans into a buffer that dies when the
+    // registry's load function returns, so we copy what we want to keep
     class texture_asset final : public GLT::asset::i_runtime_asset {
     public:
 
-        GLT::asset::type                                asset_type{ GLT::asset::core_types::texture2D };
+        GLT::asset::type                                asset_type{ GLT::asset::core_types::texture2d };
         GLT::asset::texture::texture_format             format{};
         std::vector<std::byte>                          pixels;         // concatenated mip levels
         std::vector<GLT::asset::texture::mip_range>     mips;           // one per mip level (empty = single level)
@@ -162,7 +182,7 @@ namespace GLT::asset::texture {
         }
 
 
-        // Convenience for the renderer: base-level dimensions.
+        // Convenience for the renderer: base-level dimensions
         FORCE_INLINE_R u32 width()  const noexcept { return format.width; }
         FORCE_INLINE_R u32 height() const noexcept { return format.height; }
         FORCE_INLINE_R bool has_mips() const noexcept { return format.mip_levels > 1; }

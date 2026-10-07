@@ -21,6 +21,7 @@
 
 #include <util/io/vfs.h>
 #include <util/io/directory_iterator.h>
+#include <asset/i_asset_registry.h>
 #include <plugin_system/plugin_manager.h>
 #include <render/i_renderer.h>
 
@@ -172,6 +173,11 @@ namespace GLT::editor::icon_manager {
     // (2) avoids wasting cells when a tighter packing exists in the same class.
     FORCE_INLINE_R grid_dimensions compute_icon_grid(u32 icon_count);
 
+    // Box-filter an RGBA8 image down so its longest side is <= max_side
+    // Never upscales. Returns the input dimensions when no downsample is needed
+    void fit_rgba8_into_cell(std::span<const u8> src, u32 sw, u32 sh, u32 max_side, std::vector<u8>& out_pixels,
+        u32& out_w, u32& out_h);
+
     atlas_layout plan_atlas(u32 icon_count, u32 icon_size, u32 padding);
 
     // thumbnail -------------------------------------------------------------------------------------------------------
@@ -218,6 +224,61 @@ namespace GLT::editor::icon_manager {
     }
 
 
+    void fit_rgba8_into_cell(std::span<const u8> src, u32 sw, u32 sh, u32 max_side, std::vector<u8>& out_pixels,
+        u32& out_w, u32& out_h) {
+
+        if (sw == 0 || sh == 0) { 
+        
+            out_pixels.clear();
+            out_w = out_h = 0;
+            return;
+        }
+
+        const u32 longest = std::max(sw, sh);
+        if (longest <= max_side) {
+            out_pixels.assign(src.begin(), src.end());
+            out_w = sw;
+            out_h = sh;
+            return;
+        }
+
+        const f32 scale = static_cast<f32>(max_side) / static_cast<f32>(longest);
+        const u32 dw = std::max<u32>(1u, static_cast<u32>(std::lround(static_cast<f32>(sw) * scale)));
+        const u32 dh = std::max<u32>(1u, static_cast<u32>(std::lround(static_cast<f32>(sh) * scale)));
+
+        out_pixels.assign(static_cast<size_t>(dw) * dh * 4, 0);
+        for (u32 y = 0; y < dh; ++y) {
+
+            const u32 sy0 = (y * sh) / dh;
+            const u32 sy1 = std::max(sy0 + 1, ((y + 1) * sh) / dh);
+
+            for (u32 x = 0; x < dw; ++x) {
+
+                const u32 sx0 = (x * sw) / dw;
+                const u32 sx1 = std::max(sx0 + 1, ((x + 1) * sw) / dw);
+
+                u32 r = 0, g = 0, b = 0, a = 0, count = 0;
+                for (u32 sy = sy0; sy < sy1; ++sy) {
+                    for (u32 sx = sx0; sx < sx1; ++sx) {
+                        const u8* p = src.data() + (static_cast<size_t>(sy) * sw + sx) * 4;
+                        r += p[0]; g += p[1]; b += p[2]; a += p[3];
+                        ++count;
+                    }
+                }
+
+                u8* dst = out_pixels.data() + (static_cast<size_t>(y) * dw + x) * 4;
+                dst[0] = static_cast<u8>(r / count);
+                dst[1] = static_cast<u8>(g / count);
+                dst[2] = static_cast<u8>(b / count);
+                dst[3] = static_cast<u8>(a / count);
+            }
+        }
+
+        out_w = dw;
+        out_h = dh;
+    }
+
+
     atlas_layout plan_atlas(u32 icon_count, u32 icon_size, u32 padding) {
 
         const grid_dimensions g = compute_icon_grid(icon_count);
@@ -246,10 +307,8 @@ namespace GLT::editor::icon_manager {
                 state.job_cv.wait(lock, [&] {
                     return state.worker_stop.load() || !state.jobs.empty();
                 });
-
                 if (state.worker_stop.load() && state.jobs.empty())
                     return;
-
                 job = std::move(state.jobs.front());
                 state.jobs.pop();
             }
@@ -257,54 +316,67 @@ namespace GLT::editor::icon_manager {
             thumbnail_result result{};
             result.handle = job.handle;
 
-            int w = 0, h = 0, channels = 0;
-            u8* raw = stbi_load(job.path.string().c_str(), &w, &h, &channels, 4);
+            // Try the asset's baked CHUNK_THUMBNAIL ------------------------------------------------
+            // The registry reads only header + chunk table
+            // The payload is (thumbnail_header | RGBA8 bytes) and may be up to THUMBNAIL_MAX_SIDE, which can exceed our atlas cell - so we downsample to fit.
+            if (auto registry = GLT::asset::registry::get_ref()) {
 
-            if (raw && w > 0 && h > 0) {
+                auto chunk = registry->read_chunk(job.path, GLT::asset::texture::CHUNK_THUMBNAIL);
 
-                // Scale so the largest side is <= THUMBNAIL_CELL_SIZE, preserving aspect ratio.
-                const f32 scale = std::min(1.0f, (f32)THUMBNAIL_CELL_SIZE / (f32)std::max(w, h));
-                const u32 nw = std::max(1u, (u32)std::lround((f32)w * scale));
-                const u32 nh = std::max(1u, (u32)std::lround((f32)h * scale));
+                if (chunk && chunk->size() >= sizeof(GLT::asset::texture::thumbnail_header)) {
 
-                result.success = true;
-                result.width   = nw;
-                result.height  = nh;
-                result.pixels.resize((size_t)nw * nh * 4);
+                    GLT::asset::texture::thumbnail_header thdr{};
+                    std::memcpy(&thdr, chunk->data(), sizeof(thdr));
 
-                // Simple box-filter downsample. Good enough for thumbnails, and avoids pulling in stb_image_resize.h.
-                for (u32 y = 0; y < nh; ++y) {
+                    const u32 sw = thdr.width;
+                    const u32 sh = thdr.height;
+                    const size_t payload = chunk->size() - sizeof(thdr);
+                    const size_t expected = static_cast<size_t>(sw) * sh * 4;
 
-                    const u32 sy0 = (y * (u32)h) / nh;
-                    const u32 sy1 = std::max(sy0 + 1, ((y + 1) * (u32)h) / nh);
+                    if (sw > 0 && sh > 0 && payload >= expected) {
 
-                    for (u32 x = 0; x < nw; ++x) {
+                        const std::span<const u8> src(
+                            reinterpret_cast<const u8*>(chunk->data() + sizeof(thdr)), expected);
 
-                        const u32 sx0 = (x * (u32)w) / nw;
-                        const u32 sx1 = std::max(sx0 + 1, ((x + 1) * (u32)w) / nw);
+                        std::vector<u8> fitted;
+                        u32 fw = 0, fh = 0;
+                        fit_rgba8_into_cell(src, sw, sh, THUMBNAIL_CELL_SIZE, fitted, fw, fh);
 
-                        u32 r = 0, g = 0, b = 0, a = 0, count = 0;
-                        for (u32 sy = sy0; sy < sy1; ++sy) {
-                            for (u32 sx = sx0; sx < sx1; ++sx) {
-                                const u8* p = raw + ((size_t)sy * w + sx) * 4;
-                                r += p[0]; g += p[1]; b += p[2]; a += p[3];
-                                ++count;
-                            }
+                        if (!fitted.empty()) {
+                            result.success = true;
+                            result.width = fw;
+                            result.height = fh;
+                            result.pixels = std::move(fitted);
                         }
-
-                        u8* dst = result.pixels.data() + ((size_t)y * nw + x) * 4;
-                        dst[0] = (u8)(r / count);
-                        dst[1] = (u8)(g / count);
-                        dst[2] = (u8)(b / count);
-                        dst[3] = (u8)(a / count);
                     }
                 }
             }
 
-            if (raw)
-                stbi_image_free(raw);
+            // Fallback: raw image on disk (un-imported .png/.jpg dropped into content) -------------
+            if (!result.success) {
 
-            // std::this_thread::sleep_for(std::chrono::seconds(2));
+                int w = 0, h = 0, channels = 0;
+                u8* raw = stbi_load(job.path.string().c_str(), &w, &h, &channels, 4);
+
+                if (raw && w > 0 && h > 0) {
+
+                    const std::span<const u8> src(raw, static_cast<size_t>(w) * h * 4);
+
+                    std::vector<u8> fitted;
+                    u32 fw = 0, fh = 0;
+                    fit_rgba8_into_cell(src, static_cast<u32>(w), static_cast<u32>(h), THUMBNAIL_CELL_SIZE, fitted, fw, fh);
+
+                    if (!fitted.empty()) {
+                        result.success = true;
+                        result.width = fw;
+                        result.height = fh;
+                        result.pixels = std::move(fitted);
+                    }
+                }
+
+                if (raw)
+                    stbi_image_free(raw);
+            }
 
             {
                 std::lock_guard lock(state.result_mutex);

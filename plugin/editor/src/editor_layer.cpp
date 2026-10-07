@@ -523,8 +523,8 @@ namespace GLT::editor {
                     return GLT::create_unique_ref<window>(p);                                       \
                 });
 
-        // ADD_ASSET_EDITOR(GLT::asset::core_types::texture2D,     texture_viewer_window)       // TODO: fix image viewer implementation
-        // ADD_ASSET_EDITOR(GLT::asset::core_types::texture3D,     texture_viewer_window)
+        // ADD_ASSET_EDITOR(GLT::asset::core_types::texture2d,     texture_viewer_window)       // TODO: fix image viewer implementation
+        // ADD_ASSET_EDITOR(GLT::asset::core_types::texture3d,     texture_viewer_window)
         // ADD_ASSET_EDITOR(GLT::asset::core_types::cube_map,      texture_viewer_window)
         ADD_ASSET_EDITOR(GLT::asset::core_types::material,      material_viewer_window)
         ADD_ASSET_EDITOR(GLT::asset::core_types::audio,         audio_viewer_window)

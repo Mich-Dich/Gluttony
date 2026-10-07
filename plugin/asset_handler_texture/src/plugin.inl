@@ -53,9 +53,9 @@ namespace GLT::asset::handler::texture {
 
     FORCE_INLINE_R std::span<const GLT::asset::type> plugin::types() const noexcept {
 
-        // Only texture2D for now. Add texture3D / cube_map here when the
+        // Only texture2d for now. Add texture3d / cube_map here when the
         // factory grows support and the chunk layout can express them.
-        static constexpr GLT::asset::type t[] = { GLT::asset::core_types::texture2D, };
+        static constexpr GLT::asset::type t[] = { GLT::asset::core_types::texture2d, };
         return t;
     }
 

@@ -13,24 +13,24 @@ namespace GLT::asset::mesh {
 
     // CONSTANTS =======================================================================================================
 
-    // Chunk IDs (any u32; keep them stable once shipped).
+    // Chunk IDs (any u32; keep them stable once shipped)
     inline constexpr GLT::asset::chunk_id               CHUNK_VERTICES = 0x0001;
 
     inline constexpr GLT::asset::chunk_id               CHUNK_INDICES = 0x0002;
 
-    inline constexpr GLT::asset::chunk_id               CHUNK_SUBMESHES = 0x0003;   // submesh + material index ranges
+    inline constexpr GLT::asset::chunk_id               CHUNK_SUBMESHES = 0x0003;       // submesh + material index ranges
 
-    inline constexpr GLT::asset::chunk_id               CHUNK_BOUNDS = 0x0004;   // glm::vec3 min / max
+    inline constexpr GLT::asset::chunk_id               CHUNK_BOUNDS = 0x0004;          // glm::vec3 min / max
 
-    inline constexpr GLT::asset::chunk_id               CHUNK_SKELETON = 0x0005;   // skeletal_mesh only
+    inline constexpr GLT::asset::chunk_id               CHUNK_SKELETON = 0x0005;        // skeletal_mesh only
 
-    inline constexpr GLT::asset::chunk_id               CHUNK_ANIMATIONS = 0x0006;   // skeletal_mesh only
+    inline constexpr GLT::asset::chunk_id               CHUNK_ANIMATIONS = 0x0006;      // skeletal_mesh only
 
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
 
-    // Interleaved vertex. Keep this POD and 16-byte aligned for GPU upload.
+    // Interleaved vertex. Keep this POD and 16-byte aligned for GPU upload
     struct vertex {
 
         glm::vec3                                       position;           // 12
@@ -73,10 +73,10 @@ namespace GLT::asset::mesh {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // The runtime representation of a loaded mesh asset. Handlers own this type; the registry only ever sees it as `i_runtime_asset*`
+    // The runtime representation of a loaded mesh asset. Handlers own this type; the registry only ever sees it as [i_runtime_asset*]
     //
-    // IMPORTANT: this struct OWNS the decoded geometry. The chunk_reader hands out spans into a buffer that dies when the registry's load
-    // function returns, so every handler must copy what it wants to keep
+    // IMPORTANT: this struct OWNS the decoded geometry. The chunk_reader hands out spans into a buffer that dies when the 
+    // registry's load function returns, so every handler must copy what it wants to keep
     class mesh_asset final : public GLT::asset::i_runtime_asset {
     public:
 

@@ -114,6 +114,12 @@ namespace GLT::asset::factory::texture_stb {
     [[nodiscard]] GLT::asset::texture::color_space resolve_color_space(u8 user_choice, GLT::asset::texture::texture_usage usage,
         GLT::asset::texture::color_space decoded) noexcept;
 
+
+    // Downscale to fit THUMBNAIL_MAX_SIDE on the longest edge and produce RGBA8
+    // Input must be u8_rgba or f32_rgba. Returns empty on unsupported format
+    [[nodiscard]] std::vector<std::byte> make_thumbnail_rgba8(std::span<const std::byte> src, u32 sw, u32 sh, 
+        GLT::asset::texture::pixel_format fmt, u32& tw, u32& th);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     template<typename T>
@@ -476,6 +482,48 @@ namespace GLT::asset::factory::texture_stb {
         }
     }
 
+
+    [[nodiscard]] std::vector<std::byte> make_thumbnail_rgba8(std::span<const std::byte> src, u32 sw, u32 sh, 
+        GLT::asset::texture::pixel_format fmt, u32& tw, u32& th) {
+
+        tw = 0; th = 0;
+        if (sw == 0 || sh == 0)
+            return {};
+
+        const u32 longest = std::max(sw, sh);
+        const f32 scale = (longest > GLT::asset::texture::THUMBNAIL_MAX_SIDE)
+            ? static_cast<f32>(GLT::asset::texture::THUMBNAIL_MAX_SIDE) / static_cast<f32>(longest)
+            : 1.0f;
+
+        tw = std::max<u32>(1u, static_cast<u32>(static_cast<f32>(sw) * scale + 0.5f));
+        th = std::max<u32>(1u, static_cast<u32>(static_cast<f32>(sh) * scale + 0.5f));
+
+        switch (fmt) {
+
+            case GLT::asset::texture::pixel_format::u8_rgba:
+                if (tw == sw && th == sh)
+                    return std::vector<std::byte>(src.begin(), src.end());
+                return resize_rgba_bilinear<u8>(src, sw, sh, tw, th);
+
+            case GLT::asset::texture::pixel_format::f32_rgba: {
+
+                // Bilinear on f32 then clamp to [0,1] for the preview. 
+                // A proper tonemap needs exposure; for a thumbnail the linear clamp is fine.
+                auto resized = resize_rgba_bilinear<f32>(src, sw, sh, tw, th);
+                std::vector<std::byte> out(resized.size() / sizeof(f32));
+                const f32* s = reinterpret_cast<const f32*>(resized.data());
+                u8* d = reinterpret_cast<u8*>(out.data());
+                for (size_t i = 0; i < out.size(); ++i)
+                    d[i] = static_cast<u8>(std::clamp(s[i], 0.0f, 1.0f) * 255.0f + 0.5f);
+                return out;
+            }
+
+            default:
+                tw = 0; th = 0;
+                return {};
+        }
+    }
+
     // FUNCTION IMPLEMENTATION =========================================================================================
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -505,16 +553,16 @@ namespace GLT::asset::factory::texture_stb {
     [[nodiscard]] std::span<const GLT::asset::factory::binding> plugin::bindings() const noexcept {
 
         static constexpr GLT::asset::factory::binding b[] = {
-            { "png",    GLT::asset::core_types::texture2D },
-            { "jpg",    GLT::asset::core_types::texture2D },
-            { "jpeg",   GLT::asset::core_types::texture2D },
-            { "bmp",    GLT::asset::core_types::texture2D },
-            { "tga",    GLT::asset::core_types::texture2D },
-            { "gif",    GLT::asset::core_types::texture2D },
-            { "psd",    GLT::asset::core_types::texture2D },
-            { "hdr",    GLT::asset::core_types::texture2D },
-            { "pic",    GLT::asset::core_types::texture2D },
-            { "pnm",    GLT::asset::core_types::texture2D },
+            { "png",    GLT::asset::core_types::texture2d },
+            { "jpg",    GLT::asset::core_types::texture2d },
+            { "jpeg",   GLT::asset::core_types::texture2d },
+            { "bmp",    GLT::asset::core_types::texture2d },
+            { "tga",    GLT::asset::core_types::texture2d },
+            { "gif",    GLT::asset::core_types::texture2d },
+            { "psd",    GLT::asset::core_types::texture2d },
+            { "hdr",    GLT::asset::core_types::texture2d },
+            { "pic",    GLT::asset::core_types::texture2d },
+            { "pnm",    GLT::asset::core_types::texture2d },
         };
         return b;
     }
@@ -524,7 +572,7 @@ namespace GLT::asset::factory::texture_stb {
     [[nodiscard]] std::span<const GLT::asset::factory::i_asset_factory_plugin::option_descriptor>
         plugin::option_schema(const GLT::asset::type& target_type) const noexcept {
 
-        if (target_type != GLT::asset::core_types::texture2D)
+        if (target_type != GLT::asset::core_types::texture2d)
             return {};
 
         using desc = GLT::asset::factory::i_asset_factory_plugin::option_descriptor;
@@ -604,7 +652,7 @@ namespace GLT::asset::factory::texture_stb {
         GLT::asset::asset_writer& out) {
 
 
-        if (target_type != GLT::asset::core_types::texture2D)
+        if (target_type != GLT::asset::core_types::texture2d)
             return std::unexpected{ GLT::asset::import_error::not_supported };
 
         const parsed_options option = parse_type_specific(opts.type_specific);
@@ -697,6 +745,31 @@ namespace GLT::asset::factory::texture_stb {
             .height = img.height,
             .depth = 1,
         });
+
+        // ---- editor-only thumbnail chunk ---------------------------------------------------------------
+        // Written here so import() is the single source of truth for the preview. The runtime handler ignores CHUNK_THUMBNAIL entirely
+        // icon_manager reads it back through the registry's read_chunk() without allocating a runtime asset
+        {
+            u32 tw = 0, th = 0;
+            const auto thumb_pixels = make_thumbnail_rgba8(std::span<const std::byte>{ img.pixels }, img.width, img.height,
+                img.format, tw, th);
+
+            if (!thumb_pixels.empty() && tw > 0 && th > 0) {
+
+                GLT::asset::texture::thumbnail_header thdr{};
+                thdr.width  = static_cast<u16>(tw);
+                thdr.height = static_cast<u16>(th);
+                thdr.format = static_cast<u16>(GLT::asset::texture::pixel_format::u8_rgba);
+
+                std::vector<std::byte> chunk(sizeof(thdr) + thumb_pixels.size());
+                std::memcpy(chunk.data(), &thdr, sizeof(thdr));
+                std::memcpy(chunk.data() + sizeof(thdr), thumb_pixels.data(), thumb_pixels.size());
+
+                out.write_chunk(GLT::asset::texture::CHUNK_THUMBNAIL, std::span<const std::byte>{ chunk });
+            } else {
+                LOG(warn, "texture_stb: no thumbnail generated for [{}]", source.generic_string());
+            }
+        }
 
         // option: generate_mips -----------------------------------------------------------------------
         if (option.generate_mips) {

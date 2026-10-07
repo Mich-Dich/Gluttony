@@ -33,9 +33,10 @@ namespace GLT::editor {
 
     constexpr f32                                                   CELL_WIDTH = ICON_RENDER_SIZE + (ICON_TOP_MARGIN * 2);
 
-    constexpr f32                                                   CELL_HEIGHT = CELL_WIDTH + (18.f);
+    // Cell height reserves a name field below the 56px icon: 2px gap above it, 4px pad below, leaving 28px of usable height
+    constexpr f32                                                   CELL_HEIGHT = CELL_WIDTH + (29.f);
 
-    constexpr f32                                                   LABEL_BOTTOM_MARGIN = 20.0f;
+    // constexpr f32                                                   LABEL_BOTTOM_MARGIN = 20.0f;
 
     constexpr const char*                                           DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
 
@@ -117,8 +118,8 @@ namespace GLT::editor {
 
             switch (t.value) {
 
-                case GLT::asset::core_types::texture2D.value:           [[fallthrough]];
-                case GLT::asset::core_types::texture3D.value:           [[fallthrough]];
+                case GLT::asset::core_types::texture2d.value:           [[fallthrough]];
+                case GLT::asset::core_types::texture3d.value:           [[fallthrough]];
                 case GLT::asset::core_types::cube_map.value:            return icon_manager::icon::texture_big;
 
                 case GLT::asset::core_types::world.value:               [[fallthrough]];
@@ -216,8 +217,8 @@ namespace GLT::editor {
                 case GLT::asset::core_types::mesh_collection.value:     h = 155.0f; s = 0.50f; break;
 
                 // textures — blue family
-                case GLT::asset::core_types::texture2D.value:           h = 210.0f; s = 0.55f; break;
-                case GLT::asset::core_types::texture3D.value:           h = 225.0f; s = 0.55f; break;
+                case GLT::asset::core_types::texture2d.value:           h = 210.0f; s = 0.55f; break;
+                case GLT::asset::core_types::texture3d.value:           h = 225.0f; s = 0.55f; break;
                 case GLT::asset::core_types::cube_map.value:            h = 240.0f; s = 0.50f; break;
 
                 // materials — violet / purple family
@@ -861,9 +862,9 @@ namespace GLT::editor {
 
             const ImU32 accent = type_to_color(resolve_entry_type(entry.extension));
 
-            constexpr f32 STRIP_HEIGHT  = 2.5f;
-            constexpr f32 STRIP_INSET_X = 6.0f;
-            constexpr f32 STRIP_OFFSET_Y = 19.0f;
+            constexpr f32 STRIP_HEIGHT  = 2.f;
+            constexpr f32 STRIP_INSET_X = 6.f;
+            constexpr f32 STRIP_OFFSET_Y = 32.f;
 
             const ImVec2 strip_min(origin.x + STRIP_INSET_X, cell_max.y - STRIP_OFFSET_Y - STRIP_HEIGHT);
             const ImVec2 strip_max(cell_max.x - STRIP_INSET_X, cell_max.y - STRIP_OFFSET_Y);
@@ -873,21 +874,30 @@ namespace GLT::editor {
         // icon / thumbnail --------------------------------------------------------------------------------------------
         bool drew_thumbnail = false;
 
-        if (!entry.is_directory && GLT::render::is_image_extension(entry.extension)) {
+        // Two sources of previews:
+        //   - raw images that were dropped in but not yet imported  ->  STB fallback path
+        //   - .glt_texture2d assets                                 ->  baked CHUNK_THUMBNAIL
+        // Everything else (meshes, materials, folders, shaders …) falls through to the icon atlas
+        if (!entry.is_directory) {
 
-            const auto thumb = icon_manager::get_thumbnail(entry.path);
-            if (thumb.state == icon_manager::thumbnail_state::ready && thumb.image_size.x > 0.0f) {
+            const bool wants_thumbnail = GLT::render::is_image_extension(entry.extension) ||
+                resolve_entry_type(entry.extension) == GLT::asset::core_types::texture2d;
 
-                const f32 scale = std::min(ICON_RENDER_SIZE / thumb.image_size.x, ICON_RENDER_SIZE / thumb.image_size.y);
-                const f32 draw_w = thumb.image_size.x * scale;
-                const f32 draw_h = thumb.image_size.y * scale;
-                const ImVec2 t_min(
-                    origin.x + (cell_size.x - draw_w) * 0.5f,
-                    origin.y + ICON_TOP_MARGIN + (ICON_RENDER_SIZE - draw_h) * 0.5f);
-                const ImVec2 t_max(t_min.x + draw_w, t_min.y + draw_h);
+            if (wants_thumbnail) {
 
-                draw->AddImage(thumb.tex_ref, t_min, t_max, thumb.uv0, thumb.uv1);
-                drew_thumbnail = true;
+                const auto thumb = icon_manager::get_thumbnail(entry.path);
+                if (thumb.state == icon_manager::thumbnail_state::ready && thumb.image_size.x > 0.0f) {
+
+                    const f32 scale  = std::min(ICON_RENDER_SIZE / thumb.image_size.x, ICON_RENDER_SIZE / thumb.image_size.y);
+                    const f32 draw_w = thumb.image_size.x * scale;
+                    const f32 draw_h = thumb.image_size.y * scale;
+                    const ImVec2 t_min(origin.x + (cell_size.x - draw_w) * 0.5f, 
+                        origin.y + ICON_TOP_MARGIN + (ICON_RENDER_SIZE - draw_h) * 0.5f);
+                    const ImVec2 t_max(t_min.x + draw_w, t_min.y + draw_h);
+
+                    draw->AddImage(thumb.tex_ref, t_min, t_max, thumb.uv0, thumb.uv1);
+                    drew_thumbnail = true;
+                }
             }
         }
 
@@ -897,55 +907,57 @@ namespace GLT::editor {
                 entry.is_directory ? icon_manager::icon::folder_big : extension_to_icon(entry.extension));
             if (icon.image_size.x > 0.0f) {
 
-                const ImVec2 icon_min(
-                    origin.x + (cell_size.x - ICON_RENDER_SIZE) * 0.5f,
-                    origin.y + ICON_TOP_MARGIN);
-                const ImVec2 icon_max(
-                    icon_min.x + ICON_RENDER_SIZE,
-                    icon_min.y + ICON_RENDER_SIZE);
-
-                draw->AddImage(icon.tex_ref, icon_min, icon_max, icon.uv0, icon.uv1, 
-                    ImGui::GetColorU32(ImVec4(1.f, 1.f, 1.f, .75f)));
+                const ImVec2 icon_min(origin.x + (cell_size.x - ICON_RENDER_SIZE) * 0.5f, origin.y + ICON_TOP_MARGIN);
+                const ImVec2 icon_max(icon_min.x + ICON_RENDER_SIZE, icon_min.y + ICON_RENDER_SIZE);
+                draw->AddImage(icon.tex_ref, icon_min, icon_max, icon.uv0, icon.uv1, ImGui::GetColorU32(ImVec4(1.f, 1.f, 1.f, .75f)));
             }
         }
 
         // filename, wrapped to at most two lines ----------------------------------------------------------------------
 
-        // We do our own wrap so a long name renders as two centred lines ending in "..." rather than being silently clipped
-        // The clip rect keeps any accidental overhang inside the cell bounds
-        constexpr f32 NAME_PAD_X      = 8.0f;
-        constexpr f32 NAME_PAD_BOTTOM = 3.0f;
+        // The name field is the band between the icon and the bottom of the cell, with a small gap above
+        // Both single- and two-line names are drawn as a block that is vertically centred inside this band
+        constexpr f32 NAME_PAD_X = 8.0f;
+        constexpr f32 NAME_FIELD_GAP_ABOVE = 2.0f;
+        constexpr f32 NAME_FIELD_GAP_BELOW = 4.0f;
+        constexpr f32 NAME_LINE_TIGHTEN = 2.0f;
+        constexpr f32 NAME_BLOCK_OFFSET_Y = 3.0f;           // Nudge the whole name block down
 
         const f32 name_max_w = cell_size.x - 2.0f * NAME_PAD_X;
-        const f32 line_h     = ImGui::GetTextLineHeight();
+        const f32 line_h = ImGui::GetTextLineHeight();
+        const f32 line_advance = line_h - NAME_LINE_TIGHTEN;
+        const f32 field_top = origin.y + ICON_TOP_MARGIN + ICON_RENDER_SIZE + NAME_FIELD_GAP_ABOVE;
+        const f32 field_bottom = cell_max.y - NAME_FIELD_GAP_BELOW;
+        const f32 field_height = std::max(0.0f, field_bottom - field_top);
 
         std::string name_line1;
         std::string name_line2;
         wrap_to_two_lines(entry.name, name_max_w, name_line1, name_line2);
 
-        draw->PushClipRect(
-            ImVec2(origin.x + NAME_PAD_X, origin.y),
-            ImVec2(cell_max.x - NAME_PAD_X, cell_max.y),
-            true);
+        draw->PushClipRect(ImVec2(origin.x + NAME_PAD_X, origin.y), ImVec2(cell_max.x - NAME_PAD_X, cell_max.y), true);
 
-        auto draw_line_centered = [&](const std::string& s, const f32 y) {
-            if (s.empty())
+        auto draw_line_centered = [&](const std::string& string, const f32 y) {
+            if (string.empty())
                 return;
-            const f32 w = ImGui::CalcTextSize(s.c_str()).x;
+            const f32 w = ImGui::CalcTextSize(string.c_str()).x;
             const f32 x = origin.x + std::max(2.0f, (cell_size.x - w) * 0.5f);
-            draw->AddText(ImVec2(x, y), IM_COL32_WHITE, s.c_str());
+            draw->AddText(ImVec2(x, y), IM_COL32_WHITE, string.c_str());
         };
 
         if (name_line2.empty()) {
 
-            // Single line: bottom-aligned as before
-            draw_line_centered(name_line1, cell_max.y - NAME_PAD_BOTTOM - line_h);
+            // Single line: centre the one line's height inside the field
+            const f32 block_h = line_h;
+            const f32 y = field_top + (field_height - block_h) * 0.5f + NAME_BLOCK_OFFSET_Y;
+            draw_line_centered(name_line1, y);
 
         } else {
 
-            // Two lines: bottom-align the block so the pair stays pinned to the bottom of the cell regardless of text metrics
-            const f32 y1 = cell_max.y - NAME_PAD_BOTTOM - 2.0f * line_h;
-            const f32 y2 = y1 + line_h;
+            // Two lines: centre the combined block, then stack the second line at the tightened advance
+            const f32 block_h = line_h + line_advance;
+            const f32 y1 = field_top + (field_height - block_h) * 0.5f + NAME_BLOCK_OFFSET_Y;
+            const f32 y2 = y1 + line_advance;
+
             draw_line_centered(name_line1, y1);
             draw_line_centered(name_line2, y2);
         }
@@ -960,12 +972,12 @@ namespace GLT::editor {
 
             if (drag_multi) {
                 for (size_t i = 0; i < m_selected_paths.size(); ++i) {
-                    if (i) payload += '\n';
+                    if (i) 
+                        payload += '\n';
                     payload += m_selected_paths[i].string();
                 }
-            } else {
+            } else
                 payload = entry.path.string();
-            }
 
             ImGui::SetDragDropPayload(DRAG_PAYLOAD_ID, payload.data(), payload.size());
 
@@ -981,8 +993,8 @@ namespace GLT::editor {
         if (entry.is_directory && ImGui::BeginDragDropTarget()) {
 
             m_any_item_drop_target_active = true;
-
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(DRAG_PAYLOAD_ID)) {
+
                 const auto sources = parse_drag_payload_impl(payload);
                 move_assets_to(sources, entry.path);
             }

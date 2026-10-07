@@ -241,8 +241,8 @@ namespace GLT::asset::registry_default {
         define(mesh_collection,     "mesh_collection");
 
 		// ------ texture types ------
-        define(texture2D,           "texture2D");
-        define(texture3D,           "texture3D");
+        define(texture2d,           "texture2d");
+        define(texture3d,           "texture3d");
         define(cube_map,            "cube_map");
 
 		// ------ material types ------
@@ -988,6 +988,55 @@ namespace GLT::asset::registry_default {
         // Releasing dependencies may cascade unloads
         for (GLT::asset::handle dep : deps_to_release)
             release(dep);
+    }
+
+
+    std::expected<std::vector<std::byte>, GLT::asset::load_error> plugin::read_chunk(const std::filesystem::path& path,
+        GLT::asset::chunk_id id) const {
+
+
+        const auto relative = GLT::project::to_content_relative(path);
+        if (relative.empty())
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
+        auto bytes_res = read_file(PROJECT_CONTENT_DIR / relative);
+        if (!bytes_res)
+            return std::unexpected{ bytes_res.error() };
+
+        const auto& bytes = *bytes_res;
+        if (bytes.size() < sizeof(GLT::asset::header))
+            return std::unexpected{ GLT::asset::load_error::corrupt_header };
+
+        GLT::asset::header hdr{};
+        std::memcpy(&hdr, bytes.data(), sizeof(GLT::asset::header));
+        if (hdr.magic != GLT::asset::header::MAGIC || hdr.format_version > GLT::asset::header::CURRENT_VERSION)
+            return std::unexpected{ GLT::asset::load_error::corrupt_header };
+
+        if (hdr.chunk_count == 0)
+            return std::unexpected{ GLT::asset::load_error::not_found };
+
+        const u64 need = sizeof(GLT::asset::chunk_entry) * hdr.chunk_count;
+        if (hdr.chunk_table_offset + need > bytes.size())
+            return std::unexpected{ GLT::asset::load_error::corrupt_header };
+
+        std::vector<GLT::asset::chunk_entry> table(hdr.chunk_count);
+        std::memcpy(table.data(), bytes.data() + hdr.chunk_table_offset, need);
+
+        for (const auto& entry : table) {
+
+            if (entry.id != id)
+                continue;
+            if (entry.offset + entry.size_on_disk > bytes.size())
+                return std::unexpected{ GLT::asset::load_error::corrupt_header };
+
+            // TODO: dispatch on entry.compression once a decompressor lands
+            std::vector<std::byte> out(static_cast<size_t>(entry.size_on_disk));
+            if (!out.empty())
+                std::memcpy(out.data(), bytes.data() + entry.offset, out.size());
+            return out;
+        }
+
+        return std::unexpected{ GLT::asset::load_error::not_found };
     }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================

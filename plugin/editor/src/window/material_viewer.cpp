@@ -388,7 +388,7 @@ namespace GLT::editor {
 
         using slot = GLT::asset::material::texture_slot;
 
-        if (GLT::UI::table_row_asset_picker("Albedo", m_edit_textures[static_cast<std::size_t>(slot::base_color)], GLT::asset::core_types::texture2D))
+        if (GLT::UI::table_row_asset_picker("Albedo", m_edit_textures[static_cast<std::size_t>(slot::base_color)], GLT::asset::core_types::texture2d))
             mark_dirty();
 
         if (GLT::UI::table_row_color("Base color", m_edit.base_color, 0.f, 1.f))
@@ -418,7 +418,7 @@ namespace GLT::editor {
 
         using slot = GLT::asset::material::texture_slot;
 
-        if (GLT::UI::table_row_asset_picker("Emissive", m_edit_textures[static_cast<std::size_t>(slot::emissive)], GLT::asset::core_types::texture2D))
+        if (GLT::UI::table_row_asset_picker("Emissive", m_edit_textures[static_cast<std::size_t>(slot::emissive)], GLT::asset::core_types::texture2d))
             mark_dirty();
 
         if (GLT::UI::table_row_color("Emissive color", m_edit.emissive, 0.f, 1.f))
@@ -439,19 +439,19 @@ namespace GLT::editor {
 
         using slot = GLT::asset::material::texture_slot;
 
-        if (GLT::UI::table_row_asset_picker("Normal", m_edit_textures[static_cast<std::size_t>(slot::normal)], GLT::asset::core_types::texture2D))
+        if (GLT::UI::table_row_asset_picker("Normal", m_edit_textures[static_cast<std::size_t>(slot::normal)], GLT::asset::core_types::texture2d))
             mark_dirty();
 
         if (GLT::UI::table_row("Normal scale", m_edit.normal_scale, 0.02f, 0.f, 4.f))
             mark_dirty();
 
-        if (GLT::UI::table_row_asset_picker("Occlusion", m_edit_textures[static_cast<std::size_t>(slot::occlusion)], GLT::asset::core_types::texture2D))
+        if (GLT::UI::table_row_asset_picker("Occlusion", m_edit_textures[static_cast<std::size_t>(slot::occlusion)], GLT::asset::core_types::texture2d))
             mark_dirty();
 
         if (GLT::UI::table_row("Occlusion strength", m_edit.occlusion_strength, 0.02f, 0.f, 1.f))
             mark_dirty();
 
-        if (GLT::UI::table_row_asset_picker("Height", m_edit_textures[static_cast<std::size_t>(slot::height)], GLT::asset::core_types::texture2D))
+        if (GLT::UI::table_row_asset_picker("Height", m_edit_textures[static_cast<std::size_t>(slot::height)], GLT::asset::core_types::texture2d))
             mark_dirty();
 
         GLT::UI::end_table();

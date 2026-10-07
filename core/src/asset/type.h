@@ -9,7 +9,7 @@ namespace GLT::asset {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr const char*                       COMPONENT_DATA_TABLE_NAME = "COMPONENT_DATA_TABLE_NAME";
+    constexpr const char*                           COMPONENT_DATA_TABLE_NAME = "COMPONENT_DATA_TABLE_NAME";
 
     // MACROS ==========================================================================================================
 
@@ -18,17 +18,17 @@ namespace GLT::asset {
     using handle = ::handle;
 
 
-    using content_hash = u64;    // xxh3 of the payload - hot-reload detection
+    using content_hash = u64;                                               // xxh3 of the payload - hot-reload detection
 
 
-    using chunk_id = u32;    // handler-defined (mesh: "vertices", "indices", "bvh", ...)
+    using chunk_id = u32;                                                   // handler-defined (mesh: "vertices", "indices", "bvh", ...)
 
 
     struct type {
 
-        u32                                             value;
+        u32                                         value;
 
-        constexpr type() noexcept = default;                            // default ctor
+        constexpr type() noexcept = default;                                // default ctor
         constexpr explicit type(u32 v) noexcept : value(v) {}
 
         constexpr bool operator==(const type&) const noexcept = default;
@@ -39,7 +39,7 @@ namespace GLT::asset {
     };
 
 
-    // Structural element for reflection: const char* is structural, string_view is not.
+    // Structural element for reflection: const char* is structural, string_view is not
     struct type_entry {
 
         const char* name;
@@ -47,52 +47,52 @@ namespace GLT::asset {
     };
 
 
-    // Core-reserved range: [0, 1024) Plugin range: [1024, ...). Registry hands these out.
-    // Plugin calls registry->reserve_type("mygame.weapon") once at on_load().
+    // Core-reserved range: [0, 1024) Plugin range: [1024, ...). Registry hands these out
+    // Plugin calls registry->reserve_type("mygame.weapon") once at on_load()
     namespace core_types {
 
         inline constexpr type invalid               {  0 };
-        inline constexpr type world                 {  1 };     // Complete world/scene file
-        inline constexpr type region                {  2 };     // Sub-section of a world
-        inline constexpr type audio                 {  3 };     // Generic audio asset (to be specialized later)
+        inline constexpr type world                 {  1 };                 // Complete world/scene file
+        inline constexpr type region                {  2 };                 // Sub-section of a world
+        inline constexpr type audio                 {  3 };                 // Generic audio asset (to be specialized later)
 
 		// ------ mesh types ------
-        inline constexpr type static_mesh           {  4 };     // Non-animated mesh geometry
-        inline constexpr type procedural_mesh       {  5 };     // Programmatically generated mesh
-        inline constexpr type dynamic_mesh          {  6 };     // Mesh that can be modified at runtime
-        inline constexpr type skeletal_mesh         {  7 };     // Mesh with bone animation support
-        inline constexpr type mesh_collection       {  8 };     // Collection of multiple meshes
+        inline constexpr type static_mesh           {  4 };                 // Non-animated mesh geometry
+        inline constexpr type procedural_mesh       {  5 };                 // Programmatically generated mesh
+        inline constexpr type dynamic_mesh          {  6 };                 // Mesh that can be modified at runtime
+        inline constexpr type skeletal_mesh         {  7 };                 // Mesh with bone animation support
+        inline constexpr type mesh_collection       {  8 };                 // Collection of multiple meshes
 
 		// ------ texture types ------
-        inline constexpr type texture2D             {  9 };     // Standard 2D texture
-        inline constexpr type texture3D             { 10 };     // 3D volume texture
-        inline constexpr type cube_map              { 11 };     // Cube map texture for sbyboxs/reflection
+        inline constexpr type texture2d             {  9 };                 // Standard 2D texture
+        inline constexpr type texture3d             { 10 };                 // 3D volume texture
+        inline constexpr type cube_map              { 11 };                 // Cube map texture for sbyboxs/reflection
 
 		// ------ material types ------
-        inline constexpr type material              { 12 };     // Base material definition
-        inline constexpr type material_instance     { 13 };     // Instance of a material with parameter overrides
+        inline constexpr type material              { 12 };                 // Base material definition
+        inline constexpr type material_instance     { 13 };                 // Instance of a material with parameter overrides
 
         inline constexpr type anim                  { 14 };
-        inline constexpr type light                 { 15 };     // RT light profiles
-        inline constexpr type bvh                   { 16 };     // prebuilt BLAS/TLAS
-        inline constexpr type volume                { 17 };     // participating media
+        inline constexpr type light                 { 15 };                 // RT light profiles
+        inline constexpr type bvh                   { 16 };                 // prebuilt BLAS/TLAS
+        inline constexpr type volume                { 17 };                 // participating media
     }
 
 
     enum class flags : u32 {
 
-        none                                    = 0,
-        compressed                              = BIT(0),               // whole-file (zstd etc.)
-        encrypted                               = BIT(1),
-        streaming                               = BIT(2),               // chunk sizes are hints, decode lazily
-        editor_only                             = BIT(3),
-        runtime_only                            = BIT(4),
-        hot_reloadable                          = BIT(5),
-        ray_traced                              = BIT(6),               // participates in BVH / BLAS / TLAS
+        none                                        = 0,
+        compressed                                  = BIT(0),               // whole-file (zstd etc.)
+        encrypted                                   = BIT(1),
+        streaming                                   = BIT(2),               // chunk sizes are hints, decode lazily
+        editor_only                                 = BIT(3),
+        runtime_only                                = BIT(4),
+        hot_reloadable                              = BIT(5),
+        ray_traced                                  = BIT(6),               // participates in BVH / BLAS / TLAS
     };
 
 
-    // Result of a load attempt; use std::expected everywhere so the registry can propagate "missing / corrupt / unsupported" without exceptions or nulls.
+    // Result of a load attempt; use std::expected everywhere so the registry can propagate "missing / corrupt / unsupported" without exceptions or nulls
     enum class load_error : u8 {
 
         not_found = 0,
@@ -102,9 +102,9 @@ namespace GLT::asset {
         missing_dependency,
         no_handler,
         out_of_memory,
-        needs_reload,                                                   // handler asks registry to rebuild
-        cyclic_dependency,                                              // useful for the loader below
-        already_exists,                                                 // path or id already registered
+        needs_reload,                                                       // handler asks registry to rebuild
+        cyclic_dependency,                                                  // useful for the loader below
+        already_exists,                                                     // path or id already registered
     };
 
 
@@ -118,23 +118,23 @@ namespace GLT::asset {
     };
 
 
-    struct chunk_entry {                                                // 32 bytes, alignas(8)
+    struct chunk_entry {                                                    // 32 bytes, alignas(8)
 
-        chunk_id                                id{};
-        u32                                     compression{};          // codec id, 0 = raw
-        u64                                     offset{};               // from start of file
-        u64                                     size_on_disk{};
-        u64                                     size_decoded{};
+        chunk_id                                    id{};
+        u32                                         compression{};          // codec id, 0 = raw
+        u64                                         offset{};               // from start of file
+        u64                                         size_on_disk{};
+        u64                                         size_decoded{};
     };
 
 
-    // On-disk dependency row. Path is NUL-terminated in the string table; path_offset == 0 means "id-only" (resolved via the registry's id map).
+    // On-disk dependency row. Path is NUL-terminated in the string table; path_offset == 0 means "id-only" (resolved via the registry's id map)
     struct dependency_disk {
 
-        UUID                                    id{};
-        u64                                     path_offset{};
-        u32                                     target_type{};
-        u32                                     _pad{};
+        UUID                                        id{};
+        u64                                         path_offset{};
+        u32                                         target_type{};
+        u32                                         _pad{};
     };
     static_assert(std::is_trivially_copyable_v<dependency_disk>);
     static_assert(sizeof(dependency_disk) == 24);
@@ -152,8 +152,8 @@ namespace GLT::asset {
         u16                                         engine_version{};
 
         // paths -------------------------------------------------------------------------------------------------------
-        std::filesystem::path                       virtual_path{};     // vfs path the registry loaded
-        std::filesystem::path                       source_path{};      // where the import came from
+        std::filesystem::path                       virtual_path{};         // vfs path the registry loaded
+        std::filesystem::path                       source_path{};          // where the import came from
         std::string                                 name{};
 
         // layout ------------------------------------------------------------------------------------------------------
@@ -200,7 +200,7 @@ namespace GLT::asset {
 
     // TEMPLATE DECLARATION ============================================================================================
 
-    // Reflect every variable of type `type` inside a given namespace.
+    // Reflect every variable of type `type` inside a given namespace
     template <auto Namespace>
     FORCE_INLINE_R consteval auto make_type_entries();
 
@@ -225,13 +225,13 @@ namespace GLT::asset {
 
         virtual ~i_runtime_asset() = default;
 
-        // Cheap tag for the registry / debug tooling. Handlers fill this in.
+        // Cheap tag for the registry / debug tooling. Handlers fill this in
         [[nodiscard]] virtual GLT::asset::type type() const noexcept = 0;
 
-        // Approximate resident bytes, reported to the profiler.
+        // Approximate resident bytes, reported to the profiler
         [[nodiscard]] virtual u64 memory_usage() const noexcept { return 0; }
 
-        // Called by the registry when this asset's dependents need to know it changed (hot-reload). Default: no-op.
+        // Called by the registry when this asset's dependents need to know it changed (hot-reload). Default: no-op
         virtual void on_reloaded() noexcept {}
     };
 

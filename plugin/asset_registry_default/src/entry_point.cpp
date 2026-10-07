@@ -275,6 +275,11 @@ namespace GLT::asset::registry_default {
 
         void release(GLT::asset::handle handle) override;
 
+        // PEEK API (for debugging, editor, ...) -----------------------------------------------------------------------
+
+        [[nodiscard]] std::expected<std::vector<std::byte>, GLT::asset::load_error> read_chunk(const std::filesystem::path& path,
+            chunk_id id) const override;
+
     private:
 
         [[nodiscard]] slot* slot_for(GLT::asset::handle h) noexcept;

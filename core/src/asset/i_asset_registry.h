@@ -179,6 +179,18 @@ namespace GLT::asset {
 
         virtual void release(GLT::asset::handle handle) = 0;
 
+        // PEEK API (for debugging, editor, ...) -----------------------------------------------------------------------
+
+        // Read a single named chunk from an asset file WITHOUT loading the asset or invoking its handler
+        // The registry parses only the header + chunk table and returns the (decompressed) payload bytes
+        //
+        // Intended for editor tooling: thumbnails, metadata inspectors, source diffs
+        // Runtime code should go through load() / data()
+        //
+        // @param path  CAUTION - content dir relative path (PROJECT_CONTENT_DIR / path)
+        [[nodiscard]] virtual std::expected<std::vector<std::byte>, GLT::asset::load_error> read_chunk(
+            const std::filesystem::path& path, chunk_id id) const = 0;
+            
     };
 
 }
