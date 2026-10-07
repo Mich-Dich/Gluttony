@@ -8,10 +8,11 @@ hitAttributeEXT vec2 attribs;
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 
 layout(set = 0, binding = 1) uniform CameraUBO {
-    mat4 view_inv;
-    mat4 proj_inv;
-    vec4 sun_direction;   // xyz = direction TO the sun
-    vec4 sun_color;       // xyz = color, w = intensity
+    mat4  view_inv;
+    mat4  proj_inv;
+    vec4  sun_direction;   // xyz = direction TO the sun
+    vec4  sun_color;       // xyz = color, w = intensity
+    uvec4 accum_params;    // unused here; must exist for the block to match the rgen
 } cam;
 
 // ---------------------------------------------------------------------------------------
@@ -54,12 +55,12 @@ layout(set = 0, binding = 7, std430) readonly buffer GeometryBuffer { GpuGeometr
 // ---------------------------------------------------------------------------------------
 // Texture slot indices - MUST match GLT::asset::material::texture_slot
 // ---------------------------------------------------------------------------------------
-const uint SLOT_BASE_COLOR         = 0u;
+const uint SLOT_BASE_COLOR = 0u;
 const uint SLOT_METALLIC_ROUGHNESS = 1u;
-const uint SLOT_NORMAL             = 2u;
-const uint SLOT_EMISSIVE           = 3u;
-const uint SLOT_OCCLUSION          = 4u;
-const uint SLOT_HEIGHT             = 5u;   // reserved, unused
+const uint SLOT_NORMAL = 2u;
+const uint SLOT_EMISSIVE = 3u;
+const uint SLOT_OCCLUSION = 4u;
+const uint SLOT_HEIGHT = 5u;   // reserved, unused
 
 // ---------------------------------------------------------------------------------------
 // AO configuration
@@ -199,16 +200,21 @@ void main() {
     const vec3 hit_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
     // --- RNG seed ------------------------------------------------------------------------
-    // Vary per-pixel AND per-bounce, otherwise every bounce reuses the same first
-    // random numbers and the GI picks up a visible fixed pattern.
-    uint seed = uint(gl_LaunchIDEXT.x) * 1973u
-              ^ uint(gl_LaunchIDEXT.y) * 9277u
-              ^ uint(my_bounce)          * 31337u
+    // Vary per-pixel, per-bounce, AND per-frame. The frame term is what makes temporal accumulation work: without it,
+    // every frame produces bit-identical noise and the running average converges to a single noisy sample instead of the true mean
+    //
+    // cam.accum_params.x is the number of samples already accumulated in the accum buffer, i.e. the frame index within the
+    // current accumulation run. It increments by one each frame while the camera is still, and resets to 0 when it isn't, which
+    // is exactly the decorrelation we want.
+    uint seed = uint(gl_LaunchIDEXT.x)     * 1973u
+              ^ uint(gl_LaunchIDEXT.y)     * 9277u
+              ^ uint(my_bounce)            * 31337u
+              ^ cam.accum_params.x         * 71923u
               ^ 26699u;
 
     // --- AO (bounce 0 only) --------------------------------------------------------------
-    // AO is a stand-in for sky visibility. Running it at every bounce would compound
-    // the estimate and darken interiors far too much, so it's gated to the primary hit.
+    // AO is a stand-in for sky visibility. Running it at every bounce would compound the estimate and darken interiors far
+    // too much, so it's gated to the primary hit
     float ao_geometric = 1.0;
     if (my_bounce == 0) {
         float occlusion = 0.0;
@@ -230,9 +236,8 @@ void main() {
     const float ao = ao_geometric * occ_mat;
 
     // --- soft sun shadow (every bounce) --------------------------------------------------
-    // A surface in sun shadow still reflects ambient and sky. If we skipped the shadow
-    // test at bounces > 0, indirect light would wrap around corners and leak, so we
-    // pay one extra ray per bounce.
+    // A surface in sun shadow still reflects ambient and sky. If we skipped the shadow test at bounces > 0, indirect light would
+    // wrap around corners and leak, so we pay one extra ray per bounce
     const vec3  L         = normalize(cam.sun_direction.xyz);
     const float NdotL_raw = dot(N, L);
     float shadow          = 0.0;
@@ -288,20 +293,18 @@ void main() {
     vec3 result = ambient + diffuse + specular + emissive;
 
     // --- indirect bounce (emissive + one-bounce GI) --------------------------------------
-    // One cosine-weighted ray per hit. The path carries no payload state beyond the
-    // bounce counter; on return, its radiance is what we received from that direction.
+    // One cosine-weighted ray per hit. The path carries no payload state beyond the bounce counter; on return, its radiance is
+    // what we received from that direction.
     //
     // For a Lambertian BRDF with cosine-weighted sampling, the rendering equation
     //     L_o = albedo/pi * Integral( L_i * cos(theta) domega )
     // reduces to just
     //     L_o ~= albedo * L_i
-    // because the pdf cos(theta)/pi cancels the cos(theta) and the pi. So the only
-    // weighting we apply is the current surface's albedo.
+    // because the pdf cos(theta)/pi cancels the cos(theta) and the pi. So the only weighting we apply is the current surface's albedo
     //
-    // The sky is a valid hit for this ray - the rmiss shader returns the sky colour,
-    // which means upward-facing surfaces pick up sky light naturally. If the scene
-    // becomes too bright overall, dial down the 0.15 ambient term above; it's a
-    // heuristic that predates the sky bounce.
+    // The sky is a valid hit for this ray - the rmiss shader returns the sky colour, which means upward-facing surfaces pick up sky
+    // light naturally. If the scene becomes too bright overall, dial down the 0.15 ambient term above; it's a heuristic that predates
+    // the sky bounce
     if (my_bounce < MAX_BOUNCES) {
 
         const vec3 bounce_dir = cosine_hemisphere(seed, N);

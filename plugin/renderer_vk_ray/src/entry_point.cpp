@@ -167,6 +167,7 @@ namespace GLT::renderer_vk_ray {
         enum class image_type{
             swapchain = 0,
             render,
+            accum,
         };
 
 
@@ -445,10 +446,17 @@ namespace GLT::renderer_vk_ray {
         std::vector<GLT::asset::handle>                         m_pending_material_loads{};
         std::vector<GLT::asset::handle>                         m_pending_material_unloads{};
 
+        // improve render quality --------------------------------------------------------------------------------------
+        GLT::ref<image>                                         m_accum_image{};                // RGBA32F running average
+        u32                                                     m_accum_sample_count = 0;       // samples accumulated so far
+        glm::mat4                                               m_accum_prev_view{ 1.0f };      // camera view used last frame
+        glm::vec3                                               m_accum_prev_position{ 0.f };
+
         // preview -----------------------------------------------------------------------------------------------------
 
         bool                                                    m_preview_ready = false;
         GLT::ref<image>                                         m_preview_image{};
+        GLT::ref<image>                                         m_preview_accum_image{};        // separate accum for the preview pass
         vr::allocated_buffer                                    m_preview_vertex_buffer{};
         vr::allocated_buffer                                    m_preview_index_buffer{};
         vr::allocated_buffer                                    m_preview_instance_buffer{};

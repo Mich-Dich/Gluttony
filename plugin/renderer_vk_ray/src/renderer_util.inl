@@ -93,10 +93,33 @@ namespace GLT::renderer_vk_ray {
                     m_output_image->get_accessible_image_ref().layout,
                     new_layout,
                     render_range,                                   // Image subresource range
-                    vk::PipelineStageFlagBits::eAllCommands ,       // Source stage
+                    vk::PipelineStageFlagBits::eAllCommands,        // Source stage
                     vk::PipelineStageFlagBits::eAllCommands         // Destination stage
                 );
                 m_output_image->get_accessible_image_ref().layout = new_layout;
+
+            } break;
+
+            case image_type::accum: {
+
+                vk::ImageSubresourceRange accum_range(
+                    vk::ImageAspectFlagBits::eColor,                // Color aspect
+                    0,                                              // Base mip level
+                    1,                                              // Level count
+                    0,                                              // Base array layer
+                    1                                               // Layer count
+                );
+
+                m_vr_dev->transition_image_layout(
+                    command_buffer,
+                    m_accum_image->get_allocated_image_ref().image,
+                    m_accum_image->get_accessible_image_ref().layout,
+                    new_layout,
+                    accum_range,
+                    vk::PipelineStageFlagBits::eAllCommands,
+                    vk::PipelineStageFlagBits::eAllCommands
+                );
+                m_accum_image->get_accessible_image_ref().layout = new_layout;
 
             } break;
         }
