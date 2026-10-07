@@ -88,8 +88,20 @@ const float SHADOW_RAY_TMAX    = 10000.0;  // effectively "to infinity" for the 
 // chit) = MAX_BOUNCES + 3.
 const int MAX_BOUNCES = 3;
 
+// Number of indirect rays traced per chit at bounce 0.
+//
+// The count halves each level: 4 at b0, 2 at b1, 1 at b2, and bounce 3 doesn't trace
+// at all. The reason is that indirect cost multiplies: a flat 4 at every level means
+// 4 * 4 * 4 = 64 indirect paths per primary ray, whereas 4 * 2 * 1 = 8 stays tractable
+// while still giving the primary bounce - the one you actually see - the full 4x
+// sample rate.
+//
+// The deepest bounce contributes the smallest fraction of the final colour, so
+// cutting it there costs almost nothing visually and saves the most rays.
+const int INDIRECT_SAMPLES_BASE = 4;
+
 // ---------------------------------------------------------------------------------------
-// Tiny hash-based RNG - good enough for AO, shadows and one-ray GI.
+// Tiny hash-based RNG - good enough for AO, shadows and GI.
 // ---------------------------------------------------------------------------------------
 uint pcg_hash(uint state) {
     state = state * 747796405u + 2891336453u;
@@ -120,7 +132,6 @@ vec3 cosine_hemisphere(inout uint seed, vec3 n) {
 
 void main() {
     // --- current bounce depth ------------------------------------------------------------
-    // This is the value the caller set before tracing into us. Bounce 0 = primary ray.
     const int my_bounce = int(payload.w);
 
     // --- per-instance geometry record ----------------------------------------------------
@@ -200,21 +211,26 @@ void main() {
     const vec3 hit_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
     // --- RNG seed ------------------------------------------------------------------------
-    // Vary per-pixel, per-bounce, AND per-frame. The frame term is what makes temporal accumulation work: without it,
-    // every frame produces bit-identical noise and the running average converges to a single noisy sample instead of the true mean
+    // Vary per-pixel, per-bounce, per-frame, AND per-incoming-ray-direction.
     //
-    // cam.accum_params.x is the number of samples already accumulated in the accum buffer, i.e. the frame index within the
-    // current accumulation run. It increments by one each frame while the camera is still, and resets to 0 when it isn't, which
-    // is exactly the decorrelation we want.
+    // The direction term is essential now that a single chit fires multiple indirect
+    // rays: without it, all N siblings inherited the same seed and ran identical AO
+    // and shadow tests, and the extra samples did nothing. Hashing the incoming ray
+    // direction (which is different for every sibling) decorrelates them.
+    //
+    // The frame term is what makes temporal accumulation work: without it, every
+    // frame produces bit-identical noise and the running average converges to a
+    // single noisy sample instead of the true mean.
     uint seed = uint(gl_LaunchIDEXT.x)     * 1973u
               ^ uint(gl_LaunchIDEXT.y)     * 9277u
               ^ uint(my_bounce)            * 31337u
               ^ cam.accum_params.x         * 71923u
+              ^ floatBitsToUint(gl_WorldRayDirectionEXT.x) * 40499u
+              ^ floatBitsToUint(gl_WorldRayDirectionEXT.y) * 51137u
+              ^ floatBitsToUint(gl_WorldRayDirectionEXT.z) * 62473u
               ^ 26699u;
 
     // --- AO (bounce 0 only) --------------------------------------------------------------
-    // AO is a stand-in for sky visibility. Running it at every bounce would compound the estimate and darken interiors far
-    // too much, so it's gated to the primary hit
     float ao_geometric = 1.0;
     if (my_bounce == 0) {
         float occlusion = 0.0;
@@ -222,12 +238,12 @@ void main() {
             const vec3 dir = cosine_hemisphere(seed, N);
             const vec3 org = hit_world + N * AO_RAY_BIAS;
 
-            payload = vec4(0.0, 0.0, 0.0, float(my_bounce));    // occluded-test scratch
+            payload = vec4(0.0, 0.0, 0.0, float(my_bounce));
             traceRayEXT(
                 topLevelAS,
                 gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
                 0xFF,
-                1u, 0u, 1u,                                     // AO hit group + AO miss
+                1u, 0u, 1u,
                 org, 0.001, dir, AO_RADIUS, 0);
             occlusion += payload.x;
         }
@@ -236,8 +252,6 @@ void main() {
     const float ao = ao_geometric * occ_mat;
 
     // --- soft sun shadow (every bounce) --------------------------------------------------
-    // A surface in sun shadow still reflects ambient and sky. If we skipped the shadow test at bounces > 0, indirect light would
-    // wrap around corners and leak, so we pay one extra ray per bounce
     const vec3  L         = normalize(cam.sun_direction.xyz);
     const float NdotL_raw = dot(N, L);
     float shadow          = 0.0;
@@ -257,12 +271,12 @@ void main() {
             const float phi = 6.28318530718 * rand_float(seed);
             const vec3  dir = normalize(L + t * (r * cos(phi)) + b * (r * sin(phi)));
 
-            payload = vec4(0.0, 0.0, 0.0, float(my_bounce));    // occluded-test scratch
+            payload = vec4(0.0, 0.0, 0.0, float(my_bounce));
             traceRayEXT(
                 topLevelAS,
                 gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
                 0xFF,
-                1u, 0u, 1u,                                     // AO hit group + AO miss
+                1u, 0u, 1u,
                 org, 0.001, dir, SHADOW_RAY_TMAX, 0);
 
             lit += (payload.x < 0.5) ? 1.0 : 0.0;
@@ -292,35 +306,38 @@ void main() {
 
     vec3 result = ambient + diffuse + specular + emissive;
 
-    // --- indirect bounce (emissive + one-bounce GI) --------------------------------------
-    // One cosine-weighted ray per hit. The path carries no payload state beyond the bounce counter; on return, its radiance is
-    // what we received from that direction.
+    // --- indirect bounce (emissive + multi-sample GI) ------------------------------------
+    // At each bounce level we trace `indirect_samples` cosine-weighted rays and average
+    // them. The estimator is unchanged from the single-ray version:
     //
-    // For a Lambertian BRDF with cosine-weighted sampling, the rendering equation
-    //     L_o = albedo/pi * Integral( L_i * cos(theta) domega )
-    // reduces to just
-    //     L_o ~= albedo * L_i
-    // because the pdf cos(theta)/pi cancels the cos(theta) and the pi. So the only weighting we apply is the current surface's albedo
+    //     L_o ~= albedo * mean( L_i )
     //
-    // The sky is a valid hit for this ray - the rmiss shader returns the sky colour, which means upward-facing surfaces pick up sky
-    // light naturally. If the scene becomes too bright overall, dial down the 0.15 ambient term above; it's a heuristic that predates
-    // the sky bounce
+    // because cosine-weighted sampling makes the pdf cancel the BRDF and the cosine term.
+    // Just replace "L_i" with "the average of N independent L_i" and the formula holds.
+    //
+    // indirect_samples halves with each bounce: see INDIRECT_SAMPLES_BASE for why.
+    const int indirect_samples = max(1, INDIRECT_SAMPLES_BASE >> my_bounce);
+
     if (my_bounce < MAX_BOUNCES) {
 
-        const vec3 bounce_dir = cosine_hemisphere(seed, N);
-        const vec3 bounce_org = hit_world + N * AO_RAY_BIAS;
+        vec3 gi = vec3(0.0);
+        for (int i = 0; i < indirect_samples; ++i) {
 
-        // Reset the payload for the nested trace and bump the bounce counter.
-        payload = vec4(0.0, 0.0, 0.0, float(my_bounce + 1));
+            const vec3 bounce_dir = cosine_hemisphere(seed, N);
+            const vec3 bounce_org = hit_world + N * AO_RAY_BIAS;
 
-        traceRayEXT(
-            topLevelAS,
-            gl_RayFlagsOpaqueEXT,       // no terminate-on-first-hit; we want the closest shader to run fully
-            0xFF,
-            0u, 0u, 0u,                 // primary hit group + primary miss
-            bounce_org, 0.001, bounce_dir, SHADOW_RAY_TMAX, 0);
+            payload = vec4(0.0, 0.0, 0.0, float(my_bounce + 1));
 
-        result += albedo * payload.xyz;
+            traceRayEXT(
+                topLevelAS,
+                gl_RayFlagsOpaqueEXT,
+                0xFF,
+                0u, 0u, 0u,
+                bounce_org, 0.001, bounce_dir, SHADOW_RAY_TMAX, 0);
+
+            gi += payload.xyz;
+        }
+        result += albedo * gi / float(indirect_samples);
     }
 
     payload = vec4(result, float(my_bounce));

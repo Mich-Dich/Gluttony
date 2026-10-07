@@ -205,7 +205,7 @@ namespace GLT::renderer_vk_ray {
         VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[m_current_frame], VK_TRUE, UINT64_MAX));
         m_device.resetFences(m_in_flight_fences[m_current_frame]);
 
-        // ---- GPU timing: read the previous use of this command buffer slot -----------------
+        // GPU timing: read the previous use of this command buffer slot -----------------------------------------------
         // The fence above guarantees the timestamps we wrote last time this slot was submitted have completed, so the result is available without waiting.
         if (m_timestamp_pool) {
 
@@ -224,18 +224,41 @@ namespace GLT::renderer_vk_ray {
         process_pending_meshes();           // Pull new meshes in / old meshes out at the frame boundary
         rebuild_tlas_from_scene();          // Rebuild the TLAS from the scene the world submitted during update
 
-        // ---- accumulation reset -----------------------------------------------------------
-        // Reset whenever the camera view changes
-        if (glm::distance(m_active_camera.position, m_accum_prev_position) > 1e-4f ||
-            glm::dot(glm::normalize(m_active_camera.view[2]), glm::normalize(m_accum_prev_view[2])) < 0.9999f) {
+        // accumulation reset ------------------------------------------------------------------------------------------
+        // Two independent checks, both compared against the state at the last reset:
+        //
+        //   - Position: any real translation invalidates history, because the projection of every pixel changes
+        //     Threshold is small (0.01 mm at metre scale) so even slow drift trips it eventually
+        //
+        //   - Rotation: the previous 0.9999 threshold (~0.81 deg) let several frames accumulate during a slow pan,
+        //     producing a visible smear. 0.999999 (~0.08 deg) resets within one frame at any practical rotation speed
+        //
+        // The up-vector check catches roll (rotating around the camera's own forward axis), which leaves the forward vector
+        // unchanged and would otherwise slip through
+        //
+        // Both prev values are updated only on reset, so both checks are "cumulative since the last reset" - consistent
+        // semantics, and no slow drift can slip past forever
 
+        const glm::vec3 prev_fwd = -glm::vec3(m_accum_prev_view[2]);
+        const glm::vec3 curr_fwd = -glm::vec3(m_active_camera.view[2]);
+        const glm::vec3 prev_up  =  glm::vec3(m_accum_prev_view[1]);
+        const glm::vec3 curr_up  =  glm::vec3(m_active_camera.view[1]);
+
+        constexpr f32 ROT_DOT_THRESHOLD = 0.999999f;   // ~0.08 deg of deviation
+        constexpr f32 POS_THRESHOLD     = 1e-5f;       // 0.01 mm at metre scale
+
+        const bool pos_moved = glm::distance(m_active_camera.position, m_accum_prev_position) > POS_THRESHOLD;
+        const bool rot_moved = glm::dot(prev_fwd, curr_fwd) < ROT_DOT_THRESHOLD
+                            || glm::dot(prev_up,  curr_up) < ROT_DOT_THRESHOLD;
+
+        if (pos_moved || rot_moved) {
             m_accum_sample_count = 0;
             m_accum_prev_view = m_active_camera.view;
+            m_accum_prev_position = m_active_camera.position;
         }
-        m_accum_prev_position = m_active_camera.position;
 
-        // ---- reset per-frame counters ------------------------------------------------------
-        m_frame_draw_calls    = 0;
+        // reset per-frame counters ------------------------------------------------------------------------------------
+        m_frame_draw_calls = 0;
         m_frame_render_passes = 0;
 
         try {
