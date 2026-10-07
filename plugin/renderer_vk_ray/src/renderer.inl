@@ -702,8 +702,11 @@ namespace GLT::renderer_vk_ray {
         // we get barycentric coordinates of the hit point in this case which is a vec2
         vr::pipeline_settings pipeline_settings = {};
         pipeline_settings.pipeline_layout = m_pipeline_layout;
-        pipeline_settings.max_recursion_depth = 2;                  // primary + AO
-        pipeline_settings.max_payload_size = sizeof(glm::vec3);
+
+        // Depth budget: rgen -> bounce 0 chit -> bounce 1 chit -> ... -> bounce N-1 chit
+        // -> shadow ray from the deepest chit. For 3 indirect bounces plus a nested shadow trace, that's rgen + 4 chits = depth 6
+        pipeline_settings.max_recursion_depth = 6;
+        pipeline_settings.max_payload_size = sizeof(glm::vec4);
         pipeline_settings.max_hit_attribute_size = sizeof(glm::vec2);
 
         // Collection of shaders for the pipeline

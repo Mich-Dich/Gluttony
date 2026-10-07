@@ -38,8 +38,6 @@ namespace GLT::editor {
 
     // constexpr f32                                                   LABEL_BOTTOM_MARGIN = 20.0f;
 
-    constexpr const char*                                           DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
-
 	const std::vector<std::pair<std::string, std::string>>          POSSIBLE_IMPORT_TILE_TYPES = {
 
 		//									mesh																 image
@@ -768,7 +766,7 @@ namespace GLT::editor {
                 ImGui::InvisibleButton("##cb_bg_drop", remaining);
                 if (ImGui::BeginDragDropTarget()) {
 
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(DRAG_PAYLOAD_ID)) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(GLT::UI::ASSET_DRAG_PAYLOAD)) {
                         const auto sources = parse_drag_payload_impl(payload);
                         move_assets_to(sources, m_current_dir);
                     }
@@ -979,7 +977,7 @@ namespace GLT::editor {
             } else
                 payload = entry.path.string();
 
-            ImGui::SetDragDropPayload(DRAG_PAYLOAD_ID, payload.data(), payload.size());
+            ImGui::SetDragDropPayload(GLT::UI::ASSET_DRAG_PAYLOAD, payload.data(), payload.size());
 
             if (drag_multi)
                 ImGui::Text("%zu items", m_selected_paths.size());
@@ -993,7 +991,7 @@ namespace GLT::editor {
         if (entry.is_directory && ImGui::BeginDragDropTarget()) {
 
             m_any_item_drop_target_active = true;
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(DRAG_PAYLOAD_ID)) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(GLT::UI::ASSET_DRAG_PAYLOAD)) {
 
                 const auto sources = parse_drag_payload_impl(payload);
                 move_assets_to(sources, entry.path);

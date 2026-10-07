@@ -11,8 +11,11 @@ layout(set = 0, binding = 1) uniform CameraUBO {
 } cam;
 layout(set = 0, binding = 2, rgba8) uniform image2D out_image;
 
-// MUST match every rayPayloadInEXT declaration at location 0 across the pipeline.
-layout(location = 0) rayPayloadEXT vec3 payload;
+// Shared ray payload.
+//   xyz = radiance
+//   w   = current bounce depth (stored as float so it fits alongside xyz without
+//         the std430 vec3/int padding headache)
+layout(location = 0) rayPayloadEXT vec4 payload;
 
 void main() {
 
@@ -22,9 +25,10 @@ void main() {
     const vec4 target    = cam.proj_inv * vec4(ndc.x, ndc.y, 1, 1);
     const vec4 direction = cam.view_inv * vec4(normalize(target.xyz / target.w), 0);
 
-    payload = vec3(0.0);   // fallback; overwritten by chit or miss
+    payload = vec4(0.0, 0.0, 0.0, 0.0);   // radiance 0, bounce 0
+
     traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xFF, 0, 0, 0,
         origin.xyz, 0.001, direction.xyz, 1000.0, 0);
 
-    imageStore(out_image, ivec2(gl_LaunchIDEXT.xy), vec4(payload, 1.0));
+    imageStore(out_image, ivec2(gl_LaunchIDEXT.xy), vec4(payload.xyz, 1.0));
 }

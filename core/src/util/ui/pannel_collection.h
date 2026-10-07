@@ -15,6 +15,13 @@ namespace GLT::UI {
 
 	// CONSTANTS =======================================================================================================
 
+    // Drag-and-drop payload type used whenever an asset path (or several) is dragged between editor widgets
+	// Producers and consumers both match on this ID
+    //
+    // Payload layout: a newline-separated list of absolute filesystem paths. The trailing byte is NOT guaranteed to be
+	// a newline; consumers must tolerate an unterminated final line
+    inline constexpr const char* ASSET_DRAG_PAYLOAD = "ASSET_DRAG_PAYLOAD";
+
 	// MACROS ==========================================================================================================
 
 	// TYPES ===========================================================================================================

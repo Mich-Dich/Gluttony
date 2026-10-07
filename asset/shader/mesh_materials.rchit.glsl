@@ -2,7 +2,7 @@
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_nonuniform_qualifier : enable
 
-layout(location = 0) rayPayloadInEXT vec3 payload;
+layout(location = 0) rayPayloadInEXT vec4 payload;
 hitAttributeEXT vec2 attribs;
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
@@ -69,7 +69,26 @@ const float AO_RADIUS   = 30.0;     // world-space occlusion radius
 const float AO_RAY_BIAS = 0.005;    // push origin off the surface
 
 // ---------------------------------------------------------------------------------------
-// Tiny hash-based RNG - good enough for AO.
+// Soft sun shadow configuration
+// ---------------------------------------------------------------------------------------
+const float SUN_ANGULAR_RADIUS = 0.035;    // tan(half-angle); ~2 deg
+const int   SUN_SAMPLES        = 8;        // rays per pixel for the shadow test
+const float SHADOW_RAY_TMAX    = 10000.0;  // effectively "to infinity" for the sun
+
+// ---------------------------------------------------------------------------------------
+// Indirect bounce configuration
+// ---------------------------------------------------------------------------------------
+// MAX_BOUNCES is the deepest shading level reached. A value of 3 means the primary
+// hit plus three levels of indirect bounce (bounce 0, 1, 2, 3). The deepest chit
+// does not trace further, so its own shadow test is the only nested ray it issues.
+//
+// If you change this, also update max_recursion_depth in renderer.inl. The needed
+// depth is 1 (rgen) + MAX_BOUNCES + 1 (a chit) + 1 (nested shadow from the deepest
+// chit) = MAX_BOUNCES + 3.
+const int MAX_BOUNCES = 3;
+
+// ---------------------------------------------------------------------------------------
+// Tiny hash-based RNG - good enough for AO, shadows and one-ray GI.
 // ---------------------------------------------------------------------------------------
 uint pcg_hash(uint state) {
     state = state * 747796405u + 2891336453u;
@@ -99,9 +118,11 @@ vec3 cosine_hemisphere(inout uint seed, vec3 n) {
 }
 
 void main() {
+    // --- current bounce depth ------------------------------------------------------------
+    // This is the value the caller set before tracing into us. Bounce 0 = primary ray.
+    const int my_bounce = int(payload.w);
+
     // --- per-instance geometry record ----------------------------------------------------
-    // gl_InstanceCustomIndexEXT is the base offset into the geometry buffer for this
-    // instance; gl_GeometryIndexEXT walks the submeshes the BLAS laid out in the same order.
     const GpuGeometry geom = geometries[gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT];
     const GpuMaterial mat  = materials[geom.material_index];
 
@@ -138,15 +159,9 @@ void main() {
     vec3 N = normalize(normal_matrix * n_local);
 
     // --- material sampling ---------------------------------------------------------------
-    // Base color: sampled unconditionally. When the material has no base-color texture,
-    // mat.textures[SLOT_BASE_COLOR] == 0 and the checkerboard fallback shows through,
-    // making an untextured material visually obvious.
     const vec4 base_tex = texture(textures[nonuniformEXT(mat.textures[SLOT_BASE_COLOR])], uv);
     const vec3 albedo   = mat.base_color.rgb * base_tex.rgb;
 
-    // Metallic-roughness: only applied when a texture is bound. The checkerboard
-    // fallback is not an identity multiply, so an untextured material must use its
-    // scalar parameters directly.
     float roughness = mat.roughness;
     float metallic  = mat.metallic;
     if (mat.textures[SLOT_METALLIC_ROUGHNESS] != 0u) {
@@ -157,14 +172,12 @@ void main() {
     roughness = clamp(roughness, 0.04, 1.0);
     metallic  = clamp(metallic,  0.0,  1.0);
 
-    // Occlusion: same reasoning. No texture -> full occlusion (1.0).
     float occ_mat = 1.0;
     if (mat.textures[SLOT_OCCLUSION] != 0u) {
         const float occ_tex = texture(textures[nonuniformEXT(mat.textures[SLOT_OCCLUSION])], uv).r;
         occ_mat = mix(1.0, occ_tex, mat.occlusion_strength);
     }
 
-    // Emissive: same reasoning. No texture -> scalar emissive stands alone.
     vec3 emissive = mat.emissive;
     if (mat.textures[SLOT_EMISSIVE] != 0u)
         emissive *= texture(textures[nonuniformEXT(mat.textures[SLOT_EMISSIVE])], uv).rgb;
@@ -174,7 +187,6 @@ void main() {
         vec3 n_tangent = texture(textures[nonuniformEXT(mat.textures[SLOT_NORMAL])], uv).xyz * 2.0 - 1.0;
         n_tangent.xy *= mat.normal_scale;
 
-        // Gram-Schmidt orthogonalize T against N, then rebuild B
         vec3 T_world = normalize(normal_matrix * t_local);
         T_world = normalize(T_world - N * dot(N, T_world));
         const vec3 B_world = cross(N, T_world) * bitangent_sign;
@@ -186,53 +198,127 @@ void main() {
     // --- world-space hit point -----------------------------------------------------------
     const vec3 hit_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
-    // --- AO ------------------------------------------------------------------------------
+    // --- RNG seed ------------------------------------------------------------------------
+    // Vary per-pixel AND per-bounce, otherwise every bounce reuses the same first
+    // random numbers and the GI picks up a visible fixed pattern.
     uint seed = uint(gl_LaunchIDEXT.x) * 1973u
               ^ uint(gl_LaunchIDEXT.y) * 9277u
+              ^ uint(my_bounce)          * 31337u
               ^ 26699u;
 
-    float occlusion = 0.0;
-    for (int i = 0; i < AO_SAMPLES; ++i) {
-        const vec3 dir = cosine_hemisphere(seed, N);
+    // --- AO (bounce 0 only) --------------------------------------------------------------
+    // AO is a stand-in for sky visibility. Running it at every bounce would compound
+    // the estimate and darken interiors far too much, so it's gated to the primary hit.
+    float ao_geometric = 1.0;
+    if (my_bounce == 0) {
+        float occlusion = 0.0;
+        for (int i = 0; i < AO_SAMPLES; ++i) {
+            const vec3 dir = cosine_hemisphere(seed, N);
+            const vec3 org = hit_world + N * AO_RAY_BIAS;
+
+            payload = vec4(0.0, 0.0, 0.0, float(my_bounce));    // occluded-test scratch
+            traceRayEXT(
+                topLevelAS,
+                gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                0xFF,
+                1u, 0u, 1u,                                     // AO hit group + AO miss
+                org, 0.001, dir, AO_RADIUS, 0);
+            occlusion += payload.x;
+        }
+        ao_geometric = 1.0 - occlusion / float(AO_SAMPLES);
+    }
+    const float ao = ao_geometric * occ_mat;
+
+    // --- soft sun shadow (every bounce) --------------------------------------------------
+    // A surface in sun shadow still reflects ambient and sky. If we skipped the shadow
+    // test at bounces > 0, indirect light would wrap around corners and leak, so we
+    // pay one extra ray per bounce.
+    const vec3  L         = normalize(cam.sun_direction.xyz);
+    const float NdotL_raw = dot(N, L);
+    float shadow          = 0.0;
+
+    if (NdotL_raw > 0.0) {
+
+        const vec3 up = abs(L.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        const vec3 t  = normalize(cross(up, L));
+        const vec3 b  = cross(L, t);
+
         const vec3 org = hit_world + N * AO_RAY_BIAS;
 
-        payload = vec3(0.0);
-        traceRayEXT(
-            topLevelAS,
-            gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-            0xFF,
-            1u,    // sbtRecordOffset  -> AO hit group
-            0u,    // sbtRecordStride  -> offset alone selects the hit group
-            1u,    // missIndex        -> AO miss shader
-            org, 0.001, dir, AO_RADIUS, 0);
-        occlusion += payload.x;
+        float lit = 0.0;
+        for (int i = 0; i < SUN_SAMPLES; ++i) {
+
+            const float r   = SUN_ANGULAR_RADIUS * sqrt(rand_float(seed));
+            const float phi = 6.28318530718 * rand_float(seed);
+            const vec3  dir = normalize(L + t * (r * cos(phi)) + b * (r * sin(phi)));
+
+            payload = vec4(0.0, 0.0, 0.0, float(my_bounce));    // occluded-test scratch
+            traceRayEXT(
+                topLevelAS,
+                gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                0xFF,
+                1u, 0u, 1u,                                     // AO hit group + AO miss
+                org, 0.001, dir, SHADOW_RAY_TMAX, 0);
+
+            lit += (payload.x < 0.5) ? 1.0 : 0.0;
+        }
+        shadow = 1.0 - lit / float(SUN_SAMPLES);
     }
-    const float ao = (1.0 - occlusion / float(AO_SAMPLES)) * occ_mat;
 
-    // --- direct lighting (Lambert diffuse + cheap Blinn-Phong specular) ------------------
-    const vec3  L      = normalize(cam.sun_direction.xyz);
-    const float NdotL  = max(dot(N, L), 0.0);
+    // --- direct lighting -----------------------------------------------------------------
+    const float NdotL = max(NdotL_raw, 0.0) * (1.0 - shadow);
 
-    const vec3  V      = normalize(-gl_WorldRayDirectionEXT);
-    const vec3  H      = normalize(L + V);
-    const float NdotH  = max(dot(N, H), 0.0);
-    const float VdotH  = max(dot(V, H), 0.0);
+    const vec3  V     = normalize(-gl_WorldRayDirectionEXT);
+    const vec3  H     = normalize(L + V);
+    const float NdotH = max(dot(N, H), 0.0);
+    const float VdotH = max(dot(V, H), 0.0);
 
     const vec3 sun_rgb = cam.sun_color.rgb * cam.sun_color.w;
 
-    // Fresnel-Schlick with F0 pulled toward albedo by metallic
     const vec3 F0 = mix(vec3(0.04), albedo, metallic);
     const vec3 F  = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
 
-    // Roughness-controlled lobe. Not GGX, but cheap and monotonic in roughness.
     const float shininess = mix(4.0, 256.0, 1.0 - roughness);
     const float spec_term = pow(NdotH, shininess) * (1.0 - roughness) * mat.reflectance;
 
     const vec3 diffuse  = albedo * (1.0 - metallic) * sun_rgb * NdotL;
     const vec3 specular = F * spec_term * sun_rgb * NdotL;
-
-    // AO modulates only the ambient term
     const vec3 ambient  = albedo * 0.15 * ao * (1.0 - metallic);
 
-    payload = ambient + diffuse + specular + emissive;
+    vec3 result = ambient + diffuse + specular + emissive;
+
+    // --- indirect bounce (emissive + one-bounce GI) --------------------------------------
+    // One cosine-weighted ray per hit. The path carries no payload state beyond the
+    // bounce counter; on return, its radiance is what we received from that direction.
+    //
+    // For a Lambertian BRDF with cosine-weighted sampling, the rendering equation
+    //     L_o = albedo/pi * Integral( L_i * cos(theta) domega )
+    // reduces to just
+    //     L_o ~= albedo * L_i
+    // because the pdf cos(theta)/pi cancels the cos(theta) and the pi. So the only
+    // weighting we apply is the current surface's albedo.
+    //
+    // The sky is a valid hit for this ray - the rmiss shader returns the sky colour,
+    // which means upward-facing surfaces pick up sky light naturally. If the scene
+    // becomes too bright overall, dial down the 0.15 ambient term above; it's a
+    // heuristic that predates the sky bounce.
+    if (my_bounce < MAX_BOUNCES) {
+
+        const vec3 bounce_dir = cosine_hemisphere(seed, N);
+        const vec3 bounce_org = hit_world + N * AO_RAY_BIAS;
+
+        // Reset the payload for the nested trace and bump the bounce counter.
+        payload = vec4(0.0, 0.0, 0.0, float(my_bounce + 1));
+
+        traceRayEXT(
+            topLevelAS,
+            gl_RayFlagsOpaqueEXT,       // no terminate-on-first-hit; we want the closest shader to run fully
+            0xFF,
+            0u, 0u, 0u,                 // primary hit group + primary miss
+            bounce_org, 0.001, bounce_dir, SHADOW_RAY_TMAX, 0);
+
+        result += albedo * payload.xyz;
+    }
+
+    payload = vec4(result, float(my_bounce));
 }

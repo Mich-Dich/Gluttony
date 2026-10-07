@@ -1,7 +1,7 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
 
-layout(location = 0) rayPayloadInEXT vec3 payload;
+layout(location = 0) rayPayloadInEXT vec4 payload;
 
 void main() {
 
@@ -10,5 +10,5 @@ void main() {
     const vec3 horizon = vec3(0.85, 0.75, 0.60);   // warm haze
     const vec3 zenith  = vec3(0.20, 0.40, 0.85);   // blue up top
 
-    payload = mix(horizon, zenith, t);
+    payload = vec4(mix(horizon, zenith, t), payload.w);
 }

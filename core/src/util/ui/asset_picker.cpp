@@ -21,309 +21,397 @@ namespace GLT::UI {
 
     // TYPES ===========================================================================================================
 
+    // One immutable, thread-safe scan result. Readers grab a shared_ptr
+    // and hold it for as long as they need; writers swap in a new one.
+    struct scan_snapshot {
+
+        std::vector<std::filesystem::path>              paths;
+        std::chrono::steady_clock::time_point           generated{};
+    };
+
+
+    struct cache_entry {
+
+        std::shared_ptr<const scan_snapshot>            current;
+        std::atomic_bool                                scanning{ false };
+    };
+
+
+    // Process-wide scan cache. Lives for the lifetime of the program;
+    // the shutdown race (worker finishes after the singleton dies) is not
+    // possible because the singleton outlives thread_pool::shutdown().
+    class picker_cache {
+    public:
+
+        static picker_cache& instance() {
+
+            static picker_cache c;
+            return c;
+        }
+
+
+        // Never blocks. Returns whatever is cached, or nullptr if a scan
+        // is in flight and no previous result exists. Kicks off a new
+        // scan when the cached result is older than `max_age`.
+        std::shared_ptr<const scan_snapshot> get(const std::filesystem::path& root, std::string_view extension, std::chrono::seconds max_age) {
+
+            const std::string key = make_key(root, extension);
+
+            std::lock_guard lock(m_mutex);
+
+            cache_entry& entry = m_entries[key];
+            const auto now = std::chrono::steady_clock::now();
+            const bool stale = !entry.current || (now - entry.current->generated) > max_age;
+
+            if (stale && !entry.scanning.exchange(true))
+                kick_scan(key, root, std::string(extension));
+
+            return entry.current;
+        }
+
+
+        void invalidate_all() {
+
+            std::lock_guard lock(m_mutex);
+            m_entries.clear();
+        }
+
+
+        void invalidate(const std::filesystem::path& root, std::string_view ext) {
+
+            std::lock_guard lock(m_mutex);
+            m_entries.erase(make_key(root, ext));
+        }
+
+    private:
+
+        static std::string make_key(const std::filesystem::path& root, std::string_view ext) {
+
+            std::string k = root.generic_string();
+            k.push_back('|');
+            k.append(ext);
+            return k;
+        }
+
+
+        void kick_scan(std::string key, std::filesystem::path root, std::string extension) {
+
+            GLT::thread_pool::push([this, key = std::move(key), root = std::move(root), extension = std::move(extension)]() mutable {
+
+                    auto snap = std::make_shared<scan_snapshot>();
+                    snap->generated = std::chrono::steady_clock::now();
+
+                    const std::string suffix = "." + extension;
+                    std::error_code error{};
+                    auto iterator = GLT::vfs::recursive_directory_iterator(root);
+                    if (error)
+                        return;
+
+                    for (const auto& entry : iterator) {
+
+                        if (!entry.is_regular_file(error))
+                            continue;
+
+                        // Convert to project-relative at the boundary. Everything downstream - the cache, the popup, resolve_path
+                        // speaks the same language as the registry (which now stores virtual_path as project-relative).
+                        const auto rel = GLT::project::to_content_relative(entry.path());
+                        if (rel.empty())
+                            continue;                                           // outside content dir; not our asset
+
+                        if (rel.extension() != suffix)
+                            continue;
+
+                        snap->paths.push_back(rel);
+                    }
+
+                    std::sort(snap->paths.begin(), snap->paths.end());          // Stable across rescans: sort by generic path.
+
+                    std::lock_guard lock(m_mutex);
+                    if (auto it = m_entries.find(key); it != m_entries.end()) {
+                        it->second.current  = std::move(snap);
+                        it->second.scanning = false;
+                    }
+                });
+        }
+
+        std::mutex                                          m_mutex;
+        std::unordered_map<std::string, cache_entry>        m_entries;
+    };
+
+
+    // Access trait: abstracts “read the handle”, “write the handle”, “clear the handle” over both a raw handle and an asset_ref.
+    template<typename H>
+    struct picker_handle_access;
+
+
+    template<>
+    struct picker_handle_access<GLT::asset::handle> {
+        static GLT::asset::handle get(const GLT::asset::handle& h) noexcept { return h; }
+        static void set(GLT::asset::handle& h, GLT::asset::handle v) noexcept { h = v; }
+        static void clear(GLT::asset::handle& h) noexcept { h = INVALID_HANDLE; }
+    };
+
+
+    template<>
+    struct picker_handle_access<GLT::asset::asset_ref> {
+        static GLT::asset::handle get(const GLT::asset::asset_ref& h) noexcept { return h.get(); }
+        static void set(GLT::asset::asset_ref& h, GLT::asset::handle v) { h = GLT::asset::asset_ref{ v }; }
+        static void clear(GLT::asset::asset_ref& h) { h.reset(); }
+    };
+
     // STATIC VARIABLES ================================================================================================
+
+    std::mutex                                              g_root_mutex;
+    std::filesystem::path                                   g_asset_root{};             // empty = not configured
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
+    // Mirrors the parser in content_browser.cpp. Kept local on purpose: the picker shouldn't have to include the 
+    // editor plugin and the content browser just to read a payload it already knows the shape of
+    std::vector<std::filesystem::path> parse_asset_drag_payload(const ImGuiPayload* payload);
+
+
+    std::string extension_for(GLT::asset::type t);
+
+
+    // Resolve a chosen path to a handle, going through the registry so that hot-reload and refcounting stay consistent.
+    std::optional<GLT::asset::handle> resolve_path(const GLT::ref<GLT::asset::i_asset_registry_plugin>& registry,
+        const std::filesystem::path& path);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
+
+    template<typename H>
+    bool asset_picker_widget_impl(const asset_picker_options& opts, H& in_out, f32 available_width);
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-    namespace {
+    std::vector<std::filesystem::path> parse_asset_drag_payload(const ImGuiPayload* payload) {
 
-        std::mutex                                          g_root_mutex;
-        std::filesystem::path                               g_asset_root{};             // empty = not configured
+        std::vector<std::filesystem::path> out;
+        if (!payload || !payload->Data || payload->DataSize <= 0)
+            return out;
 
-
-        // One immutable, thread-safe scan result. Readers grab a shared_ptr
-        // and hold it for as long as they need; writers swap in a new one.
-        struct scan_snapshot {
-
-            std::vector<std::filesystem::path>              paths;
-            std::chrono::steady_clock::time_point           generated{};
-        };
-
-
-        struct cache_entry {
-
-            std::shared_ptr<const scan_snapshot>            current;
-            std::atomic_bool                                scanning{ false };
-        };
-
-
-        // Process-wide scan cache. Lives for the lifetime of the program;
-        // the shutdown race (worker finishes after the singleton dies) is not
-        // possible because the singleton outlives thread_pool::shutdown().
-        class picker_cache {
-        public:
-
-            static picker_cache& instance() {
-
-                static picker_cache c;
-                return c;
+        const char* p = static_cast<const char*>(payload->Data);
+        const char* end = p + payload->DataSize;
+        const char* line_begin = p;
+        while (p < end) {
+            const char c = *p;
+            if (c == '\n' || c == '\0') {
+                if (p > line_begin)
+                    out.emplace_back(std::string(line_begin, p));
+                line_begin = p + 1;
             }
-
-
-            // Never blocks. Returns whatever is cached, or nullptr if a scan
-            // is in flight and no previous result exists. Kicks off a new
-            // scan when the cached result is older than `max_age`.
-            std::shared_ptr<const scan_snapshot> get(const std::filesystem::path& root, std::string_view extension, std::chrono::seconds max_age) {
-
-                const std::string key = make_key(root, extension);
-
-                std::lock_guard lock(m_mutex);
-
-                cache_entry& entry = m_entries[key];
-                const auto now = std::chrono::steady_clock::now();
-                const bool stale = !entry.current || (now - entry.current->generated) > max_age;
-
-                if (stale && !entry.scanning.exchange(true))
-                    kick_scan(key, root, std::string(extension));
-
-                return entry.current;
-            }
-
-
-            void invalidate_all() {
-
-                std::lock_guard lock(m_mutex);
-                m_entries.clear();
-            }
-
-
-            void invalidate(const std::filesystem::path& root, std::string_view ext) {
-
-                std::lock_guard lock(m_mutex);
-                m_entries.erase(make_key(root, ext));
-            }
-
-        private:
-
-            static std::string make_key(const std::filesystem::path& root, std::string_view ext) {
-
-                std::string k = root.generic_string();
-                k.push_back('|');
-                k.append(ext);
-                return k;
-            }
-
-
-            void kick_scan(std::string key, std::filesystem::path root, std::string extension) {
-
-                GLT::thread_pool::push([this, key = std::move(key), root = std::move(root), extension = std::move(extension)]() mutable {
-
-                        auto snap = std::make_shared<scan_snapshot>();
-                        snap->generated = std::chrono::steady_clock::now();
-
-                        const std::string suffix = "." + extension;
-                        std::error_code error{};
-                        auto iterator = GLT::vfs::recursive_directory_iterator(root);
-                        if (error)
-                            return;
-
-                        for (const auto& entry : iterator) {
-
-                            if (!entry.is_regular_file(error))
-                                continue;
-
-                            // Convert to project-relative at the boundary. Everything downstream - the cache, the popup, resolve_path
-                            // speaks the same language as the registry (which now stores virtual_path as project-relative).
-                            const auto rel = GLT::project::to_content_relative(entry.path());
-                            if (rel.empty())
-                                continue;                                           // outside content dir; not our asset
-
-                            if (rel.extension() != suffix)
-                                continue;
-
-                            snap->paths.push_back(rel);
-                        }
-
-                        std::sort(snap->paths.begin(), snap->paths.end());          // Stable across rescans: sort by generic path.
-
-                        std::lock_guard lock(m_mutex);
-                        if (auto it = m_entries.find(key); it != m_entries.end()) {
-                            it->second.current  = std::move(snap);
-                            it->second.scanning = false;
-                        }
-                    });
-            }
-
-            std::mutex                                          m_mutex;
-            std::unordered_map<std::string, cache_entry>        m_entries;
-        };
-
-
-        std::string extension_for(GLT::asset::type t) { return std::string(GLT::asset::type_to_extension(t)); }
-
-
-        // Resolve a chosen path to a handle, going through the registry so that hot-reload and refcounting stay consistent.
-        std::optional<GLT::asset::handle>
-        resolve_path(const GLT::ref<GLT::asset::i_asset_registry_plugin>& registry, const std::filesystem::path& path) {
-
-            if (auto h = registry->find(path); h != INVALID_HANDLE)
-                return h;
-
-            auto loaded = registry->load(path);
-            if (!loaded)
-                return std::nullopt;
-
-            return *loaded;
+            p++;
         }
+        if (line_begin < end)
+            out.emplace_back(std::string(line_begin, end));
+
+        return out;
+    }
 
 
-        // Access trait: abstracts “read the handle”, “write the handle”, “clear the handle” over both a raw handle and an asset_ref.
-        template<typename H>
-        struct picker_handle_access;
+    std::string extension_for(GLT::asset::type t) { return std::string(GLT::asset::type_to_extension(t)); }
 
 
-        template<>
-        struct picker_handle_access<GLT::asset::handle> {
-            static GLT::asset::handle get(const GLT::asset::handle& h) noexcept { return h; }
-            static void set(GLT::asset::handle& h, GLT::asset::handle v) noexcept { h = v; }
-            static void clear(GLT::asset::handle& h) noexcept { h = INVALID_HANDLE; }
-        };
+    std::optional<GLT::asset::handle> resolve_path(const GLT::ref<GLT::asset::i_asset_registry_plugin>& registry,
+        const std::filesystem::path& path) {
 
+        if (auto h = registry->find(path); h != INVALID_HANDLE)
+            return h;
 
-        template<>
-        struct picker_handle_access<GLT::asset::asset_ref> {
-            static GLT::asset::handle get(const GLT::asset::asset_ref& h) noexcept { return h.get(); }
-            static void set(GLT::asset::asset_ref& h, GLT::asset::handle v) { h = GLT::asset::asset_ref{ v }; }
-            static void clear(GLT::asset::asset_ref& h) { h.reset(); }
-        };
+        auto loaded = registry->load(path);
+        if (!loaded)
+            return std::nullopt;
 
-
-        template<typename H>
-        bool asset_picker_widget_impl(const asset_picker_options& opts, H& in_out, f32 available_width) {
-
-            using access = picker_handle_access<H>;
-
-            auto registry = GLT::asset::registry::get_ref();
-            if (!registry) {
-                ImGui::TextDisabled("no asset registry");
-                return false;
-            }
-
-            const std::filesystem::path root = opts.root.empty() ? get_asset_root() : opts.root;
-            const std::string ext = extension_for(opts.filter);
-
-            const GLT::asset::handle current = access::get(in_out);
-            const auto& info = registry->info(current);
-            const std::string display = (current == INVALID_HANDLE || info.name.empty())
-                ? std::string(opts.placeholder)
-                : info.name;
-
-            bool changed = false;
-
-            const ImGuiStyle& style = ImGui::GetStyle();
-            const f32 frame_h = ImGui::GetFrameHeight();
-            const f32 clear_w = (opts.allow_clear && current != INVALID_HANDLE) ? (frame_h + style.ItemSpacing.x) : 0.f;
-            const f32 field_w = available_width - clear_w - frame_h - style.ItemSpacing.x;
-
-            char display_buf[256];
-            std::snprintf(display_buf, sizeof(display_buf), "%s", display.c_str());
-
-            ImGui::SetNextItemWidth(field_w);
-            ImGui::InputText("##value", display_buf, sizeof(display_buf), ImGuiInputTextFlags_ReadOnly);
-
-            const ImVec2 field_min = ImGui::GetItemRectMin();
-            const ImVec2 field_max = ImGui::GetItemRectMax();
-            const f32 field_screen_w = field_max.x - field_min.x;
-
-            if (ImGui::IsItemClicked())
-                ImGui::OpenPopup("##picker_popup");
-
-            ImGui::SameLine();
-            if (ImGui::Button("...", ImVec2(frame_h, 0)))
-                ImGui::OpenPopup("##picker_popup");
-
-            if (opts.allow_clear && current != INVALID_HANDLE) {
-                ImGui::SameLine();
-                if (ImGui::Button("x", ImVec2(frame_h, 0))) {
-                    access::clear(in_out);
-                    changed = true;
-                }
-            }
-
-            if (ImGui::IsPopupOpen("##picker_popup")) {
-                ImGui::SetNextWindowPos(ImVec2(field_min.x, field_max.y), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(field_screen_w, 0.0f), ImGuiCond_Always);
-            }
-
-            ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(720, 560));
-            if (ImGui::BeginPopup("##picker_popup")) {
-
-                static char search_buf[128] = "";
-                if (ImGui::IsWindowAppearing())
-                    search_buf[0] = '\0';
-
-                const auto snap = picker_cache::instance().get(root, ext, std::chrono::seconds(10));
-
-                if (ImGui::Button("Refresh"))
-                    invalidate_asset_cache(root, ext);
-
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(220.f);
-                ImGui::InputTextWithHint("##search", "Filter...", search_buf, sizeof(search_buf));
-                const std::string_view needle{ search_buf };
-
-                ImGui::SameLine();
-                if (snap)
-                    ImGui::TextDisabled("%zu item%s", snap->paths.size(), snap->paths.size() == 1 ? "" : "s");
-                else
-                    ImGui::TextDisabled("scanning...");
-
-                ImGui::Separator();
-
-                if (snap) {
-                    const f32 row_h = ImGui::GetTextLineHeightWithSpacing();
-                    if (ImGui::BeginChild("##list", ImVec2(0, row_h * 14), true)) {
-
-                        for (const auto& path : snap->paths) {
-
-                            const std::string shown = (path.parent_path() / path.stem()).generic_string();
-
-                            if (!needle.empty() && shown.find(needle) == std::string::npos)
-                                continue;
-
-                            const GLT::asset::handle live = access::get(in_out);
-                            const bool selected = (live != INVALID_HANDLE) && registry->info(live).virtual_path == path;
-
-                            if (ImGui::Selectable(shown.c_str(), selected)) {
-                                if (auto h = resolve_path(registry, path)) {
-                                    if (*h != access::get(in_out)) {
-                                        access::set(in_out, *h);
-                                        changed = true;
-                                    }
-                                } else
-                                    LOG(warn, "load failed for [{}]", path.generic_string())
-
-                                ImGui::CloseCurrentPopup();
-                            }
-                        }
-                    }
-                    ImGui::EndChild();
-                }
-
-                if (opts.allow_clear && access::get(in_out) != INVALID_HANDLE) {
-                    ImGui::Separator();
-                    if (ImGui::Selectable("Clear")) {
-                        access::clear(in_out);
-                        changed = true;
-                        ImGui::CloseCurrentPopup();
-                    }
-                }
-
-                ImGui::EndPopup();
-            }
-
-            return changed;
-        }
-
+        return *loaded;
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
+
+    template<typename H>
+    bool asset_picker_widget_impl(const asset_picker_options& opts, H& in_out, f32 available_width) {
+
+        using access = picker_handle_access<H>;
+
+        auto registry = GLT::asset::registry::get_ref();
+        if (!registry) {
+            ImGui::TextDisabled("no asset registry");
+            return false;
+        }
+
+        const std::filesystem::path root = opts.root.empty() ? get_asset_root() : opts.root;
+        const std::string ext = extension_for(opts.filter);
+
+        const GLT::asset::handle current = access::get(in_out);
+        const auto& info = registry->info(current);
+        const std::string display = (current == INVALID_HANDLE || info.name.empty())
+            ? std::string(opts.placeholder)
+            : info.name;
+
+        bool changed = false;
+
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const f32 frame_h = ImGui::GetFrameHeight();
+        const f32 clear_w = (opts.allow_clear && current != INVALID_HANDLE) ? (frame_h + style.ItemSpacing.x) : 0.f;
+        const f32 field_w = available_width - clear_w - frame_h - style.ItemSpacing.x;
+
+        char display_buf[256];
+        std::snprintf(display_buf, sizeof(display_buf), "%s", display.c_str());
+
+        ImGui::SetNextItemWidth(field_w);
+        ImGui::InputText("##value", display_buf, sizeof(display_buf), ImGuiInputTextFlags_ReadOnly);
+
+        // While a compatible drag is over the field, tint the border so the user gets an unambiguous "this is the drop target" signal
+        // ImGui's default drop feedback is easy to miss on a read-only input
+        if (ImGui::GetDragDropPayload() != nullptr &&
+            ImGui::GetDragDropPayload()->IsDataType(GLT::UI::ASSET_DRAG_PAYLOAD) &&
+            ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+
+            ImGui::GetWindowDrawList()->AddRect(
+                ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                ImGui::GetColorU32(ImGuiCol_DragDropTarget),
+                ImGui::GetStyle().FrameRounding,
+                0, 2.0f);
+        }
+
+        // drop target -------------------------------------------------------------------------------------------------
+        // Accepts a drag produced by the content browser (or anything else that emits the same payload). Only the first
+        // item whose extension matches [opts.filter] is consumed - the widget holds a single handle, so a multi-selection
+        // drop resolves to one asset rather than refusing the whole drop
+        if (ImGui::BeginDragDropTarget()) {
+
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(GLT::UI::ASSET_DRAG_PAYLOAD)) {
+
+                const std::string wanted_ext = "." + ext;       // `ext` is dotless today ("glt_material")
+
+                bool saw_any = false;
+                for (const auto& abs : parse_asset_drag_payload(payload)) {
+                    saw_any = true;
+
+                    // The registry speaks project-relative paths. Absolute paths come off the payload; anything outside
+                    // PROJECT_CONTENT_DIR is skipped
+                    const auto rel = GLT::project::to_content_relative(abs);
+                    if (rel.empty())
+                        continue;
+
+                    // Filter on extension BEFORE calling load(): rejects the wrong asset type without paying for a parse
+                    // and a slot claim
+                    if (rel.extension() != wanted_ext)
+                        continue;
+
+                    if (auto h = resolve_path(registry, rel)) {
+                        if (*h != access::get(in_out)) {
+                            access::set(in_out, *h);
+                            changed = true;
+                        }
+                    } else {
+                        LOG(warn, "dropped asset failed to load [{}]", rel.generic_string())
+                    }
+
+                    break;      // first compatible item wins
+                }
+
+                if (saw_any && !changed)
+                    LOG(warn, "dropped items did not match filter [{}]", ext)
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        const ImVec2 field_min = ImGui::GetItemRectMin();
+        const ImVec2 field_max = ImGui::GetItemRectMax();
+        const f32 field_screen_w = field_max.x - field_min.x;
+
+        if (ImGui::IsItemClicked())
+            ImGui::OpenPopup("##picker_popup");
+
+        ImGui::SameLine();
+        if (ImGui::Button("...", ImVec2(frame_h, 0)))
+            ImGui::OpenPopup("##picker_popup");
+
+        if (opts.allow_clear && current != INVALID_HANDLE) {
+            ImGui::SameLine();
+            if (ImGui::Button("x", ImVec2(frame_h, 0))) {
+                access::clear(in_out);
+                changed = true;
+            }
+        }
+
+        if (ImGui::IsPopupOpen("##picker_popup")) {
+            ImGui::SetNextWindowPos(ImVec2(field_min.x, field_max.y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(field_screen_w, 0.0f), ImGuiCond_Always);
+        }
+
+        ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(720, 560));
+        if (ImGui::BeginPopup("##picker_popup")) {
+
+            static char search_buf[128] = "";
+            if (ImGui::IsWindowAppearing())
+                search_buf[0] = '\0';
+
+            const auto snap = picker_cache::instance().get(root, ext, std::chrono::seconds(10));
+
+            if (ImGui::Button("Refresh"))
+                invalidate_asset_cache(root, ext);
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(220.f);
+            ImGui::InputTextWithHint("##search", "Filter...", search_buf, sizeof(search_buf));
+            const std::string_view needle{ search_buf };
+
+            ImGui::SameLine();
+            if (snap)
+                ImGui::TextDisabled("%zu item%s", snap->paths.size(), snap->paths.size() == 1 ? "" : "s");
+            else
+                ImGui::TextDisabled("scanning...");
+
+            ImGui::Separator();
+
+            if (snap) {
+                const f32 row_h = ImGui::GetTextLineHeightWithSpacing();
+                if (ImGui::BeginChild("##list", ImVec2(0, row_h * 14), true)) {
+
+                    for (const auto& path : snap->paths) {
+
+                        const std::string shown = (path.parent_path() / path.stem()).generic_string();
+
+                        if (!needle.empty() && shown.find(needle) == std::string::npos)
+                            continue;
+
+                        const GLT::asset::handle live = access::get(in_out);
+                        const bool selected = (live != INVALID_HANDLE) && registry->info(live).virtual_path == path;
+
+                        if (ImGui::Selectable(shown.c_str(), selected)) {
+                            if (auto h = resolve_path(registry, path)) {
+                                if (*h != access::get(in_out)) {
+                                    access::set(in_out, *h);
+                                    changed = true;
+                                }
+                            } else
+                                LOG(warn, "load failed for [{}]", path.generic_string())
+
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                }
+                ImGui::EndChild();
+            }
+
+            if (opts.allow_clear && access::get(in_out) != INVALID_HANDLE) {
+                ImGui::Separator();
+                if (ImGui::Selectable("Clear")) {
+                    access::clear(in_out);
+                    changed = true;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+
+            ImGui::EndPopup();
+        }
+
+        return changed;
+    }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
@@ -339,7 +427,7 @@ namespace GLT::UI {
         std::lock_guard lock(g_root_mutex);
 
         if (g_asset_root.empty()) {
-            LOG(warn, "asset_picker: asset root never set; call GLT::UI::set_asset_root(PROJECT_CONTENT_DIR) at startup");
+            LOG(warn, "asset root never set; call GLT::UI::set_asset_root(PROJECT_CONTENT_DIR) at startup");
             g_asset_root = std::filesystem::current_path();     // degraded fallback
         }
         return g_asset_root;
