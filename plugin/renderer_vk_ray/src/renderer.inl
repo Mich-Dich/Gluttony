@@ -262,7 +262,7 @@ namespace GLT::renderer_vk_ray {
         begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
         current_cmd.begin(begin_info);
 
-        // Start the GPU timer for this frame.
+        // Start the GPU timer for this frame
         if (m_timestamp_pool) {
 
             current_cmd.resetQueryPool(m_timestamp_pool, m_current_frame * 2, 2);
@@ -352,8 +352,8 @@ namespace GLT::renderer_vk_ray {
         }
 
         // advance temporal state
-        m_temporal_valid  = true;
-        m_gbuffer_index   = 1 - m_gbuffer_index;
+        m_temporal_valid = true;
+        m_gbuffer_index = 1 - m_gbuffer_index;
         transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eShaderReadOnlyOptimal);       // to SHADER_READ_ONLY_OPTIMAL
 
         begin_imgui_frame(current_cmd);
@@ -866,6 +866,7 @@ namespace GLT::renderer_vk_ray {
 
         m_output_image = GLT::create_ref<image>();
         m_output_image->resize({m_render_size.x, m_render_size.y, 1});
+
         m_current_raw = GLT::create_ref<image>();
         m_current_raw->resize({m_render_size.x, m_render_size.y, 1}, GLT::render::image_format::RGBA16F);
 

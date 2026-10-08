@@ -1,4 +1,8 @@
+
 #pragma once
+
+#include "modes.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -52,6 +56,25 @@ namespace GLT::renderer_vk_ray {
 
         GLT::render::image::register_factory({});   // clear it - see note below
     }
+
+
+    std::span<const GLT::render::render_mode_info> renderer::supported_modes() const { return modes::mode_table; }
+
+
+    void renderer::set_render_mode(u32 mode_id) {
+
+        // Validate; ignore unknown ids
+        for (const auto& mode : modes::mode_table)
+            if (mode.id == mode_id) {
+                m_active_mode = mode_id;
+                return;
+            }
+
+        LOG(warn, "Renderer: unknown render mode id [{}]", mode_id);
+    }
+
+
+    u32 renderer::get_render_mode() const { return m_active_mode; }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

@@ -66,6 +66,10 @@ namespace GLT::editor {
 
         void render_viewport();
 
+        // Renders the floating mode selector in the top-left of the viewport image. Returns true while its combo popup is open,
+        // so the caller can suppress viewport input
+        bool render_mode_selector_overlay();
+
         void render_details();
 
         void render_outliner();

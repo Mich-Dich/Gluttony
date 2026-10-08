@@ -165,35 +165,103 @@ namespace GLT::editor {
         ImGui::DockBuilderFinish(dockspace_id);
     }
 
-    // ImGui::DragFloat3("Scale", &transform.scale.x, 0.05f, 0.001f, 1000.f);
 
     void world_viewport_window::render_viewport() {
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ImageRounding, 0.0f);
+
         if (ImGui::Begin("Viewport")) {
 
             m_viewport_size = ImGui::GetContentRegionAvail();
             ImGui::Image(m_renderer->get_rendered_image(), m_viewport_size);
-            const bool hovered = ImGui::IsItemHovered();
+
+            const bool image_hovered = ImGui::IsItemHovered();
+
+            // Floating overlay: render-mode dropdown in the upper-left
+            const bool dropdown_active = render_mode_selector_overlay();
+
             const bool right_down = ImGui::IsMouseDown(ImGuiMouseButton_Right);
 
-            // Enter: press RMB while the image itself is the top-most hovered item
-            if (!m_cursor_captured && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            // Enter: press RMB while the image itself is the top-most hovered item and the dropdown isn't consuming input
+            if (!m_cursor_captured && image_hovered && !dropdown_active
+                && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
 
                 set_cursor_captured(true);
                 GLT::editor::context::get().set_viewport_interacted(true);
             }
 
-            // release RMB. MUST NOT depend on hover - once captured, ImGui reports the virtual cursor at the window center
+            // Release RMB
             if (m_cursor_captured && !right_down) {
-
                 set_cursor_captured(false);
                 GLT::editor::context::get().set_viewport_interacted(false);
             }
         }
+
         ImGui::End();
         ImGui::PopStyleVar(2);
+    }
+
+
+    bool world_viewport_window::render_mode_selector_overlay() {
+
+        if (!m_renderer)
+            return false;
+
+        const ImVec2 image_min = ImGui::GetItemRectMin();
+        constexpr f32 INSET = 8.f;
+        ImGui::SetCursorScreenPos(ImVec2(image_min.x + INSET, image_min.y + INSET));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f, 4.f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.10f, 0.10f, 0.70f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.16f, 0.16f, 0.16f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.18f, 0.18f, 0.18f, 0.90f));
+
+        const auto modes = m_renderer->supported_modes();
+        const u32 current = m_renderer->get_render_mode();
+        const char* current_label = "Render mode";
+        for (const auto& m : modes)
+            if (m.id == current) {
+                
+                current_label = m.display_name;
+                break;
+            }
+
+        ImGui::SetNextItemWidth(180.f);
+
+        bool popup_open = false;
+        if (ImGui::BeginCombo("##render_mode", current_label)) {
+
+            popup_open = true;
+            const char* last_category = nullptr;
+            for (const auto& m : modes) {
+
+                // Separator when the category changes and isn't empty
+                if (m.has_category() && (last_category == nullptr || std::strcmp(last_category, m.category) != 0)) {
+
+                    last_category = m.category;
+                    ImGui::SeparatorText(m.category);
+                }
+
+                ImGui::PushID(static_cast<int>(m.id));
+
+                const bool selected = (m.id == current);
+                if (ImGui::Selectable(m.display_name, selected))
+                    m_renderer->set_render_mode(m.id);
+
+                if (m.has_tooltip() && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", m.tooltip);
+
+                ImGui::PopID();
+            }
+
+            ImGui::EndCombo();
+        }
+
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(2);
+
+        return popup_open || ImGui::IsPopupOpen("##render_mode");
     }
 
 

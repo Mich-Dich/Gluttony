@@ -162,6 +162,16 @@ namespace GLT::renderer_vk_ray {
 
         void release_mesh(GLT::asset::handle mesh) override;
 
+        // render output modes -----------------------------------------------------------------------------------------
+
+        [[nodiscard]] std::span<const GLT::render::render_mode_info> supported_modes() const override;
+
+        
+        void set_render_mode(u32 mode_id) override;
+
+        
+        [[nodiscard]] u32 get_render_mode() const override;
+
     private:
 
         enum class image_type{
@@ -316,6 +326,7 @@ namespace GLT::renderer_vk_ray {
         glm::ivec2                                              m_render_size{ 300, 400};
 
         GLT::render::renderer_feature                           m_features{};
+        u32                                                     m_active_mode{ 0 };     // default; will be set from is_default on init
 
         GLT::system_state                                       m_state = GLT::system_state::destroyed;
         vr::instance_wrapper                                    m_instance;
@@ -459,7 +470,6 @@ namespace GLT::renderer_vk_ray {
         bool                                                    m_temporal_valid = false;       // false -> shader uses current only
         u32                                                     m_frame_counter = 0;
         vk::Pipeline                                            m_temporal_pipeline = nullptr;  // compute pipeline for temporal resolve pass
-        vk::PipelineLayout                                      m_temporal_pipeline_layout = nullptr;
 
         // preview -----------------------------------------------------------------------------------------------------
 

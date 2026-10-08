@@ -9,6 +9,7 @@
 
 #include "plugin_system/i_plugin.h"
 #include "render/image.h"
+#include "render/render_mode.h"
 #include "debug/profiler.h"
 #include "plugin_system/plugin_manager.h"
 #include "asset/mesh.h"
@@ -34,32 +35,6 @@ namespace GLT::render {
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
-
-    // Standard modes that every renderer must support. Plugin‑specific modes must have ids >= GLT::render::mode::count
-    enum class mode : u32 {
-
-        lit = 0,            // full shading with lighting (default)
-        unlit,              // flat surface color, no lighting
-        albedo,             // base color / albedo channel
-        normals,            // world‑space surface normals, remapped to [0,1]
-        depth,              // linear depth from camera (normalized)
-        roughness,
-        metallic,
-        uv,                 // texture coordinates
-        wireframe,
-        overdraw,           // number of shading invocations per pixel
-        count,              // sentinel - not a real mode
-    };
-    inline constexpr u32 count = static_cast<u32>(GLT::render::mode::count);
-
-
-    // A plugin‑specific debug mode, [id] must be >= standard_render_mode::count and unique within the renderer
-    struct custom_render_mode {
-        u32             id;
-        const char*     name;           // shown in the debug dropdown
-        const char*     description;    // optional tooltip
-    };
-
 
     // Renderer capability flags (optional, can be used for feature queries)
     enum class renderer_feature : u8 {
@@ -341,6 +316,30 @@ namespace GLT::render {
         // subsequent calls show the previous frame's render.
         [[nodiscard]] virtual void* render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
             std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) = 0;
+
+
+        // render output modes -----------------------------------------------------------------------------------------
+
+        // @brief Returns every render output mode this renderer supports
+        //
+        // The editor queries this to build the mode selector; the renderer is free to return whatever modes it wants, in
+        // whatever order. Ids are stable per renderer but not required to be contiguous
+        //
+        // @return Span over the renderer's static mode table. Valid for the plugin's lifetime
+        [[nodiscard]] virtual std::span<const render_mode_info> supported_modes() const = 0;
+
+
+        // @brief Activates a render output mode
+        //
+        // No-op if [mode_id] isn't in supported_modes(). The renderer is expected to pass the id through to its shader(s)
+        // n the next frame
+        //
+        // @param mode_id  Id from supported_modes()
+        virtual void set_render_mode(u32 mode_id) = 0;
+
+
+        // @brief Returns the currently active render mode
+        [[nodiscard]] virtual u32 get_render_mode() const = 0;
 
     };
 
