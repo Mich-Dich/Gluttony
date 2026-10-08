@@ -121,7 +121,9 @@ namespace GLT::renderer_vk_ray {
         m_preview_image = GLT::create_ref<image>();
         m_preview_image->resize({ PREVIEW_IMAGE_SIZE, PREVIEW_IMAGE_SIZE, 1 });
         m_preview_image->get_descriptor_set();
-
+        m_preview_dummy_gbuffer = GLT::create_ref<image>();
+        m_preview_dummy_gbuffer->resize({1, 1, 1}, GLT::render::image_format::RGBA32F);
+        
         // The preview shares the pipeline layout, so it also has to provide binding 8. Its sample count is pinned to 0
         // (see upload_preview_data), so the accumulation branch is never taken and this image is only ever written, never read back
         m_preview_accum_image = GLT::create_ref<image>();
@@ -233,8 +235,23 @@ namespace GLT::renderer_vk_ray {
                 vk::ShaderStageFlagBits::eClosestHitKHR, BINDLESS_TEXTURE_MAX, m_preview_texture_descriptors.data()),
             vr::descriptor_item(7, vk::DescriptorType::eStorageBuffer,
                 vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_preview_geometry_buffer),
-            vr::descriptor_item(8, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR, 10, &m_preview_accum_image->get_accessible_image_ref(), 1),
+            
+            vr::descriptor_item(8,  vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eRaygenKHR,
+                10, &m_preview_accum_image->get_accessible_image_ref(), 1),
+            vr::descriptor_item(9,  vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eRaygenKHR,
+                10, &m_preview_accum_image->get_accessible_image_ref(), 1),
+            vr::descriptor_item(10, vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
+                10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
+            vr::descriptor_item(11, vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
+                10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
+            vr::descriptor_item(12, vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
+                10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
+            vr::descriptor_item(13, vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
+                10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
         };
 
         m_preview_desc_buffer = m_vr_dev->create_descriptor_buffer(m_resource_descriptor_layout, m_preview_bindings, vr::descriptor_buffer_type::combined);
@@ -308,7 +325,7 @@ namespace GLT::renderer_vk_ray {
         ubo.proj_inv = glm::inverse(proj);
         ubo.sun_direction = glm::vec4(glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f)), 0.0f);
         ubo.sun_color = glm::vec4(1.0f, 0.95f, 0.85f, 3.0f);
-        ubo.accum_params = glm::uvec4{0u, 0u, 0u, 0u};
+        ubo.temporal = glm::uvec4{ 1u, 1u, 0u, 0u };   // reset, write index 0
 
         std::memcpy(m_vr_dev->map_buffer(m_preview_camera_ubo), &ubo, sizeof(ubo));
         m_vr_dev->unmap_buffer(m_preview_camera_ubo);

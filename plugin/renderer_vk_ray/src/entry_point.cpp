@@ -236,6 +236,9 @@ namespace GLT::renderer_vk_ray {
         // Clear the output image to a background colour (e.g., dark blue)
         void clear_output_image(vk::CommandBuffer cmd, const glm::vec4& color);
 
+        
+        void clear_gbuffer(vk::CommandBuffer cmd, GLT::ref<image> &gbuffer);
+
         // --- IMGUI ---------------------------------------------------------------------------------------------------
 
         void imgui_init();
@@ -447,16 +450,20 @@ namespace GLT::renderer_vk_ray {
         std::vector<GLT::asset::handle>                         m_pending_material_unloads{};
 
         // improve render quality --------------------------------------------------------------------------------------
-        GLT::ref<image>                                         m_accum_image{};                // RGBA32F running average
-        u32                                                     m_accum_sample_count = 0;       // samples accumulated so far
-        glm::mat4                                               m_accum_prev_view{ 1.0f };      // camera view used last frame
-        glm::vec3                                               m_accum_prev_position{ 0.f };
+        std::array<GLT::ref<image>, 2>                          m_accum_image{};
+        std::array<GLT::ref<image>, 2>                          m_gbuffer_pos{};
+        std::array<GLT::ref<image>, 2>                          m_gbuffer_nrm{};
+        u32                                                     m_gbuffer_index = 0;
+        glm::mat4                                               m_prev_view_proj{1.0f};
+        bool                                                    m_temporal_valid = false;   // false -> shader uses current only
+        u32                                                     m_frame_counter = 0;
 
         // preview -----------------------------------------------------------------------------------------------------
 
         bool                                                    m_preview_ready = false;
         GLT::ref<image>                                         m_preview_image{};
         GLT::ref<image>                                         m_preview_accum_image{};        // separate accum for the preview pass
+        GLT::ref<image>                                         m_preview_dummy_gbuffer{};
         vr::allocated_buffer                                    m_preview_vertex_buffer{};
         vr::allocated_buffer                                    m_preview_index_buffer{};
         vr::allocated_buffer                                    m_preview_instance_buffer{};

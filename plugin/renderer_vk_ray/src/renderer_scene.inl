@@ -150,6 +150,10 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::process_pending_meshes() {
 
+        const bool any_work =
+            !m_pending_material_unloads.empty() || !m_pending_unloads.empty() ||
+            !m_pending_material_loads.empty()   || !m_pending_loads.empty();
+
         for (auto mat : m_pending_material_unloads)
             unload_material(mat);
         for (auto mesh : m_pending_unloads)
@@ -170,6 +174,11 @@ namespace GLT::renderer_vk_ray {
         }
         m_pending_loads.clear();
         m_pending_material_loads.clear();
+
+        // A topology change invalidates every pixel's history. This is the ONLY
+        // time we need a global reset now — camera motion is handled by reprojection
+        if (any_work)
+            m_temporal_valid = false;
     }
 
 

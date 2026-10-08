@@ -47,6 +47,27 @@ namespace GLT::renderer_vk_ray {
     }
 
 
+    void renderer::clear_gbuffer(vk::CommandBuffer cmd, GLT::ref<image>& gbuffer) {
+
+        const vk::ImageSubresourceRange range(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
+        const vk::Image img = gbuffer->get_allocated_image_ref().image;
+
+        // to TRANSFER_DST
+        m_vr_dev->transition_image_layout(cmd, img, gbuffer->get_accessible_image_ref().layout, vk::ImageLayout::eTransferDstOptimal, range,
+            vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eTransfer);
+
+        vk::ClearColorValue cv{};
+        cv.float32[0] = 0.f; cv.float32[1] = 0.f; cv.float32[2] = 0.f; cv.float32[3] = 0.f;
+        cmd.clearColorImage(img, vk::ImageLayout::eTransferDstOptimal, cv, range);
+
+        // back to GENERAL so the rchit can imageStore and the raygen can imageLoad
+        m_vr_dev->transition_image_layout(cmd, img, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, range,
+            vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eAllCommands);
+
+        gbuffer->get_accessible_image_ref().layout = vk::ImageLayout::eGeneral;
+    }
+
+
     void renderer::transition_image_layout(vk::CommandBuffer command_buffer, const image_type type, 
         const vk::ImageLayout new_layout) {
 
@@ -101,8 +122,7 @@ namespace GLT::renderer_vk_ray {
             } break;
 
             case image_type::accum: {
-
-                vk::ImageSubresourceRange accum_range(
+                const vk::ImageSubresourceRange range(
                     vk::ImageAspectFlagBits::eColor,                // Color aspect
                     0,                                              // Base mip level
                     1,                                              // Level count
@@ -110,17 +130,18 @@ namespace GLT::renderer_vk_ray {
                     1                                               // Layer count
                 );
 
-                m_vr_dev->transition_image_layout(
-                    command_buffer,
-                    m_accum_image->get_allocated_image_ref().image,
-                    m_accum_image->get_accessible_image_ref().layout,
-                    new_layout,
-                    accum_range,
-                    vk::PipelineStageFlagBits::eAllCommands,
-                    vk::PipelineStageFlagBits::eAllCommands
-                );
-                m_accum_image->get_accessible_image_ref().layout = new_layout;
-
+                for (u32 i = 0; i < 2; ++i) {
+                    m_vr_dev->transition_image_layout(
+                        command_buffer,
+                        m_accum_image[i]->get_allocated_image_ref().image,
+                        m_accum_image[i]->get_accessible_image_ref().layout,
+                        new_layout,
+                        range,
+                        vk::PipelineStageFlagBits::eAllCommands,
+                        vk::PipelineStageFlagBits::eAllCommands
+                    );
+                    m_accum_image[i]->get_accessible_image_ref().layout = new_layout;
+                }
             } break;
         }
     }

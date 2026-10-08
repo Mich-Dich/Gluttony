@@ -72,13 +72,18 @@ namespace GLT::renderer_vk_ray {
         glm::vec4                   sun_direction{ 0.5f, 1.0f, 0.3f, 0.0f };
         glm::vec4                   sun_color{ 1.0f, 0.95f, 0.85f, 3.0f };
 
-        // x = number of samples already accumulated in the accum image
-        // 0 means "this is the first sample, write it directly, do not read the accum buffer"
-        // The rgen uses a running average: accum = mix(prev, current, 1 / (x + 1))
-        // Padded to a full vec4 so std140 alignment is trivially correct on both sides
-        glm::uvec4                  accum_params{ 0u, 0u, 0u, 0u };
+        // previous frame's (proj * view). Used by the raygen to reproject the current world-space hit point back into
+        // the previous frame's screen space
+        glm::mat4                   prev_view_proj{ 1.0f };
+
+        // x = reset flag (1 = history invalid, use current only)
+        // y = max history length (clamps the running-mean weight)
+        // z = write g-buffer index (0 or 1) for the current frame
+        // w = frame counter — varies per frame so ray noise decorrelates and temporal
+        //     accumulation can converge
+        glm::uvec4 temporal{ 1u, 64u, 0u, 0u };
     };
-    static_assert(sizeof(camera_ubo) == 176, "camera_ubo layout mismatch");
+    static_assert(sizeof(camera_ubo) == 240, "camera_ubo layout mismatch");
 
     // STATIC VARIABLES ================================================================================================
     
@@ -169,9 +174,15 @@ namespace GLT::renderer_vk_ray {
         }
 
         m_output_image.reset();
-        m_accum_image.reset();
+        m_accum_image[0].reset();
+        m_accum_image[1].reset();
+        m_gbuffer_pos[0].reset();
+        m_gbuffer_pos[1].reset();
+        m_gbuffer_nrm[0].reset();
+        m_gbuffer_nrm[1].reset();
         m_preview_image.reset();
         m_preview_accum_image.reset();
+        m_preview_dummy_gbuffer.reset();
         imgui_shutdown();
 
         // Destroy swapchain resources
@@ -194,7 +205,7 @@ namespace GLT::renderer_vk_ray {
         mp_window.reset();
         LOG_SHUTDOWN
     }
-    
+
     // CLASS PUBLIC ====================================================================================================
 
     void renderer::begin_frame() {
@@ -224,39 +235,6 @@ namespace GLT::renderer_vk_ray {
         process_pending_meshes();           // Pull new meshes in / old meshes out at the frame boundary
         rebuild_tlas_from_scene();          // Rebuild the TLAS from the scene the world submitted during update
 
-        // accumulation reset ------------------------------------------------------------------------------------------
-        // Two independent checks, both compared against the state at the last reset:
-        //
-        //   - Position: any real translation invalidates history, because the projection of every pixel changes
-        //     Threshold is small (0.01 mm at metre scale) so even slow drift trips it eventually
-        //
-        //   - Rotation: the previous 0.9999 threshold (~0.81 deg) let several frames accumulate during a slow pan,
-        //     producing a visible smear. 0.999999 (~0.08 deg) resets within one frame at any practical rotation speed
-        //
-        // The up-vector check catches roll (rotating around the camera's own forward axis), which leaves the forward vector
-        // unchanged and would otherwise slip through
-        //
-        // Both prev values are updated only on reset, so both checks are "cumulative since the last reset" - consistent
-        // semantics, and no slow drift can slip past forever
-
-        const glm::vec3 prev_fwd = -glm::vec3(m_accum_prev_view[2]);
-        const glm::vec3 curr_fwd = -glm::vec3(m_active_camera.view[2]);
-        const glm::vec3 prev_up  =  glm::vec3(m_accum_prev_view[1]);
-        const glm::vec3 curr_up  =  glm::vec3(m_active_camera.view[1]);
-
-        constexpr f32 ROT_DOT_THRESHOLD = 0.999999f;   // ~0.08 deg of deviation
-        constexpr f32 POS_THRESHOLD     = 1e-5f;       // 0.01 mm at metre scale
-
-        const bool pos_moved = glm::distance(m_active_camera.position, m_accum_prev_position) > POS_THRESHOLD;
-        const bool rot_moved = glm::dot(prev_fwd, curr_fwd) < ROT_DOT_THRESHOLD
-                            || glm::dot(prev_up,  curr_up) < ROT_DOT_THRESHOLD;
-
-        if (pos_moved || rot_moved) {
-            m_accum_sample_count = 0;
-            m_accum_prev_view = m_active_camera.view;
-            m_accum_prev_position = m_active_camera.position;
-        }
-
         // reset per-frame counters ------------------------------------------------------------------------------------
         m_frame_draw_calls = 0;
         m_frame_render_passes = 0;
@@ -284,26 +262,34 @@ namespace GLT::renderer_vk_ray {
         if (m_timestamp_pool) {
 
             current_cmd.resetQueryPool(m_timestamp_pool, m_current_frame * 2, 2);
-            current_cmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe,
-                m_timestamp_pool, m_current_frame * 2);
+            current_cmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, m_timestamp_pool, m_current_frame * 2);
         }
 
         // Update camera + sun parameters
         {
             const f32 aspect = static_cast<f32>(m_render_size.x) / static_cast<f32>(m_render_size.y);
-            glm::mat4 proj = glm::perspective(glm::radians(m_active_camera.fov), aspect, m_active_camera.near_plane, m_active_camera.far_plane);
+            glm::mat4 proj = glm::perspective(glm::radians(m_active_camera.fov), aspect, m_active_camera.near_plane,
+                m_active_camera.far_plane);
             proj[1][1] *= -1;
 
+            const glm::mat4 view = m_active_camera.view;
+            const glm::mat4 view_proj = proj * view;
+
             camera_ubo ubo{};
-            ubo.view_inv = glm::inverse(m_active_camera.view);
+            ubo.view_inv = glm::inverse(view);
             ubo.proj_inv = glm::inverse(proj);
             ubo.sun_direction = glm::vec4(glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f)), 0.0f);
             ubo.sun_color = glm::vec4(1.0f, 0.95f, 0.85f, 3.0f);
-            ubo.accum_params.x  = m_accum_sample_count;
+            ubo.prev_view_proj = m_prev_view_proj;
+            ubo.temporal = glm::uvec4(m_temporal_valid ? 0u : 1u, 64u, m_gbuffer_index, m_frame_counter);
 
             void* data = m_vr_dev->map_buffer(m_uniform_buffer);
             std::memcpy(data, &ubo, sizeof(ubo));
             m_vr_dev->unmap_buffer(m_uniform_buffer);
+
+            // Stash for next frame
+            m_prev_view_proj = view_proj;
+            m_frame_counter++;                              // next frame gets a different seed
         }
 
         {   // Descriptor buffer binding for the main pass
@@ -325,16 +311,20 @@ namespace GLT::renderer_vk_ray {
         transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eGeneral);                     // Transition output to GENERAL
         transition_image_layout(current_cmd, image_type::accum,  vk::ImageLayout::eGeneral); 
 
+        // clear the write G-buffers so pixels that miss the primary ray read as "no hit"
+        clear_gbuffer(current_cmd, m_gbuffer_pos[m_gbuffer_index]);
+        clear_gbuffer(current_cmd, m_gbuffer_nrm[m_gbuffer_index]);
+
         // Ray tracing
         current_cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, m_rt_pipeline);
         m_vr_dev->dispatch_rays(m_rt_pipeline, m_sbt_buffer, m_render_size.x, m_render_size.y, 1, current_cmd);
 
-        m_frame_draw_calls++;        // one RT dispatch
-        m_frame_render_passes++;     // the RT dispatch is the scene's only "pass"
+        m_frame_draw_calls++;
+        m_frame_render_passes++;
 
-        // Advance the accumulation counter for next frame. If we just reset to 0 above, this becomes 1, which is correct:
-        // the dispatch we just recorded uses sample_count = 0 (write directly), and the next dispatch will mix against it with weight 1/2
-        m_accum_sample_count++;
+        // advance temporal state
+        m_temporal_valid = true;                        // next frame may reproject
+        m_gbuffer_index = 1 - m_gbuffer_index;          // ping-pong for next frame
 
         // // Blit from output image to swapchain image
         // transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eTransferDstOptimal);       // to TRANSFER_DST_OPTIMAL
@@ -419,26 +409,39 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::set_render_size(const glm::ivec2& size) {
 
-        if (size.x <= 0 || size.y <= 0)         return;
-        if (m_render_size == size)              return;
+        if (size.x <= 0 || size.y <= 0)
+            return;
+        if (m_render_size == size)
+            return;
 
         m_render_size = size;
         m_output_image->resize({size.x, size.y, 1});
-        m_accum_image->resize({size.x, size.y, 1}, GLT::render::image_format::RGBA32F);
+
+        for (u32 i = 0; i < 2; ++i) {
+            m_accum_image[i]->resize({size.x, size.y, 1}, GLT::render::image_format::RGBA32F);
+            m_gbuffer_pos[i]->resize({size.x, size.y, 1}, GLT::render::image_format::RGBA32F);
+            m_gbuffer_nrm[i]->resize({size.x, size.y, 1}, GLT::render::image_format::RGBA16F);
+        }
 
         immediate_submit([&](vk::CommandBuffer cmd) {
-            vk::ImageSubresourceRange range(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
-            m_vr_dev->transition_image_layout(cmd,
-                m_accum_image->get_allocated_image_ref().image,
-                vk::ImageLayout::eUndefined,
-                vk::ImageLayout::eGeneral,
-                range,
-                vk::PipelineStageFlagBits::eTopOfPipe,
-                vk::PipelineStageFlagBits::eAllCommands);
-            m_accum_image->get_accessible_image_ref().layout = vk::ImageLayout::eGeneral;
+            const vk::ImageSubresourceRange range(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
+            auto to_general = [&](GLT::ref<image>& img) {
+                m_vr_dev->transition_image_layout(cmd,
+                    img->get_allocated_image_ref().image,
+                    vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral, range,
+                    vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eAllCommands);
+                img->get_accessible_image_ref().layout = vk::ImageLayout::eGeneral;
+            };
+            to_general(m_accum_image[0]);
+            to_general(m_accum_image[1]);
+            to_general(m_gbuffer_pos[0]);
+            to_general(m_gbuffer_pos[1]);
+            to_general(m_gbuffer_nrm[0]);
+            to_general(m_gbuffer_nrm[1]);
         });
 
-        m_accum_sample_count = 0;           // Any resize invalidates the accumulation buffer's contents
+        m_temporal_valid = false;       // new sizes -> no valid history
+        m_gbuffer_index  = 0;
 
         update_descriptor_set();
     }
@@ -718,8 +721,19 @@ namespace GLT::renderer_vk_ray {
             vr::descriptor_item(7, vk::DescriptorType::eStorageBuffer,
                 vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_geometry_buffer),
 
-            vr::descriptor_item(8, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR, 10, &m_accum_image->get_accessible_image_ref(), 1),
+            // ping-pong accum + g-buffer
+            vr::descriptor_item(8,  vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR, 10, &m_accum_image[0]->get_accessible_image_ref(), 1),
+            vr::descriptor_item(9,  vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR, 10, &m_accum_image[1]->get_accessible_image_ref(), 1),
+            vr::descriptor_item(10, vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 10, &m_gbuffer_pos[0]->get_accessible_image_ref(), 1),
+            vr::descriptor_item(11, vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 10, &m_gbuffer_pos[1]->get_accessible_image_ref(), 1),
+            vr::descriptor_item(12, vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 10, &m_gbuffer_nrm[0]->get_accessible_image_ref(), 1),
+            vr::descriptor_item(13, vk::DescriptorType::eStorageImage,
+                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 10, &m_gbuffer_nrm[1]->get_accessible_image_ref(), 1),
         };
 
         // create a descriptor set layout, for the ray tracing pipeline
@@ -847,26 +861,44 @@ namespace GLT::renderer_vk_ray {
 
         m_output_image = GLT::create_ref<image>();
 
-        // The accum image is RGBA32F so a running average over hundreds of samples doesn't quantise. The output image stays
-        // RGBA8 because it's only ever read for display.
-        // Note: R32G32B32A32_SFLOAT as a storage image requires shaderStorageImageExtendedFormats on some drivers
-        m_accum_image = GLT::create_ref<image>();
-        m_accum_image->resize({m_render_size.x, m_render_size.y, 1}, GLT::render::image_format::RGBA32F);
+        // Ping-pong accum + g-buffer
+        for (u32 index = 0; index < 2; ++index) {
 
-        // Bake eGeneral into the layout tracker BEFORE the descriptor is built.
-        // Otherwise the descriptor records eUndefined and imageLoad on the accum
-        // buffer is undefined on some drivers.
+            m_accum_image[index] = GLT::create_ref<image>();
+            m_accum_image[index]->resize({m_render_size.x, m_render_size.y, 1}, GLT::render::image_format::RGBA32F);
+
+            m_gbuffer_pos[index] = GLT::create_ref<image>();
+            m_gbuffer_pos[index]->resize({m_render_size.x, m_render_size.y, 1}, GLT::render::image_format::RGBA32F);
+
+            m_gbuffer_nrm[index] = GLT::create_ref<image>();
+            m_gbuffer_nrm[index]->resize({m_render_size.x, m_render_size.y, 1}, GLT::render::image_format::RGBA16F);
+        }
+
+        // Init both accum and g-buffer into eGeneral. Anything read back by the shader
+        // (imageLoad) requires eGeneral layout.
         immediate_submit([&](vk::CommandBuffer cmd) {
-            vk::ImageSubresourceRange range(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
-            m_vr_dev->transition_image_layout(cmd,
-                m_accum_image->get_allocated_image_ref().image,
-                vk::ImageLayout::eUndefined,
-                vk::ImageLayout::eGeneral,
-                range,
-                vk::PipelineStageFlagBits::eTopOfPipe,
-                vk::PipelineStageFlagBits::eAllCommands);
-            m_accum_image->get_accessible_image_ref().layout = vk::ImageLayout::eGeneral;
+            const vk::ImageSubresourceRange range(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
+
+            auto prep = [&](GLT::ref<image>& img) {
+                m_vr_dev->transition_image_layout(cmd,
+                    img->get_allocated_image_ref().image,
+                    vk::ImageLayout::eUndefined,
+                    vk::ImageLayout::eGeneral,
+                    range,
+                    vk::PipelineStageFlagBits::eTopOfPipe,
+                    vk::PipelineStageFlagBits::eAllCommands);
+                img->get_accessible_image_ref().layout = vk::ImageLayout::eGeneral;
+            };
+
+            prep(m_accum_image[0]);
+            prep(m_accum_image[1]);
+            prep(m_gbuffer_pos[0]);
+            prep(m_gbuffer_pos[1]);
+            prep(m_gbuffer_nrm[0]);
+            prep(m_gbuffer_nrm[1]);
         });
+
+        m_temporal_valid = false;   // first frame is a reset frame
 
         // samplers + white 1x1 fallback texture (slot 0) -------------------------
         // Must run before the default material is written, because it initialises m_texture_descriptors[] which the descriptor buffer reads
