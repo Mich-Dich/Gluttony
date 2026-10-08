@@ -76,14 +76,17 @@ namespace GLT::renderer_vk_ray {
         // the previous frame's screen space
         glm::mat4                   prev_view_proj{ 1.0f };
 
+        // NEW: current frame's (proj * view). Declared in every shader's CameraUBO block — the shader-side layout will
+        // not match without it, and the shader reads [temporal] from outside the buffer
+        glm::mat4                   view_proj{ 1.0f };
+
         // x = reset flag (1 = history invalid, use current only)
         // y = max history length (clamps the running-mean weight)
         // z = write g-buffer index (0 or 1) for the current frame
-        // w = frame counter — varies per frame so ray noise decorrelates and temporal
-        //     accumulation can converge
+        // w = frame counter — varies per frame so ray noise decorrelates and temporal accumulation can converge
         glm::uvec4 temporal{ 1u, 64u, 0u, 0u };
     };
-    static_assert(sizeof(camera_ubo) == 240, "camera_ubo layout mismatch");
+    static_assert(sizeof(camera_ubo) == 304, "camera_ubo layout mismatch");
 
     // STATIC VARIABLES ================================================================================================
     
@@ -181,6 +184,7 @@ namespace GLT::renderer_vk_ray {
         m_gbuffer_nrm[0].reset();
         m_gbuffer_nrm[1].reset();
         m_preview_image.reset();
+        m_current_raw.reset();
         m_preview_accum_image.reset();
         m_preview_dummy_gbuffer.reset();
         imgui_shutdown();
@@ -268,8 +272,7 @@ namespace GLT::renderer_vk_ray {
         // Update camera + sun parameters
         {
             const f32 aspect = static_cast<f32>(m_render_size.x) / static_cast<f32>(m_render_size.y);
-            glm::mat4 proj = glm::perspective(glm::radians(m_active_camera.fov), aspect, m_active_camera.near_plane,
-                m_active_camera.far_plane);
+            glm::mat4 proj = glm::perspective(glm::radians(m_active_camera.fov), aspect, m_active_camera.near_plane, m_active_camera.far_plane);
             proj[1][1] *= -1;
 
             const glm::mat4 view = m_active_camera.view;
@@ -281,14 +284,14 @@ namespace GLT::renderer_vk_ray {
             ubo.sun_direction = glm::vec4(glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f)), 0.0f);
             ubo.sun_color = glm::vec4(1.0f, 0.95f, 0.85f, 3.0f);
             ubo.prev_view_proj = m_prev_view_proj;
+            ubo.view_proj = view_proj;
             ubo.temporal = glm::uvec4(m_temporal_valid ? 0u : 1u, 64u, m_gbuffer_index, m_frame_counter);
 
             void* data = m_vr_dev->map_buffer(m_uniform_buffer);
             std::memcpy(data, &ubo, sizeof(ubo));
             m_vr_dev->unmap_buffer(m_uniform_buffer);
 
-            // Stash for next frame
-            m_prev_view_proj = view_proj;
+            m_prev_view_proj = view_proj;                   // Stash for next frame
             m_frame_counter++;                              // next frame gets a different seed
         }
 
@@ -308,36 +311,49 @@ namespace GLT::renderer_vk_ray {
 
         transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eTransferDstOptimal);
         clear_output_image(current_cmd, m_clear_color);
-        transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eGeneral);                     // Transition output to GENERAL
+        transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eGeneral);
         transition_image_layout(current_cmd, image_type::accum,  vk::ImageLayout::eGeneral); 
 
         // clear the write G-buffers so pixels that miss the primary ray read as "no hit"
         clear_gbuffer(current_cmd, m_gbuffer_pos[m_gbuffer_index]);
         clear_gbuffer(current_cmd, m_gbuffer_nrm[m_gbuffer_index]);
 
-        // Ray tracing
+        // pass 1: trace + write raw colour ----------------------------------------------------------------------------
         current_cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, m_rt_pipeline);
         m_vr_dev->dispatch_rays(m_rt_pipeline, m_sbt_buffer, m_render_size.x, m_render_size.y, 1, current_cmd);
 
         m_frame_draw_calls++;
         m_frame_render_passes++;
 
+        // barrier: raygen writes to current_raw, compute reads it -----------------------------------------------------
+        {
+            vk::MemoryBarrier mb = vk::MemoryBarrier()
+                .setSrcAccessMask(vk::AccessFlagBits::eShaderWrite)
+                .setDstAccessMask(vk::AccessFlagBits::eShaderRead);
+
+            current_cmd.pipelineBarrier(
+                vk::PipelineStageFlagBits::eRayTracingShaderKHR,
+                vk::PipelineStageFlagBits::eComputeShader,
+                {}, 1, &mb, 0, nullptr, 0, nullptr);
+        }
+
+        // pass 2: temporal resolve ------------------------------------------------------------------------------------
+        {
+            current_cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_temporal_pipeline);
+            m_vr_dev->bind_descriptor_buffer({ m_resource_desc_buffer }, current_cmd);
+            m_vr_dev->bind_descriptor_set(m_pipeline_layout, 0, 0, 0, current_cmd, vk::PipelineBindPoint::eCompute);
+
+            const u32 gx = (static_cast<u32>(m_render_size.x) + 7u) / 8u;
+            const u32 gy = (static_cast<u32>(m_render_size.y) + 7u) / 8u;
+            current_cmd.dispatch(gx, gy, 1);
+
+            m_frame_draw_calls++;
+            m_frame_render_passes++;
+        }
+
         // advance temporal state
-        m_temporal_valid = true;                        // next frame may reproject
-        m_gbuffer_index = 1 - m_gbuffer_index;          // ping-pong for next frame
-
-        // // Blit from output image to swapchain image
-        // transition_image_layout(current_cmd, image_type::swapchain, vk::ImageLayout::eTransferDstOptimal);       // to TRANSFER_DST_OPTIMAL
-        // transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eTransferSrcOptimal);          // to TRANSFER_SRC_OPTIMAL
-        // current_cmd.blitImage(
-        //     m_output_image->get_allocated_image_ref().image,            vk::ImageLayout::eTransferSrcOptimal,
-        //     m_swapchain.swapchain_images[m_current_swapchain_image],    vk::ImageLayout::eTransferDstOptimal,
-        //     vk::ImageBlit(vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
-        //     {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)},
-        //     vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1),
-        //     {vk::Offset3D(0, 0, 0), vk::Offset3D(m_render_size.x, m_render_size.y, 1)}),
-        //     vk::Filter::eLinear);
-
+        m_temporal_valid  = true;
+        m_gbuffer_index   = 1 - m_gbuffer_index;
         transition_image_layout(current_cmd, image_type::render, vk::ImageLayout::eShaderReadOnlyOptimal);       // to SHADER_READ_ONLY_OPTIMAL
 
         begin_imgui_frame(current_cmd);
@@ -416,6 +432,7 @@ namespace GLT::renderer_vk_ray {
 
         m_render_size = size;
         m_output_image->resize({size.x, size.y, 1});
+        m_current_raw->resize({size.x, size.y, 1}, GLT::render::image_format::RGBA16F);
 
         for (u32 i = 0; i < 2; ++i) {
             m_accum_image[i]->resize({size.x, size.y, 1}, GLT::render::image_format::RGBA32F);
@@ -438,6 +455,7 @@ namespace GLT::renderer_vk_ray {
             to_general(m_gbuffer_pos[1]);
             to_general(m_gbuffer_nrm[0]);
             to_general(m_gbuffer_nrm[1]);
+            to_general(m_current_raw);
         });
 
         m_temporal_valid = false;       // new sizes -> no valid history
@@ -578,29 +596,6 @@ namespace GLT::renderer_vk_ray {
 
         m_vr_dev = new vr::device(m_instance.instance_handle, m_device, m_physical_device);
 
-
-        // vk::SamplerCreateInfo sampler_info{};
-        // sampler_info.magFilter = vk::Filter::eNearest;
-        // sampler_info.minFilter = vk::Filter::eNearest;
-        // sampler_info.mipmapMode = vk::SamplerMipmapMode::eNearest;
-        // sampler_info.addressModeU = vk::SamplerAddressMode::eClampToEdge;
-        // sampler_info.addressModeV = vk::SamplerAddressMode::eClampToEdge;
-        // sampler_info.addressModeW = vk::SamplerAddressMode::eClampToEdge;
-        // sampler_info.anisotropyEnable = VK_FALSE;
-        // sampler_info.maxAnisotropy = 1.0f;
-        // sampler_info.borderColor = vk::BorderColor::eFloatOpaqueBlack;
-        // sampler_info.unnormalizedCoordinates = VK_FALSE;
-        // sampler_info.compareEnable = VK_FALSE;
-        // sampler_info.compareOp = vk::CompareOp::eAlways;
-        // sampler_info.mipLodBias = 0.0f;
-        // sampler_info.minLod = 0.0f;
-        // sampler_info.maxLod = 0.0f;
-        // m_default_sampler_nearest = m_device.createSampler(sampler_info);
-
-        // sampler_info.magFilter = vk::Filter::eLinear;
-        // sampler_info.minFilter = vk::Filter::eLinear;
-        // m_default_sampler_linear = m_device.createSampler(sampler_info);
-
         // two timestamps per concurrent frame, so we can measure the GPU time of the frame that used each command buffer.
         {
             const vk::PhysicalDeviceProperties props = m_physical_device.getProperties();
@@ -692,48 +687,37 @@ namespace GLT::renderer_vk_ray {
 
     void renderer::create_rt_pipeline() {
 
+        // Don't lie [using] but it make the binding more readable
+        using VKDI = vr::descriptor_item;
+        using VKDT = vk::DescriptorType;
+        using VKSF = vk::ShaderStageFlagBits;
+
         // [POI]
-        // Now we create a descriptor layout for the ray tracing pipeline
-        // last parameter is a pointer to the items vector, so we can use it later to create the descriptor set
-        // for now we have only one item, so we just pass the address of the first element
-        // if we want to update the descriptor set later with another item,
-        // we can just reassign the vr::descriptor_item::pItems with new items and update the descriptor set
+        // Now we create a descriptor layout for the ray tracing pipeline last parameter is a pointer to the items vector,
+        // so we can use it later to create the descriptor set for now we have only one item, so we just pass the address
+        // of the first element if we want to update the descriptor set later with another item, we can just reassign the 
+        // vr::descriptor_item::pItems with new items and update the descriptor set
         m_resource_bindings = {
-            vr::descriptor_item(0, vk::DescriptorType::eAccelerationStructureKHR,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_tlas_handle.buffer.dev_address), // <-- extended
-            vr::descriptor_item(1, vk::DescriptorType::eUniformBuffer,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_uniform_buffer),
-            vr::descriptor_item(2, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR, 10, &m_output_image->get_accessible_image_ref(), 1),
-            vr::descriptor_item(3, vk::DescriptorType::eStorageBuffer,
-                vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_material_buffer),
-            vr::descriptor_item(4, vk::DescriptorType::eStorageBuffer,
-                vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_vertex_buffer),
-            vr::descriptor_item(5, vk::DescriptorType::eStorageBuffer,
-                vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_index_buffer),
+            VKDI(0, VKDT::eAccelerationStructureKHR, VKSF::eRaygenKHR | VKSF::eClosestHitKHR, 1, &m_tlas_handle.buffer.dev_address),
+            VKDI(1, VKDT::eUniformBuffer, VKSF::eRaygenKHR | VKSF::eClosestHitKHR | VKSF::eCompute, 1, &m_uniform_buffer),
+            VKDI(2, VKDT::eStorageImage, VKSF::eRaygenKHR | VKSF::eCompute, 10, &m_output_image->get_accessible_image_ref(), 1),
+            VKDI(3, VKDT::eStorageBuffer, VKSF::eClosestHitKHR, 1, &m_material_buffer),
+            VKDI(4, VKDT::eStorageBuffer, VKSF::eClosestHitKHR, 1, &m_vertex_buffer),
+            VKDI(5, VKDT::eStorageBuffer, VKSF::eClosestHitKHR, 1, &m_index_buffer),
 
             // bindless textures support
-            // Bindless texture array. No dynamic_array_size -> fixed-size array,
-            // every element is written in create_default_texture() and per-element on load.
-            vr::descriptor_item(6, vk::DescriptorType::eCombinedImageSampler, vk::ShaderStageFlagBits::eClosestHitKHR,
-                BINDLESS_TEXTURE_MAX, m_texture_descriptors.data()),
-
-            vr::descriptor_item(7, vk::DescriptorType::eStorageBuffer,
-                vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_geometry_buffer),
+            // Bindless texture array. No dynamic_array_size -> fixed-size array, every element is written in create_default_texture() and per-element on load
+            VKDI(6, VKDT::eCombinedImageSampler, VKSF::eClosestHitKHR, BINDLESS_TEXTURE_MAX, m_texture_descriptors.data()),
+            VKDI(7, VKDT::eStorageBuffer, VKSF::eClosestHitKHR, 1, &m_geometry_buffer),
 
             // ping-pong accum + g-buffer
-            vr::descriptor_item(8,  vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR, 10, &m_accum_image[0]->get_accessible_image_ref(), 1),
-            vr::descriptor_item(9,  vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR, 10, &m_accum_image[1]->get_accessible_image_ref(), 1),
-            vr::descriptor_item(10, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 10, &m_gbuffer_pos[0]->get_accessible_image_ref(), 1),
-            vr::descriptor_item(11, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 10, &m_gbuffer_pos[1]->get_accessible_image_ref(), 1),
-            vr::descriptor_item(12, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 10, &m_gbuffer_nrm[0]->get_accessible_image_ref(), 1),
-            vr::descriptor_item(13, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 10, &m_gbuffer_nrm[1]->get_accessible_image_ref(), 1),
+            VKDI(8,  VKDT::eStorageImage, VKSF::eCompute, 10, &m_accum_image[0]->get_accessible_image_ref(), 1),
+            VKDI(9,  VKDT::eStorageImage, VKSF::eCompute, 10, &m_accum_image[1]->get_accessible_image_ref(), 1),
+            VKDI(10, VKDT::eStorageImage, VKSF::eClosestHitKHR | VKSF::eCompute, 10, &m_gbuffer_pos[0]->get_accessible_image_ref(), 1),
+            VKDI(11, VKDT::eStorageImage, VKSF::eClosestHitKHR | VKSF::eCompute, 10, &m_gbuffer_pos[1]->get_accessible_image_ref(), 1),
+            VKDI(12, VKDT::eStorageImage, VKSF::eClosestHitKHR | VKSF::eCompute, 10, &m_gbuffer_nrm[0]->get_accessible_image_ref(), 1),
+            VKDI(13, VKDT::eStorageImage, VKSF::eClosestHitKHR | VKSF::eCompute, 10, &m_gbuffer_nrm[1]->get_accessible_image_ref(), 1),
+            VKDI(14, VKDT::eStorageImage, VKSF::eRaygenKHR | VKSF::eCompute, 10, &m_current_raw->get_accessible_image_ref(), 1),
         };
 
         // create a descriptor set layout, for the ray tracing pipeline
@@ -766,7 +750,7 @@ namespace GLT::renderer_vk_ray {
         ASSERT(!ao_hit_spv.empty(), "", "Failed to load shader")
         auto ao_hit_shader_module = m_vr_dev->create_shader_from_spv(ao_hit_spv);
 
-        // AO miss - writes 0.0 (unoccluded)
+        // AO miss - writes 0.0 (un-occluded)
         auto ao_miss_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "mesh_ao.rmiss.glsl");
         ASSERT(!ao_miss_spv.empty(), "", "Failed to load shader")
         auto ao_miss_shader_module = m_vr_dev->create_shader_from_spv(ao_miss_spv);
@@ -816,13 +800,32 @@ namespace GLT::renderer_vk_ray {
         // Build the shader binding table, it is a buffer that contains the shaders for the pipeline and we can update hit record data if we want
         m_sbt_buffer = m_vr_dev->create_sbt(m_rt_pipeline, sbtInfo);
 
+        // ---- temporal resolve compute pipeline ---------------------------------------
+        {
+            auto compute_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "mesh_materials_temporal.comp.glsl");
+            ASSERT(!compute_spv.empty(), "", "Failed to load temporal resolve shader")
+            auto compute_module = m_vr_dev->create_shader_from_spv(compute_spv);
+
+            vk::ComputePipelineCreateInfo cpci{};
+            cpci.layout = m_pipeline_layout;
+            cpci.stage = vk::PipelineShaderStageCreateInfo()
+                .setStage(vk::ShaderStageFlagBits::eCompute)
+                .setModule(compute_module.module)
+                .setPName("main");
+
+            auto result = m_device.createComputePipeline(nullptr, cpci);
+            VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create temporal compute pipeline")
+            m_temporal_pipeline = result.value;
+            m_device.destroyShaderModule(compute_module.module);
+        }
+
         // create a descriptor buffer for the ray tracing pipeline
         m_resource_desc_buffer = m_vr_dev->create_descriptor_buffer(m_resource_descriptor_layout, m_resource_bindings,
-            vr::descriptor_buffer_type::combined);      // sampler | resource
+            vr::descriptor_buffer_type::combined);                          // sampler | resource
 
-        m_live_buffer_count += 1;           // m_resource_desc_buffer.buffer
-        m_live_pipeline_count += 1;         // m_rt_pipeline
-        m_live_descriptor_set_count += 1;   // one set inside m_resource_desc_buffer
+        m_live_buffer_count++;                                              // m_resource_desc_buffer.buffer
+        m_live_pipeline_count++;                                            // m_rt_pipeline
+        m_live_descriptor_set_count++;                                      // one set inside m_resource_desc_buffer
 
         // cleanup
         m_device.destroyShaderModule(ray_gen_shader_module.module);
@@ -837,6 +840,8 @@ namespace GLT::renderer_vk_ray {
             m_device.destroyPipelineLayout(m_pipeline_layout);
             m_device.destroyDescriptorSetLayout(m_resource_descriptor_layout);
             m_vr_dev->destroy_buffer(m_resource_desc_buffer.buffer);
+            if (m_temporal_pipeline)
+                m_device.destroyPipeline(m_temporal_pipeline);
         });
     }
 
@@ -860,6 +865,9 @@ namespace GLT::renderer_vk_ray {
         m_immediate_submit_fence = m_device.createFence(fence_CI);
 
         m_output_image = GLT::create_ref<image>();
+        m_output_image->resize({m_render_size.x, m_render_size.y, 1});
+        m_current_raw = GLT::create_ref<image>();
+        m_current_raw->resize({m_render_size.x, m_render_size.y, 1}, GLT::render::image_format::RGBA16F);
 
         // Ping-pong accum + g-buffer
         for (u32 index = 0; index < 2; ++index) {
@@ -896,6 +904,7 @@ namespace GLT::renderer_vk_ray {
             prep(m_gbuffer_pos[1]);
             prep(m_gbuffer_nrm[0]);
             prep(m_gbuffer_nrm[1]);
+            prep(m_current_raw);
         });
 
         m_temporal_valid = false;   // first frame is a reset frame

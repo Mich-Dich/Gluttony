@@ -107,3 +107,86 @@ Implementation details, architecture notes, and plugin authoring guides will liv
 ---
 
 If you find a bug or want to add something, open an issue or a PR. I can’t promise prompt responses, but I’ll be thrilled that someone else looked at the code.
+
+
+
+# existing features
+Runtime
+- Input system
+- Camera system
+- Audio mixer/streaming/effects
+- Job system / thread pool
+
+Content / asset pipeline
+- Import factories (currently only: mesh/texture/audio)
+- VFS
+
+World / ECS / scene
+- Component serialization
+- world serialization
+- world streaming
+- controller
+
+Platform / OS
+- Filesystem/dialogs
+- Timers
+- Crash handler
+
+Editor / tooling
+- content browser (with thumbnail cache, import panel, drag-drop into scene, ...)
+- Material editor
+- World inspector (Editor outliner/details)
+
+Engine infrastructure
+- generic serialization
+- reflection
+
+# PLanned features until a real game can be created
+Gameplay / Runtime
+- physics
+- scripting (attaching a script to an entity)
+- animations
+- runtime UI (currently using ImGui for debugging)
+- save/load system
+- prefabs / entity templates
+- navigation
+
+World
+- terrain/volumes
+- navigation *(could live here instead if you treat it as world tooling)*
+
+Networking
+- networking/online
+
+Asset Pipeline / Content
+- hot-reload watcher
+- asset cooking/packaging
+- resource cache
+
+Build / Export
+- exporting the game (currently works only with editor)
+- asset cooking/packaging *(if you split build-time packaging from runtime asset pipeline)*
+
+Rendering
+- portable renderer (currently using HW RT, need a rasterizer as well)
+- shader/pipeline system
+- Render graph
+- LOD
+- Post-processing
+- Particles/VFX
+- Debug draw/gizmos
+- Sky/atmosphere
+
+Editor / Tooling
+- Undo/redo
+- Selection/gizmos
+- Play-in-editor
+
+Engine Infrastructure
+- Memory manager
+- Versioning/migration — asset versions exist, but no migration framework
+- Plugin ABI/versioning
+- Tests/CI
+
+Platform / OS
+- in-game console

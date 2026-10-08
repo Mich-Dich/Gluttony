@@ -31,10 +31,15 @@
     "instrumentor",
     "miniaudio",
     "outliner",
+    "Raygen",
+    "rchit",
     "renderable",
     "reparent",
+    "rgen",
+    "rmiss",
     "rolloff",
     "soloud",
+    "Spir",
     "spirv",
     "submesh",
     "submeshes",
@@ -42,7 +47,10 @@
     "tlas",
     "undoable",
     "VFSPP",
-    "vk_ray"
+    "vk_ray",
+    "VKDI",
+    "VKDT",
+    "VKSF"
   ],
   "C_Cpp.errorSquiggles": "disabled",
   "github.copilot.enable": {

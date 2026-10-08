@@ -215,63 +215,68 @@ namespace GLT::renderer_vk_ray {
         // Everything starts at the checkerboard fallback, exactly like m_texture_descriptors did at init
         m_preview_texture_descriptors = m_texture_descriptors;
 
+        // Don't lie [using] but it make the binding more readable
+        using VKDI = vr::descriptor_item;
+        using VKDT = vk::DescriptorType;
+        using VKSF = vk::ShaderStageFlagBits;
+
         // ---- preview descriptor buffer ---------------------------------------------
         // Same layout as the main one - only the contents differ. Bindings 4 and 5 are NOT the shared main vertex/index buffers
         // the sphere lives in its own buffers so a resize of the main geometry doesn't invalidate this set
         m_preview_bindings = {
-            vr::descriptor_item(0, vk::DescriptorType::eAccelerationStructureKHR,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_preview_tlas.buffer.dev_address),
-            vr::descriptor_item(1, vk::DescriptorType::eUniformBuffer,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_preview_camera_ubo),
-            vr::descriptor_item(2, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR, 10, &m_preview_image->get_accessible_image_ref(), 1),
-            vr::descriptor_item(3, vk::DescriptorType::eStorageBuffer,
-                vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_preview_material_buffer),
-            vr::descriptor_item(4, vk::DescriptorType::eStorageBuffer,
-                vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_preview_vertex_buffer),
-            vr::descriptor_item(5, vk::DescriptorType::eStorageBuffer,
-                vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_preview_index_buffer),
-            vr::descriptor_item(6, vk::DescriptorType::eCombinedImageSampler,
-                vk::ShaderStageFlagBits::eClosestHitKHR, BINDLESS_TEXTURE_MAX, m_preview_texture_descriptors.data()),
-            vr::descriptor_item(7, vk::DescriptorType::eStorageBuffer,
-                vk::ShaderStageFlagBits::eClosestHitKHR, 1, &m_preview_geometry_buffer),
-            
-            vr::descriptor_item(8,  vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eRaygenKHR,
-                10, &m_preview_accum_image->get_accessible_image_ref(), 1),
-            vr::descriptor_item(9,  vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eRaygenKHR,
-                10, &m_preview_accum_image->get_accessible_image_ref(), 1),
-            vr::descriptor_item(10, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
-                10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
-            vr::descriptor_item(11, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
-                10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
-            vr::descriptor_item(12, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
-                10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
-            vr::descriptor_item(13, vk::DescriptorType::eStorageImage,
-                vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
-                10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
+            VKDI(0, VKDT::eAccelerationStructureKHR, VKSF::eRaygenKHR | VKSF::eClosestHitKHR, 1, &m_preview_tlas.buffer.dev_address),
+            VKDI(1, VKDT::eUniformBuffer, VKSF::eRaygenKHR | VKSF::eClosestHitKHR, 1, &m_preview_camera_ubo),
+            VKDI(2, VKDT::eStorageImage, VKSF::eRaygenKHR, 10, &m_preview_image->get_accessible_image_ref(), 1),
+            VKDI(3, VKDT::eStorageBuffer, VKSF::eClosestHitKHR, 1, &m_preview_material_buffer),
+            VKDI(4, VKDT::eStorageBuffer, VKSF::eClosestHitKHR, 1, &m_preview_vertex_buffer),
+            VKDI(5, VKDT::eStorageBuffer, VKSF::eClosestHitKHR, 1, &m_preview_index_buffer),
+            VKDI(6, VKDT::eCombinedImageSampler, VKSF::eClosestHitKHR, BINDLESS_TEXTURE_MAX, m_preview_texture_descriptors.data()),
+            VKDI(7, VKDT::eStorageBuffer, VKSF::eClosestHitKHR, 1, &m_preview_geometry_buffer),
+            VKDI(8,  VKDT::eStorageImage, VKSF::eRaygenKHR, 10, &m_preview_accum_image->get_accessible_image_ref(), 1),
+            VKDI(9,  VKDT::eStorageImage, VKSF::eRaygenKHR, 10, &m_preview_accum_image->get_accessible_image_ref(), 1),
+            VKDI(10, VKDT::eStorageImage, VKSF::eRaygenKHR | VKSF::eClosestHitKHR, 10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
+            VKDI(11, VKDT::eStorageImage, VKSF::eRaygenKHR | VKSF::eClosestHitKHR, 10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
+            VKDI(12, VKDT::eStorageImage, VKSF::eRaygenKHR | VKSF::eClosestHitKHR, 10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
+            VKDI(13, VKDT::eStorageImage, VKSF::eRaygenKHR | VKSF::eClosestHitKHR, 10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
+
+            // Reuse the existing dummy gbuffer (it's a 1x1 RGBA float image — the shader never reads it in the preview path since the
+            // compute pass isn't run for previews; the preview's own dispatch stops after the RT pass)
+            VKDI(14, VKDT::eStorageImage, VKSF::eRaygenKHR | VKSF::eCompute, 10, &m_preview_dummy_gbuffer->get_accessible_image_ref(), 1),
         };
 
         m_preview_desc_buffer = m_vr_dev->create_descriptor_buffer(m_resource_descriptor_layout, m_preview_bindings, vr::descriptor_buffer_type::combined);
-
         m_vr_dev->update_descriptor_buffer(m_preview_desc_buffer, m_preview_bindings, vr::descriptor_buffer_type::combined);
-
         m_preview_ready = true;
 
         // ---- cleanup -----------------------------------------------------------------
         m_deletion_queue.push_func([this]() {
 
-            if (m_preview_desc_buffer.buffer.buffer)            m_vr_dev->destroy_buffer(m_preview_desc_buffer.buffer);
-            if (m_preview_camera_ubo.buffer)                    m_vr_dev->destroy_buffer(m_preview_camera_ubo);
-            if (m_preview_geometry_buffer.buffer)               m_vr_dev->destroy_buffer(m_preview_geometry_buffer);
-            if (m_preview_material_buffer.buffer)               m_vr_dev->destroy_buffer(m_preview_material_buffer);
-            if (m_preview_instance_buffer.buffer)               m_vr_dev->destroy_buffer(m_preview_instance_buffer);
-            if (m_preview_index_buffer.buffer)                  m_vr_dev->destroy_buffer(m_preview_index_buffer);
-            if (m_preview_vertex_buffer.buffer)                 m_vr_dev->destroy_buffer(m_preview_vertex_buffer);
-            if (m_preview_sphere_blas.buffer.buffer)            m_vr_dev->destroy_blas(m_preview_sphere_blas);
-            if (m_preview_tlas.buffer.buffer)                   m_vr_dev->destroy_tlas(m_preview_tlas);
+            if (m_preview_desc_buffer.buffer.buffer)
+                m_vr_dev->destroy_buffer(m_preview_desc_buffer.buffer);
+
+            if (m_preview_camera_ubo.buffer)
+                m_vr_dev->destroy_buffer(m_preview_camera_ubo);
+
+            if (m_preview_geometry_buffer.buffer)
+                m_vr_dev->destroy_buffer(m_preview_geometry_buffer);
+
+            if (m_preview_material_buffer.buffer)
+                m_vr_dev->destroy_buffer(m_preview_material_buffer);
+
+            if (m_preview_instance_buffer.buffer)
+                m_vr_dev->destroy_buffer(m_preview_instance_buffer);
+
+            if (m_preview_index_buffer.buffer)
+                m_vr_dev->destroy_buffer(m_preview_index_buffer);
+
+            if (m_preview_vertex_buffer.buffer)
+                m_vr_dev->destroy_buffer(m_preview_vertex_buffer);
+
+            if (m_preview_sphere_blas.buffer.buffer)
+                m_vr_dev->destroy_blas(m_preview_sphere_blas);
+
+            if (m_preview_tlas.buffer.buffer)
+                m_vr_dev->destroy_tlas(m_preview_tlas);
         });
     }
 

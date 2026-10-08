@@ -453,16 +453,19 @@ namespace GLT::renderer_vk_ray {
         std::array<GLT::ref<image>, 2>                          m_accum_image{};
         std::array<GLT::ref<image>, 2>                          m_gbuffer_pos{};
         std::array<GLT::ref<image>, 2>                          m_gbuffer_nrm{};
+        GLT::ref<image>                                         m_current_raw{};                // current frame's shaded colour
         u32                                                     m_gbuffer_index = 0;
         glm::mat4                                               m_prev_view_proj{1.0f};
-        bool                                                    m_temporal_valid = false;   // false -> shader uses current only
+        bool                                                    m_temporal_valid = false;       // false -> shader uses current only
         u32                                                     m_frame_counter = 0;
+        vk::Pipeline                                            m_temporal_pipeline = nullptr;  // compute pipeline for temporal resolve pass
+        vk::PipelineLayout                                      m_temporal_pipeline_layout = nullptr;
 
         // preview -----------------------------------------------------------------------------------------------------
 
         bool                                                    m_preview_ready = false;
         GLT::ref<image>                                         m_preview_image{};
-        GLT::ref<image>                                         m_preview_accum_image{};        // separate accum for the preview pass
+        GLT::ref<image>                                         m_preview_accum_image{};    // separate accum for the preview pass
         GLT::ref<image>                                         m_preview_dummy_gbuffer{};
         vr::allocated_buffer                                    m_preview_vertex_buffer{};
         vr::allocated_buffer                                    m_preview_index_buffer{};
