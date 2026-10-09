@@ -3,7 +3,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::renderer_vk_ray {
+namespace GLT::renderer::vk_ray {
 
     // CONSTANTS =======================================================================================================
 
@@ -17,9 +17,31 @@ namespace GLT::renderer_vk_ray {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
+    // Counts primitive draws ImGui will issue - i.e. every cmd buffer entry that isn't a user callback. This matches
+    // the Vulkan backend's actual vkCmdDraw* count
+    u32 count_imgui_draw_calls(const ImDrawData* draw_data);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
+    u32 count_imgui_draw_calls(const ImDrawData* draw_data) {
+
+        if (!draw_data)
+            return 0;
+
+        u32 count = 0;
+        for (int i = 0; i < draw_data->CmdListsCount; ++i) {
+
+            const ImDrawList* cmd_list = draw_data->CmdLists[i];
+            for (int j = 0; j < cmd_list->CmdBuffer.Size; ++j) {
+
+                if (cmd_list->CmdBuffer[j].UserCallback == nullptr)
+                    ++count;
+            }
+        }
+        return count;
+    }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 

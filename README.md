@@ -110,7 +110,7 @@ If you find a bug or want to add something, open an issue or a PR. I can’t pro
 
 
 
-# existing features
+# Existing features (will likely be polished further)
 Runtime
 - Input system
 - Camera system
@@ -141,7 +141,7 @@ Engine infrastructure
 - generic serialization
 - reflection
 
-# PLanned features until a real game can be created
+# Planned features until a real game can be created
 Gameplay / Runtime
 - physics
 - scripting (attaching a script to an entity)
@@ -153,7 +153,7 @@ Gameplay / Runtime
 
 World
 - terrain/volumes
-- navigation *(could live here instead if you treat it as world tooling)*
+- navigation
 
 Networking
 - networking/online
@@ -165,7 +165,7 @@ Asset Pipeline / Content
 
 Build / Export
 - exporting the game (currently works only with editor)
-- asset cooking/packaging *(if you split build-time packaging from runtime asset pipeline)*
+- asset cooking/packaging
 
 Rendering
 - portable renderer (currently using HW RT, need a rasterizer as well)
@@ -184,7 +184,7 @@ Editor / Tooling
 
 Engine Infrastructure
 - Memory manager
-- Versioning/migration — asset versions exist, but no migration framework
+- Versioning/migration - asset versions exist, but no migration framework
 - Plugin ABI/versioning
 - Tests/CI
 

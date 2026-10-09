@@ -22,7 +22,7 @@ compile_plugin(SHARED                                                   ${PLUGIN
 compile_plugin(STATIC                                                   ${PLUGIN_NAME}_static   glm imgui)
 
 # vendor ------------------------------------------------------------------------------------
-set(VENDOR_DIR                                                          "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
 set(ASSIMP_DIR                                                          "${VENDOR_DIR}/assimp")
 git_clone_or_update("git@github.com:assimp/assimp.git"                  "${ASSIMP_DIR}")
 

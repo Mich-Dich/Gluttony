@@ -28,23 +28,24 @@ namespace GLT::render {
     template <auto Namespace>
     consteval auto make_render_mode_entries() {
 
-        std::vector<render_mode_info> out;
-        for (auto m : std::meta::members_of(Namespace, std::meta::access_context::unchecked())) {
+        std::vector<render_mode_info> out{};
+        const std::vector<std::meta::info> all_members = std::meta::members_of(Namespace, std::meta::access_context::unchecked());
+        for (auto member : all_members) {
 
-            if (!std::meta::is_variable(m))
+            if (!std::meta::is_variable(member))
                 continue;
 
-            if (std::meta::remove_cv(std::meta::type_of(m)) != ^^render_mode)
+            if (std::meta::remove_cv(std::meta::type_of(member)) != ^^render_mode)
                 continue;
 
-            const auto value = std::meta::extract<render_mode>(m);
+            const auto value = std::meta::extract<render_mode>(member);
 
             render_mode_info info{};
             info.id = value.id;
             info.is_default = value.is_default;
-            info.key = std::define_static_string(std::meta::identifier_of(m));
+            info.key = std::define_static_string(std::meta::identifier_of(member));
 
-            for (auto a : std::meta::annotations_of(m)) {
+            for (auto a : std::meta::annotations_of(member)) {
 
                 const auto at = std::meta::type_of(a);
                 if (at == ^^reflect::annotations::display_name) {

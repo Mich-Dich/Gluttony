@@ -3,7 +3,7 @@
 #include <meta>
 
 #include "asset/type.h"
-#include "reflect/registry.h"
+#include "reflection/registry.h"
 
 
 
@@ -59,7 +59,7 @@ namespace GLT::reflect {
 
         // Annotations win; otherwise identifier_of for class/enum, display_string_of for primitives and templates
         // Note: display_string_of is implementation defined — any type you serialize across compilers needs [[=name{"..."}]]
-        consteval std::string_view type_name(std::meta::info type);
+        consteval const char* type_name(std::meta::info type);
 
 
         consteval u32 type_hash_of(std::meta::info type);
@@ -79,7 +79,8 @@ namespace GLT::reflect {
         template <typename Ann>
         consteval std::optional<Ann> find_annotation(std::meta::info owner) {
 
-            for (auto a : std::meta::annotations_of(owner)) {
+            const std::vector<std::meta::info> anns = std::meta::annotations_of(owner);
+            for (auto a : anns) {
                 if (std::meta::type_of(a) == ^^Ann)
                     return std::meta::extract<Ann>(a);
             }
@@ -94,10 +95,13 @@ namespace GLT::reflect {
             if (!std::is_class_v<T> || std::is_enum_v<T>)
                 return {};
 
+            const std::vector<std::meta::info> member_infos =
+                std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked());
+
             std::vector<member_descriptor> out;
-            for (auto m : std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked())) {
+            for (auto m : member_infos)
                 out.push_back(build_member(m));
-            }
+
             return std::define_static_array(out);
         }
 
@@ -105,9 +109,14 @@ namespace GLT::reflect {
         template <typename E> requires std::is_enum_v<E>
         consteval std::span<const enum_entry> build_enum_entries() {
 
+            const std::vector<std::meta::info> enum_infos = std::meta::enumerators_of(^^E);
+
             std::vector<enum_entry> out;
-            for (auto e : std::meta::enumerators_of(^^E)) {
-                out.push_back({std::define_static_string(std::meta::identifier_of(e)), static_cast<i64>(std::meta::extract<E>(e))});
+            for (auto e : enum_infos) {
+                out.push_back({
+                    std::define_static_string(std::meta::identifier_of(e)),
+                    static_cast<i64>(std::meta::extract<E>(e))
+                });
             }
             return std::define_static_array(out);
         }
@@ -148,7 +157,8 @@ namespace GLT::reflect {
 
         consteval bool has_annotation(std::meta::info owner, std::meta::info tag_type) {
 
-            for (auto a : std::meta::annotations_of(owner))
+            const std::vector<std::meta::info> anns = std::meta::annotations_of(owner);
+            for (auto a : anns)
                 if (std::meta::type_of(a) == tag_type)
                     return true;
             return false;
@@ -156,7 +166,7 @@ namespace GLT::reflect {
 
         // Stable type name + hash -------------------------------------------------------------------------------------
 
-        consteval std::string_view type_name(std::meta::info type) {
+        consteval const char* type_name(std::meta::info type) {
 
             if (auto n = find_annotation<annotations::name>(type))
                 return std::define_static_string(std::string_view(n->value));
@@ -174,6 +184,31 @@ namespace GLT::reflect {
 
         consteval type_kind kind_of(std::meta::info type) {
 
+            if (type == ^^bool)                                 return type_kind::boolean;
+
+            if (std::meta::is_arithmetic_type(type)) {
+                const auto sz = std::meta::size_of(type);
+                if (std::meta::is_floating_point_type(type)) {
+                    if (sz == 4)                                return type_kind::f32;
+                    if (sz == 8)                                return type_kind::f64;
+                } else if (std::meta::is_signed_type(type)) {
+                    switch (sz) {
+                        case 1:                                 return type_kind::i8;
+                        case 2:                                 return type_kind::i16;
+                        case 4:                                 return type_kind::i32;
+                        case 8:                                 return type_kind::i64;
+                    }
+                } else {
+                    switch (sz) {
+                        case 1:                                 return type_kind::u8;
+                        case 2:                                 return type_kind::u16;
+                        case 4:                                 return type_kind::u32;
+                        case 8:                                 return type_kind::u64;
+                    }
+                }
+                return type_kind::unknown;
+            }
+
             if (std::meta::is_enum_type(type))                  return type_kind::enum_type;
 
             if (std::meta::is_class_type(type)) {
@@ -187,17 +222,17 @@ namespace GLT::reflect {
                 // Containers — simple trait shape
                 if (std::meta::has_template_arguments(type)) {
                     auto tmpl = std::meta::template_of(type);
-                    if (tmpl == ^^std::vector || tmpl == ^^std::array ||
-                        tmpl == ^^std::map    || tmpl == ^^std::unordered_map)
+                    if (tmpl == ^^std::vector || tmpl == ^^std::array || tmpl == ^^std::map || tmpl == ^^std::unordered_map)
                         return type_kind::container_type;
                 }
-                if (!std::meta::nonstatic_data_members_of(type, std::meta::access_context::unchecked()).empty())
+
+                const std::vector<std::meta::info> member_infos = std::meta::nonstatic_data_members_of(type,
+                    std::meta::access_context::unchecked());
+                if (!member_infos.empty())
                     return type_kind::struct_type;
+
                 return type_kind::opaque_type;
             }
-
-            if (std::meta::is_arithmetic_type(type) || type == ^^bool)
-                return type_kind::primitive;
 
             return type_kind::unknown;
         }
@@ -209,7 +244,8 @@ namespace GLT::reflect {
             member_descriptor md{};
             md.name = std::define_static_string(std::meta::identifier_of(member));
             md.type_hash = type_hash_of(std::meta::type_of(member));
-            md.offset = static_cast<u32>(std::meta::offset_of(member));
+            md.offset = static_cast<u32>(std::meta::offset_of(member).bytes);
+            md.kind = kind_of(std::meta::type_of(member));
 
             // Flags
             u32 f = static_cast<u32>(member_flags::serialize);   // default-on

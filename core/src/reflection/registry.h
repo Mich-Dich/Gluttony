@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include "reflect/annotations.h"
+#include "reflection/annotations.h"
 
 
 
@@ -24,15 +24,22 @@ namespace GLT::reflect {
     enum class type_kind : u8 {
 
         unknown = 0,
-        primitive,                                                          // int, float, bool, char, ...
-        enum_type,                                                          // enum / enum class
-        struct_type,                                                        // reflected class or struct
-        string_type,                                                        // std::string
-        path_type,                                                          // std::filesystem::path
-        handle_type,                                                        // GLT::asset::handle
-        uuid_type,                                                          // GLT::UUID
-        container_type,                                                     // std::vector / std::array / std::map / ...
-        opaque_type,                                                        // no reflection; consumer override required
+
+        // primitives ------------------------------------------------------------------
+        boolean,
+        u8, u16, u32, u64,
+        i8, i16, i32, i64,
+        f32, f64,
+
+        // composite -------------------------------------------------------------------
+        enum_type,
+        struct_type,
+        string_type,
+        path_type,
+        handle_type,
+        uuid_type,
+        container_type,
+        opaque_type,
     };
 
 
@@ -55,22 +62,23 @@ namespace GLT::reflect {
 
     struct enum_entry {
 
-        std::string_view                                name;
+        const char*                                     name;
         i64                                             value;
     };
 
 
     struct member_descriptor {
 
-        std::string_view                                name{};
+        const char*                                     name{};
         u32                                             type_hash{};
         u32                                             offset{};           // valid for standard-layout
         u32                                             flags{};            // member_flags
-        std::string_view                                display_name{};     // empty = use name
-        std::string_view                                tooltip{};
-        std::string_view                                category{};
+        const char*                                     display_name{};     // empty = use name
+        const char*                                     tooltip{};
+        const char*                                     category{};
         f64                                             range_min{};
         f64                                             range_max{};
+        type_kind                                       kind{ type_kind::unknown };
 
         // Fallback accessor for non-standard-layout types. Null → use offset
         // Generated once per member at compile time; see build.inl
@@ -80,7 +88,7 @@ namespace GLT::reflect {
 
     struct type_descriptor {
 
-        std::string_view                                name{};
+        const char*                                     name{};
         u32                                             hash{};
         u32                                             size{};
         u32                                             alignment{};
@@ -108,7 +116,7 @@ namespace GLT::reflect {
     };
 
 
-    struct editor_override {
+    struct editor_draw_override {
 
         bool (*draw)(const member_descriptor&, void* ptr);
     };
@@ -117,19 +125,57 @@ namespace GLT::reflect {
 
     // FUNCTION DECLARATION ============================================================================================
     
-    constexpr u32 fnv1a_32(std::string_view s) noexcept {
-
-        u32 h = 2166136261u;
-        for (unsigned char c : s) { 
-            h ^= c; 
-            h *= 16777619u;
-        }
-        return h;
-    }
+    FORCE_INLINE_R constexpr u32 fnv1a_32(std::string_view s) noexcept;
 
 
     // Process-wide instance. Function-local static → no static-init order problems
     [[nodiscard]] reflection_registry& registry();
+
+    // ---- registration API -------------------------------------------------------
+
+    // Call after all registrations for a phase are done. Sorts and indexes
+    void finalize();
+
+    // ---- lookup helpers ---------------------------------------------------------
+
+    FORCE_INLINE_R const type_descriptor* type_of(std::string_view name) noexcept;
+
+
+    FORCE_INLINE_R const type_descriptor* type_of(u32 hash) noexcept;
+
+    // ---- visitor ----------------------------------------------------------------
+
+    // One level; recursion is the consumer's job (they know what to skip)
+    using member_callback = std::function<bool(const member_descriptor&, void* member_ptr)>;
+
+
+    void for_each_member(const type_descriptor& td, void* obj, const member_callback& cb);
+
+    // ---- migration --------------------------------------------------------------
+
+    using migrate_fn = void(*)(void* obj, u16 from_version);
+
+
+    void register_migration(u32 type_hash, u16 from_version, migrate_fn fn);
+
+
+    bool run_migrations(u32 type_hash, u16 from_version, void* obj);
+
+    // ---- overrides (consumer behavior) ------------------------------------------
+
+
+    void register_serializer(u32 type_hash, serialization_override o);
+
+
+    void register_editor_draw(u32 type_hash, editor_draw_override o);
+
+
+    [[nodiscard]] const serialization_override* serializer_override(u32 type_hash) noexcept;
+
+
+    [[nodiscard]] const editor_draw_override* editor_draw_override_for(u32 type_hash) noexcept;
+
+    // TEMPLATE DECLARATION ============================================================================================
 
     // ---- registration API -------------------------------------------------------
 
@@ -141,9 +187,6 @@ namespace GLT::reflect {
     requires std::is_enum_v<E>
     void register_enum();
 
-    // Call after all registrations for a phase are done. Sorts and indexes
-    void finalize();
-
     // ---- lookup helpers ---------------------------------------------------------
 
     template <typename T>
@@ -152,42 +195,10 @@ namespace GLT::reflect {
     template <typename T>
     [[nodiscard]] const type_descriptor* type_of() noexcept;
 
-    [[nodiscard]] const type_descriptor* type_of(std::string_view name) noexcept;
-
-    [[nodiscard]] const type_descriptor* type_of(u32 hash) noexcept;
-
     // ---- visitor ----------------------------------------------------------------
 
-    // One level; recursion is the consumer's job (they know what to skip)
-    using member_callback = std::function<bool(const member_descriptor&, void* member_ptr)>;
-
-    void for_each_member(const type_descriptor& td, void* obj, const member_callback& cb);
-
     template <typename T>
-    void for_each_member(T* obj, const member_callback& cb) {
-        if (auto* td = type_of<T>())
-            for_each_member(*td, obj, cb);
-    }
-
-    // ---- migration --------------------------------------------------------------
-
-    using migrate_fn = void(*)(void* obj, u16 from_version);
-
-    void register_migration(u32 type_hash, u16 from_version, migrate_fn fn);
-
-    bool run_migrations(u32 type_hash, u16 from_version, void* obj);
-
-    // ---- overrides (consumer behavior) ------------------------------------------
-
-    void register_serializer(u32 type_hash, serialization_override o);
-
-    void register_editor_draw(u32 type_hash, editor_override o);
-
-    [[nodiscard]] const serialization_override* serializer_override(u32 type_hash) noexcept;
-
-    [[nodiscard]] const editor_override* editor_override(u32 type_hash) noexcept;
-
-    // TEMPLATE DECLARATION ============================================================================================
+    void for_each_member(T* obj, const member_callback& cb);
 
     // CLASS DECLARATION ===============================================================================================
 
@@ -219,5 +230,5 @@ namespace GLT::reflect {
 
 }
 
-#include "reflect/build.inl"
-#include "reflect/registry.inl"
+#include "reflection/build.inl"
+#include "reflection/registry.inl"

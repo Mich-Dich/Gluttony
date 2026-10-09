@@ -15,6 +15,7 @@
 #include "asset/mesh.h"
 #include "asset/material.h"
 #include "world/camera_snapshot.h" 
+#include "reflection/registry.h"
 
 
 
@@ -53,6 +54,18 @@ namespace GLT::render {
         open_gl,
         direct_x,
         metal,
+    };
+
+
+    // driven by the scene's directional light
+    struct sun_settings {
+
+        glm::vec3   direction = { 0.5f, 1.0f, 0.3f };       // pointing TOWARD the sun
+        glm::vec3   color = { 1.0f, 0.95f, 0.85f };         // linear
+        f32         intensity = 3.0f;
+        f32         angular_radius = 0.035f;                // radians
+        u32         samples = 4u;                           // shadow rays per hit
+        f32         shadow_ray_tmax = 10000.0f;
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -168,17 +181,6 @@ namespace GLT::render {
         //
         // @return Swapchain image dimensions in pixels.
         [[nodiscard]] virtual glm::ivec2 get_swapchain_size() const = 0;
-
-
-        // @brief Resizes the swapchain and any size-dependent resources.
-        //
-        // Called when the window framebuffer size changes. The implementation
-        // should recreate the swapchain at the new dimensions and rebuild
-        // framebuffers or other resources that depend on the swapchain size.
-        //
-        // @param width  New width in pixels.
-        // @param height New height in pixels.
-        virtual void resize(const u32 width, const u32 height) = 0;
 
 
         // @brief Enables or disables vertical synchronisation.
@@ -340,6 +342,35 @@ namespace GLT::render {
 
         // @brief Returns the currently active render mode
         [[nodiscard]] virtual u32 get_render_mode() const = 0;
+
+        // settings ----------------------------------------------------------------------------------------------------
+
+        virtual void set_sun_settings(const sun_settings& settings) = 0;
+
+
+        virtual const sun_settings& get_sun_settings() const = 0;
+
+
+        // @brief Returns the reflection descriptor of the renderer's tunable settings
+        //
+        // Returns nullptr if the renderer exposes no settings. The editor pairs this with [settings_data()] to render
+        // a generic panel: it walks the descriptor's members, dispatches on each member's [type_kind], and writes through
+        // the pointer returned by [settings_data()]. [on_settings_changed()] is called once per frame after any edit
+        [[nodiscard]] virtual const reflect::type_descriptor* settings_descriptor() const = 0;
+
+
+        // @brief Returns a mutable pointer to the renderer's live settings instance
+        //
+        // The pointer is stable for the plugin's lifetime. Writes take effect on the next frame; the editor calls
+        // [on_settings_changed()] after each batch of edits
+        [[nodiscard]] virtual void* settings_data() = 0;
+
+
+        // @brief Notifies the renderer that one or more settings changed
+        //
+        // The renderer uses this to invalidate any state derived from the changed values (typically: reset temporal
+        // accumulation, re-upload constants, invalidate caches)
+        virtual void on_settings_changed() = 0;
 
     };
 

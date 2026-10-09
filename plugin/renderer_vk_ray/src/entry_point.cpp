@@ -16,18 +16,19 @@
 #include "util/utils.h"
 #include "util/data_structures.h"
 #include "util/shader_compiler.h"
+#include "renderer_settings.inl"
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::renderer_vk_ray {
+namespace GLT::renderer::vk_ray {
 
     class image;
 }
 
 
-namespace GLT::renderer_vk_ray {
+namespace GLT::renderer::vk_ray {
 
     // CONSTANTS =======================================================================================================
 
@@ -85,9 +86,6 @@ namespace GLT::renderer_vk_ray {
         // --- swapchain & configuration -------------------------------------------------------------------------------
 
         FORCE_INLINE_R glm::ivec2 get_swapchain_size() const override;
-        
-        
-        void resize(const u32 width, const u32 height) override;
 
         IGNORE_UNUSED_PARAMETER_START
         IGNORE_UNUSED_VARIABLE_START
@@ -171,6 +169,22 @@ namespace GLT::renderer_vk_ray {
 
         
         [[nodiscard]] u32 get_render_mode() const override;
+
+        // settings ----------------------------------------------------------------------------------------------------
+
+        [[nodiscard]] const GLT::reflect::type_descriptor* settings_descriptor() const override;
+
+
+        [[nodiscard]] void* settings_data() override;
+
+
+        void on_settings_changed() override;
+
+
+        FORCE_INLINE void set_sun_settings(const GLT::render::sun_settings& settings) override;
+
+
+        FORCE_INLINE_R const GLT::render::sun_settings& get_sun_settings() const override;
 
     private:
 
@@ -494,6 +508,11 @@ namespace GLT::renderer_vk_ray {
         std::array<GLT::asset::handle, TEXTURE_SLOT_COUNT>      m_preview_textures{};
         glm::vec3                                               m_preview_camera_pos{ 0.0f, 0.0f, 3.0f };
 
+        // settings ----------------------------------------------------------------------------------------------------
+
+        GLT::render::sun_settings                               m_sun_settings{};
+        GLT::renderer::vk_ray::settings::visual                  m_visual_settings{};
+
     };
 
 
@@ -550,7 +569,7 @@ namespace GLT::renderer_vk_ray {
 
         vr::allocated_image                                     m_allocated_image{};
         vr::accessible_image                                    m_accessible_image{};
-        GLT::ref<GLT::renderer_vk_ray::renderer>                m_renderer{};
+        GLT::ref<GLT::renderer::vk_ray::renderer>                m_renderer{};
         GLT::render::image_format                               m_format = GLT::render::image_format::RGBA;
         u32                                                     m_mip_levels = 1;
 
@@ -608,4 +627,4 @@ namespace GLT::renderer_vk_ray {
 #include "renderer_scene.inl"
 #include "renderer_preview.inl"
 
-EXPORT_PLUGIN_CLASS(GLT::renderer_vk_ray::renderer, GLT::renderer_vk_ray::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::renderer::vk_ray::renderer, GLT::renderer::vk_ray::descriptor)

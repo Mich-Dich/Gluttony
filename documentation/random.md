@@ -44,12 +44,17 @@ Next steps for the renderer:
 
 
 
+    // driven by the render settings UI
+    struct visual_settings {
 
-
-
-
-
-
+        u32                                                     ao_samples = 4u;
+        f32                                                     ao_radius = 30.0f;
+        f32                                                     ao_ray_bias = 0.005f;
+        u32                                                     indirect_samples_base = 3u;
+        u32                                                     temporal_max_history = 64u;
+        f32                                                     temporal_clip_k = 2.0f;
+    };
+    
 
 
 

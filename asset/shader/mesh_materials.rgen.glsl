@@ -7,11 +7,18 @@ layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1) uniform CameraUBO {
     mat4  view_inv;
     mat4  proj_inv;
-    vec4  sun_direction;
-    vec4  sun_color;
     mat4  prev_view_proj;
     mat4  view_proj;
-    uvec4 temporal;
+
+    vec4  sun_direction;
+    vec4  sun_color;
+    vec4  sun_params;       // x = angular_radius, y = shadow_ray_tmax
+
+    uvec4 temporal;         // x = reset, y = max_history, z = write_idx, w = frame_counter
+    vec4  temporal_params;  // x = clip_k
+
+    uvec4 visual_uints;     // x = ao_samples, y = indirect_samples_base, z = sun_samples
+    vec4  visual_floats;    // x = ao_radius,  y = ao_ray_bias
 } cam;
 
 layout(set = 0, binding = 14, rgba16f) uniform image2D current_raw;

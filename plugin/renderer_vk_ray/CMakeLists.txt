@@ -27,7 +27,7 @@ target_link_libraries(${PLUGIN_NAME}                                    PRIVATE 
 target_link_libraries(${PLUGIN_NAME}_static                             PRIVATE glslang)
 
 # --- ensures vk_ray and its dependencies are present in vendor/ --------------------------
-set(VENDOR_DIR                                                          "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
 set(VK_STB_IMAGE_DIR                                                    "${VENDOR_DIR}/stb_image")
 set(VULKAN_HEADERS_DIR                                                  "${VENDOR_DIR}/Vulkan-Headers")
 set(VK_BOOTSTRAP_DIR                                                    "${VENDOR_DIR}/vk-bootstrap")
@@ -45,13 +45,17 @@ target_include_directories(${PLUGIN_NAME}                               PRIVATE 
 target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${VK_STB_IMAGE_DIR}/include")
 
 set(VK_BOOTSTRAP_VULKAN_HEADERS_DIR "${VULKAN_HEADERS_DIR}/include"     CACHE PATH "Path to Vulkan headers" FORCE)
-add_subdirectory("${VK_BOOTSTRAP_DIR}")
+if(NOT TARGET vk-bootstrap)
+    add_subdirectory("${VK_BOOTSTRAP_DIR}"                              "${CMAKE_BINARY_DIR}/vendor/vk-bootstrap")
+endif()
 set_target_properties(vk-bootstrap                                      PROPERTIES POSITION_INDEPENDENT_CODE ON) 
 
-add_subdirectory("${VMA_DIR}")                                          # header-only, just brings the directory into the build
+if(NOT TARGET VulkanMemoryAllocator)
+    add_subdirectory("${VMA_DIR}"                                       "${CMAKE_BINARY_DIR}/vendor/VulkanMemoryAllocator")
+endif()
 set(VK_RAY_USE_EXTERNAL_DEPS ON                                         CACHE BOOL "Use external vk-bootstrap and VMA" FORCE)
 
-add_subdirectory("${VK_RAY_DIR}")
+add_subdirectory("${VK_RAY_DIR}"                                        "${CMAKE_BINARY_DIR}/vendor/vk_ray")
 set_target_properties(vk_ray                                            PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(vk_ray                                       PUBLIC
     "${VMA_DIR}/include"

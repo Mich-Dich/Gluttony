@@ -25,7 +25,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::renderer_vk_ray {
+namespace GLT::renderer::vk_ray {
 
     // CONSTANTS =======================================================================================================
 
@@ -400,7 +400,7 @@ namespace GLT::renderer_vk_ray {
 
     void image::allocate_memory(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped) {
 
-        m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::renderer_vk_ray::renderer>(GLT::plugin_manager::interface::renderer);
+        m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::renderer::vk_ray::renderer>(GLT::plugin_manager::interface::renderer);
         vr::device* vr_dev = m_renderer->get_vr_dev();
         vk::Device vk_device = m_renderer->get_vk_device();
         const u32 mip_levels = mipmapped ? static_cast<u32>(std::floor(std::log2(std::max(size.x, size.y)))) + 1 : 1;

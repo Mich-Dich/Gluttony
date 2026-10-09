@@ -15,7 +15,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::renderer_vk_ray {
+namespace GLT::renderer::vk_ray {
 
     // CONSTANTS =======================================================================================================
 
@@ -37,7 +37,7 @@ namespace GLT::renderer_vk_ray {
         #define VK_CHECK(expr, successMsg, failureMsg)
     #endif
 
-    // TYPES ===========================================================================================================
+    // VK_CHECK_SYPES ===========================================================================================================
 
     // Matches the layout declared in mesh_materials.rchit.glsl
     struct gpu_material {
@@ -67,26 +67,27 @@ namespace GLT::renderer_vk_ray {
 
 
     struct camera_ubo {
-        glm::mat4                   view_inv{ 1.0f };
-        glm::mat4                   proj_inv{ 1.0f };
-        glm::vec4                   sun_direction{ 0.5f, 1.0f, 0.3f, 0.0f };
-        glm::vec4                   sun_color{ 1.0f, 0.95f, 0.85f, 3.0f };
 
-        // previous frame's (proj * view). Used by the raygen to reproject the current world-space hit point back into
-        // the previous frame's screen space
-        glm::mat4                   prev_view_proj{ 1.0f };
+        // ---- camera ----
+        glm::mat4       view_inv{ 1.0f };
+        glm::mat4       proj_inv{ 1.0f };
+        glm::mat4       prev_view_proj{ 1.0f };
+        glm::mat4       view_proj{ 1.0f };
 
-        // NEW: current frame's (proj * view). Declared in every shader's CameraUBO block — the shader-side layout will
-        // not match without it, and the shader reads [temporal] from outside the buffer
-        glm::mat4                   view_proj{ 1.0f };
+        // ---- sun ----
+        glm::vec4       sun_direction{ 0.5f, 1.0f, 0.3f, 0.0f };      // xyz = normalized, w unused
+        glm::vec4       sun_color{ 1.0f, 0.95f, 0.85f, 3.0f };        // rgb = linear, a = intensity
+        glm::vec4       sun_params{ 0.035f, 10000.0f, 0.0f, 0.0f };   // x = angular_radius, y = shadow_ray_tmax
 
-        // x = reset flag (1 = history invalid, use current only)
-        // y = max history length (clamps the running-mean weight)
-        // z = write g-buffer index (0 or 1) for the current frame
-        // w = frame counter — varies per frame so ray noise decorrelates and temporal accumulation can converge
-        glm::uvec4 temporal{ 1u, 64u, 0u, 0u };
+        // ---- temporal ----
+        glm::uvec4      temporal{ 1u, 64u, 0u, 0u };                  // x = reset, y = max_history, z = write_idx, w = frame_counter
+        glm::vec4       temporal_params{ 2.0f, 0.0f, 0.0f, 0.0f };    // x = clip_k
+
+        // ---- visual ----
+        glm::uvec4      visual_uints{ 4u, 3u, 4u, 0u };               // x = ao_samples, y = indirect_samples_base, z = sun_samples
+        glm::vec4       visual_floats{ 30.0f, 0.005f, 0.0f, 0.0f };   // x = ao_radius,  y = ao_ray_bias
     };
-    static_assert(sizeof(camera_ubo) == 304, "camera_ubo layout mismatch");
+    static_assert(sizeof(camera_ubo) == 368, "camera_ubo layout mismatch");
 
     // STATIC VARIABLES ================================================================================================
     
@@ -94,32 +95,9 @@ namespace GLT::renderer_vk_ray {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
-    // Counts primitive draws ImGui will issue - i.e. every cmd buffer entry
-    // that isn't a user callback. This matches the Vulkan backend's actual
-    // vkCmdDraw* count.
-    u32 count_imgui_draw_calls(const ImDrawData* draw_data);
-
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
-
-    u32 count_imgui_draw_calls(const ImDrawData* draw_data) {
-
-        if (!draw_data)
-            return 0;
-
-        u32 count = 0;
-        for (int i = 0; i < draw_data->CmdListsCount; ++i) {
-
-            const ImDrawList* cmd_list = draw_data->CmdLists[i];
-            for (int j = 0; j < cmd_list->CmdBuffer.Size; ++j) {
-
-                if (cmd_list->CmdBuffer[j].UserCallback == nullptr)
-                    ++count;
-            }
-        }
-        return count;
-    }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
@@ -269,8 +247,12 @@ namespace GLT::renderer_vk_ray {
             current_cmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, m_timestamp_pool, m_current_frame * 2);
         }
 
-        // Update camera + sun parameters
+        // Update camera + sun + visual settings
         {
+            const auto& ss = m_sun_settings;
+            const auto& vs = m_visual_settings;
+
+            // --- camera ---
             const f32 aspect = static_cast<f32>(m_render_size.x) / static_cast<f32>(m_render_size.y);
             glm::mat4 proj = glm::perspective(glm::radians(m_active_camera.fov), aspect, m_active_camera.near_plane, m_active_camera.far_plane);
             proj[1][1] *= -1;
@@ -281,18 +263,29 @@ namespace GLT::renderer_vk_ray {
             camera_ubo ubo{};
             ubo.view_inv = glm::inverse(view);
             ubo.proj_inv = glm::inverse(proj);
-            ubo.sun_direction = glm::vec4(glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f)), 0.0f);
-            ubo.sun_color = glm::vec4(1.0f, 0.95f, 0.85f, 3.0f);
             ubo.prev_view_proj = m_prev_view_proj;
             ubo.view_proj = view_proj;
-            ubo.temporal = glm::uvec4(m_temporal_valid ? 0u : 1u, 64u, m_gbuffer_index, m_frame_counter);
+
+            // --- sun ---
+            const glm::vec3 sun_dir = glm::normalize(ss.direction);
+            ubo.sun_direction = glm::vec4(sun_dir, 0.0f);
+            ubo.sun_color = glm::vec4(ss.color, ss.intensity);
+            ubo.sun_params = glm::vec4(ss.angular_radius, ss.shadow_ray_tmax, 0.0f, 0.0f);
+
+            // --- temporal ---
+            ubo.temporal = glm::uvec4(m_temporal_valid ? 0u : 1u, vs.temporal_max_history, m_gbuffer_index, m_frame_counter);
+            ubo.temporal_params = glm::vec4(vs.temporal_clip_k, 0.0f, 0.0f, 0.0f);
+
+            // --- visual ---
+            ubo.visual_uints = glm::uvec4(vs.ao_samples, vs.indirect_samples_base, ss.samples, 0u);
+            ubo.visual_floats = glm::vec4(vs.ao_radius, vs.ao_ray_bias, 0.0f, 0.0f);
 
             void* data = m_vr_dev->map_buffer(m_uniform_buffer);
             std::memcpy(data, &ubo, sizeof(ubo));
             m_vr_dev->unmap_buffer(m_uniform_buffer);
 
-            m_prev_view_proj = view_proj;                   // Stash for next frame
-            m_frame_counter++;                              // next frame gets a different seed
+            m_prev_view_proj = view_proj;
+            m_frame_counter++;
         }
 
         {   // Descriptor buffer binding for the main pass
@@ -410,19 +403,6 @@ namespace GLT::renderer_vk_ray {
     }
 
 
-    glm::ivec2 renderer::get_swapchain_size() const {
-
-        return {m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height}; 
-    }
-
-    IGNORE_UNUSED_PARAMETER_START
-    IGNORE_UNUSED_VARIABLE_START
-
-    void renderer::resize(const u32 width, const u32 height) { }
-
-    IGNORE_UNUSED_VARIABLE_STOP
-    IGNORE_UNUSED_PARAMETER_STOP
-
     void renderer::set_render_size(const glm::ivec2& size) {
 
         if (size.x <= 0 || size.y <= 0)
@@ -463,44 +443,6 @@ namespace GLT::renderer_vk_ray {
 
         update_descriptor_set();
     }
-
-
-    void* renderer::get_rendered_image() { return static_cast<void*>(m_output_image->get_descriptor_set()); }
-
-
-    glm::uvec2 renderer::get_rendered_image_size() { return m_output_image->get_size(); }
-
-
-    [[nodiscard]] debug::render_stats renderer::get_render_stats() const {
-
-        return debug::render_stats{
-
-            // GPU time: most recent completed measurement (updated in begin_frame from the previous use of the current command buffer slot)
-            // Zero until the first slot has wrapped at least once.
-            .gpu_time_ms = m_last_gpu_time_ms,
-
-            // rendering -----------------------------------------------------------------------------------------------
-            // These are per-frame totals; the HUD reads them after draw_frame(). draw_calls includes both the scene RT dispatch 
-            // and every ImGui primitive draw. render_passes is the RT dispatch plus the ImGui render pass.
-            .draw_calls = m_frame_draw_calls,
-            .triangles = m_index_used / 3,
-            .vertices = m_vertex_used,
-            .render_passes = m_frame_render_passes,
-
-            // memory (absolute, not per-frame) ------------------------------------------------------------------------
-            .vram_bytes = GLT::render::image::get_live_vram_bytes(),
-            .ram_bytes = 0,                     // not tracked yet; would need a heap hook
-
-            // resources (absolute counts) -----------------------------------------------------------------------------
-            .texture_count = GLT::render::image::get_live_count(),
-            .buffer_count = m_live_buffer_count,
-            .descriptor_set_count = m_live_descriptor_set_count,
-            .pipeline_count = m_live_pipeline_count,
-        };
-    }
-
-
-    void renderer::set_active_camera(const GLT::world::camera_snapshot& camera) { m_active_camera = camera; }
 
 
 	void renderer::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
@@ -965,26 +907,6 @@ namespace GLT::renderer_vk_ray {
             if (m_default_sampler_nearest)
                 m_device.destroySampler(m_default_sampler_nearest);
         });
-    }
-
-
-    void renderer::update_descriptor_set() {
-
-        // Called from two places:
-        //   1. reserve_mesh_space() when the shared buffers move - m_resource_desc_buffer already exists by then, we're just refreshing the resource handles.
-        //   2. During init via reserve_mesh_space(), *before* create_rt_pipeline() has built m_resource_desc_buffer. 
-        //      Skip - create_rt_pipeline() will pick up the current m_resource_bindings state when it builds the descriptor buffer.
-        if (!m_resource_desc_buffer.buffer.buffer)
-            return;
-
-        // // Set the camera position
-        // // movement, rotation and input is handled by the Application Base class and we can modify the camera values as we like
-        // m_active_camera->m_position = glm::vec3(0.0f, 0.0f, 2.5f);
-
-        // [POI] We already provided each descriptor item with the pointer to a resource back when we created the descriptor set layout
-        // so we can just update the resource values here
-        // if we want to update the descriptor set with a new item, we can just reassign the vr::descriptor_item::p*** with new items and update the descriptor set
-        m_vr_dev->update_descriptor_buffer(m_resource_desc_buffer, m_resource_bindings, vr::descriptor_buffer_type::resource);
     }
 
 }

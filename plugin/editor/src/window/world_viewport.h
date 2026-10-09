@@ -5,6 +5,7 @@
 
 #include <world/i_world_inspector.h>
 #include <event/application_event.h>
+#include <reflection/registry.h>
 
 #include "window/base/base_window.h"
 #include "window/content_browser.h"
@@ -90,6 +91,12 @@ namespace GLT::editor {
 
         // Confirms or discards the current request and dequeues it. Pops the next request off the queue if one is waiting
         void resolve_save_as_request(bool confirmed);
+
+        bool render_settings_overlay();
+
+        void render_settings_popup_body();  // popup content, called by render_settings_overlay
+
+        bool draw_reflected_setting(const GLT::reflect::member_descriptor& md, void* ptr);
 
 
         std::vector<content_browser_window>             m_content_browsers{};

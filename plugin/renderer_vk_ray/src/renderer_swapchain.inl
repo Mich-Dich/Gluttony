@@ -3,7 +3,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::renderer_vk_ray {
+namespace GLT::renderer::vk_ray {
 
     // CONSTANTS =======================================================================================================
 
@@ -98,5 +98,11 @@ namespace GLT::renderer_vk_ray {
             }
         }
 	}
+
+
+    glm::ivec2 renderer::get_swapchain_size() const {
+
+        return {m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height}; 
+    }
 
 }

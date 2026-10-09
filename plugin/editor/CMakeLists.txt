@@ -26,7 +26,7 @@ target_compile_definitions(${PLUGIN_NAME}                               PRIVATE
 )
 
 # vendor ------------------------------------------------------------------------------------
-set(VENDOR_DIR                                                          "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
 set(IMPLOT_DIR                                                          "${VENDOR_DIR}/implot")
 set(IMGUI_DIR                                                           "${VENDOR_DIR}/imgui")
 set(STB_IMAGE_DIR                                                       "${VENDOR_DIR}/stb_image")

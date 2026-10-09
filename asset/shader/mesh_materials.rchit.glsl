@@ -12,11 +12,18 @@ layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1) uniform CameraUBO {
     mat4  view_inv;
     mat4  proj_inv;
-    vec4  sun_direction;
-    vec4  sun_color;
     mat4  prev_view_proj;
     mat4  view_proj;
-    uvec4 temporal;
+
+    vec4  sun_direction;
+    vec4  sun_color;
+    vec4  sun_params;       // x = angular_radius, y = shadow_ray_tmax
+
+    uvec4 temporal;         // x = reset, y = max_history, z = write_idx, w = frame_counter
+    vec4  temporal_params;  // x = clip_k
+
+    uvec4 visual_uints;     // x = ao_samples, y = indirect_samples_base, z = sun_samples
+    vec4  visual_floats;    // x = ao_radius,  y = ao_ray_bias
 } cam;
 
 struct GpuMaterial {
@@ -65,16 +72,7 @@ const uint SLOT_EMISSIVE = 3u;
 const uint SLOT_OCCLUSION = 4u;
 const uint SLOT_HEIGHT = 5u;
 
-const int AO_SAMPLES = 4;
-const float AO_RADIUS = 30.0;
-const float AO_RAY_BIAS = 0.005;
-
-const float SUN_ANGULAR_RADIUS = 0.035;
-const int SUN_SAMPLES = 4;
-const float SHADOW_RAY_TMAX = 10000.0;
-
 const int MAX_BOUNCES = 3;
-const int INDIRECT_SAMPLES_BASE = 3;
 
 uint pcg_hash(uint state) {
     state = state * 747796405u + 2891336453u;
@@ -104,7 +102,16 @@ vec3 cosine_hemisphere(inout uint seed, vec3 n) {
 }
 
 void main() {
+
+    // clamps protect against UI that lets the user type 0 (which would divide by zero)
     const int my_bounce = int(payload.w);
+    const int ao_samples = clamp(int(cam.visual_uints.x), 1, 64);
+    const float ao_radius = max(cam.visual_floats.x, 0.0);
+    const float ao_ray_bias = max(cam.visual_floats.y, 0.0);
+    const int sun_samples = clamp(int(cam.visual_uints.z), 1, 64);
+    const float sun_angular_radius = max(cam.sun_params.x, 0.0);
+    const float shadow_ray_tmax = max(cam.sun_params.y, 0.0);
+    const int indirect_samples_base = clamp(int(cam.visual_uints.y), 1, 64);
 
     const GpuGeometry geom = geometries[gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT];
     const GpuMaterial mat  = materials[geom.material_index];
@@ -175,29 +182,29 @@ void main() {
 
     const vec3 hit_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
-    uint seed = uint(gl_LaunchIDEXT.x)     * 1973u
-              ^ uint(gl_LaunchIDEXT.y)     * 9277u
-              ^ uint(my_bounce)            * 31337u
-              ^ cam.temporal.w             * 71923u
-              ^ floatBitsToUint(gl_WorldRayDirectionEXT.x) * 40499u
-              ^ floatBitsToUint(gl_WorldRayDirectionEXT.y) * 51137u
-              ^ floatBitsToUint(gl_WorldRayDirectionEXT.z) * 62473u
+    uint seed = uint(gl_LaunchIDEXT.x)                      * 1973u
+              ^ uint(gl_LaunchIDEXT.y)                      * 9277u
+              ^ uint(my_bounce)                             * 31337u
+              ^ cam.temporal.w                              * 71923u
+              ^ floatBitsToUint(gl_WorldRayDirectionEXT.x)  * 40499u
+              ^ floatBitsToUint(gl_WorldRayDirectionEXT.y)  * 51137u
+              ^ floatBitsToUint(gl_WorldRayDirectionEXT.z)  * 62473u
               ^ 26699u;
 
     float ao_geometric = 1.0;
     if (my_bounce == 0) {
         float occlusion = 0.0;
-        for (int i = 0; i < AO_SAMPLES; ++i) {
+        for (int i = 0; i < ao_samples; ++i) {
             const vec3 dir = cosine_hemisphere(seed, N);
-            const vec3 org = hit_world + N * AO_RAY_BIAS;
+            const vec3 org = hit_world + N * ao_ray_bias;
 
             payload = vec4(0.0, 0.0, 0.0, float(my_bounce));
             traceRayEXT(topLevelAS,
                 gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-                0xFF, 1u, 0u, 1u, org, 0.001, dir, AO_RADIUS, 0);
+                0xFF, 1u, 0u, 1u, org, 0.001, dir, ao_radius, 0);
             occlusion += payload.x;
         }
-        ao_geometric = 1.0 - occlusion / float(AO_SAMPLES);
+        ao_geometric = 1.0 - occlusion / float(ao_samples);
     }
     const float ao = ao_geometric * occ_mat;
 
@@ -209,21 +216,21 @@ void main() {
         const vec3 up = abs(L.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
         const vec3 t  = normalize(cross(up, L));
         const vec3 b  = cross(L, t);
-        const vec3 org = hit_world + N * AO_RAY_BIAS;
+        const vec3 org = hit_world + N * ao_ray_bias;
 
         float lit = 0.0;
-        for (int i = 0; i < SUN_SAMPLES; ++i) {
-            const float r   = SUN_ANGULAR_RADIUS * sqrt(rand_float(seed));
+        for (int i = 0; i < sun_samples; ++i) {
+            const float r   = sun_angular_radius * sqrt(rand_float(seed));
             const float phi = 6.28318530718 * rand_float(seed);
             const vec3  dir = normalize(L + t * (r * cos(phi)) + b * (r * sin(phi)));
 
             payload = vec4(0.0, 0.0, 0.0, float(my_bounce));
             traceRayEXT(topLevelAS,
                 gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-                0xFF, 1u, 0u, 1u, org, 0.001, dir, SHADOW_RAY_TMAX, 0);
+                0xFF, 1u, 0u, 1u, org, 0.001, dir, shadow_ray_tmax, 0);
             lit += (payload.x < 0.5) ? 1.0 : 0.0;
         }
-        shadow = 1.0 - lit / float(SUN_SAMPLES);
+        shadow = 1.0 - lit / float(sun_samples);
     }
 
     const float NdotL = max(NdotL_raw, 0.0) * (1.0 - shadow);
@@ -247,16 +254,16 @@ void main() {
 
     vec3 result = ambient + diffuse + specular + emissive;
 
-    const int indirect_samples = max(1, INDIRECT_SAMPLES_BASE >> my_bounce);
+    const int indirect_samples = max(1, indirect_samples_base >> my_bounce);
 
     if (my_bounce < MAX_BOUNCES) {
         vec3 gi = vec3(0.0);
         for (int i = 0; i < indirect_samples; ++i) {
             const vec3 bounce_dir = cosine_hemisphere(seed, N);
-            const vec3 bounce_org = hit_world + N * AO_RAY_BIAS;
+            const vec3 bounce_org = hit_world + N * ao_ray_bias;
 
             payload = vec4(0.0, 0.0, 0.0, float(my_bounce + 1));
-            traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xFF, 0u, 0u, 0u, bounce_org, 0.001, bounce_dir, SHADOW_RAY_TMAX, 0);
+            traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xFF, 0u, 0u, 0u, bounce_org, 0.001, bounce_dir, shadow_ray_tmax, 0);
             gi += payload.xyz;
         }
         result += albedo * gi / float(indirect_samples);
@@ -278,3 +285,4 @@ void main() {
 
     payload = vec4(result, float(my_bounce));
 }
+

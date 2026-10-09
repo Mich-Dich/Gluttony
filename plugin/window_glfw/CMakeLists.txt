@@ -36,10 +36,10 @@ function(ensure_glfw                                                    VENDOR_D
     set(GLFW_INSTALL           OFF CACHE BOOL "Generate installation target"       FORCE)
 
     target_compile_definitions(${PLUGIN_NAME}                           PRIVATE GLFW_INCLUDE_NONE)
-    add_subdirectory("${GLFW_DIR}")
+    add_subdirectory("${GLFW_DIR}"                                      "${CMAKE_BINARY_DIR}/vendor/glfw")
 endfunction()
 
-ensure_glfw("${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+ensure_glfw("${CMAKE_SOURCE_DIR}/vendor")
 target_link_libraries(${PLUGIN_NAME}                                    PRIVATE glfw)
 
 set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "reflect/registry.h"
+#include "reflection/registry.h"
 
 
 
@@ -30,7 +30,7 @@ namespace GLT::reflect {
         inline std::unordered_map<u32, serialization_override>& ser_overrides();
         
         
-        inline std::unordered_map<u32, editor_override>& edt_overrides();
+        inline std::unordered_map<u32, editor_draw_override>& edt_overrides();
 
         // INTERNAL TEMPLATE IMPLEMENTATION ============================================================================
 
@@ -43,9 +43,9 @@ namespace GLT::reflect {
         }
         
         
-        inline std::unordered_map<u32, editor_override>& edt_overrides() {
+        inline std::unordered_map<u32, editor_draw_override>& edt_overrides() {
         
-            static std::unordered_map<u32, editor_override> m;
+            static std::unordered_map<u32, editor_draw_override> m;
             return m;
         }
 
@@ -60,6 +60,16 @@ namespace GLT::reflect {
     }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
+
+    constexpr u32 fnv1a_32(std::string_view s) noexcept {
+
+        u32 h = 2166136261u;
+        for (unsigned char c : s) { 
+            h ^= c; 
+            h *= 16777619u;
+        }
+        return h;
+    }
 
     // ---- registry singleton -----------------------------------------------------
 
@@ -80,14 +90,14 @@ namespace GLT::reflect {
 
     // visitor ---------------------------------------------------------------------------------------------------------
 
-    inline void for_each_member(const type_descriptor& td, void* obj, const member_callback& cb) {
+    inline void for_each_member(const type_descriptor& td, void* obj, const member_callback& callback) {
 
         if (!td.is_struct())
             return;
         auto* base = static_cast<std::byte*>(obj);
         for (const auto& m : td.members) {
             void* member_ptr = m.access ? m.access(obj) : static_cast<void*>(base + m.offset);
-            if (!cb(m, member_ptr))
+            if (!callback(m, member_ptr))
                 return;
         }
     }
@@ -117,7 +127,7 @@ namespace GLT::reflect {
     inline void register_serializer(u32 h, serialization_override o) { detail::ser_overrides()[h] = o; }
 
 
-    inline void register_editor_draw(u32 h, editor_override o)       { detail::edt_overrides()[h] = o; }
+    inline void register_editor_draw(u32 h, editor_draw_override o)       { detail::edt_overrides()[h] = o; }
 
 
     inline const serialization_override* serializer_override(u32 h) noexcept {
@@ -128,7 +138,7 @@ namespace GLT::reflect {
     }
 
 
-    inline const editor_override* editor_override(u32 h) noexcept {
+    inline const editor_draw_override* editor_draw_override_for(u32 h) noexcept {
 
         auto& m = detail::edt_overrides();
         auto it = m.find(h);
@@ -145,6 +155,14 @@ namespace GLT::reflect {
 
     template <typename E> requires std::is_enum_v<E>
     void register_enum() { registry().add(&type_descriptor_of<E>); }
+
+    // ---- visitor ----------------------------------------------------------------
+
+    template <typename T>
+    void for_each_member(T* obj, const member_callback& callback) {
+        if (auto* td = type_of<T>())
+            for_each_member(*td, obj, callback);
+    }
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
 

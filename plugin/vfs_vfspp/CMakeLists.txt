@@ -51,7 +51,7 @@ function(ensure_vfspp                                               VENDOR_DIR)
     target_include_directories(vfspp SYSTEM INTERFACE               "$<BUILD_INTERFACE:${VFSPP_DIR}/include>")  # Suppress warnings from vfspp headers
 endfunction()
 
-ensure_vfspp("${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+ensure_vfspp("${CMAKE_SOURCE_DIR}/vendor")
 
 # --- Compile the plugin as both shared and static ------------------------------------------
 compile_plugin(SHARED                                               "${PLUGIN_NAME}")

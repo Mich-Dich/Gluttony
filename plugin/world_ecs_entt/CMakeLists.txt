@@ -23,7 +23,7 @@ compile_plugin(STATIC                                                   ${PLUGIN
 # target_link_options(${PLUGIN_NAME}                                      PRIVATE "LINKER:--no-undefined")
 
 # clone all vendor libs ---------------------------------------------------------------------
-set(VENDOR_DIR                                                          "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
 set(ENTT_DIR                                                            "${VENDOR_DIR}/entt")
 git_clone_or_update("git@github.com:skypjack/entt.git"                  "${ENTT_DIR}")
 

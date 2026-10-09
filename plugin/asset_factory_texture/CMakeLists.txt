@@ -22,7 +22,7 @@ compile_plugin(SHARED                                                   ${PLUGIN
 compile_plugin(STATIC                                                   ${PLUGIN_NAME}_static   glm)
 
 # vendor ------------------------------------------------------------------------------------
-set(VENDOR_DIR                                                          "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
 set(VK_STB_IMAGE_DIR                                                    "${VENDOR_DIR}/stb_image")
 git_clone_or_update("git@github.com:franko/stb_image.git"               "${VK_STB_IMAGE_DIR}")
 

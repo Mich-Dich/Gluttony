@@ -178,21 +178,22 @@ namespace GLT::editor {
 
             const bool image_hovered = ImGui::IsItemHovered();
 
-            // Floating overlay: render-mode dropdown in the upper-left
-            const bool dropdown_active = render_mode_selector_overlay();
+            // Floating overlay, upper-left corner
+            const bool mode_popup_open = render_mode_selector_overlay();
+            const bool settings_popup_open = render_settings_overlay();
+            const bool overlay_active = mode_popup_open || settings_popup_open;
 
             const bool right_down = ImGui::IsMouseDown(ImGuiMouseButton_Right);
 
             // Enter: press RMB while the image itself is the top-most hovered item and the dropdown isn't consuming input
-            if (!m_cursor_captured && image_hovered && !dropdown_active
-                && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            if (!m_cursor_captured && image_hovered && !overlay_active && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
 
                 set_cursor_captured(true);
                 GLT::editor::context::get().set_viewport_interacted(true);
             }
 
-            // Release RMB
-            if (m_cursor_captured && !right_down) {
+            if (m_cursor_captured && !right_down) {                 // Release RMB
+
                 set_cursor_captured(false);
                 GLT::editor::context::get().set_viewport_interacted(false);
             }
@@ -208,35 +209,62 @@ namespace GLT::editor {
         if (!m_renderer)
             return false;
 
+        // position the button in the top-left of the viewport image
         const ImVec2 image_min = ImGui::GetItemRectMin();
         constexpr f32 INSET = 8.f;
         ImGui::SetCursorScreenPos(ImVec2(image_min.x + INSET, image_min.y + INSET));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f, 4.f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.10f, 0.10f, 0.70f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.16f, 0.16f, 0.16f, 0.85f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.18f, 0.18f, 0.18f, 0.90f));
 
-        const auto modes = m_renderer->supported_modes();
-        const u32 current = m_renderer->get_render_mode();
+        // resolve the current mode's label
+        const auto modes   = m_renderer->supported_modes();
+        const u32  current = m_renderer->get_render_mode();
+
         const char* current_label = "Render mode";
         for (const auto& m : modes)
             if (m.id == current) {
-                
                 current_label = m.display_name;
                 break;
             }
 
-        ImGui::SetNextItemWidth(180.f);
+        // the button 
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f, 5.f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.10f, 0.10f, 0.55f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.16f, 0.16f, 0.75f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.20f, 0.20f, 0.90f));
+
+        if (ImGui::Button(current_label))
+            ImGui::OpenPopup("##render_mode_popup");
+
+        // Capture the button's screen-space rect before popping styles
+        const ImVec2 btn_min = ImGui::GetItemRectMin();
+        const ImVec2 btn_max = ImGui::GetItemRectMax();
+
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(2);
+
+        // the popup
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.f, 6.f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.f, 2.f));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.08f, 0.08f, 0.08f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.20f, 0.20f, 0.70f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.30f, 0.30f, 0.30f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.35f, 0.35f, 0.35f, 0.95f));
+
+        // Top-left of the popup = bottom-left of the button, 4px below. ImGuiCond_Appearing fires on the frame the popup opens
+        // after that the popup keeps its position until it closes
+        ImGui::SetNextWindowPos(ImVec2(btn_min.x, btn_max.y + 4.f), ImGuiCond_Appearing);
 
         bool popup_open = false;
-        if (ImGui::BeginCombo("##render_mode", current_label)) {
+        if (ImGui::BeginPopup("##render_mode_popup",
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
 
             popup_open = true;
+
             const char* last_category = nullptr;
             for (const auto& m : modes) {
 
-                // Separator when the category changes and isn't empty
+                // Category separator when it changes.
                 if (m.has_category() && (last_category == nullptr || std::strcmp(last_category, m.category) != 0)) {
 
                     last_category = m.category;
@@ -246,22 +274,25 @@ namespace GLT::editor {
                 ImGui::PushID(static_cast<int>(m.id));
 
                 const bool selected = (m.id == current);
-                if (ImGui::Selectable(m.display_name, selected))
+                if (ImGui::Selectable(m.display_name, selected)) {
                     m_renderer->set_render_mode(m.id);
+                    ImGui::CloseCurrentPopup();     // standard dropdown UX
+                }
 
+                // Immediate tooltip on hover
                 if (m.has_tooltip() && ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s", m.tooltip);
 
                 ImGui::PopID();
             }
 
-            ImGui::EndCombo();
+            ImGui::EndPopup();
         }
 
-        ImGui::PopStyleColor(3);
-        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar(3);
 
-        return popup_open || ImGui::IsPopupOpen("##render_mode");
+        return popup_open;
     }
 
 
@@ -767,6 +798,138 @@ namespace GLT::editor {
         auto callback = std::move(pending.req.on_resolved);
         if (callback)
             callback(resolved);
+    }
+
+
+    bool world_viewport_window::render_settings_overlay() {
+
+        if (!m_renderer)
+            return false;
+
+        const auto* type_data = m_renderer->settings_descriptor();
+        void* data = m_renderer->settings_data();
+        if (!type_data || !data)
+            return false;
+
+        ImGui::SameLine(0.0f, 6.0f);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f, 5.f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.10f, 0.10f, 0.55f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.16f, 0.16f, 0.75f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.20f, 0.20f, 0.90f));
+
+        if (ImGui::Button("Settings"))
+            ImGui::OpenPopup("##render_settings_popup");
+
+        const ImVec2 btn_min = ImGui::GetItemRectMin();
+        const ImVec2 btn_max = ImGui::GetItemRectMax();
+
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(2);
+
+        // Same popup styling as the mode selector
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.f, 8.f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.f);
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.08f, 0.08f, 0.08f, 0.92f));
+
+        ImGui::SetNextWindowPos(ImVec2(btn_min.x, btn_max.y + 4.f), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2(400.f, 0.f));
+
+        bool open = false;
+        if (ImGui::BeginPopup("##render_settings_popup", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+
+            open = true;
+
+            if (ImGui::BeginTable("##renderer_settings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+
+                UI::begin_table("Renderer_settings", false);
+
+                std::string_view last_cat{};
+                bool changed = false;
+                GLT::reflect::for_each_member(*type_data, data,
+                    [&](const GLT::reflect::member_descriptor& member_descriptor, void* ptr) -> bool {
+
+                        if (member_descriptor.flags & (u32)GLT::reflect::member_flags::skip)
+                            return true;
+
+                        const std::string_view cat = member_descriptor.category ? member_descriptor.category : "";
+
+                        // Category header row when it changes
+                        if (!cat.empty() && cat != last_cat) {
+                            last_cat = cat;
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_Header));
+                            ImGui::TextUnformatted(cat.data());
+                            ImGui::TableSetColumnIndex(1);
+                        }
+
+                        if (draw_reflected_setting(member_descriptor, ptr))
+                            changed = true;
+
+                        return true;
+                    });
+
+                UI::end_table();
+
+                if (changed)            // One notification per frame, not per field
+                    m_renderer->on_settings_changed();
+            }
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+
+        return open;
+    }
+
+
+    bool world_viewport_window::draw_reflected_setting(const GLT::reflect::member_descriptor& md, void* ptr) {
+
+        const std::string_view label = (md.display_name && md.display_name[0])
+            ? std::string_view(md.display_name)
+            : std::string_view(md.name);
+
+        const bool has_range = (md.flags & (u32)GLT::reflect::member_flags::has_range) != 0;
+        const f32  lo = static_cast<f32>(md.range_min);
+        const f32  hi = static_cast<f32>(md.range_max);
+
+        switch (md.kind) {
+
+            case GLT::reflect::type_kind::boolean: {
+                auto& value = *static_cast<bool*>(ptr);
+                return GLT::UI::table_row(label, value);
+            }
+
+            case GLT::reflect::type_kind::u32: {
+                auto& value = *static_cast<u32*>(ptr);
+                return has_range ? GLT::UI::table_row<u32>(label, value, 0.2f, lo, hi) : GLT::UI::table_row<u32>(label, value);
+            }
+            case GLT::reflect::type_kind::i32: {
+                auto& value = *static_cast<i32*>(ptr);
+                return has_range ? GLT::UI::table_row<i32>(label, value, 0.2f, lo, hi) : GLT::UI::table_row<i32>(label, value);
+            }
+            case GLT::reflect::type_kind::f32: {
+                auto& value = *static_cast<f32*>(ptr);
+                return has_range ? GLT::UI::table_row<f32>(label, value, 0.1f, lo, hi) : GLT::UI::table_row<f32>(label, value);
+            }
+            case GLT::reflect::type_kind::f64: {
+                auto& value = *static_cast<f64*>(ptr);
+                return has_range ? GLT::UI::table_row<f64>(label, value, 0.1f, lo, hi) : GLT::UI::table_row<f64>(label, value);
+            }
+
+            default: {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(label.data());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextDisabled("(unsupported)");
+                return false;
+            }
+        }
     }
 
 }

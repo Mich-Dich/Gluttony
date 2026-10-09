@@ -8,11 +8,18 @@ layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 1) uniform CameraUBO {
     mat4  view_inv;
     mat4  proj_inv;
+    mat4  prev_view_proj;
+    mat4  view_proj;
+
     vec4  sun_direction;
     vec4  sun_color;
-    mat4  prev_view_proj;
-    mat4  view_proj;          // current frame's (proj * view)
-    uvec4 temporal;
+    vec4  sun_params;       // x = angular_radius, y = shadow_ray_tmax
+
+    uvec4 temporal;         // x = reset, y = max_history, z = write_idx, w = frame_counter
+    vec4  temporal_params;  // x = clip_k
+
+    uvec4 visual_uints;     // x = ao_samples, y = indirect_samples_base, z = sun_samples
+    vec4  visual_floats;    // x = ao_radius,  y = ao_ray_bias
 } cam;
 
 layout(set = 0, binding = 2,  rgba8)  uniform image2D out_image;
@@ -101,7 +108,7 @@ void main() {
     // k = 1.25, the clip was firing on individual noisy frames and producing
     // flicker. If you still see flicker after this, raise k further (2.5, 3.0)
     // before touching anything else.
-    const float k = 2.0;
+    const float k = max(cam.temporal_params.x, 0.1);   // guard against a UI set to 0
     const vec3  clip_lo = m1 - k * sigma;
     const vec3  clip_hi = m1 + k * sigma;
 

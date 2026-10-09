@@ -6,7 +6,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::renderer_vk_ray {
+namespace GLT::renderer::vk_ray {
 
     // CONSTANTS =======================================================================================================
 
@@ -328,9 +328,23 @@ namespace GLT::renderer_vk_ray {
         camera_ubo ubo{};
         ubo.view_inv = glm::inverse(view);
         ubo.proj_inv = glm::inverse(proj);
-        ubo.sun_direction = glm::vec4(glm::normalize(glm::vec3(0.5f, 1.0f, 0.3f)), 0.0f);
-        ubo.sun_color = glm::vec4(1.0f, 0.95f, 0.85f, 3.0f);
-        ubo.temporal = glm::uvec4{ 1u, 1u, 0u, 0u };   // reset, write index 0
+        ubo.prev_view_proj = glm::mat4(1.0f);
+        ubo.view_proj = proj * view;
+
+        const glm::vec3 sun_dir = glm::normalize(m_sun_settings.direction);
+        ubo.sun_direction = glm::vec4(sun_dir, 0.0f);
+        ubo.sun_color = glm::vec4(m_sun_settings.color, m_sun_settings.intensity);
+        ubo.sun_params = glm::vec4(m_sun_settings.angular_radius, m_sun_settings.shadow_ray_tmax, 0.0f, 0.0f);
+
+        ubo.temporal = glm::uvec4{ 1u, 1u, 0u, 0u };      // force reset
+        ubo.temporal_params = glm::vec4(m_visual_settings.temporal_clip_k, 0.0f, 0.0f, 0.0f);
+
+        ubo.visual_uints = glm::uvec4(m_visual_settings.ao_samples, m_visual_settings.indirect_samples_base, m_sun_settings.samples, 0u);
+        ubo.visual_floats = glm::vec4(m_visual_settings.ao_radius, m_visual_settings.ao_ray_bias, 0.0f, 0.0f);
+
+
+        std::memcpy(m_vr_dev->map_buffer(m_preview_camera_ubo), &ubo, sizeof(ubo));
+        m_vr_dev->unmap_buffer(m_preview_camera_ubo);
 
         std::memcpy(m_vr_dev->map_buffer(m_preview_camera_ubo), &ubo, sizeof(ubo));
         m_vr_dev->unmap_buffer(m_preview_camera_ubo);

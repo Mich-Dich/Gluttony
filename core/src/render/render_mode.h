@@ -58,7 +58,7 @@ namespace GLT::render {
     // Skips anything that isn't a non-static [render_mode] variable. Reads display_name, tooltip and category from the 
     // variable's annotations; falls back to the variable name if display_name is absent
     //
-    // @tparam Namespace  C++26 reflection value, e.g. ^^GLT::renderer_vk_ray::modes
+    // @tparam Namespace  C++26 reflection value, e.g. ^^GLT::renderer::vk_ray::modes
     // @return A static array of render_mode_info
     template <auto Namespace>
     consteval auto make_render_mode_entries();

@@ -27,7 +27,7 @@ compile_plugin(STATIC                                                   ${PLUGIN
 
 
 # clone all vendor libs ---------------------------------------------------------------------
-set(VENDOR_DIR                                                          "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
 set(SOLOUD_DIR                                                          "${VENDOR_DIR}/soloud")
 git_clone_or_update("git@github.com:jarikomppa/soloud.git"              "${SOLOUD_DIR}")
 

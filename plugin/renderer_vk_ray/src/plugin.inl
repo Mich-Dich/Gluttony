@@ -1,13 +1,15 @@
 
 #pragma once
 
+#include <reflection/registry.h>
+
 #include "modes.h"
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::renderer_vk_ray {
+namespace GLT::renderer::vk_ray {
 
     // CONSTANTS =======================================================================================================
 
@@ -36,19 +38,23 @@ namespace GLT::renderer_vk_ray {
         GLT::render::image::factory_table table{};
 
         table.default_fn = []() -> std::unique_ptr<GLT::render::image> {
-            return std::make_unique<GLT::renderer_vk_ray::image>();
+            return std::make_unique<GLT::renderer::vk_ray::image>();
         };
         table.size_fn = [](const glm::uvec3& size) -> std::unique_ptr<GLT::render::image> {
-            return std::make_unique<GLT::renderer_vk_ray::image>(size);
+            return std::make_unique<GLT::renderer::vk_ray::image>(size);
         };
         table.data_fn = [](const void* data, const u32 width, const u32 height, const bool mipmapped = false) -> std::unique_ptr<GLT::render::image> {
-            return std::make_unique<GLT::renderer_vk_ray::image>(data, width, height, mipmapped);
+            return std::make_unique<GLT::renderer::vk_ray::image>(data, width, height, mipmapped);
         };
         table.path_fn = [](const std::filesystem::path& path, bool mipmapped) -> std::unique_ptr<GLT::render::image> {
-            return std::make_unique<GLT::renderer_vk_ray::image>(path, mipmapped);
+            return std::make_unique<GLT::renderer::vk_ray::image>(path, mipmapped);
         };
 
         GLT::render::image::register_factory(table);
+
+        // register the visual settings
+        GLT::reflect::register_type<settings::visual>();
+        GLT::reflect::finalize();
     }
 
 
@@ -56,25 +62,6 @@ namespace GLT::renderer_vk_ray {
 
         GLT::render::image::register_factory({});   // clear it - see note below
     }
-
-
-    std::span<const GLT::render::render_mode_info> renderer::supported_modes() const { return modes::mode_table; }
-
-
-    void renderer::set_render_mode(u32 mode_id) {
-
-        // Validate; ignore unknown ids
-        for (const auto& mode : modes::mode_table)
-            if (mode.id == mode_id) {
-                m_active_mode = mode_id;
-                return;
-            }
-
-        LOG(warn, "Renderer: unknown render mode id [{}]", mode_id);
-    }
-
-
-    u32 renderer::get_render_mode() const { return m_active_mode; }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

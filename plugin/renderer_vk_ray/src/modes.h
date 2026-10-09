@@ -5,7 +5,7 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT::renderer_vk_ray::modes {
+namespace GLT::renderer::vk_ray::modes {
 
     // CONSTANTS =======================================================================================================
 
@@ -17,24 +17,29 @@ namespace GLT::renderer_vk_ray::modes {
     using GLT::reflect::annotations::tooltip;
     using GLT::reflect::annotations::category;
 
+
     [[=display_name{"Lit"}]]
     [[=tooltip{"Full shading with lighting"}]]
     [[=category{"Shading"}]]
     inline constexpr GLT::render::render_mode lit{ .id = 0, .is_default = true };
+
 
     [[=display_name{"Unlit"}]]
     [[=tooltip{"Flat surface color, no lighting"}]]
     [[=category{"Shading"}]]
     inline constexpr GLT::render::render_mode unlit{ .id = 1 };
 
+
     [[=display_name{"Albedo"}]]
     [[=category{"Material"}]]
     inline constexpr GLT::render::render_mode albedo{ .id = 2 };
+
 
     [[=display_name{"Normals"}]]
     [[=tooltip{"World-space normals, remapped to [0,1]"}]]
     [[=category{"Geometry"}]]
     inline constexpr GLT::render::render_mode normals{ .id = 3 };
+
 
     [[=display_name{"Depth"}]]
     [[=category{"Geometry"}]]
