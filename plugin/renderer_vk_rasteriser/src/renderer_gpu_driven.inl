@@ -1,3 +1,4 @@
+
 #pragma once
 
 
@@ -98,6 +99,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     void renderer::create_cull_pipeline() {
 
+        // Six bindings: instances, meshes, submeshes, draw commands, draw count, camera (for frustum planes)
         std::vector<util::descriptor_item> layout_items;
         layout_items.emplace_back(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
         layout_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
@@ -105,14 +107,13 @@ namespace GLT::renderer::vk_rasterizer {
         layout_items.emplace_back(3, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
         layout_items.emplace_back(4, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
         layout_items.emplace_back(5, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
-        layout_items.emplace_back(6, vk::DescriptorType::eCombinedImageSampler, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
 
         m_cull_set_layout = m_dev->create_descriptor_set_layout(layout_items);
         m_live_descriptor_set_count++;
 
         vk::PipelineLayoutCreateInfo pipeline_layout_info{};
         pipeline_layout_info.setLayoutCount = 1;
-        pipeline_layout_info.pSetLayouts    = &m_cull_set_layout;
+        pipeline_layout_info.pSetLayouts = &m_cull_set_layout;
         m_cull_pipeline_layout = m_device.createPipelineLayout(pipeline_layout_info);
 
         const auto shader_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "vk_rasterizer";
@@ -122,13 +123,13 @@ namespace GLT::renderer::vk_rasterizer {
         vk::ShaderModule compute_shader = m_dev->create_shader_module(compute_spv);
 
         vk::PipelineShaderStageCreateInfo shader_stage{};
-        shader_stage.stage  = vk::ShaderStageFlagBits::eCompute;
+        shader_stage.stage = vk::ShaderStageFlagBits::eCompute;
         shader_stage.module = compute_shader;
-        shader_stage.pName  = "main";
+        shader_stage.pName = "main";
 
         vk::ComputePipelineCreateInfo pipeline_info{};
         pipeline_info.layout = m_cull_pipeline_layout;
-        pipeline_info.stage  = shader_stage;
+        pipeline_info.stage = shader_stage;
 
         auto result = m_device.createComputePipeline(nullptr, pipeline_info);
         VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create cull pipeline");
@@ -137,20 +138,29 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_device.destroyShaderModule(compute_shader);
 
-        // Per-frame draw command + draw count buffers. Descriptor buffers are populated later, by refresh_hiz_descriptors(), 
-        // once the pyramid's texture and views are known
+        // Per-frame draw command + draw count buffers + cull descriptor buffers
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
 
-            m_draw_command_buffers[frame_index] = m_dev->create_buffer(
-                MAX_DRAW_COMMANDS * sizeof(vk::DrawIndexedIndirectCommand),
+            m_draw_command_buffers[frame_index] = m_dev->create_buffer(MAX_DRAW_COMMANDS * sizeof(vk::DrawIndexedIndirectCommand),
                 vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
             m_live_buffer_count++;
 
-            m_draw_count_buffers[frame_index] = m_dev->create_buffer(
-                sizeof(u32),
-                vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst,
-                0);
+            m_draw_count_buffers[frame_index] = m_dev->create_buffer( sizeof(u32),
+            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, 0);
+            m_live_buffer_count++;
+
+            std::vector<util::descriptor_item> descriptor_items;
+            descriptor_items.emplace_back(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_instance_buffers[frame_index]);
+            descriptor_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_mesh_data_buffer);
+            descriptor_items.emplace_back(2, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_submesh_data_buffer);
+            descriptor_items.emplace_back(3, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_draw_command_buffers[frame_index]);
+            descriptor_items.emplace_back(4, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_draw_count_buffers[frame_index]);
+            descriptor_items.emplace_back(5, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_camera_ubos[frame_index]);
+
+            m_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_cull_set_layout, descriptor_items, 
+                util::descriptor_buffer_type::resource, 1);
+            m_dev->update_descriptor_buffer(m_cull_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::resource);
             m_live_buffer_count++;
         }
     }
@@ -159,6 +169,10 @@ namespace GLT::renderer::vk_rasterizer {
     void renderer::destroy_cull_pipeline() {
 
         m_device.waitIdle();
+
+        for (auto& descriptor_buffer : m_cull_desc_buffers)
+            if (descriptor_buffer.buffer.buffer)
+                m_dev->destroy_buffer(descriptor_buffer.buffer);
 
         for (auto& draw_command_buffer : m_draw_command_buffers)
             if (draw_command_buffer.buffer)
@@ -184,6 +198,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     // frame-time operations -------------------------------------------------------------------------------------------
 
+    // Pack every visible scene instance into a single flat array. The GPU groups by mesh during culling; the CPU no longer batches anything
     void renderer::build_instance_buffer() {
 
         if (m_scene_instances.empty())
@@ -234,9 +249,10 @@ namespace GLT::renderer::vk_rasterizer {
 
         auto& draw_count_buffer = m_draw_count_buffers[m_current_frame];
 
+        // Zero the counter
         cmd.fillBuffer(draw_count_buffer.buffer, 0, sizeof(u32), 0);
 
-        // Barrier: fill (transfer) -> dispatch (compute). This is intra-pass, the graph can't express it, so we emit it manually
+        // Barrier: transfer write -> compute read/write
         {
             vk::MemoryBarrier2 barrier{};
             barrier.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
@@ -250,6 +266,7 @@ namespace GLT::renderer::vk_rasterizer {
             cmd.pipelineBarrier2(dependency_info);
         }
 
+        // Dispatch
         cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
         m_dev->bind_descriptor_buffer({ m_cull_desc_buffers[m_current_frame] }, cmd);
         m_dev->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, cmd, vk::PipelineBindPoint::eCompute);
@@ -257,9 +274,25 @@ namespace GLT::renderer::vk_rasterizer {
         const u32 workgroup_size = 64;
         const u32 dispatch_count = (m_instance_count + workgroup_size - 1) / workgroup_size;
         cmd.dispatch(dispatch_count, 1, 1);
+
+        // Barrier: compute write -> indirect draw read
+        {
+            vk::MemoryBarrier2 barrier{};
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderWrite;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eDrawIndirect;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eIndirectCommandRead;
+
+            vk::DependencyInfo dependency_info{};
+            dependency_info.memoryBarrierCount = 1;
+            dependency_info.pMemoryBarriers = &barrier;
+            cmd.pipelineBarrier2(dependency_info);
+        }
     }
 
 
+    // Issue the whole scene as a single indexed indirect count draw. The graphics pipeline layout is unchanged — the vertex shader still reads
+    // the instance SSBO via gl_InstanceIndex, and the cull pass filled the commands' firstInstance field to point into that buffer
     void renderer::draw_scene_indirect(vk::CommandBuffer cmd) {
 
         if (m_instance_count == 0)

@@ -103,15 +103,14 @@ namespace GLT::renderer::vk_rasterizer {
 
     void renderer::create_imgui_resources() {
 
-        util::create_imgui_resources(m_imgui_descriptor_pool, m_device, m_swapchain, m_imgui_render_pass,
-            m_instance, m_physical_device, m_queues, m_imgui_framebuffers, m_imgui_initialized);
+        util::create_imgui_resources(m_imgui_descriptor_pool, m_device, m_swapchain, m_imgui_render_pass, m_instance, 
+            m_physical_device, m_queues, m_imgui_framebuffers, m_imgui_initialized);
     }
 
 
     void renderer::destroy_imgui_resources() {
 
-        util::destroy_imgui_resources(m_device, m_imgui_framebuffers, m_imgui_render_pass, 
-            m_imgui_descriptor_pool, m_imgui_initialized);
+        util::destroy_imgui_resources(m_device, m_imgui_framebuffers, m_imgui_render_pass, m_imgui_descriptor_pool, m_imgui_initialized);
     }
 
 

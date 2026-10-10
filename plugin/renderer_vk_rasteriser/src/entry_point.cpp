@@ -175,23 +175,15 @@ namespace GLT::renderer::vk_rasterizer {
 
         // GPU-driven culling ------------------------------------------------------------------------------------------
 
-        void pack_mesh_into_ssbo(mesh_slot& mesh_slot, const GLT::asset::mesh::mesh_asset& mesh_asset);
-
-        void clear_mesh_ssbo_entry(mesh_slot& mesh_slot);
-
         void create_cull_pipeline();
-
         void destroy_cull_pipeline();
 
-        // Pack every visible scene instance into a single flat array. The GPU groups by mesh during culling; the CPU no longer batches anything
+        void pack_mesh_into_ssbo(mesh_slot& mesh_slot, const GLT::asset::mesh::mesh_asset& mesh_asset);
+        void clear_mesh_ssbo_entry(mesh_slot& mesh_slot);
+
         void build_instance_buffer();
-
         void dispatch_culling(vk::CommandBuffer cmd);
-
-        // Issue the whole scene as a single indexed indirect count draw. The graphics pipeline layout is unchanged — the vertex shader still
-        // reads the instance SSBO via gl_InstanceIndex, and the cull pass filled the commands' firstInstance field to point into that buffer
         void draw_scene_indirect(vk::CommandBuffer cmd);
-
 
 
         glm::ivec2                                                  m_render_size{ 800, 600 };
@@ -306,7 +298,6 @@ namespace GLT::renderer::vk_rasterizer {
 
         util::allocated_buffer                                      m_mesh_data_buffer{};
         util::allocated_buffer                                      m_submesh_data_buffer{};
-        vk::ImageView                                               m_depth_image_view{};
 
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>  m_cull_desc_buffers{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_draw_command_buffers{};
@@ -314,8 +305,6 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Free-list for submesh slots. Each mesh reserves a contiguous run of MAX_SUBMESHES_PER_MESH slots so it can grow without re-shuffling
         u32                                                         m_submesh_used = 0;
-        graph::buffer_handle                                        m_draw_command_buffer_handle;
-        graph::buffer_handle                                        m_draw_count_buffer_handle;
 
         // GPU timing (timestamp queries) ------------------------------------------------------------------------------
 

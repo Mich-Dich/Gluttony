@@ -115,8 +115,8 @@ namespace GLT::renderer::vk_rasterizer {
         VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[m_current_frame], VK_TRUE, UINT64_MAX));
         m_device.resetFences(m_in_flight_fences[m_current_frame]);
 
-        // GPU timing: read the timestamps written the last time this command buffer slot was submitted
-        // The fence wait above guarantees they have completed, so the results are available without further sync
+        // GPU timing: read the timestamps written the last time this command buffer slot was submitted. The fence wait above 
+        // guarantees they have completed, so the results are available without further sync
         if (m_timestamp_pool) {
 
             std::array<u64, 2> timestamps{ 0, 0 };
@@ -161,18 +161,19 @@ namespace GLT::renderer::vk_rasterizer {
         process_pending_meshes();               // pull meshes in/out at the frame boundary
         update_camera_ubo();                    // fill the current frame's camera UBO
         build_instance_buffer();
-        m_frame_counter++;
 
         // Backbuffer import -------------------------------------------------------------------------------------------
         const vk::ImageLayout bb_initial = m_swapchain_images_layout[m_current_swapchain_image];
         m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::eUndefined;
+
+        using VKIU = vk::ImageUsageFlagBits;
 
         graph::texture_desc bb_desc{};
         bb_desc.name = "backbuffer";
         bb_desc.format = m_swapchain.swapchain_format;
         bb_desc.width = m_swapchain.swapchain_extent.width;
         bb_desc.height = m_swapchain.swapchain_extent.height;
-        bb_desc.usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
+        bb_desc.usage = VKIU::eColorAttachment | VKIU::eTransferDst;
         m_backbuffer_handle = m_graph->create_texture(bb_desc);
         m_graph->import_texture(m_backbuffer_handle,
             m_swapchain.swapchain_images[m_current_swapchain_image], m_swapchain.swapchain_image_views[m_current_swapchain_image],
@@ -184,8 +185,7 @@ namespace GLT::renderer::vk_rasterizer {
         rt_desc.format = vk::Format::eR8G8B8A8Unorm;
         rt_desc.width = m_render_size.x;
         rt_desc.height = m_render_size.y;
-        rt_desc.usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc |
-            vk::ImageUsageFlagBits::eTransferDst;
+        rt_desc.usage = VKIU::eSampled | VKIU::eColorAttachment | VKIU::eTransferSrc | VKIU::eTransferDst;
         rt_desc.persistent = true;
         m_triangle_target = m_graph->create_texture(rt_desc);
         m_graph->import_texture(m_triangle_target,
@@ -198,38 +198,14 @@ namespace GLT::renderer::vk_rasterizer {
         depth_desc.format = vk::Format::eD32Sfloat;
         depth_desc.width = m_render_size.x;
         depth_desc.height = m_render_size.y;
-        depth_desc.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled;
+        depth_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
         depth_desc.persistent = true;
         m_depth_target = m_graph->create_texture(depth_desc);
-        const vk::ImageView current_depth_view = m_graph->texture_default_view(m_depth_target);
 
-        // Draw command + count buffers, imported as graph resources ---------------------------------------------------
-        {
-            using VKBU = vk::BufferUsageFlagBits;
-            graph::buffer_desc command_desc{};
-            command_desc.name = "draw_commands";
-            command_desc.size = MAX_DRAW_COMMANDS * sizeof(vk::DrawIndexedIndirectCommand);
-            command_desc.usage = VKBU::eStorageBuffer | VKBU::eIndirectBuffer;
-            m_draw_command_buffer_handle = m_graph->import_buffer(command_desc, m_draw_command_buffers[m_current_frame]);
-
-            graph::buffer_desc count_desc{};
-            count_desc.name = "draw_count";
-            count_desc.size = sizeof(u32);
-            count_desc.usage = VKBU::eStorageBuffer | VKBU::eIndirectBuffer  | VKBU::eTransferDst;
-            m_draw_count_buffer_handle = m_graph->import_buffer(count_desc, m_draw_count_buffers[m_current_frame]);
-        }
-
-        // Pass: GPU culling -------------------------------------------------------------------------------------------
-        // Reads the instance SSBO and the scene's mesh/submesh metadata, writes indirect draw commands. Runs before any
-        // rendering pass that consumes those commands. Marked as a side effect because nothing in the graph consumes its
-        // outputs via a texture edge - the two draw passes just declare indirect buffer reads
-        m_graph->add_pass("gpu_cull",
+        // Pass: depth prepass -----------------------------------------------------------------------------------------
+        m_graph->add_pass("depth_prepass",
             [&](graph::pass_builder& builder) {
-                builder.read(m_hiz_pyramid, graph::texture_usage::sampled);
-                builder.write(m_draw_command_buffer_handle, graph::buffer_usage::storage_readwrite);
-                builder.write(m_draw_count_buffer_handle, graph::buffer_usage::transfer_dst);
-                builder.write(m_draw_count_buffer_handle, graph::buffer_usage::storage_readwrite);
-                builder.set_side_effects(true);
+                builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
             },
             [this](graph::pass_context& ctx) {
 
@@ -237,20 +213,6 @@ namespace GLT::renderer::vk_rasterizer {
                     return;
 
                 dispatch_culling(ctx.cmd);
-                m_frame_render_passes++;
-            });
-
-        // Pass: depth prepass -----------------------------------------------------------------------------------------
-        m_graph->add_pass("depth_prepass",
-            [&](graph::pass_builder& builder) {
-                builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
-                builder.read(m_draw_command_buffer_handle, graph::buffer_usage::indirect);
-                builder.read(m_draw_count_buffer_handle,   graph::buffer_usage::indirect);
-            },
-            [this](graph::pass_context& ctx) {
-
-                if (m_instance_count == 0)
-                    return;
 
                 ctx.begin_rendering();
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_depth_pipeline);
@@ -268,8 +230,6 @@ namespace GLT::renderer::vk_rasterizer {
                 builder.color_attachment(m_triangle_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
                     vk::ClearColorValue(std::array<f32,4>{m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a}));
                 builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore, 1.0f, 0);
-                builder.read(m_draw_command_buffer_handle, graph::buffer_usage::indirect);
-                builder.read(m_draw_count_buffer_handle,   graph::buffer_usage::indirect);
             },
             [this](graph::pass_context& ctx) {
 
@@ -326,23 +286,18 @@ namespace GLT::renderer::vk_rasterizer {
 
     void renderer::draw_frame() {
 
-        // MUST run before m_graph->execute() so imgui pass's execute lambda sees valid data
-        end_imgui_frame();                          // Produce ImGui draw data for this frame
+        end_imgui_frame();                          // Produce ImGui draw data for this frame, MUST run before m_graph->execute()
 
         vk::CommandBuffer cmd = m_render_cmd[m_current_frame];
         m_graph->execute(cmd);                      // The graph emits all its barriers and invokes every pass's execute lambda
 
-        // The graph moved the scene colour into whatever layout its last read needed. Sync that back to the image so
-        // the next frame's import starts from the correct state, and so the descriptor ImGui caches stays valid
-        m_output_image->get_accessible_image_ref().layout = m_graph->texture_layout(m_triangle_target);
-
-        // The imgui pass's VkRenderPass declares finalLayout = ePresentSrcKHR, so after execute() the backbuffer is presentable
-        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;
+        m_output_image->get_accessible_image_ref().layout = m_graph->texture_layout(m_triangle_target); // Sync image layout to graph last use
+        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;         // imgui sets layout to ePresentSrcKHR
 
         m_graph->end_frame();
+
         if (m_timestamp_pool)
             cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, m_timestamp_pool, m_current_frame * 2 + 1);
-
         cmd.end();
 
         vk::SubmitInfo submit_info{};                                                   // Submit to graphics queue
@@ -426,9 +381,9 @@ namespace GLT::renderer::vk_rasterizer {
         vk::FenceCreateInfo fci{};
         fci.flags = vk::FenceCreateFlagBits::eSignaled;
         for (u32 i = 0; i < m_image_count; i++) {
-            m_render_semaphores[i] = m_device.createSemaphore(sci);
+            m_render_semaphores[i]  = m_device.createSemaphore(sci);
             m_present_semaphores[i] = m_device.createSemaphore(sci);
-            m_in_flight_fences[i] = m_device.createFence(fci);
+            m_in_flight_fences[i]   = m_device.createFence(fci);
         }
 
         vk::CommandPoolCreateInfo pci{};
@@ -455,7 +410,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_dev = new util::device(m_instance.instance_handle, m_device, m_physical_device);
 
-        // Timestamp queries: two per in-flight frame, to measure the GPU time
+        // Timestamp queries: two per in-flight frame, so we can measure the GPU time of the submission that used each command buffer slot
         {
             const vk::PhysicalDeviceProperties properties = m_physical_device.getProperties();
             m_timestamp_period_ns = (properties.limits.timestampPeriod > 0.0f) ? properties.limits.timestampPeriod : 1.0f;
@@ -469,17 +424,18 @@ namespace GLT::renderer::vk_rasterizer {
         }
 
         m_deletion_queue.push_func([&]() {
-                        
+            
             if (m_timestamp_pool) {
                 m_device.destroyQueryPool(m_timestamp_pool);
                 m_timestamp_pool = nullptr;
             }
 
             for (auto s : m_render_semaphores)
-                if (s) m_device.destroySemaphore(s);
-
+                if (s)
+                    m_device.destroySemaphore(s);
             for (auto s : m_present_semaphores)
-                if (s) m_device.destroySemaphore(s);
+                if (s)
+                    m_device.destroySemaphore(s);
 
             for (u32 i = 0; i < m_image_count; i++)
                 if (m_in_flight_fences[i]) m_device.destroyFence(m_in_flight_fences[i]);

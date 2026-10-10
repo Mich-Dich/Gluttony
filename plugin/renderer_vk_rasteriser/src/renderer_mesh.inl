@@ -493,11 +493,10 @@ namespace GLT::renderer::vk_rasterizer {
         projection[1][1] *= -1.0f;   // Vulkan Y flip
 
         const glm::mat4 view_projection = projection * m_active_camera.view;
-        const bool hiz_enabled = m_frame_counter >= 2;              // HiZ is valid from frame 2 onward (built from frame 1's depth)
+
         camera_data.view = m_active_camera.view;
         camera_data.view_proj = view_projection;
         camera_data.camera_pos = glm::vec4(m_active_camera.position, 1.0f);
-        camera_data.flags = glm::uvec4(hiz_enabled ? 1u : 0u, 0u, 0u, 0u);
 
         // Gribb-Hartmann frustum extraction. Rows of view_projection map world space to clip space; the six planes fall out as signed
         // combinations of those rows
