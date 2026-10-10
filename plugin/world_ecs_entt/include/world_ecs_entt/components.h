@@ -7,6 +7,7 @@
 #include <asset/asset_ref.h>
 #include <asset/audio.h>
 #include <world/entity.h>
+#include <world/light_snapshot.h>
 
 #include "component_registry.h"
 
@@ -71,6 +72,22 @@ namespace GLT::world::world_ecs_entt::component {
         f32                                         far_plane{ 100.f };
     };
     static_assert(std::is_trivially_copyable_v<camera>);
+
+
+    // Makes this entity a light. Position and forward direction come from the entity's [transform] (same convention as camera)
+    // A light with no transform sits at origin facing -Z
+    struct light {
+
+        glm::vec3                                   color{ 1.f, 1.f, 1.f };      // linear RGB
+        f32                                         intensity{ 1.f };
+
+        f32                                         radius{ 10.f };             // point + spot
+        f32                                         inner_cone_angle{ 0.1f };   // radians, spot only
+        f32                                         outer_cone_angle{ 0.3f };   // radians, spot only
+
+        GLT::world::light_type                      type{ GLT::world::light_type::point };
+    };
+    static_assert(std::is_trivially_copyable_v<light>);
 
 
     // Plays a single clip. Looping / attenuation / etc. live in `config` so the entity doesn't need to copy them on spawn.

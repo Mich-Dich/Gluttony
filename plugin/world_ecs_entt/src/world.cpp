@@ -129,7 +129,7 @@ namespace GLT::world::world_ecs_entt {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    ecs_world_plugin::ecs_world_plugin()  = default;
+    ecs_world_plugin::ecs_world_plugin() = default;
 
 
     ecs_world_plugin::~ecs_world_plugin() = default;
@@ -148,6 +148,7 @@ namespace GLT::world::world_ecs_entt {
         m_codec.register_component<component::transform>("glt.transform");
         m_codec.register_component<component::no_inherit_transform>("glt.no_inherit_transform");
         m_codec.register_component<component::camera>("glt.camera");
+        m_codec.register_component<component::light>("glt.light");
 
         // custom components -------------------------------------------------------------------------------------------
 
@@ -750,6 +751,36 @@ namespace GLT::world::world_ecs_entt {
             inst.material_override = mesh_comp.material_override;
             inst.transform = world_transform_of(id);
             out.push_back(inst);
+        }
+    }
+
+
+    void ecs_world_plugin::gather_lights(std::vector<GLT::world::light_snapshot>& out) const {
+
+        out.clear();
+        auto view = m_registry.view<const component::light, const component::transform>();   // transform is required, so view constrains both
+        out.reserve(view.size_hint());
+
+        for (auto entity : view) {
+
+            const auto& light = view.get<const component::light>(entity);
+            const entity_id id = id_of(entity);
+            if (!id.is_valid())
+                continue;
+
+            const glm::mat4 world = world_transform_of(id);
+
+            GLT::world::light_snapshot s{};
+            s.position = glm::vec3(world[3]);                                   // translation column
+            s.direction = -glm::normalize(glm::vec3(world[2]));                  // -Z is forward, engine convention
+            s.color = light.color;
+            s.intensity = light.intensity;
+            s.radius = light.radius;
+            s.inner_cone_angle = light.inner_cone_angle;
+            s.outer_cone_angle = light.outer_cone_angle;
+            s.type = light.type;
+
+            out.push_back(s);
         }
     }
 

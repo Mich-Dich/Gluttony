@@ -97,6 +97,11 @@ namespace GLT::renderer::vk_rasterizer {
 
         void release_mesh(GLT::asset::handle mesh) override;
 
+        // light -------------------------------------------------------------------------------------------------------
+
+        // Called by the world each frame with the current set of lights
+        void submit_lights(std::span<const GLT::world::light_snapshot> lights) override;
+
         // modes -------------------------------------------------------------------------------------------------------
 
         [[nodiscard]] std::span<const GLT::render::render_mode_info> supported_modes() const override;
@@ -130,7 +135,6 @@ namespace GLT::renderer::vk_rasterizer {
     private:
 
         struct mesh_slot {
-        
             GLT::asset::handle                                      asset{};
             u32                                                     vertex_offset = 0;      // in vertices
             u32                                                     vertex_count = 0;
@@ -139,17 +143,18 @@ namespace GLT::renderer::vk_rasterizer {
             bool                                                    alive = false;
         };
 
+        // Lifecycle ---------------------------------------------------------------------------------------------------
 
         void init_vulkan();
         void create_swapchain(const glm::ivec2 size);
         void destroy_swapchain();
         void resize_swapchain(const glm::ivec2 size);
 
-        // the render output image (this is what get_rendered_image() returns)
         void create_render_target();
         void destroy_render_target();
 
-        // imgui
+        // ImGui -------------------------------------------------------------------------------------------------------
+
         void imgui_init();
         void imgui_shutdown();
         void create_imgui_resources();
@@ -157,23 +162,49 @@ namespace GLT::renderer::vk_rasterizer {
         void begin_imgui_frame();
         void end_imgui_frame();
 
+        // Mesh loading ------------------------------------------------------------------------------------------------
 
         bool reserve_mesh_space(u32 vertex_count, u32 index_count);
         void upload_mesh_slice(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh);
         mesh_slot* find_slot(GLT::asset::handle h) noexcept;
         const mesh_slot* find_slot(GLT::asset::handle h) const noexcept;
-
         void process_pending_meshes();
 
-        void create_mesh_resources();                           // buffers, UBOs, descriptor buffer, set layout, pipeline
+        // Lights --------------------------------------------------------------------------------------------
+
+        void create_light_resources();
+        void destroy_light_resources();
+        void update_lights();
+
+        // Lights (cluster infrastructure) -------------------------------------------------------------------
+
+        void create_cluster_resources();
+        void destroy_cluster_resources();
+
+        // Recompute cluster dimensions from the current render size; rebuild buffers if they changed. Called from begin_frame()
+        // after m_graph->begin_frame(), so non-persistent resources have already been reset by the graph and persistent ones are 
+        // ready to be re-queried
+        void update_cluster_dimensions();
+
+        // Light culling -------------------------------------------------------------------------------------
+
+        void create_light_culling_pipeline();
+        void destroy_light_culling_pipeline();
+
+        // Refresh the per-frame descriptors to point at the current frame's resources. Cheap and idempotent;
+        // called once per frame from begin_frame()
+        void update_light_cull_descriptors();
+
+        // Write the light meta UBO (light_count, index list capacity, per-cluster cap) for the current frame
+        void update_light_meta_ubo();
+
+        // Mesh pipeline and per-frame descriptor data -----------------------------------------------------------------
+
+        void create_mesh_resources();
         void destroy_mesh_resources();
-        void update_camera_ubo();                               // called once per frame in begin_frame()
+        void update_camera_ubo();
 
-        // helpers
-        void transition_image_layout(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldL,
-            vk::ImageLayout newL, vk::ImageSubresourceRange range = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-
-        // GPU-driven culling ------------------------------------------------------------------------------------------
+        // GPU-driven rendering ----------------------------------------------------------------------------------------
 
         void create_cull_pipeline();
         void destroy_cull_pipeline();
@@ -182,138 +213,182 @@ namespace GLT::renderer::vk_rasterizer {
         void clear_mesh_ssbo_entry(mesh_slot& mesh_slot);
 
         void build_instance_buffer();
-        void dispatch_culling(vk::CommandBuffer cmd);
-        void draw_scene_indirect(vk::CommandBuffer cmd);
+
+        // Issue the whole scene as a single indexed indirect count draw. The graphics pipeline layout is unchanged — the vertex shader
+        // still reads the instance SSBO via gl_InstanceIndex, and the cull pass filled the commands' firstInstance field to point into 
+        // that buffer
+        void draw_scene_indirect(vk::CommandBuffer cmd, vk::Buffer draw_commands, vk::Buffer draw_count);
+
+        // Helpers -----------------------------------------------------------------------------------------------------
+
+        void transition_image_layout(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldL,
+            vk::ImageLayout newL, vk::ImageSubresourceRange range = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
 
 
-        glm::ivec2                                                  m_render_size{ 800, 600 };
-        GLT::render::renderer_feature                               m_features{};
-        u32                                                         m_active_mode{ 0 };
+        // Configuration -----------------------------------------------------------------------------------------------
 
-        util::instance_wrapper                                      m_instance;
-        util::command_queues                                        m_queues{};
-        vk::Device                                                  m_device = nullptr;
-        vk::SurfaceKHR                                              m_surface = nullptr;
-        vk::PhysicalDevice                                          m_physical_device = nullptr;
-        util::deletion_queue                                        m_deletion_queue{};
-        util::swapchain_builder                                     m_swapchain_builder;
-        util::swapchain_resources                                   m_swapchain;
-        util::device*                                               m_dev = nullptr;
+        glm::ivec2                                                          m_render_size{ 800, 600 };
+        glm::ivec2                                                          m_target_framebuffer_size{};
+        glm::vec4                                                           m_clear_color{ 0.09f, 0.09f, 0.09f, 1.f };
+        GLT::render::renderer_feature                                       m_features{};
+        u32                                                                 m_active_mode{ 0 };
 
-        // sync
-        u32                                                         m_image_count = 0;
-        u32                                                         m_current_frame = 0;
-        u32                                                         m_current_swapchain_image = 0;
-        std::vector<vk::Semaphore>                                  m_render_semaphores{};
-        std::vector<vk::Semaphore>                                  m_present_semaphores{};
-        std::vector<vk::Fence>                                      m_in_flight_fences{};
-        std::vector<vk::ImageLayout>                                m_swapchain_images_layout{};
+        // Vulkan core -------------------------------------------------------------------------------------------------
 
-        // command
-        vk::CommandPool                                             m_graphics_pool;
-        std::array<vk::CommandBuffer, MAX_CONCURRENT_FRAMES>        m_render_cmd;
+        util::instance_wrapper                                              m_instance;
+        util::command_queues                                                m_queues{};
+        vk::Device                                                          m_device = nullptr;
+        vk::SurfaceKHR                                                      m_surface = nullptr;
+        vk::PhysicalDevice                                                  m_physical_device = nullptr;
+        util::deletion_queue                                                m_deletion_queue{};
+        util::device*                                                       m_dev = nullptr;
 
-        // immediate submit
-        vk::Fence                                                   m_immediate_submit_fence{};
-        vk::CommandBuffer                                           m_immediate_submit_command_buffer{};
-        vk::CommandPool                                             m_immediate_submit_command_pool{};
+        // Swapchain ---------------------------------------------------------------------------------------------------
 
-        // render target + pipeline
-        GLT::ref<image>                                             m_output_image = nullptr;
-        vk::RenderPass                                              m_triangle_render_pass = nullptr;
-        std::vector<vk::Framebuffer>                                m_triangle_framebuffers;
-        util::shader_compiler                                       m_shader_compiler{};
+        util::swapchain_builder                                             m_swapchain_builder;
+        util::swapchain_resources                                           m_swapchain;
+        u32                                                                 m_image_count = 0;
+        u32                                                                 m_current_swapchain_image = 0;
+        std::vector<vk::ImageLayout>                                        m_swapchain_images_layout{};
 
-        // imgui
-        vk::DescriptorPool                                          m_imgui_descriptor_pool = nullptr;
-        vk::RenderPass                                              m_imgui_render_pass = nullptr;
-        std::vector<vk::Framebuffer>                                m_imgui_framebuffers;
-        bool                                                        m_imgui_initialized = false;
-        ImGuiContext*                                               m_imgui_context = nullptr;
+        // Frame synchronisation ---------------------------------------------------------------------------------------
 
-        // platform
-        GLT::platform::backend_api                                  mp_window_backend_api{};
-        ref<GLT::platform::i_window_plugin>                         mp_window{};
-        handle                                                      m_framebuffer_resize_sub{};
+        u32                                                                 m_current_frame = 0;
+        std::vector<vk::Semaphore>                                          m_render_semaphores{};
+        std::vector<vk::Semaphore>                                          m_present_semaphores{};
+        std::vector<vk::Fence>                                              m_in_flight_fences{};
 
-        glm::ivec2                                                  m_target_framebuffer_size{};
-        glm::vec4                                                   m_clear_color{ 0.09f, 0.09f, 0.09f, 1.f };
+        // Command buffers ---------------------------------------------------------------------------------------------
 
-        // stats
-        u32                                                         m_frame_draw_calls = 0;
-        u32                                                         m_frame_render_passes = 0;
-        u32                                                         m_live_buffer_count = 0;
-        u32                                                         m_live_pipeline_count = 0;
-        u32                                                         m_live_descriptor_set_count = 0;
+        vk::CommandPool                                                     m_graphics_pool;
+        std::array<vk::CommandBuffer, MAX_CONCURRENT_FRAMES>                m_render_cmd;
 
-        GLT::world::camera_snapshot                                 m_active_camera{};
+        vk::Fence                                                           m_immediate_submit_fence{};
+        vk::CommandBuffer                                                   m_immediate_submit_command_buffer{};
+        vk::CommandPool                                                     m_immediate_submit_command_pool{};
 
-        // settings (kept for interface compatibility)
-        GLT::render::sun_settings                                   m_sun_settings{};
-        GLT::renderer::vk_rasterizer::settings::visual              m_visual_settings{};
+        // Platform ----------------------------------------------------------------------------------------------------
 
-        // render graph ------------------------------------------------------------------------------------------------
+        GLT::platform::backend_api                                          mp_window_backend_api{};
+        ref<GLT::platform::i_window_plugin>                                 mp_window{};
+        handle                                                              m_framebuffer_resize_sub{};
 
-        GLT::unique_ref<graph::render_graph>                        m_graph;
-        graph::texture_handle                                       m_backbuffer_handle;
-        graph::texture_handle                                       m_triangle_target;   // persistent - persists across frames
-        graph::texture_handle                                       m_depth_target;
+        // Render graph resources --------------------------------------------------------------------------------------
 
-        // mesh state --------------------------------------------------------------------------------------------------
+        GLT::unique_ref<graph::render_graph>                                m_graph;
+        graph::texture_handle                                               m_backbuffer_handle;
+        graph::texture_handle                                               m_scene_color;
+        graph::texture_handle                                               m_depth_target;
 
-        util::allocated_buffer                                      m_vertex_buffer{};
-        util::allocated_buffer                                      m_index_buffer{};
-        u32                                                         m_vertex_capacity = 0;
-        u32                                                         m_index_capacity = 0;
-        u32                                                         m_vertex_used = 0;
-        u32                                                         m_index_used = 0;
-        u32                                                         m_instance_count = 0;
+        // Output image (sampled by ImGui) and shader compiler ---------------------------------------------------------
 
-        std::vector<mesh_slot>                                      m_mesh_slots{};
-        std::vector<u32>                                            m_free_slots{};
+        GLT::ref<image>                                                     m_output_image = nullptr;
+        util::shader_compiler                                               m_shader_compiler{};
 
-        // scene state (populated by submit_scene) ---------------------------------------------------------------------
+        // ImGui -------------------------------------------------------------------------------------------------------
 
-        std::vector<GLT::asset::mesh::instance>                     m_scene_instances{};
-        std::unordered_set<GLT::asset::handle>                      m_scene_meshes{};
-        std::unordered_set<GLT::asset::handle>                      m_retained_meshes{};
-        std::vector<GLT::asset::handle>                             m_pending_loads{};
-        std::vector<GLT::asset::handle>                             m_pending_unloads{};
+        vk::DescriptorPool                                                  m_imgui_descriptor_pool = nullptr;
+        vk::RenderPass                                                      m_imgui_render_pass = nullptr;
+        std::vector<vk::Framebuffer>                                        m_imgui_framebuffers;
+        bool                                                                m_imgui_initialized = false;
 
-        // mesh pipeline + per-frame descriptor data -------------------------------------------------------------------
+        // Camera and lighting settings --------------------------------------------------------------------------------
 
-        vk::DescriptorSetLayout                                     m_mesh_set_layout = nullptr;
-        vk::PipelineLayout                                          m_mesh_pipeline_layout = nullptr;
-        vk::Pipeline                                                m_mesh_pipeline = nullptr;
-        vk::Pipeline                                                m_depth_pipeline = nullptr;
-        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_camera_ubos{};
-        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_instance_buffers{};
-        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>  m_frame_desc_buffers{};
+        GLT::world::camera_snapshot                                         m_active_camera{};
+        GLT::render::sun_settings                                           m_sun_settings{};
+        GLT::renderer::vk_rasterizer::settings::visual                      m_visual_settings{};
+
+        // Stats and GPU timing ----------------------------------------------------------------------------------------
+
+        u32                                                                 m_frame_draw_calls = 0;
+        u32                                                                 m_frame_render_passes = 0;
+        u32                                                                 m_live_buffer_count = 0;
+        u32                                                                 m_live_pipeline_count = 0;
+        u32                                                                 m_live_descriptor_set_count = 0;
+
+        vk::QueryPool                                                       m_timestamp_pool = nullptr;
+        f32                                                                 m_timestamp_period_ns = 1.0f;
+        std::array<f32, MAX_CONCURRENT_FRAMES>                              m_gpu_frame_time_ms{};
+        f32                                                                 m_last_gpu_time_ms = 0.0f;
+
+        // Mesh system -------------------------------------------------------------------------------------------------
+
+        util::allocated_buffer                                              m_vertex_buffer{};
+        util::allocated_buffer                                              m_index_buffer{};
+        u32                                                                 m_vertex_capacity = 0;
+        u32                                                                 m_index_capacity = 0;
+        u32                                                                 m_vertex_used = 0;
+        u32                                                                 m_index_used = 0;
+
+        std::vector<mesh_slot>                                              m_mesh_slots{};
+        std::vector<u32>                                                    m_free_slots{};
+
+        // Lights ------------------------------------------------------------------------------------------------------
+
+        std::vector<GLT::world::light_snapshot>                             m_submitted_lights{};
+        std::vector<GLT::world::light_snapshot>                             m_debug_lights{};
+        std::vector<gpu_light>                                              m_packed_lights{};
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_light_buffers{};
+        u32                                                                 m_light_count = 0;
+        GLT::world::light_snapshot                                          m_new_debug_light{};
+
+        // Clustered lighting ------------------------------------------------------------------------------------------
+
+        struct cluster_grid_params {
+            u32                                                             grid_x = 0;
+            u32                                                             grid_y = 0;
+            u32                                                             grid_z = 0;
+            u32                                                             cluster_count = 0;
+        };
+
+        cluster_grid_params                                                 m_cluster_params{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_light_grid_handles{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_light_index_list_handles{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_light_counter_handles{};
+        u32                                                                 m_cluster_index_capacity = 0;
+        vk::DescriptorSetLayout                                             m_light_cull_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_light_cull_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_light_cull_pipeline = nullptr;
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_light_meta_ubos{};
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_light_cull_desc_buffers{};
+
+        // Scene state (populated by submit_scene) ---------------------------------------------------------------------
+
+        std::vector<GLT::asset::mesh::instance>                             m_scene_instances{};
+        std::unordered_set<GLT::asset::handle>                              m_scene_meshes{};
+        std::unordered_set<GLT::asset::handle>                              m_retained_meshes{};
+        std::vector<GLT::asset::handle>                                     m_pending_loads{};
+        std::vector<GLT::asset::handle>                                     m_pending_unloads{};
+
+        // Mesh pipeline + per-frame descriptor data -------------------------------------------------------------------
+
+        vk::DescriptorSetLayout                                             m_mesh_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_mesh_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_mesh_pipeline = nullptr;
+        vk::Pipeline                                                        m_depth_pipeline = nullptr;
+
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_camera_ubos{};
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_instance_buffers{};
+        std::vector<gpu_instance_data>                                      m_packed_instances{};
+        u32                                                                 m_instance_count = 0;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_frame_desc_buffers{};
 
         // GPU-driven culling ------------------------------------------------------------------------------------------
 
-        vk::DescriptorSetLayout                                     m_cull_set_layout = nullptr;
-        vk::PipelineLayout                                          m_cull_pipeline_layout = nullptr;
-        vk::Pipeline                                                m_cull_pipeline = nullptr;
+        vk::DescriptorSetLayout                                             m_cull_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_cull_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_cull_pipeline = nullptr;
 
-        util::allocated_buffer                                      m_mesh_data_buffer{};
-        util::allocated_buffer                                      m_submesh_data_buffer{};
+        util::allocated_buffer                                              m_mesh_data_buffer{};
+        util::allocated_buffer                                              m_submesh_data_buffer{};
+        u32                                                                 m_submesh_used = 0;
 
-        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>  m_cull_desc_buffers{};
-        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_draw_command_buffers{};
-        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_draw_count_buffers{};
-
-        // Free-list for submesh slots. Each mesh reserves a contiguous run of MAX_SUBMESHES_PER_MESH slots so it can grow without re-shuffling
-        u32                                                         m_submesh_used = 0;
-
-        // GPU timing (timestamp queries) ------------------------------------------------------------------------------
-
-        vk::QueryPool                                               m_timestamp_pool = nullptr;
-        f32                                                         m_timestamp_period_ns = 1.0f;
-        std::array<f32, MAX_CONCURRENT_FRAMES>                      m_gpu_frame_time_ms{};
-        f32                                                         m_last_gpu_time_ms = 0.0f;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_cull_desc_buffers{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_commands_handles{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_count_handles{};
 
     };
+
 
     class image : public GLT::render::image {
     public:
@@ -424,6 +499,9 @@ namespace GLT::renderer::vk_rasterizer {
 #include "renderer_mesh.inl"
 #include "renderer_scene.inl"
 #include "renderer_gpu_driven.inl"
+#include "renderer_lights.inl"
+#include "renderer_clusters.inl"
+#include "renderer_light_culling.inl"
 // #include "renderer_material_texture.inl"
 // #include "renderer_preview.inl"
 

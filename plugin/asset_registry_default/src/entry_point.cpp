@@ -73,6 +73,9 @@ namespace GLT::asset::registry_default {
         void write_chunk(GLT::asset::chunk_id id, const std::span<const std::byte> data, u32 compression = 0) override;
 
 
+        [[nodiscard]] bool has_dependency(UUID id) const noexcept;
+
+    
         void declare_dependency(const UUID id);
 
 

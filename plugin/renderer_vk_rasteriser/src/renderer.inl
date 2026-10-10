@@ -59,10 +59,13 @@ namespace GLT::renderer::vk_rasterizer {
         m_active_camera.fov = 45.f;
 
         init_vulkan();
+        m_graph = GLT::create_unique_ref<graph::render_graph>(m_dev);
         create_render_target();
         create_mesh_resources();
+        create_light_resources();
+        create_cluster_resources();
+        create_light_culling_pipeline();
         imgui_init();
-        m_graph = GLT::create_unique_ref<graph::render_graph>(m_dev);
 
         m_framebuffer_resize_sub = GLT::event_bus::subscribe<GLT::window_framebuffer_resize_event>(
             [this](const GLT::window_framebuffer_resize_event& event) {
@@ -85,6 +88,9 @@ namespace GLT::renderer::vk_rasterizer {
             if (m_in_flight_fences[i])
                 VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[i], VK_TRUE, UINT64_MAX))
 
+        destroy_light_culling_pipeline();
+        destroy_cluster_resources();
+        destroy_light_resources();
         destroy_mesh_resources();
         destroy_render_target();
         imgui_shutdown();
@@ -115,13 +121,13 @@ namespace GLT::renderer::vk_rasterizer {
         VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[m_current_frame], VK_TRUE, UINT64_MAX));
         m_device.resetFences(m_in_flight_fences[m_current_frame]);
 
-        // GPU timing: read the timestamps written the last time this command buffer slot was submitted. The fence wait above 
+        // GPU timing: read the timestamps written the last time this command buffer slot was submitted. The fence wait above
         // guarantees they have completed, so the results are available without further sync
         if (m_timestamp_pool) {
 
             std::array<u64, 2> timestamps{ 0, 0 };
-            const vk::Result result = m_device.getQueryPoolResults(m_timestamp_pool, m_current_frame * 2, 2, sizeof(u64) * timestamps.size(),
-                timestamps.data(), sizeof(u64), vk::QueryResultFlagBits::e64);
+            const vk::Result result = m_device.getQueryPoolResults(m_timestamp_pool, m_current_frame * 2, 2, 
+                sizeof(u64) * timestamps.size(), timestamps.data(), sizeof(u64), vk::QueryResultFlagBits::e64);
 
             if (result == vk::Result::eSuccess && timestamps[1] > timestamps[0]) {
 
@@ -140,7 +146,6 @@ namespace GLT::renderer::vk_rasterizer {
             m_current_swapchain_image = r.value;
 
         } catch (const vk::OutOfDateKHRError&) {
-
             resize_swapchain(m_target_framebuffer_size);
             return;
         }
@@ -158,41 +163,48 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_graph->begin_frame();
 
-        process_pending_meshes();               // pull meshes in/out at the frame boundary
-        update_camera_ubo();                    // fill the current frame's camera UBO
+        update_cluster_dimensions();        // rebuild the grid/index buffers if the render size changed
+        process_pending_meshes();
+        update_camera_ubo();
         build_instance_buffer();
-
-        // Backbuffer import -------------------------------------------------------------------------------------------
-        const vk::ImageLayout bb_initial = m_swapchain_images_layout[m_current_swapchain_image];
-        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::eUndefined;
+        update_lights();
 
         using VKIU = vk::ImageUsageFlagBits;
 
-        graph::texture_desc bb_desc{};
-        bb_desc.name = "backbuffer";
-        bb_desc.format = m_swapchain.swapchain_format;
-        bb_desc.width = m_swapchain.swapchain_extent.width;
-        bb_desc.height = m_swapchain.swapchain_extent.height;
-        bb_desc.usage = VKIU::eColorAttachment | VKIU::eTransferDst;
-        m_backbuffer_handle = m_graph->create_texture(bb_desc);
-        m_graph->import_texture(m_backbuffer_handle,
-            m_swapchain.swapchain_images[m_current_swapchain_image], m_swapchain.swapchain_image_views[m_current_swapchain_image],
-            { bb_initial, {}, vk::PipelineStageFlagBits2::eNone });
+        // Backbuffer --------------------------------------------------------------------------------------------------
+        const vk::ImageLayout backbuffer_initial_layout = m_swapchain_images_layout[m_current_swapchain_image];
+        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::eUndefined;
 
-        // Scene colour: import m_output_image -------------------------------------------------------------------------
-        graph::texture_desc rt_desc{};
-        rt_desc.name = "scene_color";
-        rt_desc.format = vk::Format::eR8G8B8A8Unorm;
-        rt_desc.width = m_render_size.x;
-        rt_desc.height = m_render_size.y;
-        rt_desc.usage = VKIU::eSampled | VKIU::eColorAttachment | VKIU::eTransferSrc | VKIU::eTransferDst;
-        rt_desc.persistent = true;
-        m_triangle_target = m_graph->create_texture(rt_desc);
-        m_graph->import_texture(m_triangle_target,
-            m_output_image->get_allocated_image_ref().image, m_output_image->get_accessible_image_ref().view,
+        graph::texture_desc backbuffer_desc{};
+        backbuffer_desc.name = "backbuffer";
+        backbuffer_desc.format = m_swapchain.swapchain_format;
+        backbuffer_desc.width = m_swapchain.swapchain_extent.width;
+        backbuffer_desc.height = m_swapchain.swapchain_extent.height;
+        backbuffer_desc.usage = VKIU::eColorAttachment | VKIU::eTransferDst;
+        backbuffer_desc.persistent = true;
+
+        m_backbuffer_handle = m_graph->create_texture(backbuffer_desc);
+        m_graph->import_texture(m_backbuffer_handle,
+            m_swapchain.swapchain_images[m_current_swapchain_image],
+            m_swapchain.swapchain_image_views[m_current_swapchain_image],
+            { backbuffer_initial_layout, {}, vk::PipelineStageFlagBits2::eNone });
+
+        // Scene colour (external image, sampled by ImGui) -------------------------------------------------------------
+        graph::texture_desc scene_color_desc{};
+        scene_color_desc.name = "scene_color";
+        scene_color_desc.format = vk::Format::eR8G8B8A8Unorm;
+        scene_color_desc.width = m_render_size.x;
+        scene_color_desc.height = m_render_size.y;
+        scene_color_desc.usage = VKIU::eSampled | VKIU::eColorAttachment | VKIU::eTransferSrc | VKIU::eTransferDst;
+        scene_color_desc.persistent = true;
+
+        m_scene_color = m_graph->create_texture(scene_color_desc);
+        m_graph->import_texture(m_scene_color,
+            m_output_image->get_allocated_image_ref().image,
+            m_output_image->get_accessible_image_ref().view,
             { m_output_image->get_accessible_image_ref().layout, {}, vk::PipelineStageFlagBits2::eNone });
 
-        // Scene depth: graph-owned, same size as scene colour ---------------------------------------------------------
+        // -------- Scene depth --------
         graph::texture_desc depth_desc{};
         depth_desc.name = "scene_depth";
         depth_desc.format = vk::Format::eD32Sfloat;
@@ -200,36 +212,120 @@ namespace GLT::renderer::vk_rasterizer {
         depth_desc.height = m_render_size.y;
         depth_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
         depth_desc.persistent = true;
+
         m_depth_target = m_graph->create_texture(depth_desc);
 
-        // Pass: depth prepass -----------------------------------------------------------------------------------------
-        m_graph->add_pass("depth_prepass",
+        // Refresh light culling inputs for this frame. All the resources the culling shader reads are either per-frame (frame slot)
+        // or persistent-by-name; the descriptor refresh picks up any handles that were rebuilt by update_cluster_dimensions()
+        update_light_meta_ubo();
+        update_light_cull_descriptors();
+
+        // -------- Reset the draw count to 0 (transfer write) --------
+        m_graph->add_pass("reset_draw_count",
             [&](graph::pass_builder& builder) {
-                builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
+                builder.write(m_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+                builder.set_side_effects(true);     // basically "GPU state initialization", needs to run regardless of downstream
+            },
+            [this](graph::pass_context& ctx) {
+                ctx.cmd.fillBuffer(ctx.get_buffer(m_draw_count_handles[m_current_frame]), 0, sizeof(u32), 0);
+            });
+
+        // Cull (compute) ----------------------------------------------------------------------------------------------
+        // Side effects so the culler keeps it even if nothing downstream reads its outputs.
+        m_graph->add_pass("cull",
+            [&](graph::pass_builder& builder) {
+                builder.write(m_draw_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                builder.write(m_draw_count_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                builder.set_side_effects(true);
             },
             [this](graph::pass_context& ctx) {
 
                 if (m_instance_count == 0)
                     return;
 
-                dispatch_culling(ctx.cmd);
+                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
+                m_dev->bind_descriptor_buffer({ m_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+
+                const u32 dispatch_count = (m_instance_count + 63) / 64;
+                ctx.cmd.dispatch(dispatch_count, 1, 1);
+            });
+
+        // Depth prepass -----------------------------------------------------------------------------------------------
+        m_graph->add_pass("depth_prepass",
+            [&](graph::pass_builder& builder) {
+                builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
+                builder.read(m_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
+                builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_instance_count == 0)
+                    return;
 
                 ctx.begin_rendering();
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_depth_pipeline);
                 m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame] }, ctx.cmd);
                 m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-                draw_scene_indirect(ctx.cmd);
+                draw_scene_indirect(ctx.cmd,
+                    ctx.get_buffer(m_draw_commands_handles[m_current_frame]),
+                    ctx.get_buffer(m_draw_count_handles[m_current_frame]));
                 ctx.end_rendering();
 
                 m_frame_render_passes++;
             });
 
-        // Pass: forward shading ---------------------------------------------------------------------------------------
+        // Clear light grid --------------------------------------------------------------------------------------------
+        // Runs before light culling. We clear the grid (small) and the global counter (4 bytes)
+        // The index list is not cleared - culling only reads offsets it wrote this frame
+        m_graph->add_pass("clear_light_grid",
+            [&](graph::pass_builder& builder) {
+                builder.write(m_light_grid_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+                builder.write(m_light_counter_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+                builder.set_side_effects(true);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_cluster_params.cluster_count == 0)
+                    return;
+
+                const vk::DeviceSize grid_bytes = static_cast<vk::DeviceSize>(m_cluster_params.cluster_count) * sizeof(glm::uvec2);
+
+                ctx.cmd.fillBuffer(ctx.get_buffer(m_light_grid_handles[m_current_frame]), 0, grid_bytes, 0);
+                ctx.cmd.fillBuffer(ctx.get_buffer(m_light_counter_handles[m_current_frame]), 0, sizeof(u32), 0);
+            });
+
+        // Light culling -----------------------------------------------------------------------------------------------
+        // Reads the light SSBO (Step 1) and writes the grid/index-list/counter (Step 2). Runs after clear_light_grid so
+        // every cluster starts with an empty {0,0} slot, and after depth_prepass so a future iteration can tighten the
+        // depth range per cluster from real depth
+        m_graph->add_pass("light_culling",
+            [&](graph::pass_builder& builder) {
+                builder.write(m_light_grid_handles[m_current_frame],       graph::buffer_usage::storage_readwrite);
+                builder.write(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                builder.write(m_light_counter_handles[m_current_frame],    graph::buffer_usage::storage_readwrite);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_light_count == 0 || m_cluster_params.cluster_count == 0)
+                    return;
+
+                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_light_cull_pipeline);
+                m_dev->bind_descriptor_buffer({ m_light_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_light_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+
+                // One workgroup per cluster; the shader reads gl_WorkGroupID as (gx, gy, gz)
+                ctx.cmd.dispatch(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z);
+            });
+        
+        // Forward shading ---------------------------------------------------------------------------------------------
         m_graph->add_pass("scene",
             [&](graph::pass_builder& builder) {
-                builder.color_attachment(m_triangle_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
+                builder.color_attachment(m_scene_color, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
                     vk::ClearColorValue(std::array<f32,4>{m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a}));
                 builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore, 1.0f, 0);
+                builder.read(m_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
+                builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
             },
             [this](graph::pass_context& ctx) {
 
@@ -240,17 +336,19 @@ namespace GLT::renderer::vk_rasterizer {
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_mesh_pipeline);
                 m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame] }, ctx.cmd);
                 m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-                draw_scene_indirect(ctx.cmd);
+                draw_scene_indirect(ctx.cmd,
+                    ctx.get_buffer(m_draw_commands_handles[m_current_frame]),
+                    ctx.get_buffer(m_draw_count_handles[m_current_frame]));
                 ctx.end_rendering();
 
                 m_frame_render_passes++;
             });
 
-        // Pass: ImGui -> backbuffer -----------------------------------------------------------------------------------
+        // Pass: ImGui -------------------------------------------------------------------------------------------------
         m_graph->add_pass("imgui",
             [&](graph::pass_builder& builder) {
                 builder.color_attachment(m_backbuffer_handle, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore);
-                builder.read(m_triangle_target, graph::texture_usage::sampled);       // ImGui editor samples scene_color
+                builder.read(m_scene_color, graph::texture_usage::sampled);
                 builder.set_side_effects(true);
             },
             [this](graph::pass_context& ctx) {
@@ -259,17 +357,17 @@ namespace GLT::renderer::vk_rasterizer {
                 m_frame_draw_calls += count_imgui_draw_calls(draw_data);
                 m_frame_render_passes += 1;
 
-                vk::RenderPassBeginInfo rp{};
-                rp.renderPass = m_imgui_render_pass;
-                rp.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
-                rp.renderArea.extent = m_swapchain.swapchain_extent;
+                vk::RenderPassBeginInfo render_pass_info{};
+                render_pass_info.renderPass = m_imgui_render_pass;
+                render_pass_info.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
+                render_pass_info.renderArea.extent = m_swapchain.swapchain_extent;
 
                 std::array<vk::ClearValue, 1> clear_values{};
                 clear_values[0].color = { m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a };
-                rp.clearValueCount = (u32)clear_values.size();
-                rp.pClearValues = clear_values.data();
+                render_pass_info.clearValueCount = static_cast<u32>(clear_values.size());
+                render_pass_info.pClearValues = clear_values.data();
 
-                ctx.cmd.beginRenderPass(rp, vk::SubpassContents::eInline);
+                ctx.cmd.beginRenderPass(render_pass_info, vk::SubpassContents::eInline);
                 ImGui_ImplVulkan_RenderDrawData(const_cast<ImDrawData*>(draw_data), ctx.cmd);
                 ctx.cmd.endRenderPass();
 
@@ -291,10 +389,17 @@ namespace GLT::renderer::vk_rasterizer {
         vk::CommandBuffer cmd = m_render_cmd[m_current_frame];
         m_graph->execute(cmd);                      // The graph emits all its barriers and invokes every pass's execute lambda
 
-        m_output_image->get_accessible_image_ref().layout = m_graph->texture_layout(m_triangle_target); // Sync image layout to graph last use
+        m_output_image->get_accessible_image_ref().layout = m_graph->texture_layout(m_scene_color); // Sync image layout to graph last use
         m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;         // imgui sets layout to ePresentSrcKHR
 
         m_graph->end_frame();
+
+        static u32 dup_counter = 0;
+        if (dup_counter >= 250) {
+            LOG(info, "[{}]", m_graph->dump())
+            dup_counter = 0;
+        }
+        dup_counter++;
 
         if (m_timestamp_pool)
             cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, m_timestamp_pool, m_current_frame * 2 + 1);

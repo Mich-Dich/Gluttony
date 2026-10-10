@@ -497,6 +497,14 @@ namespace GLT::renderer::vk_rasterizer {
         camera_data.view = m_active_camera.view;
         camera_data.view_proj = view_projection;
         camera_data.camera_pos = glm::vec4(m_active_camera.position, 1.0f);
+        camera_data.projection = projection;
+        camera_data.inv_projection = glm::inverse(projection);
+        camera_data.cluster_dims = glm::uvec4(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z, 0u);
+        camera_data.cluster_depth = glm::vec4(
+            m_active_camera.near_plane,
+            m_active_camera.far_plane,
+            static_cast<f32>(m_render_size.x),
+            static_cast<f32>(m_render_size.y));
 
         // Gribb-Hartmann frustum extraction. Rows of view_projection map world space to clip space; the six planes fall out as signed
         // combinations of those rows

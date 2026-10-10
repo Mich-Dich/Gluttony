@@ -218,8 +218,25 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
         if (desc.persistent) {
             auto it = m_persistent_buffers.find(desc.name);
-            if (it != m_persistent_buffers.end())
-                return it->second;
+            if (it != m_persistent_buffers.end()) {
+
+                const buffer_handle handle = it->second;
+                buffer_resource& buffer = m_buffers[handle.id];
+
+                const bool needs_rebuild = (buffer.desc.size  != desc.size) || (buffer.desc.usage != desc.usage);
+
+                if (!needs_rebuild)
+                    return handle;
+
+                // destroy the old allocation and rebuild in place, so the handle the caller is holding stays valid across the resize
+                destroy_buffer(buffer);
+                buffer = buffer_resource{};
+                buffer.desc = desc;
+                buffer.allocated = m_device->create_buffer(desc.size, desc.usage, desc.vma_flags);
+                buffer.state = { vk::ImageLayout::eUndefined, {}, vk::PipelineStageFlagBits2::eNone };
+
+                return handle;
+            }
         }
 
         u32 buffer_index = UINT32_MAX;
@@ -643,24 +660,35 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
     void render_graph::cull() {
 
-        // A pass is live if it has side effects, or if at least one of its written resources is read (or written) by a 
-        // live pass downstream. Start from side-effect / present passes and walk backwards
+        // A pass is live if it has side effects, or if at least one of its written resources is read (or written) by a
+        // live pass downstream. Start from side-effect / present passes and walk backwards.
         //
-        // Simplest correct implementation: iterate to a fixpoint. The pass count is small
+        // Iterate to a fixpoint. The pass count is small.
         for (auto& pass : m_passes)
             pass.culled = true;
 
-        std::vector<bool> used_by_live(m_textures.size() + m_buffers.size(), false);
+        std::vector<bool> texture_used_by_live(m_textures.size(), false);
+        std::vector<bool> buffer_used_by_live(m_buffers.size(), false);
 
         bool changed = true;
         while (changed) {
             changed = false;
             for (i32 index = static_cast<i32>(m_passes.size()) - 1; index >= 0; --index) {
+
                 auto& pass = m_passes[index];
                 bool live = pass.builder.m_side_effects;
+
                 if (!live) {
                     for (auto& [handle, _] : pass.builder.m_tex_writes)
-                        if (used_by_live[handle.id]) { 
+                        if (texture_used_by_live[handle.id]) {
+                            live = true;
+                            break;
+                        }
+                }
+
+                if (!live) {
+                    for (auto& [handle, _] : pass.builder.m_buf_writes)
+                        if (buffer_used_by_live[handle.id]) {
                             live = true;
                             break;
                         }
@@ -675,12 +703,18 @@ namespace GLT::renderer::vk_rasterizer::graph {
                 pass.culled = false;
                 changed = true;
 
-                // Any resource this live pass reads or writes is now considered live
+                // Every resource this live pass touches keeps its producer alive.
                 for (auto& [handle, _] : pass.builder.m_tex_reads)
-                    used_by_live[handle.id] = true;
+                    texture_used_by_live[handle.id] = true;
 
                 for (auto& [handle, _] : pass.builder.m_tex_writes)
-                    used_by_live[handle.id] = true;
+                    texture_used_by_live[handle.id] = true;
+
+                for (auto& [handle, _] : pass.builder.m_buf_reads)
+                    buffer_used_by_live[handle.id] = true;
+
+                for (auto& [handle, _] : pass.builder.m_buf_writes)
+                    buffer_used_by_live[handle.id] = true;
             }
         }
     }

@@ -15,6 +15,7 @@
 #include "asset/mesh.h"
 #include "asset/material.h"
 #include "world/camera_snapshot.h" 
+#include "world/light_snapshot.h"
 #include "reflection/registry.h"
 
 
@@ -293,6 +294,14 @@ namespace GLT::render {
         // Meshes referenced by the submitted instances are automatically retained; meshes that are no longer referenced
         // (and not externally retained via retain_mesh) are queued for unload at the next safe point.
         virtual void submit_scene(std::span<const GLT::asset::mesh::instance> instances) = 0;
+
+
+        // Copy the world's lights for the upcoming frame. Called by the world layer during update; the renderer copies
+        // the span. Semantically parallel to [submit_scene]: the renderer's `m_lights` is fully replaced.
+        //
+        // Threading: same contract as submit_scene — may be called from the update thread. This is a *handoff*, not a
+        // callback into the world.
+        virtual void submit_lights(std::span<const GLT::world::light_snapshot> lights) = 0;
 
 
         // Explicitly keep a mesh resident regardless of the submitted scene. Use for global assets (skybox, debug gizmos). Idempotent

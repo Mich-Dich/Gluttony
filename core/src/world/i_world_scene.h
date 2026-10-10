@@ -3,6 +3,7 @@
 
 #include "asset/mesh.h"
 #include "world/camera_snapshot.h" 
+#include "world/light_snapshot.h"
 
 
 
@@ -33,6 +34,9 @@ namespace GLT::world {
 
 
         virtual void gather_scene(std::vector<GLT::asset::mesh::instance>& out) const = 0;
+
+
+        virtual void gather_lights(std::vector<GLT::world::light_snapshot>& out) const = 0;
 
 
         // Fill [out] from the active camera. Returns false if there is no active camera (the renderer keeps whatever view it last had)

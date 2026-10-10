@@ -5,8 +5,8 @@
 struct InstanceData {
     mat4 model;
     mat4 normal_matrix;
+    uint mesh_index;
     uint material_index;
-    uint _pad0;
     uint _pad1;
     uint _pad2;
 };

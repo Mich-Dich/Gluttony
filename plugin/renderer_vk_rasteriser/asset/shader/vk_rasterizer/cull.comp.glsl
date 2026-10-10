@@ -46,80 +46,10 @@ layout(set = 0, binding = 5) uniform CameraUBO {
     mat4                    view;
     vec4                    camera_pos;
     vec4                    frustum_planes[6];
-    uvec4                   flags;                              // x = hiz_enabled
+    uvec4                   flags;
 } camera;
-layout(set = 0, binding = 6) uniform sampler2D hiz_pyramid;     // HiZ pyramid, full mip chain, sampled with textureLod
 
 
-
-// Project an AABB corner into NDC. Returns false if the corner is behind the camera (w <= 0), in which case the caller falls back to no-occlusion
-bool project_corner(vec3 local_corner, mat4 model, out vec3 ndc, out float clip_w) {
-
-    vec4 clip = camera.view_proj * model * vec4(local_corner, 1.0);
-    if (clip.w <= 1e-6)
-        return false;
-    ndc = clip.xyz / clip.w;
-    clip_w = clip.w;
-    return true;
-}
-
-
-// Returns true if the instance should be culled by HiZ. Everything is conservative: on any uncertainty, return false (keep the instance)
-bool is_occluded_by_hiz(InstanceData instance, MeshData mesh) {
-
-    if (camera.flags.x == 0u)
-        return false;
-
-    // Project all 8 AABB corners.
-    vec3 ndc_min = vec3( 1e30);
-    vec3 ndc_max = vec3(-1e30);
-    for (uint corner_index = 0u; corner_index < 8u; ++corner_index) {
-
-        vec3 local_corner = mix(mesh.local_min, mesh.local_max, vec3(
-            (corner_index & 1u) != 0u ? 1.0 : 0.0,
-            (corner_index & 2u) != 0u ? 1.0 : 0.0,
-            (corner_index & 4u) != 0u ? 1.0 : 0.0));
-
-        vec3 ndc;
-        float clip_w;
-        if (!project_corner(local_corner, instance.model, ndc, clip_w))
-            return false;      // AABB crosses the near plane, can't safely test
-
-        ndc_min = min(ndc_min, ndc);
-        ndc_max = max(ndc_max, ndc);
-    }
-
-    // If the AABB's nearest corner is already past the far plane, nothing would be drawn anyway; let the frustum test handle it
-    if (ndc_min.z > 1.0)
-        return false;
-
-    // Convert NDC to pyramid UV coordinates. The pyramid covers the same screen extents as the depth buffer, but at half resolution on mip 0
-    vec2 uv_min = ndc_min.xy * 0.5 + 0.5;
-    vec2 uv_max = ndc_max.xy * 0.5 + 0.5;
-    uv_min = clamp(uv_min, vec2(0.0), vec2(1.0));
-    uv_max = clamp(uv_max, vec2(0.0), vec2(1.0));
-
-    // Choose a mip level so each pyramid texel covers roughly the same number of pixels as the AABB's larger screen-space extent
-    // Mip N covers 2^(N+1) full-res pixels, so N ~= log2(size) - 1
-    ivec2 pyramid_size = textureSize(hiz_pyramid, 0);
-    vec2 screen_size_px = (uv_max - uv_min) * vec2(pyramid_size);
-    float max_screen_dim = max(screen_size_px.x, screen_size_px.y);
-    float mip_f = log2(max(max_screen_dim, 1.0)) - 1.0;
-    int mip = clamp(int(mip_f), 0, int(textureQueryLevels(hiz_pyramid)) - 1);
-
-    // Sample the 4 AABB corners and the center at that mip. Take the max. Under-sampling would let us incorrectly cull,
-    // so we over-sample slightly by also taking the center
-    vec2 center_uv = (uv_min + uv_max) * 0.5;
-    float pyramid_max = 0.0;
-    pyramid_max = max(pyramid_max, textureLod(hiz_pyramid, vec2(uv_min.x, uv_min.y), float(mip)).r);
-    pyramid_max = max(pyramid_max, textureLod(hiz_pyramid, vec2(uv_max.x, uv_min.y), float(mip)).r);
-    pyramid_max = max(pyramid_max, textureLod(hiz_pyramid, vec2(uv_min.x, uv_max.y), float(mip)).r);
-    pyramid_max = max(pyramid_max, textureLod(hiz_pyramid, vec2(uv_max.x, uv_max.y), float(mip)).r);
-    pyramid_max = max(pyramid_max, textureLod(hiz_pyramid, center_uv, float(mip)).r);
-
-    // Occluded if the AABB's nearest NDC depth is behind the pyramid's furthest depth in that screen region.
-    return ndc_min.z > pyramid_max;
-}
 
 // 8 corners, no AABB transform matrix needed
 vec3 aabb_world_corner(vec3 local_min, vec3 local_max, mat4 model, uint corner_index) {
@@ -169,9 +99,6 @@ void main() {
     }
 
     if (!frustum_test(world_min, world_max))
-        return;
-
-    if (is_occluded_by_hiz(instance, mesh))
         return;
 
     // Visible. Emit one command per submesh, each drawing a single instance.

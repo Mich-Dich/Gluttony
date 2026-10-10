@@ -39,32 +39,44 @@ namespace GLT::asset::registry_default {
     }
 
 
+    [[nodiscard]] bool asset_writer_impl::has_dependency(UUID id) const noexcept {
+
+        for (const auto& d : m_deps)
+            if (d.id == id) 
+                return true;
+        return false;
+    }
+
+
     void asset_writer_impl::declare_dependency(const UUID id) {
 
-        record_dep dep{};
-        dep.id = id;
-        dep.by_path = false;
+        if (id == 0 || has_dependency(id))
+            return;
+        record_dep dep{}; dep.id = id; dep.by_path = false;
         m_deps.push_back(std::move(dep));
     }
 
 
-    void asset_writer_impl::declare_dependency(std::string_view virtual_path, GLT::asset::type target_type) {
+    void asset_writer_impl::declare_dependency(std::string_view vp, GLT::asset::type t) {
 
+        // path-only deps have no UUID to compare; leave them as-is
         record_dep dep{};
-        dep.virtual_path = std::string(virtual_path);
-        dep.target_type = target_type;
+        dep.virtual_path = std::string(vp);
+        dep.target_type = t;
         dep.by_path = true;
         m_deps.push_back(std::move(dep));
     }
 
 
-    void asset_writer_impl::declare_dependency(const UUID id, std::string_view virtual_path, GLT::asset::type target_type) {
+    void asset_writer_impl::declare_dependency(const UUID id, std::string_view vp, GLT::asset::type t) {
 
+        if (has_dependency(id))
+            return;
         record_dep dep{};
         dep.id = id;
-        dep.virtual_path = std::string(virtual_path);
-        dep.target_type = target_type;
-        dep.by_path = !virtual_path.empty();
+        dep.virtual_path = std::string(vp);
+        dep.target_type = t;
+        dep.by_path = !vp.empty();
         m_deps.push_back(std::move(dep));
     }
 

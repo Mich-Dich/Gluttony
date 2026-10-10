@@ -77,6 +77,10 @@ namespace GLT::world::world_ecs_entt {
 
         entity_builder& set_audio(GLT::asset::handle clip, const GLT::asset::audio::source_config& cfg = {}, bool autoplay = false);
 
+
+        entity_builder& set_light(GLT::world::light_type type = GLT::world::light_type::point, const glm::vec3& color = { 1.f, 1.f, 1.f },
+            f32 intensity = 1.f);
+
         // ---- hierarchy -------------------------------------------------------------------------------
 
         // Reparent this entity. INVALID_ENTITY detaches it (equivalent to detach()).

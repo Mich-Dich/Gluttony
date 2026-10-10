@@ -99,7 +99,6 @@ namespace GLT::renderer::vk_rasterizer {
 
     void renderer::create_cull_pipeline() {
 
-        // Six bindings: instances, meshes, submeshes, draw commands, draw count, camera (for frustum planes)
         std::vector<util::descriptor_item> layout_items;
         layout_items.emplace_back(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
         layout_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
@@ -138,29 +137,47 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_device.destroyShaderModule(compute_shader);
 
-        // Per-frame draw command + draw count buffers + cull descriptor buffers
+        // Per-frame draw buffers owned by the graph. The graph handles barriers between the cull pass (which writes them) and the draw passes
+        // (which read them as indirect). One buffer per in-flight frame so frames N-1 and N-2 don't clobber the one the GPU is still reading
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
 
-            m_draw_command_buffers[frame_index] = m_dev->create_buffer(MAX_DRAW_COMMANDS * sizeof(vk::DrawIndexedIndirectCommand),
-                vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer,
-                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-            m_live_buffer_count++;
+            graph::buffer_desc draw_commands_desc{};
+            draw_commands_desc.name = "draw_commands_" + std::to_string(frame_index);
+            draw_commands_desc.size = MAX_DRAW_COMMANDS * sizeof(vk::DrawIndexedIndirectCommand);
+            draw_commands_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
+            draw_commands_desc.persistent = true;
 
-            m_draw_count_buffers[frame_index] = m_dev->create_buffer( sizeof(u32),
-            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, 0);
-            m_live_buffer_count++;
+            m_draw_commands_handles[frame_index] = m_graph->create_buffer(draw_commands_desc);
+
+            graph::buffer_desc draw_count_desc{};
+            draw_count_desc.name = "draw_count_" + std::to_string(frame_index);
+            draw_count_desc.size = sizeof(u32);
+            draw_count_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer
+                                  | vk::BufferUsageFlagBits::eIndirectBuffer
+                                  | vk::BufferUsageFlagBits::eTransferDst;
+            draw_count_desc.persistent = true;
+
+            m_draw_count_handles[frame_index] = m_graph->create_buffer(draw_count_desc);
+
+            // Build the cull descriptor set for this frame. The descriptor items point into the graph's buffers via the graph's own lookup helper
+            util::allocated_buffer* draw_commands_allocation = m_graph->buffer_allocation(m_draw_commands_handles[frame_index]);
+            util::allocated_buffer* draw_count_allocation    = m_graph->buffer_allocation(m_draw_count_handles[frame_index]);
+            ASSERT(draw_commands_allocation && draw_count_allocation, "", "Graph failed to allocate draw buffers");
 
             std::vector<util::descriptor_item> descriptor_items;
             descriptor_items.emplace_back(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_instance_buffers[frame_index]);
             descriptor_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_mesh_data_buffer);
             descriptor_items.emplace_back(2, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_submesh_data_buffer);
-            descriptor_items.emplace_back(3, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_draw_command_buffers[frame_index]);
-            descriptor_items.emplace_back(4, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_draw_count_buffers[frame_index]);
+            descriptor_items.emplace_back(3, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, draw_commands_allocation);
+            descriptor_items.emplace_back(4, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, draw_count_allocation);
             descriptor_items.emplace_back(5, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_camera_ubos[frame_index]);
 
-            m_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_cull_set_layout, descriptor_items, 
+            m_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_cull_set_layout, descriptor_items,
                 util::descriptor_buffer_type::resource, 1);
-            m_dev->update_descriptor_buffer(m_cull_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::resource);
+
+            m_dev->update_descriptor_buffer(m_cull_desc_buffers[frame_index], descriptor_items,
+                util::descriptor_buffer_type::resource);
+
             m_live_buffer_count++;
         }
     }
@@ -174,13 +191,7 @@ namespace GLT::renderer::vk_rasterizer {
             if (descriptor_buffer.buffer.buffer)
                 m_dev->destroy_buffer(descriptor_buffer.buffer);
 
-        for (auto& draw_command_buffer : m_draw_command_buffers)
-            if (draw_command_buffer.buffer)
-                m_dev->destroy_buffer(draw_command_buffer);
-
-        for (auto& draw_count_buffer : m_draw_count_buffers)
-            if (draw_count_buffer.buffer)
-                m_dev->destroy_buffer(draw_count_buffer);
+        // The draw command / draw count buffers are graph-owned (persistent) and will be destroyed by ~render_graph. Nothing to do here
 
         if (m_cull_pipeline)
             m_device.destroyPipeline(m_cull_pipeline);
@@ -201,11 +212,14 @@ namespace GLT::renderer::vk_rasterizer {
     // Pack every visible scene instance into a single flat array. The GPU groups by mesh during culling; the CPU no longer batches anything
     void renderer::build_instance_buffer() {
 
-        if (m_scene_instances.empty())
-            return;
+        m_packed_instances.clear();
 
-        std::vector<gpu_instance_data> packed;
-        packed.reserve(std::min<size_t>(m_scene_instances.size(), MAX_INSTANCES));
+        if (m_scene_instances.empty()) {
+            m_instance_count = 0;
+            return;
+        }
+
+        m_packed_instances.reserve(m_scene_instances.size());
 
         for (const auto& scene_instance : m_scene_instances) {
 
@@ -216,7 +230,7 @@ namespace GLT::renderer::vk_rasterizer {
             if (!mesh_slot || !mesh_slot->alive)
                 continue;
 
-            if (packed.size() >= MAX_INSTANCES) {
+            if (m_packed_instances.size() >= MAX_INSTANCES) {
                 LOG(warn, "Instance SSBO capacity exceeded ({} instances); scene truncated", MAX_INSTANCES);
                 break;
             }
@@ -231,69 +245,21 @@ namespace GLT::renderer::vk_rasterizer {
             instance_data.mesh_index = mesh_index;
             instance_data.material_index = 0;
 
-            packed.push_back(instance_data);
+            m_packed_instances.push_back(instance_data);
         }
 
-        m_instance_count = static_cast<u32>(packed.size());
+        m_instance_count = static_cast<u32>(m_packed_instances.size());
 
-        if (packed.empty())
+        if (m_packed_instances.empty())
             return;
 
         void* mapped = m_dev->map_buffer(m_instance_buffers[m_current_frame]);
-        std::memcpy(mapped, packed.data(), packed.size() * sizeof(gpu_instance_data));
+        std::memcpy(mapped, m_packed_instances.data(), m_packed_instances.size() * sizeof(gpu_instance_data));
         m_dev->unmap_buffer(m_instance_buffers[m_current_frame]);
     }
 
 
-    void renderer::dispatch_culling(vk::CommandBuffer cmd) {
-
-        auto& draw_count_buffer = m_draw_count_buffers[m_current_frame];
-
-        // Zero the counter
-        cmd.fillBuffer(draw_count_buffer.buffer, 0, sizeof(u32), 0);
-
-        // Barrier: transfer write -> compute read/write
-        {
-            vk::MemoryBarrier2 barrier{};
-            barrier.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
-            barrier.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
-            barrier.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite;
-
-            vk::DependencyInfo dependency_info{};
-            dependency_info.memoryBarrierCount = 1;
-            dependency_info.pMemoryBarriers = &barrier;
-            cmd.pipelineBarrier2(dependency_info);
-        }
-
-        // Dispatch
-        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
-        m_dev->bind_descriptor_buffer({ m_cull_desc_buffers[m_current_frame] }, cmd);
-        m_dev->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, cmd, vk::PipelineBindPoint::eCompute);
-
-        const u32 workgroup_size = 64;
-        const u32 dispatch_count = (m_instance_count + workgroup_size - 1) / workgroup_size;
-        cmd.dispatch(dispatch_count, 1, 1);
-
-        // Barrier: compute write -> indirect draw read
-        {
-            vk::MemoryBarrier2 barrier{};
-            barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderWrite;
-            barrier.dstStageMask = vk::PipelineStageFlagBits2::eDrawIndirect;
-            barrier.dstAccessMask = vk::AccessFlagBits2::eIndirectCommandRead;
-
-            vk::DependencyInfo dependency_info{};
-            dependency_info.memoryBarrierCount = 1;
-            dependency_info.pMemoryBarriers = &barrier;
-            cmd.pipelineBarrier2(dependency_info);
-        }
-    }
-
-
-    // Issue the whole scene as a single indexed indirect count draw. The graphics pipeline layout is unchanged — the vertex shader still reads
-    // the instance SSBO via gl_InstanceIndex, and the cull pass filled the commands' firstInstance field to point into that buffer
-    void renderer::draw_scene_indirect(vk::CommandBuffer cmd) {
+    void renderer::draw_scene_indirect(vk::CommandBuffer cmd, vk::Buffer draw_commands, vk::Buffer draw_count) {
 
         if (m_instance_count == 0)
             return;
@@ -302,9 +268,10 @@ namespace GLT::renderer::vk_rasterizer {
         cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
 
         cmd.drawIndexedIndirectCount(
-            m_draw_command_buffers[m_current_frame].buffer, 0,
-            m_draw_count_buffers[m_current_frame].buffer, 0,
-            MAX_DRAW_COMMANDS, sizeof(vk::DrawIndexedIndirectCommand));
+            draw_commands, 0,
+            draw_count, 0,
+            MAX_DRAW_COMMANDS,
+            sizeof(vk::DrawIndexedIndirectCommand));
 
         m_frame_draw_calls++;
     }

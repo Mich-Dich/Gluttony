@@ -61,7 +61,7 @@ namespace GLT::world::world_ecs_entt {
             reg.emplace<component::transform>(e);
 
         component::mesh mesh_comp{};
-        mesh_comp.mesh    = mesh;
+        mesh_comp.mesh = mesh;
         mesh_comp.visible = visible;
         reg.emplace_or_replace<component::mesh>(e, std::move(mesh_comp));
         return *this;
@@ -75,6 +75,23 @@ namespace GLT::world::world_ecs_entt {
         audio_comp.config = cfg;
         audio_comp.autoplay = autoplay;
         return add_or_replace<component::audio_source>(std::move(audio_comp));
+    }
+
+
+    entity_builder& entity_builder::set_light(GLT::world::light_type type, const glm::vec3& color, f32 intensity) {
+
+        auto& reg = m_plugin->registry();
+        const auto e = m_plugin->entt_of(m_id);
+
+        // Same invariant as set_mesh: every light is a placement, so make sure a transform exists
+        if (!reg.all_of<component::transform>(e))
+            reg.emplace<component::transform>(e);
+
+        component::light l{};
+        l.color = color;
+        l.intensity = intensity;
+        l.type = type;
+        return add_or_replace<component::light>(std::move(l));
     }
 
 

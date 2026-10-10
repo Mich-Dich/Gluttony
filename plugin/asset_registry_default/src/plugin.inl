@@ -369,19 +369,7 @@ namespace GLT::asset::registry_default {
             // seed the writer -----------------------------------------------------------------------------------------
             writer.set_name(slot->asset_info.name);
 
-            // Re-declare every dependency so the file stays self-describing
-            for (GLT::asset::handle dep : slot->deps_storage) {
-
-                const GLT::asset::registry_default::slot* dep_slot = slot_for(dep);
-                if (!dep_slot)
-                    continue;
-
-                std::error_code error{};
-                const auto rel = std::filesystem::relative(dep_slot->canonical_path, slot->canonical_path.parent_path(), error);
-                const std::string path_str = error ? dep_slot->canonical_path.generic_string() : rel.generic_string();
-
-                writer.declare_dependency(dep_slot->asset_info.id, path_str, dep_slot->asset_info.asset_type);
-            }
+            // NOTE: dependencies are re-declared by the handler in serialize()
 
             info_snap = slot->asset_info;
             asset_ptr = slot->data.get();
@@ -943,8 +931,8 @@ namespace GLT::asset::registry_default {
     void plugin::retain(GLT::asset::handle h) {
 
         std::unique_lock lock(m_mutex);
-        if (slot* s = slot_for(h))
-            ++s->ref_count;
+        if (GLT::asset::registry_default::slot* slot = slot_for(h))
+            slot->ref_count++;
     }
 
 
@@ -959,26 +947,26 @@ namespace GLT::asset::registry_default {
         {
             std::unique_lock lock(m_mutex);
 
-            slot* s = slot_for(h);
-            if (!s)
+            GLT::asset::registry_default::slot* slot = slot_for(h);
+            if (!slot)
                 return;
 
-            if (s->ref_count == 0) {
-                LOG(warn, "release() on asset with ref_count == 0");
+            if (slot->ref_count == 0) {
+                LOG(warn, "release() on asset with ref_count == 0 [{}]", slot->canonical_path.generic_string());
                 return;
             }
 
-            --s->ref_count;
-            if (s->ref_count > 0)
+            slot->ref_count--;
+            if (slot->ref_count > 0)
                 return;
 
             // Last reference is gone. Pull data out so it is destroyed after unlock
-            deps_to_release = s->deps_storage;
-            data_to_destroy = std::move(s->data);
+            deps_to_release = slot->deps_storage;
+            data_to_destroy = std::move(slot->data);
 
             // Remove from indexes and free slot
-            m_by_path.erase(s->canonical_path.generic_string());
-            m_by_id.erase(s->asset_info.id);
+            m_by_path.erase(slot->canonical_path.generic_string());
+            m_by_id.erase(slot->asset_info.id);
             release_slot(h);
         }
 
@@ -1206,9 +1194,15 @@ namespace GLT::asset::registry_default {
             std::vector<GLT::asset::dependency_disk> dep_disk(hdr.dependency_count);
             std::memcpy(dep_disk.data(), bytes.data() + hdr.dependency_table_offset, need);
 
+            std::unordered_set<UUID> seen_dep_ids;
+            seen_dep_ids.reserve(hdr.dependency_count);
+
             for (const GLT::asset::dependency_disk& dep : dep_disk) {
 
-                resolved_dep_ids.push_back(dep.id);        // ← always, even if resolution fails
+                if (!seen_dep_ids.insert(dep.id).second)
+                    continue;                               // duplicate row - skip
+
+                resolved_dep_ids.push_back(dep.id);        // <- always, even if resolution fails
 
                 // fast path - already resident by id
                 if (auto it = m_by_id.find(dep.id); it != m_by_id.end()) {

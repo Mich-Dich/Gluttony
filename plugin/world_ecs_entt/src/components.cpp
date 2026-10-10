@@ -42,6 +42,8 @@ namespace GLT::world::world_ecs_entt::component {
 
     void register_camera_descriptor(component_registry& reg);
 
+    void register_light_descriptor(component_registry& reg);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
@@ -252,6 +254,67 @@ namespace GLT::world::world_ecs_entt::component {
             { component_name_hash("transform") });
     }
 
+
+    void register_light_descriptor(component_registry& reg) {
+
+        reg.register_component<component::light>("light", "Rendering",
+
+            [](entity_id id) {
+
+                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
+                if (!plugin)
+                    return;
+
+                auto& light = plugin->registry().get<component::light>(plugin->entt_of(id));
+
+                ImGui::PushID("light");
+                GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
+
+                GLT::UI::table_row("type", light.type, GLT::util::enum_values<GLT::world::light_type>);
+                GLT::UI::table_row("color", light.color);
+                GLT::UI::table_row("intensity", light.intensity, 0.01f, 0.f, 1000.f);
+
+                if (light.type != GLT::world::light_type::directional)
+                    GLT::UI::table_row("radius", light.radius, 0.1f, 0.01f, 100000.f);
+
+                if (light.type == GLT::world::light_type::spot) {
+
+                    GLT::UI::table_row("inner cone", light.inner_cone_angle, 0.005f, 0.f, glm::pi<f32>());
+                    GLT::UI::table_row("outer cone", light.outer_cone_angle, 0.005f, 0.f, glm::pi<f32>());
+
+                    // Same invariant pattern as the audio descriptor's min/max distance: whichever row the user dragged,
+                    // restore the ordering at the end of the frame
+                    light.inner_cone_angle = GLT::math::clamp(light.inner_cone_angle, 0.f, light.outer_cone_angle);
+                }
+
+                GLT::UI::end_table();
+                ImGui::PopID();
+            },
+
+            [](entity_id id) {
+
+                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
+                if (!plugin)
+                    return std::string{};
+
+                const auto& light = plugin->registry().get<component::light>(plugin->entt_of(id));
+
+                const char* tag = "?";
+                switch (light.type) {
+                    case GLT::world::light_type::directional: tag = "dir";   break;
+                    case GLT::world::light_type::point: tag = "point"; break;
+                    case GLT::world::light_type::spot: tag = "spot";  break;
+                }
+
+                char buf[48];
+                std::snprintf(buf, sizeof(buf), "%s  i=%.2f", tag, light.intensity);
+                return std::string(buf);
+            },
+
+            // Same reasoning as camera/mesh: a light without a transform is unplaceable
+            { component_name_hash("transform") });
+    }
+
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -265,6 +328,7 @@ namespace GLT::world::world_ecs_entt::component {
         register_audio_source_descriptor(reg);
         register_no_inherit_transform_descriptor(reg);
         register_camera_descriptor(reg);
+        register_light_descriptor(reg);
     }
 
     // CLASS IMPLEMENTATION ============================================================================================

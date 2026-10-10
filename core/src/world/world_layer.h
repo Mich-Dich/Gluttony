@@ -4,13 +4,13 @@
 #include "asset/mesh.h"
 #include "world/controller.h"
 #include "event/application_event.h"
+#include "world/light_snapshot.h"
 
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
 namespace GLT::world {
-    class camera;
     class i_world_plugin;
 }
 
@@ -38,7 +38,6 @@ namespace GLT::world {
         ~world_layer();
 
         DEFAULT_GETTER(ref<GLT::world::controller>,             controller)
-        DEFAULT_GETTER(ref<GLT::world::camera>,                 editor_camera)
         DEFAULT_GETTER(ref<GLT::world::i_world_plugin>,         world)
 
 
@@ -66,10 +65,10 @@ namespace GLT::world {
 
 
         ref<GLT::world::controller>                             m_controller{};
-        ref<GLT::world::camera>                                 m_editor_camera{};
         ref<GLT::world::i_world_plugin>                         m_world{};
         handle                                                  m_save_sub_handle{};
         std::vector<GLT::asset::mesh::instance>                 m_scene_buffer{};
+        std::vector<GLT::world::light_snapshot>                 m_light_buffer{};
 
     };
 

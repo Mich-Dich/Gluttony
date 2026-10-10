@@ -150,6 +150,10 @@ namespace GLT::renderer::vk_ray {
         // the renderer remembers the uploaded meshes and skips if mesh not loaded
         void unload_mesh(GLT::asset::handle handle) override;
 
+        // light -------------------------------------------------------------------------------------------------------
+
+        void submit_lights(std::span<const GLT::world::light_snapshot> lights) override { }
+
         // scene management --------------------------------------------------------------------------------------------
     
         void submit_scene(std::span<const GLT::asset::mesh::instance> instances) override;

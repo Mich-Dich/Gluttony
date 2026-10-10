@@ -207,6 +207,9 @@ namespace GLT::world::world_ecs_entt {
         void gather_scene(std::vector<GLT::asset::mesh::instance>& out) const override;
 
 
+        void gather_lights(std::vector<GLT::world::light_snapshot>& out) const override;
+
+
         [[nodiscard]] bool get_camera_view(GLT::world::camera_snapshot& out) const override;
 
 

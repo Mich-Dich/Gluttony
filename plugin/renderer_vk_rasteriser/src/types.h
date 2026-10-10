@@ -13,7 +13,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     static constexpr u32                                        VERTEX_HEADROOM_MIN = 64 * 1024;
     
-    static constexpr u32                                        INDEX_HEADROOM_MIN  = 128 * 1024;
+    static constexpr u32                                        INDEX_HEADROOM_MIN = 128 * 1024;
 
     static constexpr u32                                        MAX_INSTANCES = 4096;
 
@@ -27,6 +27,22 @@ namespace GLT::renderer::vk_rasterizer {
 
     static constexpr u32                                        HIZ_LEVEL_COUNT = 5;
 
+    static constexpr u32                                        MAX_LIGHTS = 1024;
+
+    // Clustered light culling -----------------------------------------------------------------------------------------
+
+    static constexpr u32                                        CLUSTER_TILE_SIZE_X = 16;
+
+    static constexpr u32                                        CLUSTER_TILE_SIZE_Y = 16;
+
+    static constexpr u32                                        CLUSTER_DEPTH_SLICES = 24;
+
+    // Per-cluster ceiling enforced by the culling shader. Dense clusters drop their excess
+    static constexpr u32                                        MAX_LIGHTS_PER_CLUSTER = 256;
+
+    // Hard ceiling on the shared light index list (independent of cluster count). 4 M entries = 16 MB
+    static constexpr u32                                        MAX_CLUSTER_INDEX_ENTRIES = 4 * 1024 * 1024;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -36,9 +52,15 @@ namespace GLT::renderer::vk_rasterizer {
         glm::mat4                                               view{1.0f};
         glm::vec4                                               camera_pos{0.0f};
         glm::vec4                                               frustum_planes[6]{};
-        glm::uvec4                                              flags{0u};                  // x = hiz_enabled (1 = use occlusion test)
+        glm::uvec4                                              flags{0u};
+
+        // for light culling. Kept at the end so pre-existing shaders keep their offsets
+        glm::mat4                                               projection{1.0f};    
+        glm::mat4                                               inv_projection{1.0f};
+        glm::uvec4                                              cluster_dims{0u};       // (x = grid_x, y = grid_y, z = grid_z)
+        glm::vec4                                               cluster_depth{0.0f};    // (x = near, y = far, z = render_w, w = render_h)
     };
-    static_assert(sizeof(camera_ubo_data) == 256);
+    static_assert(sizeof(camera_ubo_data) == 416);
 
 
     // Per-instance data, written every frame by build_instance_buffer(). std430 aligned; matches InstanceData in the shaders
@@ -82,6 +104,17 @@ namespace GLT::renderer::vk_rasterizer {
     };
     static_assert(sizeof(gpu_submesh_data) == 8, "gpu_submesh_data layout mismatch");
 
+
+    // Per-light GPU data, uploaded every frame by update_lights(). Packed as 4 x vec4 for clean std430 alignment; no padding is
+    // needed inside the struct, and the shader can read it as a straight array of [Light]
+    struct gpu_light {
+        glm::vec4                                               position_radius;        // xyz = world position, w = radius (point/spot)
+        glm::vec4                                               color_intensity;        // rgb = linear color, a = intensity
+        glm::vec4                                               direction_inner_cos;    // xyz = world direction, w = cos(inner cone angle)
+        glm::vec4                                               params;                 // x = cos(outer cone angle), y = type, zw = reserved
+    };
+    static_assert(sizeof(gpu_light) == 64, "gpu_light layout mismatch");
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -91,3 +124,4 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS DECLARATION ===============================================================================================
 
 }
+

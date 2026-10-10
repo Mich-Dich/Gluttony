@@ -70,13 +70,15 @@ namespace GLT::world {
         if (!scene)
             return;
 
-        scene->gather_scene(m_scene_buffer);
-
         auto renderer = GLT::render::renderer::get_ref();
         if (!renderer)
             return;
 
+        scene->gather_scene(m_scene_buffer);
+        scene->gather_lights(m_light_buffer);
+
         renderer->submit_scene(m_scene_buffer);
+        renderer->submit_lights(m_light_buffer);
 
         if (has_camera)
             renderer->set_active_camera(cam);
