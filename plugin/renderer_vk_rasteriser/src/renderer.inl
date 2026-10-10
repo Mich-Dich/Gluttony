@@ -301,9 +301,10 @@ namespace GLT::renderer::vk_rasterizer {
         // depth range per cluster from real depth
         m_graph->add_pass("light_culling",
             [&](graph::pass_builder& builder) {
-                builder.write(m_light_grid_handles[m_current_frame],       graph::buffer_usage::storage_readwrite);
+                builder.read(m_depth_target, graph::texture_usage::depth_sampled);
+                builder.write(m_light_grid_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
                 builder.write(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                builder.write(m_light_counter_handles[m_current_frame],    graph::buffer_usage::storage_readwrite);
+                builder.write(m_light_counter_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
             },
             [this](graph::pass_context& ctx) {
 
@@ -313,11 +314,9 @@ namespace GLT::renderer::vk_rasterizer {
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_light_cull_pipeline);
                 m_dev->bind_descriptor_buffer({ m_light_cull_desc_buffers[m_current_frame] }, ctx.cmd);
                 m_dev->bind_descriptor_set(m_light_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-
-                // One workgroup per cluster; the shader reads gl_WorkGroupID as (gx, gy, gz)
                 ctx.cmd.dispatch(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z);
             });
-        
+
         // Forward shading ---------------------------------------------------------------------------------------------
         m_graph->add_pass("scene",
             [&](graph::pass_builder& builder) {
@@ -394,12 +393,12 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_graph->end_frame();
 
-        static u32 dup_counter = 0;
-        if (dup_counter >= 250) {
-            LOG(info, "[{}]", m_graph->dump())
-            dup_counter = 0;
-        }
-        dup_counter++;
+        // static u32 dup_counter = 0;
+        // if (dup_counter >= 250) {
+        //     LOG(info, "[{}]", m_graph->dump())
+        //     dup_counter = 0;
+        // }
+        // dup_counter++;
 
         if (m_timestamp_pool)
             cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, m_timestamp_pool, m_current_frame * 2 + 1);

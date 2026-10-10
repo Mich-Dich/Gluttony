@@ -69,7 +69,7 @@ namespace GLT::world::world_ecs_entt::component {
     struct camera {
         f32                                         fov{ 45.f };
         f32                                         near_plane{ 0.1f };
-        f32                                         far_plane{ 100.f };
+        f32                                         far_plane{ 1000.f };
     };
     static_assert(std::is_trivially_copyable_v<camera>);
 

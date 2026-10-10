@@ -21,6 +21,8 @@ namespace GLT::asset::world {
 
     inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_METADATA = 0x0303;          // utf-8 "key\0value\0"
 
+    inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_REGION_CELL_SIZE = 0x0304;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -46,6 +48,10 @@ namespace GLT::asset::world {
         GLT::asset::type                                asset_type{ GLT::asset::core_types::world };
         std::vector<GLT::asset::region::region>         region_index;
         std::vector<std::byte>                          settings;       // opaque, plugin-defined
+
+        // Side length (in meters) of one grid cell. Region bounds are always [cell * size - size/2, cell * size + size/2], so the origin
+        // sits at the centre of cell (0,0,0). Every region in the world uses the same size; changing this is a "rebuild the grid" operation
+        glm::vec3                                       region_cell_size{ 256.f, 256.f, 256.f };
 
         // Chosen entity that drives the renderer's view. 0xFFFFFFFF == "no active camera"
         // Stored as raw index/generation so asset/world.h doesn't have to know about world/entity.h's entity_id layout

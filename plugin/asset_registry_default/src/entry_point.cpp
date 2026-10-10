@@ -201,6 +201,9 @@ namespace GLT::asset::registry_default {
 
         [[nodiscard]] GLT::asset::handle find(const std::filesystem::path&) const override;
 
+
+        [[nodiscard]] GLT::asset::handle find_by_id(GLT::UUID id) const override;
+
         // relocation --------------------------------------------------------------------------------------------------
 
         [[nodiscard]] std::expected<void, GLT::asset::load_error> move(

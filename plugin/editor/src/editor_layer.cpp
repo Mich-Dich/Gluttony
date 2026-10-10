@@ -27,6 +27,7 @@
 #include "window/asset_import.h"
 #include "window/asset_create.h"
 #include "window/material_viewer.h"
+#include "window/world_topdown_editor.h"
 #include "util/asset_editor_registry.h"
 #include "util/file_watcher.h"
 #include "input/editor_controller.h"
@@ -528,6 +529,7 @@ namespace GLT::editor {
         // ADD_ASSET_EDITOR(GLT::asset::core_types::cube_map,      texture_viewer_window)
         ADD_ASSET_EDITOR(GLT::asset::core_types::material,      material_viewer_window)
         ADD_ASSET_EDITOR(GLT::asset::core_types::audio,         audio_viewer_window)
+        ADD_ASSET_EDITOR(GLT::asset::core_types::world,         world_topdown_editor)
 
         #undef ADD_ASSET_EDITOR
     }

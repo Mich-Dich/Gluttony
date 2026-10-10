@@ -51,6 +51,7 @@ namespace GLT::renderer::vk_rasterizer {
         layout_items.emplace_back(3, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
         layout_items.emplace_back(4, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
         layout_items.emplace_back(5, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
+        layout_items.emplace_back(6, vk::DescriptorType::eCombinedImageSampler, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
 
         m_light_cull_set_layout = m_dev->create_descriptor_set_layout(layout_items);
         m_live_descriptor_set_count++;
@@ -83,6 +84,17 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_device.destroyShaderModule(compute_shader);
 
+        // Nearest filtering: we want exact texel values for min/max reduction, not interpolated ones
+        vk::SamplerCreateInfo sampler_info{};
+        sampler_info.magFilter = vk::Filter::eNearest;
+        sampler_info.minFilter = vk::Filter::eNearest;
+        sampler_info.mipmapMode = vk::SamplerMipmapMode::eNearest;
+        sampler_info.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+        sampler_info.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+        sampler_info.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+        sampler_info.maxLod = 0.0f;
+        m_depth_sampler = m_device.createSampler(sampler_info);
+
         // Per-frame meta UBO. Allocated empty; content is written each frame by update_light_meta_ubo()
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
             m_light_meta_ubos[frame_index] = m_dev->create_buffer(sizeof(glm::uvec4),
@@ -111,6 +123,11 @@ namespace GLT::renderer::vk_rasterizer {
             if (meta_ubo.buffer)
                 m_dev->destroy_buffer(meta_ubo);
             meta_ubo = {};
+        }
+
+        if (m_depth_sampler) {
+            m_device.destroySampler(m_depth_sampler);
+            m_depth_sampler = nullptr;
         }
 
         if (m_light_cull_pipeline)
@@ -147,34 +164,50 @@ namespace GLT::renderer::vk_rasterizer {
         if (m_cluster_params.cluster_count == 0)
             return;
 
-        for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; frame_index++) {
+        // Only refresh the CURRENT frame's descriptor buffer. The fence wait at the top of
+        // begin_frame() guarantees the GPU has finished the submission that last used this slot,
+        // so it is safe to rewrite. The other two slots may still be executing on the GPU and
+        // must not be touched.
+        const u32 frame_index = m_current_frame;
 
-            util::allocated_buffer* grid_allocation = m_graph->buffer_allocation(m_light_grid_handles[frame_index]);
-            util::allocated_buffer* list_allocation = m_graph->buffer_allocation(m_light_index_list_handles[frame_index]);
-            util::allocated_buffer* counter_allocation = m_graph->buffer_allocation(m_light_counter_handles[frame_index]);
+        util::allocated_buffer* grid_allocation    = m_graph->buffer_allocation(m_light_grid_handles[frame_index]);
+        util::allocated_buffer* list_allocation    = m_graph->buffer_allocation(m_light_index_list_handles[frame_index]);
+        util::allocated_buffer* counter_allocation = m_graph->buffer_allocation(m_light_counter_handles[frame_index]);
 
-            ASSERT(grid_allocation && list_allocation && counter_allocation, "",
-                "Graph failed to allocate light culling buffers");
+        ASSERT(grid_allocation && list_allocation && counter_allocation, "",
+            "Graph failed to allocate light culling buffers");
 
-            using VKDT = vk::DescriptorType;
-            using VKSF = vk::ShaderStageFlagBits;
+        const vk::ImageView depth_view = m_graph->texture_default_view(m_depth_target);
+        ASSERT(depth_view && m_depth_sampler, "", "Depth view/sampler not ready for light culling descriptors");
 
-            std::vector<util::descriptor_item> descriptor_items;
-            descriptor_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eCompute, 1, &m_camera_ubos[frame_index]);
-            descriptor_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_light_buffers[frame_index]);
-            descriptor_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, grid_allocation);
-            descriptor_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, list_allocation);
-            descriptor_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, counter_allocation);
-            descriptor_items.emplace_back(5, VKDT::eUniformBuffer, VKSF::eCompute, 1, &m_light_meta_ubos[frame_index]);
+        // descriptor_item's union reads this as a util::accessible_image*, so the field layout must
+        // match exactly — no local substitute structs.
+        util::accessible_image depth_image{};
+        depth_image.view = depth_view;
+        depth_image.sampler = m_depth_sampler;
+        depth_image.layout = vk::ImageLayout::eDepthStencilReadOnlyOptimal;
 
-            if (m_light_cull_desc_buffers[frame_index].buffer.buffer == nullptr) {
+        using VKDT = vk::DescriptorType;
+        using VKSF = vk::ShaderStageFlagBits;
 
-                m_light_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_light_cull_set_layout, descriptor_items,
-                    util::descriptor_buffer_type::resource, 1);
+        std::vector<util::descriptor_item> descriptor_items;
+        descriptor_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eCompute, 1, &m_camera_ubos[frame_index]);
+        descriptor_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_light_buffers[frame_index]);
+        descriptor_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, grid_allocation);
+        descriptor_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, list_allocation);
+        descriptor_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, counter_allocation);
+        descriptor_items.emplace_back(5, VKDT::eUniformBuffer, VKSF::eCompute, 1, &m_light_meta_ubos[frame_index]);
+        descriptor_items.emplace_back(6, VKDT::eCombinedImageSampler, VKSF::eCompute, 1, &depth_image);
 
-            } else 
-                m_dev->update_descriptor_buffer(m_light_cull_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::resource);
-        }
+        if (m_light_cull_desc_buffers[frame_index].buffer.buffer == nullptr) {
+
+            // First time this slot is used: allocate with combined usage so the sampler binding is legal.
+            m_light_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_light_cull_set_layout, descriptor_items,
+                util::descriptor_buffer_type::combined, 1);
+
+        } else
+            m_dev->update_descriptor_buffer(m_light_cull_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::combined);
+
     }
 
 }

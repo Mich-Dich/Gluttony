@@ -369,7 +369,19 @@ namespace GLT::asset::registry_default {
             // seed the writer -----------------------------------------------------------------------------------------
             writer.set_name(slot->asset_info.name);
 
-            // NOTE: dependencies are re-declared by the handler in serialize()
+            // Re-declare every dependency so the file stays self-describing
+            for (GLT::asset::handle dep : slot->deps_storage) {
+
+                const GLT::asset::registry_default::slot* dep_slot = slot_for(dep);
+                if (!dep_slot)
+                    continue;
+
+                std::error_code error{};
+                const auto rel = std::filesystem::relative(dep_slot->canonical_path, slot->canonical_path.parent_path(), error);
+                const std::string path_str = error ? dep_slot->canonical_path.generic_string() : rel.generic_string();
+
+                writer.declare_dependency(dep_slot->asset_info.id, path_str, dep_slot->asset_info.asset_type);
+            }
 
             info_snap = slot->asset_info;
             asset_ptr = slot->data.get();
@@ -441,6 +453,19 @@ namespace GLT::asset::registry_default {
         if (it == m_by_path.end()) 
             return INVALID_HANDLE;
 
+        return it->second;
+    }
+
+
+    GLT::asset::handle plugin::find_by_id(GLT::UUID id) const {
+
+        if (id == 0)
+            return INVALID_HANDLE;
+
+        std::shared_lock lock(m_mutex);
+        auto it = m_by_id.find(id);
+        if (it == m_by_id.end())
+            return INVALID_HANDLE;
         return it->second;
     }
 
@@ -596,7 +621,7 @@ namespace GLT::asset::registry_default {
             return std::unexpected{ GLT::asset::load_error::out_of_memory };
 
         slot->handler = hit->second;
-        slot->canonical_path = path;
+        slot->canonical_path = relative;
         // slot->chunks_storage stays empty - no disk chunks yet.
 
         GLT::asset::info& ai = slot->asset_info;
@@ -606,9 +631,9 @@ namespace GLT::asset::registry_default {
         ai.flag_bits = GLT::asset::flags::none;
         ai.format_version = GLT::asset::header::CURRENT_VERSION;
         ai.engine_version = GLT::asset::header::CURRENT_VERSION;
-        ai.virtual_path = path;
+        ai.virtual_path = relative;
         ai.source_path = std::filesystem::path{};                                        // caller can set later
-        ai.name = name.empty() ? path.stem().string() : std::string(name);
+        ai.name = name.empty() ? relative.stem().string() : std::string(name);
         ai.chunks = slot->chunks_storage;
         ai.dependencies = slot->deps_storage;
         ai.dependents = slot->dependents_storage;

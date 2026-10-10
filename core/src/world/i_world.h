@@ -146,6 +146,24 @@ namespace GLT::world {
         // activation/deactivation pass here using the current anchor.
         virtual void update(const f32 delta_time) = 0;
 
+        // region grid -------------------------------------------------------------------------------------------------
+
+        // Side length (meters) of one region cell. See world_asset::region_cell_size.
+        [[nodiscard]] virtual glm::vec3 get_region_cell_size() const noexcept = 0;
+
+
+        // Change the grid size and rebuild region assignment. Every entity is re-binned to the cell its world position falls into;
+        // regions are created for any cell that ends up non-empty. Existing region assets are kept - this only changes which cells
+        // the entities land in, not which region files exist. Call save_world() to persist
+        //
+        // Non-positive components are rejected.
+        virtual void set_region_cell_size(const glm::vec3& size) = 0;
+
+
+        // Re-bin every live entity into the cell its world position currently falls into. Called automatically by set_region_cell_size()
+        // and by save_world(); exposed for editors that want to force a resync after bulk transform edits
+        virtual void reassign_all_entities() = 0;
+
         // hierarchy ---------------------------------------------------------------------------------------------------
 
         // Tree view over the world's entities. Not every world needs a hierarchy - a flat implementation can leave the defaults

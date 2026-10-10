@@ -4,6 +4,7 @@
 #include "asset/mesh.h"
 #include "world/camera_snapshot.h" 
 #include "world/light_snapshot.h"
+#include "world/entity.h"
 
 
 
@@ -17,16 +18,29 @@ namespace GLT::world {
 
     // TYPES ===========================================================================================================
 
-    // Optional side-interface a world plugin can implement so the engine can pull a renderable snapshot out of it without knowing about ECS.
+    struct entity_position {
+        entity_id   id{};
+        glm::vec3   world_position{ 0.f };
+    };
+
+    // STATIC VARIABLES ================================================================================================
+
+    // FUNCTION DECLARATION ============================================================================================
+
+    // TEMPLATE DECLARATION ============================================================================================
+
+    // CLASS DECLARATION ===============================================================================================
+
+    // Optional side-interface a world plugin can implement so the engine can pull a renderable snapshot out of it without knowing about ECS
     //
     // Same discovery pattern as i_world_inspector:
     //     if (auto* scene = world->as<i_world_scene>()) { ... }
     //
     // Contract:
-    //   - Called once per frame during the update phase, from the update thread.
-    //   - [out] is cleared first; the implementation should reuse its capacity.
-    //   - Must be safe to call while the renderer is *not* touching the world.
-    //   - The returned handles are stable for the frame; the renderer will translate them to GPU resources itself.
+    //   - Called once per frame during the update phase, from the update thread
+    //   - [out] is cleared first; the implementation should reuse its capacity
+    //   - Must be safe to call while the renderer is *not* touching the world
+    //   - The returned handles are stable for the frame; the renderer will translate them to GPU resources itself
     class i_world_scene {
     public:
 
@@ -37,6 +51,11 @@ namespace GLT::world {
 
 
         virtual void gather_lights(std::vector<GLT::world::light_snapshot>& out) const = 0;
+
+
+        // World-space position of every entity that owns a transform. Used by editors that want a spatial overview (top-down views, minimaps)
+        // without pulling the full render snapshot. Order is unspecified. [out] is cleared first
+        virtual void gather_entity_positions(std::vector<entity_position>& out) const = 0;
 
 
         // Fill [out] from the active camera. Returns false if there is no active camera (the renderer keeps whatever view it last had)
@@ -50,13 +69,5 @@ namespace GLT::world {
         [[nodiscard]] virtual entity_id get_active_camera() const noexcept = 0;
 
     };
-
-    // STATIC VARIABLES ================================================================================================
-
-    // FUNCTION DECLARATION ============================================================================================
-
-    // TEMPLATE DECLARATION ============================================================================================
-
-    // CLASS DECLARATION ===============================================================================================
 
 }

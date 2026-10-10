@@ -386,6 +386,7 @@ namespace GLT::renderer::vk_rasterizer {
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_cull_desc_buffers{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_commands_handles{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_count_handles{};
+        vk::Sampler                                                         m_depth_sampler = nullptr;
 
     };
 

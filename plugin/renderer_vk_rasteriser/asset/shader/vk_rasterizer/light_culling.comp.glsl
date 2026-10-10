@@ -28,41 +28,75 @@ layout(std430, set = 0, binding = 2) writeonly buffer LightGrid { uvec2 grid[]; 
 layout(std430, set = 0, binding = 3) writeonly buffer LightIndexList { uint indices[]; } light_index_list;
 layout(std430, set = 0, binding = 4) buffer LightCounter { uint next_free; } light_counter; // global atomic cursor into light_index_list
 layout(set = 0, binding = 5) uniform LightMetaUBO { uvec4 meta; } light_meta; // x = light_count, y = index_list_capacity, z = max_per_cluster
-
+layout(set = 0, binding = 6) uniform sampler2D depth_texture;
 
 // Helpers -------------------------------------------------------------------------------------------------------------
 
-// Compute the view-space AABB for the cluster at (gx, gy, gz). Uses an exponential depth
-// distribution so that near clusters are thin and far clusters are thick.
+// Convert a window-space depth value in [0,1] to a positive view-space Z.
+// Works for any projection whose inverse is available, regardless of Z-range convention.
+float linearize_depth(float d, mat4 inv_proj) {
+    vec4 clip = vec4(0.0, 0.0, d, 1.0);
+    vec4 view = inv_proj * clip;
+    return -view.z / view.w;    // view-space Z is negative in front
+}
+
+
 void cluster_aabb_view(uvec3 cluster, out vec3 aabb_min, out vec3 aabb_max) {
 
     const uint  slices = camera.cluster_dims.z;
     const float near_z = camera.cluster_depth.x;
-    const float far_z = camera.cluster_depth.y;
+    const float far_z  = camera.cluster_depth.y;
+
+    // ---- 1. Tighten the slice range from the actual depth in this tile ----
+    // Sample a 4x4 grid across the 16x16 footprint. The subsample is conservative: if any
+    // pixel that was sampled is at background depth, its linear value clamps toward far_z,
+    // which only makes the range wider — never narrower. Worst case is the un-tightened
+    // slice range, which is what the shader would have used anyway.
+    const ivec2 tile_origin = ivec2(cluster.xy) * ivec2(16, 16);
+    const int   sub_step    = 4;    // 4 samples per axis
+    float min_linear = 1e30;
+    float max_linear = -1e30;
+
+    for (int y = 0; y < 16; y += sub_step) {
+        for (int x = 0; x < 16; x += sub_step) {
+            const ivec2 pixel = tile_origin + ivec2(x, y);
+            const float d     = texelFetch(depth_texture, pixel, 0).r;
+            const float lz    = linearize_depth(d, camera.inv_projection);
+            min_linear = min(min_linear, lz);
+            max_linear = max(max_linear, lz);
+        }
+    }
 
     const float log_ratio = log(far_z / near_z);
-    const float slice_near = near_z * exp(log_ratio * (float(cluster.z) / float(slices)));
-    const float slice_far = near_z * exp(log_ratio * (float(cluster.z + 1) / float(slices)));
+    const float slice_near_nominal = near_z * exp(log_ratio * (float(cluster.z)     / float(slices)));
+    const float slice_far_nominal  = near_z * exp(log_ratio * (float(cluster.z + 1) / float(slices)));
 
-    // Screen dimensions (last partial tile is treated as full-size; that only over-includes lights)
+    const float slice_near = max(slice_near_nominal, min_linear);
+    const float slice_far  = min(slice_far_nominal,  max_linear);
+
+    // If the entire slice is empty (min > max), collapse to an empty range. Light tests
+    // against an empty AABB reject everything, which is the correct behavior
+    if (slice_near > slice_far) {
+        aabb_min = vec3(0.0);
+        aabb_max = vec3(-1.0);      // inverted, no sphere can intersect
+        return;
+    }
+
+    // ---- 2. Build the view-space AABB for the tightened slice range ----
     const vec2 render_size = camera.cluster_depth.zw;
-    const vec2 tile_px_min = vec2(cluster.xy) * vec2(16.0, 16.0);
+    const vec2 tile_px_min = vec2(tile_origin);
     const vec2 tile_px_max = tile_px_min + vec2(16.0, 16.0);
 
     const vec2 ndc_min = (tile_px_min / render_size) * 2.0 - 1.0;
     const vec2 ndc_max = (tile_px_max / render_size) * 2.0 - 1.0;
 
-    // Unproject the four tile corners at the near plane. NDC z = -1 corresponds to the near plane
-    // under the GLM perspective convention used by the CPU side
     vec4 n00 = camera.inv_projection * vec4(ndc_min.x, ndc_min.y, -1.0, 1.0); n00 /= n00.w;
     vec4 n10 = camera.inv_projection * vec4(ndc_max.x, ndc_min.y, -1.0, 1.0); n10 /= n10.w;
     vec4 n01 = camera.inv_projection * vec4(ndc_min.x, ndc_max.y, -1.0, 1.0); n01 /= n01.w;
     vec4 n11 = camera.inv_projection * vec4(ndc_max.x, ndc_max.y, -1.0, 1.0); n11 /= n11.w;
 
-    // Those points have view-space z = -near_z. Scaling xyz by slice/near walks them along the
-    // view ray to the slice plane
     const float sn = slice_near / near_z;
-    const float sf = slice_far / near_z;
+    const float sf = slice_far  / near_z;
 
     vec3 c0n = n00.xyz * sn; vec3 c1n = n10.xyz * sn;
     vec3 c2n = n01.xyz * sn; vec3 c3n = n11.xyz * sn;

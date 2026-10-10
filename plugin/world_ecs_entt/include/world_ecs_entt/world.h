@@ -180,6 +180,15 @@ namespace GLT::world::world_ecs_entt {
 
         [[nodiscard]] entity_id id_of(entt::entity e) const noexcept;
 
+        // region grid ------------------------------------------------------------------------------------
+
+        [[nodiscard]] glm::vec3 get_region_cell_size() const noexcept override;
+
+
+        void set_region_cell_size(const glm::vec3& size) override;
+
+
+        void reassign_all_entities() override;
 
 
 
@@ -208,6 +217,9 @@ namespace GLT::world::world_ecs_entt {
 
 
         void gather_lights(std::vector<GLT::world::light_snapshot>& out) const override;
+
+
+        void gather_entity_positions(std::vector<GLT::world::entity_position>& out) const override;
 
 
         [[nodiscard]] bool get_camera_view(GLT::world::camera_snapshot& out) const override;
@@ -278,6 +290,42 @@ namespace GLT::world::world_ecs_entt {
         void sync_world_asset();
 
 
+        // Naming-convention path for a region cell:
+        //   <world_dir>/<world_stem>_r_<x>_<y>_<z>.glt_region
+        // Returns {} if the world handle is stale or has no virtual path.
+        [[nodiscard]] std::filesystem::path region_path_for_cell(const glm::ivec3& cell) const;
+
+
+        // Resolve (or create) the region that lives in `cell`. Tries, in order:
+        //   1. registry->find_by_id(expected_id)   - region is already loaded
+        //   2. registry->find(region_path)          - same, but under the canonical path
+        //   3. registry->load(region_path)          - file exists on disk
+        //   4. register_runtime(...)                - fresh empty region, using `expected_id`
+        //
+        // On success, the returned handle is **retained** on the plugin's behalf;
+        // the caller must eventually release it (unload_world does this uniformly).
+        // Returns INVALID_HANDLE on total failure.
+        [[nodiscard]] GLT::asset::handle resolve_region_handle(const glm::ivec3& cell, GLT::UUID expected_id);
+
+        // region grid -------------------------------------------------------------------------------------------------
+
+        // floor((p + cell/2) / cell) per axis, so cell (0,0,0) is centred on the origin
+        [[nodiscard]] glm::ivec3 cell_coord_of(const glm::vec3& world_pos) const noexcept;
+
+
+        // Bounds of a cell: [cell*size - size/2, cell*size + size/2]
+        [[nodiscard]] GLT::AABB cell_bounds(const glm::ivec3& cell) const noexcept;
+
+
+        // Returns the UUID of the region whose centre is in `cell`, creating one (and retaining it) if none exists. Returns {} on failure
+        [[nodiscard]] GLT::UUID ensure_region_for_cell(const glm::ivec3& cell);
+
+
+        // Move [id] to the region its world position falls into. No-op if already there.
+        void assign_entity_to_cell(entity_id id);
+
+
+
         entt::registry                                      m_registry;
         entity_codec                                        m_codec;
         world_asset_handler                                 m_asset_handler;
@@ -290,11 +338,8 @@ namespace GLT::world::world_ecs_entt {
         f32                                                 m_streaming_radius{ 0.f };
         component_registry                                  m_components{ *this };
         entity_id                                           m_active_camera{ INVALID_ENTITY };
+        glm::vec3                                           m_region_cell_size{ 256.f, 256.f, 256.f };
 
-        // Region that receives entities spawned at runtime. Set on world load to the first declared region (preferring one with
-        // the always_loaded flag), or created on demand by save_world_as(). Empty UUID means "no default"
-        // spawned entities are orphaned until a region exists
-        GLT::UUID                                           m_default_region_id{};
     };
 
 }

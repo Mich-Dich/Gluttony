@@ -172,6 +172,9 @@ namespace GLT::world::world_ecs_entt {
             asset->active_camera_generation = cam[1];
         }
 
+        if (const auto cell = reader.get_as<glm::vec3>(GLT::asset::world::CHUNK_WORLD_REGION_CELL_SIZE); cell.size() == 1)
+            asset->region_cell_size = cell[0];
+
         LOG(info, "loaded world [{}] - {} region(s)", info.name, asset->region_index.size());
 
         return GLT::unique_ref<GLT::asset::i_runtime_asset>(std::move(asset));
@@ -219,20 +222,37 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    FORCE_INLINE_R std::expected<void, GLT::asset::load_error>
-    world_asset_handler::serialize_world(const GLT::asset::info& /*info*/, const GLT::asset::world::world_asset& asset, 
-        GLT::asset::asset_writer& out) const {
+    FORCE_INLINE_R std::expected<void, GLT::asset::load_error>world_asset_handler::serialize_world(const GLT::asset::info& /*info*/,
+        const GLT::asset::world::world_asset& asset, GLT::asset::asset_writer& out) const {
 
-        // One region_disk per entry in region_index, same order as the deps the
-        // registry already re-declared in save(). Positional alignment is what
-        // deserialize_world() relies on, so this loop is symmetric with it.
         std::vector<region_disk> disks(asset.region_index.size());
-
         for (size_t index = 0; index < asset.region_index.size(); ++index) {
+
             const auto& region = asset.region_index[index];
+
             disks[index].id = region.id;
             disks[index].bounds = region.bounds;
             disks[index].flags = region.flags;
+
+            if (!region.id) {
+                // A region with no UUID is unrepresentable. Emit a stub dep so the disk/dep positional alignment stays intact
+                // deserialize_world will map this slot to INVALID_HANDLE, which is correct
+                out.declare_dependency(0);       // writer dedups these
+                continue;
+            }
+
+            // Preferred: id + relative path, so cold-start can find the file even if the region isn't already resident
+            if (region.asset != INVALID_HANDLE && m_registry) {
+                const auto& reg_info = m_registry->info(region.asset);
+                if (reg_info.id == region.id) {
+                    out.declare_dependency(region.id, reg_info.virtual_path.generic_string(), reg_info.asset_type);
+                    continue;
+                }
+            }
+
+            // Region is either stale or not resident. We still know its UUID - emit an id-only dep. deserialize_world's m_by_id fast path
+            // will resolve it if the region is already loaded; otherwise the slot becomes INVALID_HANDLE, which is the correct degradation
+            out.declare_dependency(region.id);
         }
 
         write_chunk_span(out, GLT::asset::world::CHUNK_WORLD_REGIONS, std::span<const region_disk>(disks));
@@ -240,18 +260,19 @@ namespace GLT::world::world_ecs_entt {
         if (!asset.settings.empty())
             out.write_chunk(GLT::asset::world::CHUNK_WORLD_SETTINGS, std::span<const std::byte>(asset.settings));
 
-        // Active camera is optional. Absent chunk == "no active camera", which is already the default of world_asset
         if (asset.active_camera_index != 0xFFFFFFFFu) {
 
             struct active_camera_disk {
                 u32 index;
                 u32 generation;
-            } cam{
+            } cam {
                 asset.active_camera_index,
                 asset.active_camera_generation
             };
             write_chunk_as(out, GLT::asset::world::CHUNK_WORLD_ACTIVE_CAMERA, cam);
         }
+
+        write_chunk_as(out, GLT::asset::world::CHUNK_WORLD_REGION_CELL_SIZE, asset.region_cell_size);
 
         return {};
     }

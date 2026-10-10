@@ -105,6 +105,16 @@ namespace GLT::asset {
         // @return The asset's handle, or INVALID_HANDLE if not loaded
         [[nodiscard]] virtual GLT::asset::handle find(const std::filesystem::path& path) const = 0;
 
+
+        // @brief Looks up the handle of an already-loaded asset by its UUID
+        //
+        // Returns INVALID_HANDLE if no live slot has this UUID. Use for resolving references captured as raw IDs 
+        // (e.g. a world file whose region dependency failed to resolve via path)
+        //
+        // @param id  UUID to search for
+        // @return The live handle, or INVALID_HANDLE
+        [[nodiscard]] virtual GLT::asset::handle find_by_id(GLT::UUID id) const = 0;
+
         // relocation --------------------------------------------------------------------------------------------------
 
         // @brief Moves a file OR directory tree inside the content directory
