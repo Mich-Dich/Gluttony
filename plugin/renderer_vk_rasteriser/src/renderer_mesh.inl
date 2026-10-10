@@ -76,6 +76,7 @@ namespace GLT::renderer::vk_rasterizer {
         slot.alive = true;
 
         upload_mesh_slice(slot, *mesh);
+        pack_mesh_into_ssbo(slot, *mesh);
 
         m_vertex_used += slot.vertex_count;
         m_index_used += slot.index_count;
@@ -98,6 +99,8 @@ namespace GLT::renderer::vk_rasterizer {
         m_device.waitIdle();
 
         mesh_slot& slot = m_mesh_slots[slot_index];
+        clear_mesh_ssbo_entry(slot);
+
         slot.alive = false;
         slot.asset = INVALID_HANDLE;
         slot.vertex_offset = 0;
@@ -410,14 +413,38 @@ namespace GLT::renderer::vk_rasterizer {
             m_device.destroyShaderModule(depth_fragment_shader);
         }
 
+        // Persistent mesh-side SSBOs, read only by the cull compute shader --------------------------------------------
+        m_mesh_data_buffer = m_dev->create_buffer(MAX_MESHES * sizeof(gpu_mesh_data), vk::BufferUsageFlagBits::eStorageBuffer,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        m_live_buffer_count++;
+
+        m_submesh_data_buffer = m_dev->create_buffer(MAX_SUBMESHES * sizeof(gpu_submesh_data), vk::BufferUsageFlagBits::eStorageBuffer,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        m_live_buffer_count++;
+
+        // Zero the whole thing so unloaded slots read as submesh_count = 0
+        std::memset(m_dev->map_buffer(m_mesh_data_buffer), 0, MAX_MESHES * sizeof(gpu_mesh_data));
+        m_dev->unmap_buffer(m_mesh_data_buffer);
+        std::memset(m_dev->map_buffer(m_submesh_data_buffer), 0, MAX_SUBMESHES * sizeof(gpu_submesh_data));
+        m_dev->unmap_buffer(m_submesh_data_buffer);
+
         // Pre-reserve buffer headroom ----------------------------------------------------------------------------------
         reserve_mesh_space(VERTEX_HEADROOM_MIN, INDEX_HEADROOM_MIN);
+        create_cull_pipeline();
     }
 
 
     void renderer::destroy_mesh_resources() {
 
         m_device.waitIdle();
+        
+        destroy_cull_pipeline();
+
+        if (m_mesh_data_buffer.buffer)
+            m_dev->destroy_buffer(m_mesh_data_buffer);
+
+        if (m_submesh_data_buffer.buffer)
+            m_dev->destroy_buffer(m_submesh_data_buffer);
 
         for (auto& descriptor_buffer : m_frame_desc_buffers)
             if (descriptor_buffer.buffer.buffer)
@@ -458,128 +485,43 @@ namespace GLT::renderer::vk_rasterizer {
 
     void renderer::update_camera_ubo() {
 
-        camera_ubo_data data{};
+        camera_ubo_data camera_data{};
 
-        const f32 aspect = static_cast<f32>(m_render_size.x) / static_cast<f32>(m_render_size.y);
-        glm::mat4 proj = glm::perspective(glm::radians(m_active_camera.fov), aspect, m_active_camera.near_plane,
-            m_active_camera.far_plane);
-        proj[1][1] *= -1.0f;   // Vulkan Y flip
+        const f32 aspect_ratio = static_cast<f32>(m_render_size.x) / static_cast<f32>(m_render_size.y);
+        glm::mat4 projection = glm::perspective(glm::radians(m_active_camera.fov), aspect_ratio,
+            m_active_camera.near_plane, m_active_camera.far_plane);
+        projection[1][1] *= -1.0f;   // Vulkan Y flip
 
-        data.view = m_active_camera.view;
-        data.view_proj = proj * m_active_camera.view;
-        data.camera_pos = glm::vec4(m_active_camera.position, 1.0f);
+        const glm::mat4 view_projection = projection * m_active_camera.view;
+        const bool hiz_enabled = m_frame_counter >= 2;              // HiZ is valid from frame 2 onward (built from frame 1's depth)
+        camera_data.view = m_active_camera.view;
+        camera_data.view_proj = view_projection;
+        camera_data.camera_pos = glm::vec4(m_active_camera.position, 1.0f);
+        camera_data.flags = glm::uvec4(hiz_enabled ? 1u : 0u, 0u, 0u, 0u);
 
-        std::memcpy(m_dev->map_buffer(m_camera_ubos[m_current_frame]), &data, sizeof(data));
+        // Gribb-Hartmann frustum extraction. Rows of view_projection map world space to clip space; the six planes fall out as signed
+        // combinations of those rows
+        const glm::mat4 view_projection_transposed = glm::transpose(view_projection);
+        const glm::vec4 clip_row_0 = view_projection_transposed[0];
+        const glm::vec4 clip_row_1 = view_projection_transposed[1];
+        const glm::vec4 clip_row_2 = view_projection_transposed[2];
+        const glm::vec4 clip_row_3 = view_projection_transposed[3];
+
+        camera_data.frustum_planes[0] = clip_row_3 + clip_row_0;  // left
+        camera_data.frustum_planes[1] = clip_row_3 - clip_row_0;  // right
+        camera_data.frustum_planes[2] = clip_row_3 + clip_row_1;  // bottom
+        camera_data.frustum_planes[3] = clip_row_3 - clip_row_1;  // top
+        camera_data.frustum_planes[4] = clip_row_3 + clip_row_2;  // near
+        camera_data.frustum_planes[5] = clip_row_3 - clip_row_2;  // far
+
+        for (auto& plane : camera_data.frustum_planes) {
+            const f32 normal_length = glm::length(glm::vec3(plane));
+            if (normal_length > 0.0f)
+                plane /= normal_length;
+        }
+
+        std::memcpy(m_dev->map_buffer(m_camera_ubos[m_current_frame]), &camera_data, sizeof(camera_data));
         m_dev->unmap_buffer(m_camera_ubos[m_current_frame]);
-    }
-
-    // scene draw loop (called from both the depth prepass and the shading pass) ---------------------------------------
-
-        void renderer::build_instance_buffer() {
-
-        m_instance_batches.clear();
-
-        if (m_scene_instances.empty())
-            return;
-
-        // Group scene instance indices by their mesh handle. This way all instances that share a mesh end up contiguous in the packed SSBO,
-        // which is what lets us issue a single instanced draw per (mesh, submesh)
-        std::unordered_map<GLT::asset::handle, std::vector<u32>> instances_by_mesh;
-        instances_by_mesh.reserve(m_scene_instances.size());
-
-        for (u32 instance_index = 0; instance_index < static_cast<u32>(m_scene_instances.size()); ++instance_index) {
-
-            const auto& scene_instance = m_scene_instances[instance_index];
-            if (scene_instance.mesh == INVALID_HANDLE)
-                continue;
-            if (!find_slot(scene_instance.mesh))
-                continue;   // mesh hasn't finished loading yet, skip it this frame
-
-            instances_by_mesh[scene_instance.mesh].push_back(instance_index);
-        }
-
-        // Pack the scene instances into one contiguous array. m_instance_batches records the [first_instance, first_instance + instance_count)
-        // ranges that belong to each mesh
-        std::vector<gpu_instance_data> packed_instances;
-        packed_instances.reserve(m_scene_instances.size());
-
-        for (auto& [mesh_handle, instance_indices] : instances_by_mesh) {
-
-            if (packed_instances.size() + instance_indices.size() > MAX_INSTANCES) {
-                LOG(warn, "Instance buffer is full ({} / {} instances); truncating scene", packed_instances.size(), MAX_INSTANCES);
-                break;
-            }
-
-            instance_batch batch{};
-            batch.mesh = mesh_handle;
-            batch.first_instance = static_cast<u32>(packed_instances.size());
-            batch.instance_count = static_cast<u32>(instance_indices.size());
-
-            for (u32 scene_index : instance_indices) {
-
-                const auto& scene_instance = m_scene_instances[scene_index];
-
-                gpu_instance_data instance_data{};
-                instance_data.model = scene_instance.transform;
-
-                // Precompute the normal matrix so the vertex shader doesn't have to run inverse() + transpose() per vertex
-                const glm::mat3 upper_left_3x3(scene_instance.transform);
-                const glm::mat3 normal_matrix_3x3 = glm::transpose(glm::inverse(upper_left_3x3));
-                instance_data.normal_matrix = glm::mat4(normal_matrix_3x3);
-
-                instance_data.material_index = 0;   // no material system yet
-
-                packed_instances.push_back(instance_data);
-            }
-
-            m_instance_batches.push_back(batch);
-        }
-
-        if (packed_instances.empty())
-            return;
-
-        auto& instance_buffer = m_instance_buffers[m_current_frame];
-        void* mapped = m_dev->map_buffer(instance_buffer);
-        std::memcpy(mapped, packed_instances.data(), packed_instances.size() * sizeof(gpu_instance_data));
-        m_dev->unmap_buffer(instance_buffer);
-    }
-
-
-    void renderer::draw_scene_meshes(vk::CommandBuffer cmd) {
-
-        if (m_instance_batches.empty())
-            return;
-
-        cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
-        cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
-
-        auto registry = GLT::asset::registry::get_ref();
-
-        for (const instance_batch& batch : m_instance_batches) {
-
-            const mesh_slot* mesh_slot = find_slot(batch.mesh);
-            if (!mesh_slot || !mesh_slot->alive)
-                continue;
-
-            auto* mesh_asset = registry->data_as<GLT::asset::mesh::mesh_asset>(batch.mesh);
-            if (!mesh_asset)
-                continue;
-
-            for (const auto& submesh : mesh_asset->submeshes) {
-
-                if (submesh.index_count < 3)
-                    continue;
-
-                cmd.drawIndexed(
-                    submesh.index_count,
-                    batch.instance_count,                                // instanced draw: one call per (mesh, submesh) pair
-                    mesh_slot->index_offset + submesh.first_index,
-                    static_cast<i32>(mesh_slot->vertex_offset),
-                    batch.first_instance);                               // becomes the base of gl_InstanceIndex
-
-                m_frame_draw_calls++;
-            }
-        }
     }
 
 }

@@ -41,6 +41,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
         storage_read,        // read via imageLoad
         storage_readwrite,   // read+write via imageLoad/Store
         color_attachment,    // written as a colour target
+        depth_sampled,       // depth-aspect view read in a shader (sampler2D)
         depth_attachment,    // written as a depth target
         depth_readonly,      // depth test, no write
         transfer_src,

@@ -284,8 +284,65 @@ namespace GLT::renderer::vk_rasterizer::graph {
     void render_graph::import_buffer(buffer_handle h, const util::allocated_buffer& buf) {
 
         auto& buffer = m_buffers[h.id];
+
+        // If the graph owns a buffer here, destroy it — we're replacing it with an external one. Without this, every import
+        // leaks a graph-allocated VMA buffer
+        if (!buffer.imported && buffer.allocated.buffer)
+            m_device->destroy_buffer(buffer.allocated);
+
         buffer.imported = true;
         buffer.allocated = buf;
+    }
+
+
+    buffer_handle render_graph::import_buffer(const buffer_desc& desc, const util::allocated_buffer& buf) {
+
+        u32 buffer_index = UINT32_MAX;
+        for (u32 i = 0; i < m_buffers.size(); ++i) {
+            if (m_buffers[i].desc.name.empty() && m_buffers[i].allocated.buffer == nullptr) {
+                buffer_index = i;
+                break;
+            }
+        }
+        if (buffer_index == UINT32_MAX) {
+            buffer_index = static_cast<u32>(m_buffers.size());
+            m_buffers.emplace_back();
+        }
+
+        auto& buffer = m_buffers[buffer_index];
+        buffer = buffer_resource{};
+        buffer.desc = desc;
+        buffer.imported = true;
+        buffer.allocated = buf;
+        buffer.state = {vk::ImageLayout::eUndefined, {}, vk::PipelineStageFlagBits2::eNone};
+
+        return buffer_handle{buffer_index};
+    }
+
+
+    texture_handle render_graph::import_texture(const texture_desc& desc, vk::Image image, vk::ImageView view, resource_state s) {
+
+        u32 texture_index = UINT32_MAX;
+        for (u32 i = 0; i < m_textures.size(); ++i) {
+            if (m_textures[i].desc.name.empty() && m_textures[i].image == nullptr) {
+                texture_index = i;
+                break;
+            }
+        }
+        if (texture_index == UINT32_MAX) {
+            texture_index = static_cast<u32>(m_textures.size());
+            m_textures.emplace_back();
+        }
+
+        auto& texture = m_textures[texture_index];
+        texture = texture_resource{};
+        texture.desc = desc;
+        texture.imported = true;
+        texture.image = image;
+        texture.default_view = view;
+        texture.state = s;
+
+        return texture_handle{texture_index};
     }
 
     // Compile ---------------------------------------------------------------------------------------------------------
@@ -374,6 +431,9 @@ namespace GLT::renderer::vk_rasterizer::graph {
         texture.view_cache[key] = image_view;
         return image_view;
     }
+
+
+    vk::ImageView render_graph::texture_default_view(texture_handle h) const { return m_textures[h.id].default_view; }
 
 
     vk::Extent2D render_graph::texture_extent(texture_handle h) const { return {m_textures[h.id].desc.width, m_textures[h.id].desc.height}; }

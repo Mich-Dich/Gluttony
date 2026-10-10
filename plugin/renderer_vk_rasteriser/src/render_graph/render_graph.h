@@ -52,7 +52,13 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
         void import_texture(texture_handle handle, vk::Image image, vk::ImageView view, resource_state initial_state = {});
 
-        void import_buffer (buffer_handle  handle, const util::allocated_buffer& buf);
+        void import_buffer(buffer_handle  handle, const util::allocated_buffer& buf);
+
+        // Reserve a slot for an externally-owned buffer and register it. Nothing is allocated by the graph
+        buffer_handle  import_buffer (const buffer_desc& desc, const util::allocated_buffer& buf);
+
+        // Same for textures
+        texture_handle import_texture(const texture_desc& desc, vk::Image image, vk::ImageView view, resource_state initial_state = {});
 
         // -------- passes -----------------
 
@@ -76,6 +82,10 @@ namespace GLT::renderer::vk_rasterizer::graph {
         vk::Image texture_image(texture_handle handle) const;
 
         vk::ImageView texture_view(texture_handle handle, u32 mip, u32 layer);
+
+        // View that includes every mip level. Use this when a shader needs to sample the full mip chain via textureLod();
+        // texture_view(h, 0, 0) only covers mip 0
+        vk::ImageView texture_default_view(texture_handle handle) const;
 
         vk::Extent2D texture_extent(texture_handle handle) const;
 

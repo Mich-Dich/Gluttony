@@ -168,12 +168,31 @@ namespace GLT::renderer::vk_rasterizer {
         void create_mesh_resources();                           // buffers, UBOs, descriptor buffer, set layout, pipeline
         void destroy_mesh_resources();
         void update_camera_ubo();                               // called once per frame in begin_frame()
-        void build_instance_buffer();                           // packs scene instances into the per-frame SSBO
-        void draw_scene_meshes(vk::CommandBuffer cmd);
 
         // helpers
         void transition_image_layout(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldL,
             vk::ImageLayout newL, vk::ImageSubresourceRange range = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+
+        // GPU-driven culling ------------------------------------------------------------------------------------------
+
+        void pack_mesh_into_ssbo(mesh_slot& mesh_slot, const GLT::asset::mesh::mesh_asset& mesh_asset);
+
+        void clear_mesh_ssbo_entry(mesh_slot& mesh_slot);
+
+        void create_cull_pipeline();
+
+        void destroy_cull_pipeline();
+
+        // Pack every visible scene instance into a single flat array. The GPU groups by mesh during culling; the CPU no longer batches anything
+        void build_instance_buffer();
+
+        void dispatch_culling(vk::CommandBuffer cmd);
+
+        // Issue the whole scene as a single indexed indirect count draw. The graphics pipeline layout is unchanged — the vertex shader still
+        // reads the instance SSBO via gl_InstanceIndex, and the cull pass filled the commands' firstInstance field to point into that buffer
+        void draw_scene_indirect(vk::CommandBuffer cmd);
+
+
 
         glm::ivec2                                                  m_render_size{ 800, 600 };
         GLT::render::renderer_feature                               m_features{};
@@ -256,6 +275,7 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         m_index_capacity = 0;
         u32                                                         m_vertex_used = 0;
         u32                                                         m_index_used = 0;
+        u32                                                         m_instance_count = 0;
 
         std::vector<mesh_slot>                                      m_mesh_slots{};
         std::vector<u32>                                            m_free_slots{};
@@ -277,7 +297,32 @@ namespace GLT::renderer::vk_rasterizer {
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_camera_ubos{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_instance_buffers{};
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>  m_frame_desc_buffers{};
-        std::vector<instance_batch>                                 m_instance_batches{};
+
+        // GPU-driven culling ------------------------------------------------------------------------------------------
+
+        vk::DescriptorSetLayout                                     m_cull_set_layout = nullptr;
+        vk::PipelineLayout                                          m_cull_pipeline_layout = nullptr;
+        vk::Pipeline                                                m_cull_pipeline = nullptr;
+
+        util::allocated_buffer                                      m_mesh_data_buffer{};
+        util::allocated_buffer                                      m_submesh_data_buffer{};
+        vk::ImageView                                               m_depth_image_view{};
+
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>  m_cull_desc_buffers{};
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_draw_command_buffers{};
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_draw_count_buffers{};
+
+        // Free-list for submesh slots. Each mesh reserves a contiguous run of MAX_SUBMESHES_PER_MESH slots so it can grow without re-shuffling
+        u32                                                         m_submesh_used = 0;
+        graph::buffer_handle                                        m_draw_command_buffer_handle;
+        graph::buffer_handle                                        m_draw_count_buffer_handle;
+
+        // GPU timing (timestamp queries) ------------------------------------------------------------------------------
+
+        vk::QueryPool                                               m_timestamp_pool = nullptr;
+        f32                                                         m_timestamp_period_ns = 1.0f;
+        std::array<f32, MAX_CONCURRENT_FRAMES>                      m_gpu_frame_time_ms{};
+        f32                                                         m_last_gpu_time_ms = 0.0f;
 
     };
 
@@ -389,6 +434,7 @@ namespace GLT::renderer::vk_rasterizer {
 #include "renderer_swapchain.inl"
 #include "renderer_mesh.inl"
 #include "renderer_scene.inl"
+#include "renderer_gpu_driven.inl"
 // #include "renderer_material_texture.inl"
 // #include "renderer_preview.inl"
 

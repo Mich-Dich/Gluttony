@@ -49,7 +49,7 @@ namespace GLT::renderer::vk_rasterizer {
     [[nodiscard]] debug::render_stats renderer::get_render_stats() const {
 
         return debug::render_stats{
-            .gpu_time_ms = 0.f,
+            .gpu_time_ms = m_last_gpu_time_ms,
             .draw_calls = m_frame_draw_calls,
             .triangles = 1,
             .vertices = 3,

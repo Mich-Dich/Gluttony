@@ -51,6 +51,9 @@ namespace GLT::renderer::vk_rasterizer::graph {
             case texture_usage::color_attachment:
                 return {L::eColorAttachmentOptimal, A::eColorAttachmentWrite, S::eColorAttachmentOutput};
 
+            case texture_usage::depth_sampled:
+                return {L::eDepthStencilReadOnlyOptimal, A::eShaderRead, S::eComputeShader | S::eFragmentShader};
+
             case texture_usage::depth_attachment:
                 return {L::eDepthStencilAttachmentOptimal, A::eDepthStencilAttachmentWrite, S::eEarlyFragmentTests | S::eLateFragmentTests};
 
