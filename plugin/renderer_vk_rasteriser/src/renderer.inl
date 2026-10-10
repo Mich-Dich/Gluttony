@@ -139,8 +139,9 @@ namespace GLT::renderer::vk_rasterizer {
 
         process_pending_meshes();               // pull meshes in/out at the frame boundary
         update_camera_ubo();                    // fill the current frame's camera UBO
+        build_instance_buffer();                // pack scene instances into this frame's SSBO
 
-        // -------- Backbuffer import --------
+        // Backbuffer import -------------------------------------------------------------------------------------------
         const vk::ImageLayout bb_initial = m_swapchain_images_layout[m_current_swapchain_image];
         m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::eUndefined;
 
@@ -153,89 +154,85 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_backbuffer_handle = m_graph->create_texture(bb_desc);
         m_graph->import_texture(m_backbuffer_handle,
-            m_swapchain.swapchain_images[m_current_swapchain_image],
-            m_swapchain.swapchain_image_views[m_current_swapchain_image],
+            m_swapchain.swapchain_images[m_current_swapchain_image], m_swapchain.swapchain_image_views[m_current_swapchain_image],
             { bb_initial, {}, vk::PipelineStageFlagBits2::eNone });
 
-        // -------- Scene colour: import m_output_image --------
+        // Scene colour: import m_output_image -------------------------------------------------------------------------
         graph::texture_desc rt_desc{};
         rt_desc.name = "scene_color";
         rt_desc.format = vk::Format::eR8G8B8A8Unorm;
         rt_desc.width = m_render_size.x;
         rt_desc.height = m_render_size.y;
-        rt_desc.usage = vk::ImageUsageFlagBits::eSampled |
-            vk::ImageUsageFlagBits::eColorAttachment |
-            vk::ImageUsageFlagBits::eTransferSrc |
+        rt_desc.usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc |
             vk::ImageUsageFlagBits::eTransferDst;
         rt_desc.persistent = true;
 
         m_triangle_target = m_graph->create_texture(rt_desc);
         m_graph->import_texture(m_triangle_target,
-            m_output_image->get_allocated_image_ref().image,
-            m_output_image->get_accessible_image_ref().view,
+            m_output_image->get_allocated_image_ref().image, m_output_image->get_accessible_image_ref().view,
             { m_output_image->get_accessible_image_ref().layout, {}, vk::PipelineStageFlagBits2::eNone });
 
-        // -------- Pass: scene (clear + draw all mesh instances) --------
-        m_graph->add_pass("scene",
+        // Scene depth: graph-owned, same size as scene colour ---------------------------------------------------------
+        graph::texture_desc depth_desc{};
+        depth_desc.name = "scene_depth";
+        depth_desc.format = vk::Format::eD32Sfloat;
+        depth_desc.width = m_render_size.x;
+        depth_desc.height = m_render_size.y;
+        depth_desc.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled;
+        depth_desc.persistent = true;
+
+        m_depth_target = m_graph->create_texture(depth_desc);
+
+        // Pass: depth prepass -----------------------------------------------------------------------------------------
+        m_graph->add_pass("depth_prepass",
             [&](graph::pass_builder& b) {
-                b.color_attachment(m_triangle_target,
-                    vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
-                    vk::ClearColorValue(std::array<float,4>{
-                        m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a}));
+                b.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
             },
             [this](graph::pass_context& ctx) {
 
                 if (m_scene_instances.empty() || m_mesh_slots.empty())
-                    return;     // nothing to draw; the clear already happened via the graph
+                    return;
 
                 ctx.begin_rendering();
 
-                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_mesh_pipeline);
-
-                // Camera UBO (per-frame descriptor buffer)
-                m_dev->bind_descriptor_buffer({ m_camera_desc_buffers[m_current_frame] }, ctx.cmd);
+                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_depth_pipeline);
+                m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame] }, ctx.cmd);
                 m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
 
-                // Shared geometry — bound once
-                ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
-                ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
-
-                auto registry = GLT::asset::registry::get_ref();
-                for (const auto& inst : m_scene_instances) {
-
-                    const mesh_slot* slot = find_slot(inst.mesh);
-                    if (!slot || !slot->alive)
-                        continue;
-
-                    auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(inst.mesh);
-                    if (!mesh)
-                        continue;
-
-                    // Per-instance model matrix via push constant
-                    ctx.cmd.pushConstants(m_mesh_pipeline_layout,
-                        vk::ShaderStageFlagBits::eVertex, 0, sizeof(glm::mat4), &inst.transform);
-
-                    for (const auto& submesh : mesh->submeshes) {
-
-                        if (submesh.index_count < 3)
-                            continue;
-
-                        ctx.cmd.drawIndexed(
-                            submesh.index_count,
-                            1,
-                            static_cast<u32>(slot->index_offset + submesh.first_index),
-                            static_cast<i32>(slot->vertex_offset),
-                            0);
-
-                        m_frame_draw_calls++;
-                    }
-                }
+                draw_scene_meshes(ctx.cmd);
 
                 ctx.end_rendering();
                 m_frame_render_passes++;
             });
 
-        // -------- Pass: ImGui -> backbuffer --------
+        // Pass: forward shading ---------------------------------------------------------------------------------------
+        m_graph->add_pass("scene",
+            [&](graph::pass_builder& b) {
+                b.color_attachment(m_triangle_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
+                    vk::ClearColorValue(std::array<f32,4>{m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a}));
+
+                // Depth is loaded — the prepass already wrote the frontmost depth. The pipeline runs with depthTest=Equal,
+                // depthWrite=OFF, so early-z culls occluded fragments before the fragment shader
+                b.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore, 1.0f, 0);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_scene_instances.empty() || m_mesh_slots.empty())
+                    return;
+
+                ctx.begin_rendering();
+
+                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_mesh_pipeline);
+                m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                draw_scene_meshes(ctx.cmd);
+
+                ctx.end_rendering();
+                m_frame_render_passes++;
+            });
+
+        // Pass: ImGui -> backbuffer -----------------------------------------------------------------------------------
         m_graph->add_pass("imgui",
             [&](graph::pass_builder& b) {
                 b.color_attachment(m_backbuffer_handle, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore);

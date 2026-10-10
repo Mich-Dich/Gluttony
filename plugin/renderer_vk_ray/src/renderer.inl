@@ -670,7 +670,7 @@ namespace GLT::renderer::vk_ray {
         // create shaders for the ray tracing pipeline
         // Spir-V bytecode is required
 
-        const auto shader_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader";
+        const auto shader_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "vk_ray";
 
         // load the ray gen shader
         auto ray_gen_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "mesh_materials.rgen.glsl");

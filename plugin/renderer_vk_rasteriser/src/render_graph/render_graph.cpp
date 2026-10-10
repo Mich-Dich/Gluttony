@@ -24,6 +24,27 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
+    bool is_depth_format(vk::Format f) {
+
+        switch (f) {
+            case vk::Format::eD16Unorm:
+            case vk::Format::eD16UnormS8Uint:
+            case vk::Format::eD24UnormS8Uint:
+            case vk::Format::eX8D24UnormPack32:
+            case vk::Format::eD32Sfloat:
+            case vk::Format::eD32SfloatS8Uint:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+
+    vk::ImageAspectFlags aspect_for(vk::Format f) {
+
+        return is_depth_format(f) ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor;
+    }
+
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -71,60 +92,99 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
     texture_handle render_graph::create_texture(const texture_desc& desc) {
 
-        // Persistent resources are re-used by name across frames
-        if (desc.persistent) {
-
-            auto it = m_persistent_textures.find(desc.name);
-            if (it != m_persistent_textures.end()) {
-
-                // caller may have resized (or otherwise recreated) the backing image since last frame e.g. renderer::set_render_size()
-                // rebuilds m_output_image at the new panel size and re-imports it. The resource's desc must reflect the current size,
-                // because texture_extent() / texture_format() drive the viewport + scissor the graph sets in begin_rendering()
-                // If we don't refresh it, a resized persistent target keeps reporting its old size and the pass renders into a
-                // stale sub-rectangle of the real attachment
-                auto& texture = m_textures[it->second.id];
-
-                texture.desc.format = desc.format;
-                texture.desc.width = desc.width;
-                texture.desc.height = desc.height;
-                texture.desc.depth = desc.depth;
-                texture.desc.mip_levels = desc.mip_levels;
-                texture.desc.array_layers = desc.array_layers;
-                texture.desc.samples = desc.samples;
-                texture.desc.usage = desc.usage;
-                // persistent flag and name stay as-is
-
-                return it->second;
-            }
-        }
-
         u32 texture_index = UINT32_MAX;
-        for (u32 index = 0; index < m_textures.size(); ++index) {
-            if (m_textures[index].desc.name.empty() && m_textures[index].image == nullptr) {
-                texture_index = index;
-                break;
+
+        // persistent lookup
+        if (desc.persistent) {
+            auto it = m_persistent_textures.find(desc.name);
+            if (it != m_persistent_textures.end())
+                texture_index = it->second.id;
+        }
+
+        // free slot search (only when no persistent handle existed)
+        if (texture_index == UINT32_MAX) {
+            for (u32 index = 0; index < m_textures.size(); ++index) {
+                if (m_textures[index].desc.name.empty() && m_textures[index].image == nullptr) {
+                    texture_index = index;
+                    break;
+                }
             }
         }
+
         if (texture_index == UINT32_MAX) {
             texture_index = static_cast<u32>(m_textures.size());
             m_textures.emplace_back();
         }
 
         auto& texture = m_textures[texture_index];
-        texture = texture_resource{};
-        texture.desc = desc;
-        texture.state = {vk::ImageLayout::eUndefined, {}, vk::PipelineStageFlagBits2::eNone};
+        const bool is_fresh = texture.desc.name.empty() && texture.image == nullptr;
 
-        // Derive usage flags if the user didn't supply them
-        vk::ImageUsageFlags usage = desc.usage;
-        if (!usage) {
-            usage = vk::ImageUsageFlagBits::eSampled
-                | vk::ImageUsageFlagBits::eStorage
-                | vk::ImageUsageFlagBits::eColorAttachment
-                | vk::ImageUsageFlagBits::eTransferSrc
-                | vk::ImageUsageFlagBits::eTransferDst;
+        // Persistent IMPORTED: the caller owns the backing image and is expected to call import_texture() right after this with the current
+        // backing. We just refresh the descriptor fields. Null out the (potentially dangling) image and view so no intermediate code path
+        // touches freed memory before import_texture() overwrites them
+        if (!is_fresh && texture.imported) {
+            texture.desc = desc;
+            texture.image = nullptr;
+            texture.default_view = nullptr;
+            return texture_handle{ texture_index };
         }
 
+        // Persistent/fresh GRAPH-OWNED: check structural parameters. Anything structural forces a VkImage rebuild
+        bool needs_recreate = false;
+        if (!is_fresh) {
+            needs_recreate =
+                texture.desc.format         != desc.format       ||
+                texture.desc.width          != desc.width        ||
+                texture.desc.height         != desc.height       ||
+                texture.desc.depth          != desc.depth        ||
+                texture.desc.mip_levels     != desc.mip_levels   ||
+                texture.desc.array_layers   != desc.array_layers ||
+                texture.desc.samples        != desc.samples;
+        }
+
+        if (!is_fresh && !needs_recreate) {
+            // Nothing structural changed. Just refresh the informational fields and hand the existing handle back to the caller
+            texture.desc.usage = desc.usage;
+            return texture_handle{ texture_index };
+        }
+
+        // Either a fresh slot or a structural change on a graph-owned persistent. Tear down the old backing image if there is one
+        if (!is_fresh) {
+
+            for (auto& [_, view] : texture.view_cache)
+                if (view) m_device->get_device().destroyImageView(view);
+            texture.view_cache.clear();
+
+            if (texture.default_view)
+                m_device->get_device().destroyImageView(texture.default_view);
+
+            if (texture.allocated.image)
+                m_device->destroy_image(texture.allocated);
+
+            texture = texture_resource{};
+        }
+
+        texture.desc  = desc;
+        texture.state = { vk::ImageLayout::eUndefined, {}, vk::PipelineStageFlagBits2::eNone };
+
+        // derive usage
+        vk::ImageUsageFlags usage = desc.usage;
+        if (!usage) {
+            if (is_depth_format(desc.format)) {
+                usage = vk::ImageUsageFlagBits::eDepthStencilAttachment
+                    | vk::ImageUsageFlagBits::eSampled
+                    | vk::ImageUsageFlagBits::eTransferSrc
+                    | vk::ImageUsageFlagBits::eTransferDst;
+            } else {
+                usage = vk::ImageUsageFlagBits::eSampled
+                    | vk::ImageUsageFlagBits::eStorage
+                    | vk::ImageUsageFlagBits::eColorAttachment
+                    | vk::ImageUsageFlagBits::eTransferSrc
+                    | vk::ImageUsageFlagBits::eTransferDst;
+            }
+        }
+
+        // allocate the image
         vk::ImageCreateInfo image_ci{};
         image_ci.imageType = vk::ImageType::e2D;
         image_ci.format = desc.format;
@@ -144,10 +204,10 @@ namespace GLT::renderer::vk_rasterizer::graph {
         image_view_ci.image = texture.image;
         image_view_ci.viewType = (desc.array_layers > 1) ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
         image_view_ci.format = desc.format;
-        image_view_ci.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, desc.mip_levels, 0, desc.array_layers};
+        image_view_ci.subresourceRange = { aspect_for(desc.format), 0, desc.mip_levels, 0, desc.array_layers };
         texture.default_view = m_device->get_device().createImageView(image_view_ci);
 
-        texture_handle h{texture_index};
+        texture_handle h{ texture_index };
         if (desc.persistent)
             m_persistent_textures[desc.name] = h;
         return h;
@@ -308,7 +368,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
         image_view_ci.image = texture.image;
         image_view_ci.viewType = vk::ImageViewType::e2D;
         image_view_ci.format = texture.desc.format;
-        image_view_ci.subresourceRange = {vk::ImageAspectFlagBits::eColor, mip, 1, layer, 1};
+        image_view_ci.subresourceRange = { aspect_for(texture.desc.format), mip, 1, layer, 1 };
 
         vk::ImageView image_view = m_device->get_device().createImageView(image_view_ci);
         texture.view_cache[key] = image_view;
@@ -411,78 +471,101 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
     void render_graph::emit_barriers(vk::CommandBuffer cmd, const pass& p) {
 
-        // Gather all distinct resources touched by this pass
         std::vector<vk::ImageMemoryBarrier2> image_barriers;
         std::vector<vk::BufferMemoryBarrier2> buffer_barriers;
 
-        auto add_image_barrier = [&](texture_resource& texture_resource, resource_state target) {
+        auto add_image_barrier = [&](texture_resource& texture, resource_state target, bool this_pass_writes) {
 
-            if (texture_resource.state == target)
-                return;
+            const bool state_changed = (texture.state != target);
+            const bool write_hazard = texture.write_dirty;
 
-            vk::ImageMemoryBarrier2 image_memory_barrier{};
-            image_memory_barrier.srcStageMask = texture_resource.state.stage;
-            image_memory_barrier.srcAccessMask = texture_resource.state.access;
-            image_memory_barrier.dstStageMask = target.stage;
-            image_memory_barrier.dstAccessMask = target.access;
-            image_memory_barrier.oldLayout = texture_resource.state.layout;
-            image_memory_barrier.newLayout = target.layout;
-            image_memory_barrier.image = texture_resource.image;
-            image_memory_barrier.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, texture_resource.desc.mip_levels, 0, texture_resource.desc.array_layers};
-            image_barriers.push_back(image_memory_barrier);
-            texture_resource.state = target;
+            if (state_changed || write_hazard) {
+
+                vk::ImageMemoryBarrier2 barrier{};
+                barrier.srcStageMask = texture.state.stage;
+                barrier.srcAccessMask = texture.state.access;
+                barrier.dstStageMask = target.stage;
+                barrier.dstAccessMask = target.access;
+                barrier.oldLayout = texture.state.layout;
+                barrier.newLayout = target.layout;
+                barrier.image = texture.image;
+                barrier.subresourceRange = { aspect_for(texture.desc.format), 0, texture.desc.mip_levels, 0, texture.desc.array_layers };
+                image_barriers.push_back(barrier);
+
+                texture.state = target;
+                texture.write_dirty = false;
+            }
+
+            // If this pass also writes, mark dirty for the next pass.
+            if (this_pass_writes)
+                texture.write_dirty = true;
         };
 
-        auto add_buffer_barrier = [&](buffer_resource& buffer_resource, resource_state target) {
+        auto add_buffer_barrier = [&](buffer_resource& buffer, resource_state target, bool this_pass_writes) {
 
-            if (buffer_resource.state == target)
-                return;
-            if (!buffer_resource.allocated.buffer)
+            if (!buffer.allocated.buffer)
                 return;
 
-            vk::BufferMemoryBarrier2 bar{};
-            bar.srcStageMask = buffer_resource.state.stage;
-            bar.srcAccessMask = buffer_resource.state.access;
-            bar.dstStageMask = target.stage;
-            bar.dstAccessMask = target.access;
-            bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            bar.buffer = buffer_resource.allocated.buffer;
-            bar.offset = 0;
-            bar.size = VK_WHOLE_SIZE;
-            buffer_barriers.push_back(bar);
-            buffer_resource.state = target;
+            const bool state_changed = (buffer.state != target);
+            const bool write_hazard = buffer.write_dirty;
+
+            if (state_changed || write_hazard) {
+
+                vk::BufferMemoryBarrier2 bar{};
+                bar.srcStageMask = buffer.state.stage;
+                bar.srcAccessMask = buffer.state.access;
+                bar.dstStageMask = target.stage;
+                bar.dstAccessMask = target.access;
+                bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                bar.buffer = buffer.allocated.buffer;
+                bar.offset = 0;
+                bar.size = VK_WHOLE_SIZE;
+                buffer_barriers.push_back(bar);
+
+                buffer.state = target;
+                buffer.write_dirty = false;
+            }
+
+            if (this_pass_writes)
+                buffer.write_dirty = true;
         };
 
-        // Which textures does this pass touch?
+        // --- which textures does this pass touch, and which does it write? -----
         std::vector<u32> tex_ids;
-        for (auto& [handle, _] : p.builder.m_tex_reads)
-            tex_ids.push_back(handle.id);
+        std::set<u32>    tex_writes;
 
-        for (auto& [handle, _] : p.builder.m_tex_writes)
+        for (auto& [handle, _] : p.builder.m_tex_reads) 
             tex_ids.push_back(handle.id);
+        for (auto& [handle, _] : p.builder.m_tex_writes) {
+            tex_ids.push_back(handle.id);
+            tex_writes.insert(handle.id);
+        }
 
         std::sort(tex_ids.begin(), tex_ids.end());
         tex_ids.erase(std::unique(tex_ids.begin(), tex_ids.end()), tex_ids.end());
 
         for (u32 id : tex_ids) {
-            texture_handle h{id};
-            add_image_barrier(m_textures[id], target_texture_state(p, h));
+            texture_handle handle{id};
+            add_image_barrier(m_textures[id], target_texture_state(p, handle), tex_writes.contains(id));
         }
 
         std::vector<u32> buf_ids;
+        std::set<u32> buf_writes;
+
         for (auto& [handle, _] : p.builder.m_buf_reads)
             buf_ids.push_back(handle.id);
-
-        for (auto& [handle, _] : p.builder.m_buf_writes)
+        for (auto& [handle, _] : p.builder.m_buf_writes) {
             buf_ids.push_back(handle.id);
+            buf_writes.insert(handle.id);
+        }
 
         std::sort(buf_ids.begin(), buf_ids.end());
         buf_ids.erase(std::unique(buf_ids.begin(), buf_ids.end()), buf_ids.end());
 
         for (u32 id : buf_ids) {
-            buffer_handle h{id};
-            add_buffer_barrier(m_buffers[id], target_buffer_state(p, h));
+            buffer_handle handle{id};
+            add_buffer_barrier(m_buffers[id], target_buffer_state(p, handle), buf_writes.contains(id));
         }
 
         if (image_barriers.empty() && buffer_barriers.empty())

@@ -21,6 +21,7 @@
 #include "util/builders.h"
 #include "render_graph/render_graph.h"
 #include "settings.inl"
+#include "types.h"
 
 
 
@@ -36,23 +37,9 @@ namespace GLT::renderer::vk_rasterizer {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr u32                                               MAX_CONCURRENT_FRAMES = 3;
-
-    static constexpr u32                                        VERTEX_HEADROOM_MIN = 64 * 1024;
-    
-    static constexpr u32                                        INDEX_HEADROOM_MIN  = 128 * 1024;
-
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
-
-    struct camera_ubo_data {
-        glm::mat4                                               view_proj{1.0f};
-        glm::mat4                                               view{1.0f};
-        glm::vec4                                               camera_pos{0.0f};
-    };
-    static_assert(sizeof(camera_ubo_data) == 144, "camera_ubo_data layout mismatch");
-
 
     class renderer : public GLT::render::i_renderer_plugin {
     public:
@@ -178,10 +165,11 @@ namespace GLT::renderer::vk_rasterizer {
 
         void process_pending_meshes();
 
-        void create_mesh_resources();      // buffers, UBOs, descriptor buffer, set layout, pipeline
+        void create_mesh_resources();                           // buffers, UBOs, descriptor buffer, set layout, pipeline
         void destroy_mesh_resources();
-        void update_camera_ubo();          // called once per frame in begin_frame()
-
+        void update_camera_ubo();                               // called once per frame in begin_frame()
+        void build_instance_buffer();                           // packs scene instances into the per-frame SSBO
+        void draw_scene_meshes(vk::CommandBuffer cmd);
 
         // helpers
         void transition_image_layout(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldL,
@@ -258,6 +246,7 @@ namespace GLT::renderer::vk_rasterizer {
         GLT::unique_ref<graph::render_graph>                        m_graph;
         graph::texture_handle                                       m_backbuffer_handle;
         graph::texture_handle                                       m_triangle_target;   // persistent - persists across frames
+        graph::texture_handle                                       m_depth_target;
 
         // mesh state --------------------------------------------------------------------------------------------------
 
@@ -279,14 +268,16 @@ namespace GLT::renderer::vk_rasterizer {
         std::vector<GLT::asset::handle>                             m_pending_loads{};
         std::vector<GLT::asset::handle>                             m_pending_unloads{};
 
-        // mesh pipeline + camera UBO ----------------------------------------------------------------------------------
+        // mesh pipeline + per-frame descriptor data -------------------------------------------------------------------
 
         vk::DescriptorSetLayout                                     m_mesh_set_layout = nullptr;
         vk::PipelineLayout                                          m_mesh_pipeline_layout = nullptr;
         vk::Pipeline                                                m_mesh_pipeline = nullptr;
-
+        vk::Pipeline                                                m_depth_pipeline = nullptr;
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_camera_ubos{};
-        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>  m_camera_desc_buffers{};
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>   m_instance_buffers{};
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>  m_frame_desc_buffers{};
+        std::vector<instance_batch>                                 m_instance_batches{};
 
     };
 
