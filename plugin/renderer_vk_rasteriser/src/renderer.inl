@@ -62,6 +62,8 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph = GLT::create_unique_ref<graph::render_graph>(m_dev);
         create_render_target();
         create_mesh_resources();
+        create_shadow_resources();
+        create_local_shadow_resources();        // after create_shadow_resources(), needs m_mesh_set_layout + instance buffers
         create_light_resources();
         create_cluster_resources();
         create_light_culling_pipeline();
@@ -93,6 +95,8 @@ namespace GLT::renderer::vk_rasterizer {
         destroy_light_culling_pipeline();
         destroy_cluster_resources();
         destroy_light_resources();
+        destroy_local_shadow_resources();
+        destroy_shadow_resources();
         destroy_mesh_resources();
         destroy_render_target();
         imgui_shutdown();
@@ -165,11 +169,12 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_graph->begin_frame();
 
-        update_cluster_dimensions();        // rebuild the grid/index buffers if the render size changed
+        update_cluster_dimensions();
         process_pending_meshes();
-        update_camera_ubo();
         build_instance_buffer();
         update_lights();
+        update_shadow();
+        update_camera_ubo();
 
         using VKIU = vk::ImageUsageFlagBits;
 
@@ -217,6 +222,27 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_depth_target = m_graph->create_texture(depth_desc);
 
+        graph::texture_desc shadow_desc{};
+        shadow_desc.name = "shadow_map";
+        shadow_desc.format = vk::Format::eD32Sfloat;
+        shadow_desc.width = m_shadow_settings.resolution;
+        shadow_desc.height = m_shadow_settings.resolution;
+        shadow_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
+        shadow_desc.persistent = true;
+
+        m_shadow_map = m_graph->create_texture(shadow_desc);
+
+        graph::texture_desc atlas_desc{};
+        atlas_desc.name = "shadow_atlas";
+        atlas_desc.format = vk::Format::eD32Sfloat;                 // must match m_depth_pipeline's depth format
+        atlas_desc.width = m_shadow_settings.atlas_size;
+        atlas_desc.height = m_shadow_settings.atlas_size;
+        atlas_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
+        atlas_desc.persistent = true;
+
+        m_shadow_atlas = m_graph->create_texture(atlas_desc);
+
+
         // Refresh light culling inputs for this frame. All the resources the culling shader reads are either per-frame (frame slot)
         // or persistent-by-name; the descriptor refresh picks up any handles that were rebuilt by update_cluster_dimensions()
         update_light_meta_ubo();
@@ -256,6 +282,134 @@ namespace GLT::renderer::vk_rasterizer {
                 const u32 dispatch_count = (m_instance_count + 63) / 64;
                 ctx.cmd.dispatch(dispatch_count, 1, 1);
             });
+
+        if (m_shadow.active) {
+
+            m_graph->add_pass("reset_shadow_draw_count",
+                [&](graph::pass_builder& builder) {
+                    builder.write(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+                    builder.set_side_effects(true);
+                },
+                [this](graph::pass_context& ctx) {
+                    ctx.cmd.fillBuffer(ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]), 0, sizeof(u32), 0);
+                });
+
+            m_graph->add_pass("shadow_cull",
+                [&](graph::pass_builder& builder) {
+                    builder.write(m_shadow_draw_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                    builder.write(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                    builder.set_side_effects(true);
+                },
+                [this](graph::pass_context& ctx) {
+
+                    if (m_instance_count == 0)
+                        return;
+
+                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
+                    m_dev->bind_descriptor_buffer({ m_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                    m_dev->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+                    ctx.cmd.dispatch((m_instance_count + 63) / 64, 1, 1);
+                });
+
+            m_graph->add_pass("shadow_pass",
+                [&](graph::pass_builder& builder) {
+                    builder.depth_attachment(m_shadow_map, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
+                    builder.read(m_shadow_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
+                    builder.read(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
+                },
+                [this](graph::pass_context& ctx) {
+
+                    if (m_instance_count == 0)
+                        return;
+
+                    const u32 res = m_shadow_settings.resolution;
+
+                    ctx.begin_rendering();
+                    ctx.cmd.setViewport(0, vk::Viewport(0.f, 0.f, static_cast<f32>(res), static_cast<f32>(res), 0.f, 1.f));
+                    ctx.cmd.setScissor(0, vk::Rect2D({0, 0}, {res, res}));
+                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_depth_pipeline);          // reused depth-only pipeline
+                    m_dev->bind_descriptor_buffer({ m_shadow_desc_buffers[m_current_frame] }, ctx.cmd);
+                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+                    draw_scene_indirect(ctx.cmd,
+                        ctx.get_buffer(m_shadow_draw_commands_handles[m_current_frame]),
+                        ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]));
+                    ctx.end_rendering();
+
+                    m_frame_render_passes++;
+                });
+        }
+
+        if (m_local_shadow_view_count > 0) {
+
+            m_graph->add_pass("reset_local_shadow_counts",
+                [&](graph::pass_builder& builder) {
+                    builder.write(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+                    builder.set_side_effects(true);
+                },
+                [this](graph::pass_context& ctx) {
+                    ctx.cmd.fillBuffer(ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]), 0,
+                        MAX_SHADOW_VIEWS * sizeof(u32), 0);
+                });
+
+            m_graph->add_pass("local_shadow_cull",
+                [&](graph::pass_builder& builder) {
+                    builder.write(m_local_shadow_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                    builder.write(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                    builder.set_side_effects(true);
+                },
+                [this](graph::pass_context& ctx) {
+
+                    if (m_instance_count == 0)
+                        return;
+
+                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_local_shadow_cull_pipeline);
+                    m_dev->bind_descriptor_buffer({ m_local_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                    m_dev->bind_descriptor_set(m_local_shadow_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+                    ctx.cmd.dispatch((m_instance_count + 63) / 64, m_local_shadow_view_count, 1);   // y = view
+                });
+
+            m_graph->add_pass("local_shadow_pass",
+                [&](graph::pass_builder& builder) {
+                    builder.depth_attachment(m_shadow_atlas, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
+                    builder.read(m_local_shadow_commands_handles[m_current_frame], graph::buffer_usage::indirect);
+                    builder.read(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::indirect);
+                },
+                [this](graph::pass_context& ctx) {
+
+                    if (m_instance_count == 0)
+                        return;
+
+                    const vk::Buffer commands = ctx.get_buffer(m_local_shadow_commands_handles[m_current_frame]);
+                    const vk::Buffer counts = ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]);
+                    const auto& desc_buffer = m_local_shadow_desc_buffers[m_current_frame];
+
+                    ctx.begin_rendering();
+                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_depth_pipeline);       // reused depth-only pipeline
+                    m_dev->bind_descriptor_buffer({ desc_buffer }, ctx.cmd);
+                    ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
+                    ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
+
+                    for (const auto& tile : m_local_shadow_tiles) {
+
+                        ctx.cmd.setViewport(0, vk::Viewport(static_cast<f32>(tile.x), static_cast<f32>(tile.y),
+                            static_cast<f32>(tile.size), static_cast<f32>(tile.size), 0.f, 1.f));
+                        ctx.cmd.setScissor(0, vk::Rect2D({ static_cast<i32>(tile.x), static_cast<i32>(tile.y) }, { tile.size, tile.size }));
+
+                        // Set [tile.view] = UBO slice with this view's matrix
+                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, desc_buffer.get_offset_to_set(tile.view),
+                            ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                        ctx.cmd.drawIndexedIndirectCount(
+                            commands, static_cast<vk::DeviceSize>(tile.view) * SHADOW_COMMANDS_PER_VIEW * sizeof(vk::DrawIndexedIndirectCommand),
+                            counts, static_cast<vk::DeviceSize>(tile.view) * sizeof(u32),
+                            SHADOW_COMMANDS_PER_VIEW, sizeof(vk::DrawIndexedIndirectCommand));
+                        m_frame_draw_calls++;
+                    }
+
+                    ctx.end_rendering();
+                    m_frame_render_passes++;
+                });
+        }
 
         // Depth prepass -----------------------------------------------------------------------------------------------
         m_graph->add_pass("depth_prepass",
@@ -370,6 +524,10 @@ namespace GLT::renderer::vk_rasterizer {
                     builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
                     builder.read(m_light_grid_handles[m_current_frame], graph::buffer_usage::storage_read);
                     builder.read(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_read);
+                    if (m_shadow.active)
+                        builder.read(m_shadow_map, graph::texture_usage::depth_sampled);
+                    if (m_local_shadow_view_count > 0)
+                        builder.read(m_shadow_atlas, graph::texture_usage::depth_sampled);
                 },
                 [this](graph::pass_context& ctx) {
 

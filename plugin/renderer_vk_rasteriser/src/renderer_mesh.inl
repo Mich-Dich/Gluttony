@@ -18,9 +18,28 @@ namespace GLT::renderer::vk_rasterizer {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
+    static FORCE_INLINE void extract_frustum_planes(const glm::mat4& view_projection, glm::vec4 (&planes)[6]);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
+    static FORCE_INLINE void extract_frustum_planes(const glm::mat4& view_projection, glm::vec4 (&planes)[6]) {
+
+        const glm::mat4 t = glm::transpose(view_projection);
+        planes[0] = t[3] + t[0];   // left
+        planes[1] = t[3] - t[0];   // right
+        planes[2] = t[3] + t[1];   // bottom
+        planes[3] = t[3] - t[1];   // top
+        planes[4] = t[3] + t[2];   // near
+        planes[5] = t[3] - t[2];   // far
+
+        for (auto& plane : planes) {
+            const f32 length = glm::length(glm::vec3(plane));
+            if (length > 0.0f)
+                plane /= length;
+        }
+    }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
@@ -217,12 +236,18 @@ namespace GLT::renderer::vk_rasterizer {
         //   2  Lights SSBO      (per frame, fragment) — Forward+ light data
         //   3  Light grid SSBO  (per frame, fragment) — {offset, count} per cluster
         //   4  Light index list (per frame, fragment) — packed light indices
+        //   5  Shadow map
+        //   6  Shadow views
+        //   7  Shadow atlas
         std::vector<util::descriptor_item> descriptor_layout_items;
         descriptor_layout_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);
         descriptor_layout_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, nullptr);
         descriptor_layout_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
         descriptor_layout_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
         descriptor_layout_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
+        descriptor_layout_items.emplace_back(5, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, nullptr);
+        descriptor_layout_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
+        descriptor_layout_items.emplace_back(7, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, nullptr);
 
         m_mesh_set_layout = m_dev->create_descriptor_set_layout(descriptor_layout_items);
         m_live_descriptor_set_count++;
@@ -485,11 +510,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         camera_ubo_data camera_data{};
 
-        const f32 aspect_ratio = static_cast<f32>(m_render_size.x) / static_cast<f32>(m_render_size.y);
-        glm::mat4 projection = glm::perspective(glm::radians(m_active_camera.fov), aspect_ratio,
-            m_active_camera.near_plane, m_active_camera.far_plane);
-        projection[1][1] *= -1.0f;   // Vulkan Y flip
-
+        const glm::mat4 projection = camera_projection();
         const glm::mat4 view_projection = projection * m_active_camera.view;
 
         camera_data.view = m_active_camera.view;
@@ -504,20 +525,9 @@ namespace GLT::renderer::vk_rasterizer {
             static_cast<f32>(m_render_size.x),
             static_cast<f32>(m_render_size.y));
 
-        // Gribb-Hartmann frustum extraction. Rows of view_projection map world space to clip space; the six planes fall out as signed
-        // combinations of those rows
-        const glm::mat4 view_projection_transposed = glm::transpose(view_projection);
-        const glm::vec4 clip_row_0 = view_projection_transposed[0];
-        const glm::vec4 clip_row_1 = view_projection_transposed[1];
-        const glm::vec4 clip_row_2 = view_projection_transposed[2];
-        const glm::vec4 clip_row_3 = view_projection_transposed[3];
-
-        camera_data.frustum_planes[0] = clip_row_3 + clip_row_0;  // left
-        camera_data.frustum_planes[1] = clip_row_3 - clip_row_0;  // right
-        camera_data.frustum_planes[2] = clip_row_3 + clip_row_1;  // bottom
-        camera_data.frustum_planes[3] = clip_row_3 - clip_row_1;  // top
-        camera_data.frustum_planes[4] = clip_row_3 + clip_row_2;  // near
-        camera_data.frustum_planes[5] = clip_row_3 - clip_row_2;  // far
+        extract_frustum_planes(view_projection, camera_data.frustum_planes);
+        camera_data.light_view_proj = m_shadow.view_proj;
+        camera_data.shadow_params = m_shadow.params;
 
         for (auto& plane : camera_data.frustum_planes) {
             const f32 normal_length = glm::length(glm::vec3(plane));
@@ -544,21 +554,42 @@ namespace GLT::renderer::vk_rasterizer {
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
 
+        util::accessible_image shadow_image{};
+        shadow_image.view = m_graph->texture_default_view(m_shadow_map);
+        shadow_image.sampler = m_shadow_sampler;
+        shadow_image.layout = vk::ImageLayout::eDepthStencilReadOnlyOptimal;
+
+        util::accessible_image atlas_image{};
+        atlas_image.view = m_graph->texture_default_view(m_shadow_atlas);
+        atlas_image.sampler = m_shadow_sampler;
+        atlas_image.layout = vk::ImageLayout::eDepthStencilReadOnlyOptimal;
+
         std::vector<util::descriptor_item> descriptor_items;
         descriptor_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_camera_ubos[frame_index]);
-        descriptor_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex,                    1, &m_instance_buffers[frame_index]);
-        descriptor_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment,                  1, &m_light_buffers[frame_index]);
-        descriptor_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment,                  1, grid_allocation);
-        descriptor_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment,                  1, list_allocation);
+        descriptor_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, &m_instance_buffers[frame_index]);
+        descriptor_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_light_buffers[frame_index]);
+        descriptor_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, grid_allocation);
+        descriptor_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, list_allocation);
+        descriptor_items.emplace_back(5, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, &shadow_image);
+        descriptor_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_shadow_view_buffers[frame_index]);
+        descriptor_items.emplace_back(7, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, &atlas_image);
+
+        constexpr auto buffer_type = util::descriptor_buffer_type::combined;
 
         if (m_frame_desc_buffers[frame_index].buffer.buffer == nullptr)
-            m_frame_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_mesh_set_layout, descriptor_items,
-                util::descriptor_buffer_type::resource, 1);
+            m_frame_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_mesh_set_layout, descriptor_items, buffer_type, 1);
 
-        // The item vector was rebuilt this call, so binding_offset is 0 on every item. Refresh it
-        // from the layout before writing — otherwise every descriptor writes to offset 0
         m_dev->compute_descriptor_binding_offsets(m_mesh_set_layout, descriptor_items);
-        m_dev->update_descriptor_buffer(m_frame_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::resource);
+        m_dev->update_descriptor_buffer(m_frame_desc_buffers[frame_index], descriptor_items, buffer_type);
+
+        // Directional shadow-pass set: binding 5+ are not written (shadow_map is the attachment; the depth shaders never read them)
+        descriptor_items.erase(descriptor_items.begin() + 5, descriptor_items.end());
+        descriptor_items[0].p_resources = &m_shadow_camera_ubos[frame_index];
+
+        if (m_shadow_desc_buffers[frame_index].buffer.buffer == nullptr)
+            m_shadow_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_mesh_set_layout, descriptor_items, buffer_type, 1);
+
+        m_dev->update_descriptor_buffer(m_shadow_desc_buffers[frame_index], descriptor_items, buffer_type);
     }
 
 }

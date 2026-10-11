@@ -191,15 +191,15 @@ Next steps for the renderer:
 ---
 
 ### Step 7 — Shadow mapping (directional light first)
-**Goal:** Add shadows to the forward pass.
+**Goal:** Add shadows to the forward pass
 
-- Create a shadow map texture (depth only) and a light-space matrix.
-- Add a render graph pass `"shadow_pass"` that renders the scene from the light’s point of view. Reuse the depth-only pipeline.
-- Update `mesh.frag.glsl` to sample the shadow map and attenuate the directional light.
+- Create a shadow map texture (depth only) and a light-space matrix
+- Add a render graph pass `"shadow_pass"` that renders the scene from the light’s point of view. Reuse the depth-only pipeline
+- Update `mesh.frag.glsl` to sample the shadow map and attenuate the directional light
 
-**Outcome:** Directional shadows work; Forward+ has basic shadowing.
+**Outcome:** Directional shadows work; Forward+ has basic shadowing
 
-- Extend to point/spot shadows using cube maps or multiple shadow maps.
+- Extend to point/spot shadows using cube maps or multiple shadow maps
 
 
 ---

@@ -28,10 +28,8 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 namespace GLT::renderer::vk_rasterizer {
-
     class image;
 }
-
 
 namespace GLT::renderer::vk_rasterizer {
 
@@ -81,20 +79,10 @@ namespace GLT::renderer::vk_rasterizer {
         // mesh --------------------------------------------------------------------------------------------------------
 
         bool load_mesh(const std::filesystem::path& content_relative_path) override;
-
-
         bool load_mesh(GLT::asset::handle handle) override;
-
-
         void unload_mesh(GLT::asset::handle handle) override;
-
-
         void submit_scene(std::span<const GLT::asset::mesh::instance> instances) override;
-
-
         void retain_mesh(GLT::asset::handle mesh) override;
-
-
         void release_mesh(GLT::asset::handle mesh) override;
 
         // light -------------------------------------------------------------------------------------------------------
@@ -105,30 +93,16 @@ namespace GLT::renderer::vk_rasterizer {
         // modes -------------------------------------------------------------------------------------------------------
 
         [[nodiscard]] std::span<const GLT::render::render_mode_info> supported_modes() const override;
-
-
         void set_render_mode(u32 mode_id) override;
-
-
         [[nodiscard]] u32 get_render_mode() const override;
 
         // settings ----------------------------------------------------------------------------------------------------
 
         [[nodiscard]] const GLT::reflect::type_descriptor* settings_descriptor() const override;
-
-
         [[nodiscard]] void* settings_data() override;
-
-
         void on_settings_changed() override;
-
-
         FORCE_INLINE void set_sun_settings(const GLT::render::sun_settings& s) override { (void)s; }
-
-
         FORCE_INLINE_R const GLT::render::sun_settings& get_sun_settings() const override { return m_sun_settings; }
-
-
         [[nodiscard]] void* render_material_preview(GLT::asset::handle /*material*/, const GLT::asset::material::material_params& /*params*/,
             std::span<const GLT::asset::handle> /*textures*/, const glm::vec3& /*camera_pos*/) override { return nullptr; }
 
@@ -170,13 +144,13 @@ namespace GLT::renderer::vk_rasterizer {
         const mesh_slot* find_slot(GLT::asset::handle h) const noexcept;
         void process_pending_meshes();
 
-        // Lights --------------------------------------------------------------------------------------------
+        // Lights ------------------------------------------------------------------------------------------------------
 
         void create_light_resources();
         void destroy_light_resources();
         void update_lights();
 
-        // Lights (cluster infrastructure) -------------------------------------------------------------------
+        // Lights (cluster infrastructure) -----------------------------------------------------------------------------
 
         void create_cluster_resources();
         void destroy_cluster_resources();
@@ -186,7 +160,7 @@ namespace GLT::renderer::vk_rasterizer {
         // ready to be re-queried
         void update_cluster_dimensions();
 
-        // Light culling -------------------------------------------------------------------------------------
+        // Light culling -----------------------------------------------------------------------------------------------
 
         void create_light_culling_pipeline();
         void destroy_light_culling_pipeline();
@@ -229,11 +203,22 @@ namespace GLT::renderer::vk_rasterizer {
         void transition_image_layout(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldL,
             vk::ImageLayout newL, vk::ImageSubresourceRange range = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
 
-        // Debug view ---------------------------------------------------------------------------------------------------
+        // Debug view --------------------------------------------------------------------------------------------------
 
         void create_debug_view_resources();
         void destroy_debug_view_resources();
         void update_debug_view_descriptors();
+
+        // shadow ------------------------------------------------------------------------------------------------------
+
+        void create_shadow_resources();
+        void destroy_shadow_resources();
+        void update_shadow();                               // fit the light matrices + write the shadow camera UBO
+        void create_local_shadow_resources();
+        void destroy_local_shadow_resources();
+        void update_local_shadows();                        // called from update_lights()
+        glm::mat4 camera_projection() const;
+
 
         // Configuration -----------------------------------------------------------------------------------------------
 
@@ -405,6 +390,30 @@ namespace GLT::renderer::vk_rasterizer {
         vk::Pipeline                                                        m_light_cull_debug_pipeline = nullptr;
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_light_cull_debug_desc_buffers{};
 
+        // shadow ------------------------------------------------------------------------------------------------------
+
+        shadow_settings                                                     m_shadow_settings{};
+        shadow_state                                                        m_shadow{};
+        graph::texture_handle                                               m_shadow_map;
+        vk::Sampler                                                         m_shadow_sampler = nullptr;
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_shadow_camera_ubos{};
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_shadow_desc_buffers{};        // mesh set, binding 0 -> shadow UBO
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_shadow_cull_desc_buffers{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_shadow_draw_commands_handles{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_shadow_draw_count_handles{};
+        graph::texture_handle                                               m_shadow_atlas;
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_shadow_view_buffers{};            // SSBO + UBO slices
+        std::vector<gpu_shadow_view>                                        m_packed_shadow_views{};
+        std::vector<local_shadow_tile>                                      m_local_shadow_tiles{};
+        u32                                                                 m_local_shadow_view_count = 0;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_local_shadow_desc_buffers{};      // MAX_SHADOW_VIEWS sets, set i -> UBO slice i
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_local_shadow_cull_desc_buffers{};
+        vk::DescriptorSetLayout                                             m_local_shadow_cull_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_local_shadow_cull_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_local_shadow_cull_pipeline = nullptr;
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_local_shadow_commands_handles{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_local_shadow_counts_handles{};
+
     };
 
 
@@ -521,6 +530,7 @@ namespace GLT::renderer::vk_rasterizer {
 #include "renderer_clusters.inl"
 #include "renderer_light_culling.inl"
 #include "renderer_debug_view.inl"
+#include "renderer_shadow.inl"
 // #include "renderer_material_texture.inl"
 // #include "renderer_preview.inl"
 

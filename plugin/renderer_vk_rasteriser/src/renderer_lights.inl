@@ -68,9 +68,9 @@ namespace GLT::renderer::vk_rasterizer {
 
     void renderer::update_lights() {
 
+        m_shadow.active = false;
         m_packed_lights.clear();
-        m_packed_lights.reserve(std::min<size_t>(MAX_LIGHTS,
-            m_submitted_lights.size() + m_debug_lights.size()));
+        m_packed_lights.reserve(std::min<size_t>(MAX_LIGHTS, m_submitted_lights.size() + m_debug_lights.size()));
 
         auto pack = [&](const GLT::world::light_snapshot& snapshot) {
 
@@ -86,6 +86,15 @@ namespace GLT::renderer::vk_rasterizer {
             light.color_intensity = glm::vec4(snapshot.color, snapshot.intensity);
             light.direction_inner_cos = glm::vec4(direction, std::cos(snapshot.inner_cone_angle));
             light.params = glm::vec4(std::cos(snapshot.outer_cone_angle), static_cast<f32>(snapshot.type), 0.f, 0.f);
+
+            // First directional light casts the shadow. The shader sees it via params.z
+            constexpr f32 LIGHT_TYPE_DIRECTIONAL = 0.f;     // matches the shader: 0 = dir, 1 = point, 2 = spot
+            if (m_shadow_settings.enabled && !m_shadow.active && light.params.y == LIGHT_TYPE_DIRECTIONAL) {
+                light.params.z = 1.f;
+                m_shadow.active = true;
+                m_shadow.direction = direction;
+            }
+
             m_packed_lights.push_back(light);
         };
 
@@ -97,8 +106,13 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_light_count = static_cast<u32>(m_packed_lights.size());
 
-        if (m_light_count == 0)
+        if (m_light_count == 0) {
+            m_local_shadow_view_count = 0;
+            m_local_shadow_tiles.clear();
             return;
+        }
+
+        update_local_shadows();     // assigns tiles + writes params.z (shadow view index + 1) on the packed lights
 
         void* mapped = m_dev->map_buffer(m_light_buffers[m_current_frame]);
         std::memcpy(mapped, m_packed_lights.data(), m_light_count * sizeof(gpu_light));
