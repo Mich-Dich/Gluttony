@@ -2,14 +2,16 @@
 #pragma once
 
 #include <imgui.h>
+#include <ImGuizmo.h>
 
 #include <world/i_world_inspector.h>
 #include <event/application_event.h>
 #include <reflection/registry.h>
 
+#include "resource_manager/icon_manager.h"
+#include "util/event/asset_event.h"
 #include "window/base/base_window.h"
 #include "window/content_browser.h"
-#include "util/event/asset_event.h"
 
 
 
@@ -81,6 +83,7 @@ namespace GLT::editor {
 
         void on_save_event(const GLT::save_event& event);
 
+        // Buffered so we don't mutate the queue while someone else is iterating - update() drains this into m_save_as_queue
         void on_save_as_request_event(const GLT::save_as_request_event& event);
 
         // Reads the head of the queue and opens the modal. No-op if a request is already being shown
@@ -97,6 +100,14 @@ namespace GLT::editor {
         void render_settings_popup_body();  // popup content, called by render_settings_overlay
 
         bool draw_reflected_setting(const GLT::reflect::member_descriptor& md, void* ptr);
+
+        void render_gizmo(const ImVec2& image_min, const ImVec2& image_size);
+
+        void render_gizmo_toolbar(const ImVec2& image_min, const ImVec2& image_size);
+
+        // Draws a styled toggle button matching the render-mode overlay look.
+        static bool gizmo_toggle_button(const char* label, bool active, const ImVec2& size = ImVec2(0, 0), const bool use_icon = false,
+            icon_manager::icon icon = icon_manager::icon::transfrom_rotation);
 
 
         std::vector<content_browser_window>             m_content_browsers{};
@@ -115,6 +126,13 @@ namespace GLT::editor {
         std::vector<GLT::save_as_request_event>         m_save_as_event_buffer{};
         std::deque<pending_save_request>                m_save_as_queue{};
         bool                                            m_save_as_open{ false };
+
+        ImGuizmo::OPERATION                             m_gizmo_operation = ImGuizmo::TRANSLATE;
+        ImGuizmo::MODE                                  m_gizmo_mode = ImGuizmo::WORLD;
+        bool                                            m_gizmo_snap = false;
+        f32                                             m_gizmo_snap_translate[3] = { 1.f, 1.f, 1.f };
+        f32                                             m_gizmo_snap_rotate = 15.f;   // degrees
+        f32                                             m_gizmo_snap_scale = 0.1f;
 
     };
 

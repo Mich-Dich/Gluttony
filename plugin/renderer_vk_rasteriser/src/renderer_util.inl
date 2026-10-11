@@ -108,8 +108,8 @@ namespace GLT::renderer::vk_rasterizer {
     glm::mat4 renderer::camera_projection() const {
 
         const f32 aspect_ratio = static_cast<f32>(m_render_size.x) / static_cast<f32>(m_render_size.y);
-        glm::mat4 projection = glm::perspective(glm::radians(m_active_camera.fov), aspect_ratio,
-            m_active_camera.near_plane, m_active_camera.far_plane);
+        glm::mat4 projection = glm::perspective(glm::radians(m_active_camera.fov), aspect_ratio, m_active_camera.near_plane,
+            m_active_camera.far_plane);
         projection[1][1] *= -1.0f;
         return projection;
     }

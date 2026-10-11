@@ -4,6 +4,7 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <ImGuizmo.h>
 
 #include <application.h>
 #include <event/event_bus.h>
@@ -214,6 +215,9 @@ namespace GLT::editor {
 
 
     void editor_layer::render_imgui(const f32 delta_time) {
+
+        // ImGuizmo must see exactly one BeginFrame per ImGui frame.
+        ImGuizmo::BeginFrame();
 
         render_toolbar();
         render_dockspace();

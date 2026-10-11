@@ -1,12 +1,10 @@
 
-
 sudo chown -R mich:mich ~/workspace/Gluttony
 
 validate SSH:
 ```bash
 ssh -T git@github.com
 ```
-
 
 
 # TODO
@@ -16,47 +14,6 @@ ssh -T git@github.com
 [ ] update the asset path reference of an editor if the asset is moved
 [x] let CMake compile even without internet connection (currently it fails)
 [ ] Add a function to the plugins (new interface) that lets the plugin manager check if that plugin is even supported for the current users architecture (like my main renderer needs WR-TR)
-
-
-
-
-Next steps for the renderer:
-[x] **Static accumulation** No motion vectors. Accumulate when the camera and scene are static, reset when they aren't. This alone gets your emissive cube demo looking clean and gives you the ping-pong history buffer you'll need later. It will be a visible, dramatic improvement on the demo, and it's a stepping stone, not a throwaway.
-
-[x] **Bump samples per bounce to 2–4** This is the cheapest way to make the noise floor low enough that a later spatial pass will actually work. Traces more rays per frame, but it's trivial to try.
-
-[x] **Full temporal with reconstructed motion vectors** Reconstruct reprojection from the RT hit data. Add disocclusion rejection. This is the point where the technique works in a moving game, not just a static demo.
-
-[ ] **Spatial denoise pass on top** Joint bilateral or wavelet filter guided by the G-buffer you added in step 3. Cleans up disocclusion artefacts and any residual noise temporal couldn't reach. This is where you'd integrate OptiX if you're NVIDIA-only, or roll your own if you need portability.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    // driven by the render settings UI
-    struct visual_settings {
-
-        u32                                                     ao_samples = 4u;
-        f32                                                     ao_radius = 30.0f;
-        f32                                                     ao_ray_bias = 0.005f;
-        u32                                                     indirect_samples_base = 3u;
-        u32                                                     temporal_max_history = 64u;
-        f32                                                     temporal_clip_k = 2.0f;
-    };
-    
-
-
 
 
 
@@ -74,13 +31,6 @@ Next steps for the renderer:
 - Dependency graph viewer
 - Keybinding editor
 - Theme / style editor
-
-
-
-
-
-
-
 
 
 
@@ -159,47 +109,47 @@ Next steps for the renderer:
 
     **Outcome:** Light culling runs every frame using the depth prepass result.
 
----
+    ---
 
-### Step 5 — Forward pass consumes light lists
-**Goal:** Update the forward shading pass to use the light grid.
+    ### Step 5 — Forward pass consumes light lists
+    **Goal:** Update the forward shading pass to use the light grid.
 
-- Extend `m_mesh_set_layout` with new bindings:
-  - binding 2: lights SSBO
-  - binding 3: light grid SSBO
-  - binding 4: light index list SSBO
-  - binding 5: cluster params UBO (grid size, depth slices, near/far)
-- Update `m_frame_desc_buffers` creation to include these new bindings.
-- Modify `mesh.frag.glsl`:
-  - Compute cluster index from `gl_FragCoord.xy` and linear depth.
-  - Fetch light count and offset from the light grid.
-  - Loop over light indices, fetch light data, and accumulate lighting.
-- Keep the existing depth prepass pipeline using the same layout; it just won’t use the extra bindings.
+    - Extend `m_mesh_set_layout` with new bindings:
+    - binding 2: lights SSBO
+    - binding 3: light grid SSBO
+    - binding 4: light index list SSBO
+    - binding 5: cluster params UBO (grid size, depth slices, near/far)
+    - Update `m_frame_desc_buffers` creation to include these new bindings.
+    - Modify `mesh.frag.glsl`:
+    - Compute cluster index from `gl_FragCoord.xy` and linear depth.
+    - Fetch light count and offset from the light grid.
+    - Loop over light indices, fetch light data, and accumulate lighting.
+    - Keep the existing depth prepass pipeline using the same layout; it just won’t use the extra bindings.
 
-**Outcome:** Forward pass shades with many point/spot lights efficiently.
+    **Outcome:** Forward pass shades with many point/spot lights efficiently.
 
----
+    ---
 
-### Step 6 — Debug visualization for light culling
-**Goal:** Validate the cluster grid and light counts.
+    ### Step 6 — Debug visualization for light culling
+    **Goal:** Validate the cluster grid and light counts.
 
-- Add a debug compute or fragment shader that outputs a heatmap of light count per cluster.
-- Add a render graph pass that writes to the scene color when a toggle is enabled.
+    - Add a debug compute or fragment shader that outputs a heatmap of light count per cluster.
+    - Add a render graph pass that writes to the scene color when a toggle is enabled.
 
-**Outcome:** You can visually verify that light culling is working correctly.
+    **Outcome:** You can visually verify that light culling is working correctly.
 
----
+    ---
 
-### Step 7 — Shadow mapping (directional light first)
-**Goal:** Add shadows to the forward pass
+    ### Step 7 — Shadow mapping (directional light first)
+    **Goal:** Add shadows to the forward pass
 
-- Create a shadow map texture (depth only) and a light-space matrix
-- Add a render graph pass `"shadow_pass"` that renders the scene from the light’s point of view. Reuse the depth-only pipeline
-- Update `mesh.frag.glsl` to sample the shadow map and attenuate the directional light
+    - Create a shadow map texture (depth only) and a light-space matrix
+    - Add a render graph pass `"shadow_pass"` that renders the scene from the light’s point of view. Reuse the depth-only pipeline
+    - Update `mesh.frag.glsl` to sample the shadow map and attenuate the directional light
 
-**Outcome:** Directional shadows work; Forward+ has basic shadowing
+    **Outcome:** Directional shadows work; Forward+ has basic shadowing
 
-- Extend to point/spot shadows using cube maps or multiple shadow maps
+    - Extend to point/spot shadows using cube maps or multiple shadow maps
 
 
 ---
@@ -235,7 +185,7 @@ Next steps for the renderer:
 
 - Add a post-processing pass that reads `m_scene_color` and writes to the backbuffer.
 - Implement tonemapping (ACES, Reinhard) and gamma correction.
-- Optionally add bloom, SSAO, or TAA.
+- add bloom, SSAO, or TAA (as optional parts, use the settings system)
 - Use the render graph to manage intermediate textures.
 
 **Outcome:** A polished Forward+ renderer ready for a game engine.

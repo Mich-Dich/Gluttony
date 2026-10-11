@@ -16,6 +16,10 @@
 
 include_guard(GLOBAL)
 
+# Populates GIT_EXECUTABLE (and GIT_VERSION_STRING). REQUIRED so that a missing
+# git fails loudly at configure time instead of silently producing blank clone
+# failures inside git_clone_or_update().
+find_package(Git REQUIRED)
 
 # Provides a reusable function to clone a Git repository into a vendor directory and keep it in sync with a given ref on every configure
 # Accepts BRANCH or TAG (mutually exclusive); if the one you pass doesn't match, it automatically retries as the other kind of ref,

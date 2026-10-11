@@ -35,18 +35,37 @@ namespace GLT::world::world_ecs_entt {
     void write_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, GLT::asset::handle handle, 
         std::vector<std::byte>& out_bytes);
 
+
     // Inverse of write_asset_handle. `offset` is advanced past the consumed bytes. A missing, truncated, or unresolvable
     // asset degrades to INVALID_HANDLE rather than aborting the whole entity load - the outliner still shows the component,
     // the renderer just skips it.
     GLT::asset::handle read_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, 
         std::span<const std::byte> in_bytes, size_t& offset);
 
+
     // position/rotation(euler,rad)/scale -> mat4. YXZ order, which matches what camera/controller use elsewhere in the engine.
     static glm::mat4 compose_transform(const GLT::world::world_ecs_entt::component::transform& t);
+
 
     // Rotation-only matrix from euler angles, matching compose_transform's YXZ order. Used by translate_local to rotate
     // a local-frame delta into the entity's frame without going through a full compose().
     static glm::mat3 rotation_matrix_from_euler(const glm::vec3& euler_rad);
+
+
+    // Quaternion for the same rotation as rotation_matrix_from_euler(): Ry * Rx * Rz (intrinsic YXZ).
+    // Because the quaternion product mirrors matrix composition, this is qy * qx * qz.
+    static glm::quat quat_from_euler_yxz(const glm::vec3& euler_rad);
+
+
+    // Inverse of quat_from_euler_yxz(). Extracts YXZ euler angles from a (unit) quaternion.
+    //
+    // With M = Ry * Rx * Rz, the relevant entries are:
+    //     M[1][2] = -sx        M[2][0] = sy*cx        M[0][2] = sy*cx
+    //     M[1][0] = cx*sz      M[2][2] = cy*cx        M[0][0] = cy*cz + sy*sx*sz
+    //     M[1][1] = cx*cz
+    //
+    // glm::mat3 m stores column-major, so m[col][row] == M[row][col].
+    static glm::vec3 euler_yxz_from_quat(const glm::quat& q);
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
@@ -125,6 +144,41 @@ namespace GLT::world::world_ecs_entt {
         r = glm::rotate(r, euler_rad.x, glm::vec3(1, 0, 0));
         r = glm::rotate(r, euler_rad.z, glm::vec3(0, 0, 1));
         return glm::mat3(r);
+    }
+
+
+    static glm::quat quat_from_euler_yxz(const glm::vec3& euler_rad) {
+
+        const f32 hx = euler_rad.x * 0.5f;
+        const f32 hy = euler_rad.y * 0.5f;
+        const f32 hz = euler_rad.z * 0.5f;
+
+        const glm::quat qx{ std::cos(hx), std::sin(hx), 0.f,          0.f };
+        const glm::quat qy{ std::cos(hy), 0.f,           std::sin(hy), 0.f };
+        const glm::quat qz{ std::cos(hz), 0.f,           0.f,          std::sin(hz) };
+
+        return qy * qx * qz;
+    }
+
+
+    static glm::vec3 euler_yxz_from_quat(const glm::quat& q) {
+
+        const glm::quat n = glm::normalize(q);
+        const glm::mat3 m = glm::mat3_cast(n);
+
+        glm::vec3 euler{ 0.f };
+        euler.x = std::asin(glm::clamp(-m[2][1], -1.f, 1.f));
+
+        const f32 cx = std::cos(euler.x);
+        if (std::abs(cx) > 1e-6f) {
+            euler.y = std::atan2(m[0][2], m[2][2]);
+            euler.z = std::atan2(m[0][1], m[1][1]);
+        } else {
+            // Gimbal lock: y and z become coupled. Fold everything into y and zero z.
+            euler.y = std::atan2(-m[0][2], m[0][0]);
+            euler.z = 0.f;
+        }
+        return euler;
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -540,6 +594,56 @@ namespace GLT::world::world_ecs_entt {
         auto& transform = m_registry.get_or_emplace<component::transform>(entt_of(id));
         transform.rotation += euler_delta;
         // Rotation doesn't move the pivot; no re-bin needed
+    }
+
+
+    glm::quat ecs_world_plugin::get_local_rotation_q(entity_id id) const {
+
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null)
+            return glm::quat{ 1.f, 0.f, 0.f, 0.f };    // identity
+
+        if (const auto* transform = m_registry.try_get<component::transform>(entity))
+            return quat_from_euler_yxz(transform->rotation);
+
+        return glm::quat{ 1.f, 0.f, 0.f, 0.f };
+    }
+
+
+    void ecs_world_plugin::set_local_rotation_q(entity_id id, const glm::quat& rotation) {
+
+        if (!alive(id))
+            return;
+
+        auto& transform = m_registry.get_or_emplace<component::transform>(entt_of(id));
+        transform.rotation = euler_yxz_from_quat(rotation);
+
+        // Rotation doesn't move the pivot - no re-bin needed (same rationale as rotate_local)
+    }
+
+
+    glm::vec3 ecs_world_plugin::get_local_scale(entity_id id) const {
+
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null)
+            return glm::vec3(1.f);    // identity
+
+        if (const auto* transform = m_registry.try_get<component::transform>(entity))
+            return transform->scale;
+
+        return glm::vec3(1.f);
+    }
+
+
+    void ecs_world_plugin::set_local_scale(entity_id id, const glm::vec3& scale) {
+
+        if (!alive(id))
+            return;
+
+        auto& transform = m_registry.get_or_emplace<component::transform>(entt_of(id));
+        transform.scale = scale;
+
+        // Scale doesn't move the pivot - no re-bin needed
     }
 
     // region queries --------------------------------------------------------------------------------------------------

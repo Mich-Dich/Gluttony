@@ -97,6 +97,18 @@ namespace GLT::world::world_ecs_entt {
 
         void rotate_local(entity_id id, const glm::vec3& euler_delta) override;
 
+
+        [[nodiscard]] glm::quat get_local_rotation_q(entity_id id) const override;
+
+
+        void set_local_rotation_q(entity_id id, const glm::quat& rotation) override;
+
+
+        [[nodiscard]] glm::vec3 get_local_scale(entity_id id) const override;
+
+
+        void set_local_scale(entity_id id, const glm::vec3& scale) override;
+
         // region queries ----------------------------------------------------------------------------------------------
 
         [[nodiscard]] std::span<const GLT::asset::region::region> regions() const noexcept override;

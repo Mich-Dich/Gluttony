@@ -102,13 +102,28 @@ namespace GLT::world {
         [[nodiscard]] virtual glm::vec3 get_local_rotation(entity_id id) const = 0;
 
 
-        // Add `local_delta` to the entity's position, rotated by the entity's own local rotation. So a controller asking
-        // for `{0, 0, -d}` moves the entity "forward" regardless of which way it currently faces.
+        // Add [`local_delta] to the entity's position, rotated by the entity's own local rotation. So a controller asking
+        // for [`{0, 0, -d}] moves the entity "forward" regardless of which way it currently faces.
         virtual void translate_local(entity_id id, const glm::vec3& local_delta) = 0;
 
 
-        // Add `euler_delta` (radians) onto the entity's local rotation. Component order matches `transform::rotation`'s YXZ convention.
+        // Add [euler_delta] (radians) onto the entity's local rotation. Component order matches [transform::rotation]'s YXZ convention.
         virtual void rotate_local(entity_id id, const glm::vec3& euler_delta) = 0;
+
+
+        // Read the entity's local rotation as a quaternion. Same identity-value contract as get_local_rotation().
+        [[nodiscard]] virtual glm::quat get_local_rotation_q(entity_id id) const = 0;
+
+
+        // Absolute set. Replaces the entity's rotation. No-op on a dead entity.
+        virtual void set_local_rotation_q(entity_id id, const glm::quat& rotation) = 0;
+
+
+        // Local scale. Same identity / on-demand-creation contract as the position pair.
+        [[nodiscard]] virtual glm::vec3 get_local_scale(entity_id id) const = 0;
+
+
+        virtual void set_local_scale(entity_id id, const glm::vec3& scale) = 0;
 
         // region queries ----------------------------------------------------------------------------------------------
 

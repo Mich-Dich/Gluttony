@@ -26,6 +26,7 @@
     "gbuffer",
     "glfw",
     "gltf",
+    "Guizmo",
     "hlsl",
     "imgui",
     "implot",

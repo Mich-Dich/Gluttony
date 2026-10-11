@@ -5,12 +5,14 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include <config/imgui_config.h>
 #include <plugin_system/plugin_manager.h>
 #include <platform/i_window.h>
 #include <asset/i_asset_registry.h>
 #include <render/image.h>
 #include <render/i_renderer.h>
 #include <world/i_world.h>
+#include <world/i_world_scene.h>
 #include <world/world_layer.h>
 
 #include "util/ui/pannel_collection.h"
@@ -176,24 +178,29 @@ namespace GLT::editor {
             m_viewport_size = ImGui::GetContentRegionAvail();
             ImGui::Image(m_renderer->get_rendered_image(), m_viewport_size);
 
-            const bool image_hovered = ImGui::IsItemHovered();
+            const bool   image_hovered = ImGui::IsItemHovered();
+            const ImVec2 image_min = ImGui::GetItemRectMin();
+            const ImVec2 image_size = ImGui::GetItemRectSize();
 
-            // Floating overlay, upper-left corner
+            // These two overlays rely on GetItemRectMin() still being the image,
+            // so they MUST run before anything else draws.
             const bool mode_popup_open = render_mode_selector_overlay();
             const bool settings_popup_open = render_settings_overlay();
             const bool overlay_active = mode_popup_open || settings_popup_open;
 
+            // Gizmo is self-contained: it takes the rect explicitly, so it can run
+            // after the overlays without disturbing their layout state.
+            render_gizmo_toolbar(image_min, image_size);
+            render_gizmo(image_min, image_size);
+
             const bool right_down = ImGui::IsMouseDown(ImGuiMouseButton_Right);
 
-            // Enter: press RMB while the image itself is the top-most hovered item and the dropdown isn't consuming input
             if (!m_cursor_captured && image_hovered && !overlay_active && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-
                 set_cursor_captured(true);
                 GLT::editor::context::get().set_viewport_interacted(true);
             }
 
-            if (m_cursor_captured && !right_down) {                 // Release RMB
-
+            if (m_cursor_captured && !right_down) {
                 set_cursor_captured(false);
                 GLT::editor::context::get().set_viewport_interacted(false);
             }
@@ -666,7 +673,7 @@ namespace GLT::editor {
         GLT::event_bus::post(GLT::save_as_request_event(std::move(req)));
     }
 
-    // Buffered so we don't mutate the queue while someone else is iterating - update() drains this into m_save_as_queue
+
     void world_viewport_window::on_save_as_request_event(const save_as_request_event& event) { m_save_as_event_buffer.push_back(event); }
 
 
@@ -930,6 +937,278 @@ namespace GLT::editor {
                 return false;
             }
         }
+    }
+
+
+    void world_viewport_window::render_gizmo(const ImVec2& image_min, const ImVec2& image_size) {
+
+        if (!m_world || !m_selected_entity.is_valid())
+            return;
+        if (!m_world->alive(m_selected_entity))
+            return;
+
+        auto* scene = m_world->as<GLT::world::i_world_scene>();
+        if (!scene)
+            return;
+
+        GLT::world::camera_snapshot cam{};
+        if (!scene->get_camera_view(cam))
+            return;
+
+        if (image_size.x <= 1.f || image_size.y <= 1.f)
+            return;
+
+        ImGuizmo::SetDrawlist();
+        ImGuizmo::SetRect(image_min.x, image_min.y, image_size.x, image_size.y);
+
+        // --- view / projection -------------------------------------------------
+        // camera_snapshot::view is already world -> view (inverse of camera world).
+        const glm::mat4& view = cam.view;
+
+        const f32 aspect = image_size.x / image_size.y;
+        glm::mat4 projection = glm::perspective( glm::radians(cam.fov), aspect, cam.near_plane, cam.far_plane);
+
+        // --- model matrix from the entity's local transform --------------------
+        const glm::vec3 position = m_world->get_local_position(m_selected_entity);
+        const glm::quat rotation = m_world->get_local_rotation_q(m_selected_entity);
+        const glm::vec3 scale = m_world->get_local_scale(m_selected_entity);
+
+        glm::mat4 model = glm::translate(glm::mat4(1.f), position)
+                        * glm::mat4_cast(rotation)
+                        * glm::scale(glm::mat4(1.f), scale);
+
+        // --- snap --------------------------------------------------------------
+        float* snap_ptr = nullptr;
+        if (m_gizmo_snap) {
+            switch (m_gizmo_operation) {
+                case ImGuizmo::TRANSLATE: snap_ptr = m_gizmo_snap_translate; break;
+                case ImGuizmo::ROTATE:    snap_ptr = &m_gizmo_snap_rotate; break;
+                case ImGuizmo::SCALE:     snap_ptr = &m_gizmo_snap_scale; break;
+                default: break;
+            }
+        }
+
+        // --- manipulate --------------------------------------------------------
+        ImGuizmo::Manipulate(
+            glm::value_ptr(view),
+            glm::value_ptr(projection),
+            m_gizmo_operation,
+            m_gizmo_mode,
+            glm::value_ptr(model),
+            nullptr,
+            snap_ptr);
+
+        // --- write back only while the user is actually dragging ---------------
+        if (!ImGuizmo::IsUsing())
+            return;
+
+        const glm::vec3 new_pos = glm::vec3(model[3]);
+        const glm::quat new_rot = glm::quat_cast(glm::mat3(model));
+        const glm::vec3 new_scale = glm::vec3(
+            glm::length(glm::vec3(model[0])),
+            glm::length(glm::vec3(model[1])),
+            glm::length(glm::vec3(model[2])));
+
+        // Position: translate_local expects a *local* delta.
+        const glm::vec3 world_delta = new_pos - position;
+        if (glm::length(world_delta) > 1e-6f) {
+            const glm::vec3 local_delta = glm::inverse(rotation) * world_delta;
+            m_world->translate_local(m_selected_entity, local_delta);
+        }
+
+        // Rotation: absolute set.
+        if (glm::abs(glm::dot(rotation, new_rot)) < 0.9999f)
+            m_world->set_local_rotation_q(m_selected_entity, new_rot);
+
+        // Scale: absolute set.
+        if (glm::distance(scale, new_scale) > 1e-6f)
+            m_world->set_local_scale(m_selected_entity, new_scale);
+    }
+
+
+    void world_viewport_window::render_gizmo_toolbar(const ImVec2& image_min, const ImVec2& image_size) {
+
+        using namespace GLT::imgui_config;
+
+        constexpr f32 INSET = 8.f;
+        constexpr f32 CARD_GAP = 3.f;
+        constexpr f32 ROW_GAP = 3.f;
+        const f32 right_x = image_min.x + image_size.x - INSET;
+        const f32 top_y = image_min.y + INSET;
+        const ImVec4 card_bg(.1f, .1f, .1f, 0.45f);
+
+        constexpr ImGuiWindowFlags parent_flags =
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoDocking |
+            ImGuiWindowFlags_NoNavFocus |
+            ImGuiWindowFlags_NoFocusOnAppearing;
+
+        constexpr ImGuiChildFlags card_flags =
+            ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY |
+            ImGuiChildFlags_AlwaysUseWindowPadding;
+
+        auto push_card_style = [&]() {
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.f, 5.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.f, 4.f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, card_bg);
+        };
+        auto pop_card_style = [&]() {
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(3);
+        };
+
+        ImGui::SetNextWindowPos(ImVec2(right_x, top_y), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(CARD_GAP, CARD_GAP));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.f, 0.f, 0.f, 0.f));
+
+        ImVec2 row1_pos{}, row1_size{};
+
+        if (ImGui::Begin("##gizmo_row1", nullptr, parent_flags)) {
+
+            push_card_style();
+            if (ImGui::BeginChild("##gizmo_ops", ImVec2(0, 0), card_flags)) {
+                if (gizmo_toggle_button("T", m_gizmo_operation == ImGuizmo::TRANSLATE, ImVec2(15.f, 15.f), true, icon_manager::icon::transfrom_translation))
+                    m_gizmo_operation = ImGuizmo::TRANSLATE;
+
+                ImGui::SameLine();
+                if (gizmo_toggle_button("R", m_gizmo_operation == ImGuizmo::ROTATE, ImVec2(15.f, 15.f), true, icon_manager::icon::transfrom_rotation))
+                    m_gizmo_operation = ImGuizmo::ROTATE;
+
+                ImGui::SameLine();
+                if (gizmo_toggle_button("S", m_gizmo_operation == ImGuizmo::SCALE, ImVec2(15.f, 15.f), true, icon_manager::icon::transfrom_scale))
+                    m_gizmo_operation = ImGuizmo::SCALE;
+            }
+            ImGui::EndChild();
+            pop_card_style();
+
+
+            ImGui::SameLine();
+            push_card_style();
+            if (ImGui::BeginChild("##gizmo_space", ImVec2(0, 0), card_flags)) {
+                if (gizmo_toggle_button("Global", m_gizmo_mode == ImGuizmo::WORLD))
+                    m_gizmo_mode = ImGuizmo::WORLD;
+
+                ImGui::SameLine();
+                if (gizmo_toggle_button("Local", m_gizmo_mode == ImGuizmo::LOCAL))
+                    m_gizmo_mode = ImGuizmo::LOCAL;
+            }
+            ImGui::EndChild();
+            pop_card_style();
+
+
+            ImGui::SameLine();
+            push_card_style();
+            if (ImGui::BeginChild("##gizmo_snap_toggle", ImVec2(0, 0), card_flags)) {
+                if (gizmo_toggle_button("Snap", m_gizmo_snap))
+                    m_gizmo_snap = !m_gizmo_snap;
+            }
+            ImGui::EndChild();
+            pop_card_style();
+
+            row1_pos = ImGui::GetWindowPos();
+            row1_size = ImGui::GetWindowSize();
+        }
+        ImGui::End();
+
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(4);
+
+        // ===== ROW 2 (snap settings) ============================================
+        if (m_gizmo_snap) {
+
+            // Anchor below row1, still right-aligned to the viewport's right edge.
+            const ImVec2 anchor = ImVec2(right_x, row1_pos.y + row1_size.y + ROW_GAP);
+            ImGui::SetNextWindowPos(anchor, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0.f, 0.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,   0.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(CARD_GAP, CARD_GAP));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.f, 0.f, 0.f, 0.f));
+
+            if (ImGui::Begin("##gizmo_row2", nullptr, parent_flags)) {
+
+                push_card_style();
+                if (ImGui::BeginChild("##gizmo_snap_settings", ImVec2(0, 0), card_flags)) {
+
+                    switch (m_gizmo_operation) {
+                        case ImGuizmo::TRANSLATE:
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextUnformatted("Translate snap");
+                            ImGui::SameLine();
+                            ImGui::SetNextItemWidth(200.f);
+                            ImGui::DragFloat3("##snap_t", &m_gizmo_snap_translate[0], .1f, 0.f, 100.f, "%.2f");
+                            break;
+                        case ImGuizmo::ROTATE:
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextUnformatted("Rotate snap");
+                            ImGui::SameLine();
+                            ImGui::SetNextItemWidth(120.f);
+                            ImGui::DragFloat("##snap_r", &m_gizmo_snap_rotate, 1.f, 0.f, 100.f, "%.1f deg");
+                            break;
+                        case ImGuizmo::SCALE:
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::TextUnformatted("Scale snap");
+                            ImGui::SameLine();
+                            ImGui::SetNextItemWidth(120.f);
+                            ImGui::DragFloat("##snap_s", &m_gizmo_snap_scale, .1f, 0.f, 100.f, "%.2f");
+                            break;
+                        default: break;
+                    }
+                }
+                ImGui::EndChild();
+                pop_card_style();
+            }
+            ImGui::End();
+
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(4);
+        }
+    }
+
+
+    bool world_viewport_window::gizmo_toggle_button(const char* label, bool active, const ImVec2& size, const bool use_icon, 
+        icon_manager::icon icon) {
+
+
+        const ImVec4& c_weak = ImVec4(0.10f, 0.10f, 0.10f, 0.55f);
+        const ImVec4& c_default = GLT::imgui_config::get_action_color00_default_ref();
+        const ImVec4& c_hover = GLT::imgui_config::get_action_color00_hover_ref();
+        const ImVec4& c_active = GLT::imgui_config::get_action_color00_active_ref();
+
+        // Same intensity ladder either way; just shifted one step up when active.
+        const ImVec4& bg = active ? c_default : c_weak;
+        const ImVec4& hov = active ? c_hover   : c_default;
+        const ImVec4& act = active ? c_active  : c_hover;
+
+        ImGui::PushStyleColor(ImGuiCol_Button, bg);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hov);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, act);
+
+        // Match render_settings_overlay()'s button metrics.
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.f, 2.f));
+
+        bool clicked{};
+        if (use_icon) {
+
+            const auto icon_data = icon_manager::get(icon);
+            clicked = ImGui::ImageButton(label, icon_data.tex_ref, size, icon_data.uv0, icon_data.uv1);
+        } else
+            clicked = ImGui::Button(label, size);
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
+        return clicked;
     }
 
 }

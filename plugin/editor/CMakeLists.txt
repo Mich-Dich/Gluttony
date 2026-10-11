@@ -32,10 +32,18 @@ set(IMGUI_DIR                                                           "${VENDO
 set(STB_IMAGE_DIR                                                       "${VENDOR_DIR}/stb_image")
 set(DR_LIBS_DIR                                                         "${VENDOR_DIR}/dr_libs")
 set(IMGUI_COLOR_TEXT_EDIT_DIR                                           "${VENDOR_DIR}/ImGuiColorTextEdit")
+set(IMGUIZMO_DIR                                                        "${VENDOR_DIR}/ImGuizmo")
 git_clone_or_update("git@github.com:epezent/implot.git"                 "${IMPLOT_DIR}")
 git_clone_or_update("git@github.com:franko/stb_image.git"               "${STB_IMAGE_DIR}")
 git_clone_or_update("https://github.com/mackron/dr_libs.git"            "${DR_LIBS_DIR}")
 git_clone_or_update("https://github.com/goossens/ImGuiColorTextEdit"    "${IMGUI_COLOR_TEXT_EDIT_DIR}")
+git_clone_or_update("https://github.com/CedricGuillemet/ImGuizmo.git" "${IMGUIZMO_DIR}")
+
+# ImGuizmo ---------------------------------------------------------------------------------------
+target_include_directories(${PLUGIN_NAME}                               PRIVATE "${IMGUIZMO_DIR}/src")
+target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${IMGUIZMO_DIR}/src")
+target_sources(${PLUGIN_NAME}                                           PRIVATE "${IMGUIZMO_DIR}/src/ImGuizmo.cpp")
+target_sources(${PLUGIN_NAME}_static                                    PRIVATE "${IMGUIZMO_DIR}/src/ImGuizmo.cpp")
 
 # ImPlot ------------------------------------------------------------------------------------------
 set(IMPLOT_SOURCES
