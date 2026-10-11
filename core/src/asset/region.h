@@ -24,6 +24,12 @@ namespace GLT::asset::region {
 
     // TYPES ===========================================================================================================
 
+    enum class flag : u8 {
+
+        always_loaded = BIT(0),
+    };
+
+
     // @brief Live runtime state for one region
     //
     // Owned by the world plugin; the registry never sees this. [asset] is the handle to the backing region_asset

@@ -369,18 +369,17 @@ namespace GLT::asset::registry_default {
             // seed the writer -----------------------------------------------------------------------------------------
             writer.set_name(slot->asset_info.name);
 
-            // Re-declare every dependency so the file stays self-describing
+            // Re-declare every dependency so the file stays self-describing. Dep paths on disk are content-dir-relative
+            // the same namespace as [virtual_path] - so a dep row is position-independent: the dependent can be moved or renamed
+            // and its deps keep resolving
             for (GLT::asset::handle dep : slot->deps_storage) {
 
                 const GLT::asset::registry_default::slot* dep_slot = slot_for(dep);
                 if (!dep_slot)
                     continue;
 
-                std::error_code error{};
-                const auto rel = std::filesystem::relative(dep_slot->canonical_path, slot->canonical_path.parent_path(), error);
-                const std::string path_str = error ? dep_slot->canonical_path.generic_string() : rel.generic_string();
-
-                writer.declare_dependency(dep_slot->asset_info.id, path_str, dep_slot->asset_info.asset_type);
+                writer.declare_dependency(dep_slot->asset_info.id, dep_slot->canonical_path.generic_string(), 
+                    dep_slot->asset_info.asset_type);
             }
 
             info_snap = slot->asset_info;
@@ -1250,9 +1249,12 @@ namespace GLT::asset::registry_default {
                 }
 
                 // recurse
-                const std::filesystem::path abs_dep = path.parent_path() / dep_path;
 
-                auto child = load_unlocked(abs_dep, in_flight);
+                // [dep_path] is content-dir-relative (see the on-disk contract above), so it feeds straight into load_unlocked,
+                // which is itself content-relative
+                const std::filesystem::path child_path = std::filesystem::path{ dep_path }.lexically_normal();
+
+                auto child = load_unlocked(child_path, in_flight);
                 if (!child) {
                     LOG(warn, "[{}] dependency [{}] failed to load (error={})", key, dep_path, static_cast<int>(child.error()));
                     resolved_deps.push_back(INVALID_HANDLE);

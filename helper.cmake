@@ -21,9 +21,19 @@ include_guard(GLOBAL)
 # Accepts BRANCH or TAG (mutually exclusive); if the one you pass doesn't match, it automatically retries as the other kind of ref,
 # so you don't have to know in advance which one a given name is. Re-running this always fetches and hard-syncs to that ref,
 # so stale vendored checkouts (the original bug) can't happen.
+#
+# Throttling:
+#   By default the network round-trip (fetch + checkout + clean) is skipped when the repo was successfully synced within
+#   the last 24 hours. The timestamp lives in [<TARGET_DIR>/.git/glt_last_update.stamp] and is only written after a
+#   successful sync, so a failed run retries on the next configure.
+#
+#   Options:
+#     FORCE                        bypass the throttle and always sync
+#     INTERVAL_SECONDS <seconds>   override the 24h default (e.g. 0 to always sync, 604800 for a week)
+#
 function(git_clone_or_update REPO_URL TARGET_DIR)
-    set(options)
-    set(oneValueArgs DEPTH BRANCH TAG)
+    set(options FORCE)
+    set(oneValueArgs DEPTH BRANCH TAG INTERVAL_SECONDS)
     set(multiValueArgs)
     cmake_parse_arguments(GCOU "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -31,11 +41,31 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
         set(GCOU_DEPTH 1)
     endif()
 
+    if(NOT DEFINED GCOU_INTERVAL_SECONDS)
+        set(GCOU_INTERVAL_SECONDS 43200)        # 12 hours
+    endif()
+
     if(GCOU_BRANCH AND GCOU_TAG)
         message(FATAL_ERROR "git_clone_or_update: pass only one of BRANCH or TAG for ${TARGET_DIR}, not both")
     endif()
 
-    find_package(Git REQUIRED)
+    # ---- Throttle: skip the network round-trip if we synced recently -------
+    # The stamp lives under .git/ so `git clean -fdx` (which runs during the sync) can't eat it, and wiping the
+    # checkout naturally wipes the stamp too. It's only written on success, so a failed clone/fetch retries next time.
+    set(stamp_file "${TARGET_DIR}/.git/glt_last_update.stamp")
+
+    if(NOT GCOU_FORCE AND EXISTS "${stamp_file}")
+        file(TIMESTAMP "${stamp_file}" last_sync_epoch "%s" UTC)
+        string(TIMESTAMP              now_epoch       "%s" UTC)
+        math(EXPR since_last_sync     "${now_epoch} - ${last_sync_epoch}")
+
+        if(since_last_sync GREATER_EQUAL 0 AND since_last_sync LESS GCOU_INTERVAL_SECONDS)
+            math(EXPR hours_ago "${since_last_sync} / 3600")
+            math(EXPR interval_hours "${GCOU_INTERVAL_SECONDS} / 3600")
+            message(STATUS "Skipping ${TARGET_DIR} (last synced ${hours_ago}h ago; interval is ${interval_hours}h)")
+            return()
+        endif()
+    endif()
 
     # Resolve the requested ref to an explicit refspec.
     if(GCOU_TAG)
@@ -130,6 +160,11 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
         ERROR_QUIET
     )
     message(STATUS "Repository at ${TARGET_DIR} is up to date${ref_msg} (${current_sha})")
+
+    # ---- Write the throttle stamp -------------------------------------------
+    # Only reached after the sync succeeded. The stamp is a plain text file whose *timestamp* is what matters;
+    # the file's contents are written for human inspection when someone pokes around in .git/.
+    file(WRITE "${stamp_file}" "last sync: ${current_sha} @ ${now_epoch}\n")
 endfunction()
 
 

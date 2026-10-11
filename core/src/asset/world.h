@@ -23,6 +23,8 @@ namespace GLT::asset::world {
 
     inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_REGION_CELL_SIZE = 0x0304;
 
+    inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_STREAMING_RADIUS = 0x0305;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -52,6 +54,8 @@ namespace GLT::asset::world {
         // Side length (in meters) of one grid cell. Region bounds are always [cell * size - size/2, cell * size + size/2], so the origin
         // sits at the centre of cell (0,0,0). Every region in the world uses the same size; changing this is a "rebuild the grid" operation
         glm::vec3                                       region_cell_size{ 256.f, 256.f, 256.f };
+
+        f32                                             streaming_radius = 512.f;
 
         // Chosen entity that drives the renderer's view. 0xFFFFFFFF == "no active camera"
         // Stored as raw index/generation so asset/world.h doesn't have to know about world/entity.h's entity_id layout

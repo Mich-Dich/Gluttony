@@ -304,10 +304,12 @@ namespace GLT::world::world_ecs_entt {
         m_world = world;
 
         m_region_cell_size = world_asset->region_cell_size;                     // pick up the world's grid
-        VALIDATE(m_region_cell_size.x > 0.f || m_region_cell_size.y > 0.f || m_region_cell_size.z > 0.f,
-            m_region_cell_size = glm::vec3(256.f),
-            "", "Corrupt file holds invalid region cell size [{}, {}, {}] resetting to default of [256.f]",
-            m_region_cell_size.x, m_region_cell_size.y, m_region_cell_size.z);
+        VALIDATE(m_region_cell_size.x > 0.f && m_region_cell_size.y > 0.f && m_region_cell_size.z > 0.f,
+            m_region_cell_size = glm::vec3(256.f), "", "Corrupt file holds invalid region cell size, resetting to default of [256.f]");
+
+        m_streaming_radius = world_asset->streaming_radius;
+        VALIDATE(m_streaming_radius >= 0.f, m_streaming_radius = 512.f, 
+            "", "corrupt file has invalid streaming radius, resetting to [512.f]");
 
         m_regions = world_asset->region_index;
         m_region_states.clear();
@@ -362,8 +364,8 @@ namespace GLT::world::world_ecs_entt {
         {
             std::unordered_map<GLT::UUID, region_state> fresh;
             fresh.reserve(m_regions.size());
-            for (const auto& r : m_regions)
-                fresh.try_emplace(r.id);
+            for (const auto& region : m_regions)
+                fresh.try_emplace(region.id);
             m_region_states = std::move(fresh);
         }
 
@@ -409,10 +411,8 @@ namespace GLT::world::world_ecs_entt {
 
         auto registry = GLT::asset::registry::get_ref();
 
-        // Snap entities into their cells so the region files we're about to write reflect current transforms, even if
-        // the user edited via the details panel rather than through translate_local()
         reassign_all_entities();
-
+        prune_empty_regions(); 
         if (auto result = flush_regions(); !result)
             return result;
 
@@ -451,6 +451,8 @@ namespace GLT::world::world_ecs_entt {
         // existing handle, path differs: migrate the canonical path
         if (registry->info(m_world).virtual_path != path) {
 
+            reassign_all_entities();
+            prune_empty_regions();
             if (auto result = flush_regions(); !result)
                 return result;
 
@@ -759,19 +761,19 @@ namespace GLT::world::world_ecs_entt {
         for (auto& [rid, state] : m_region_states)
             state.entities.clear();
 
-        for (u32 i = 0; i < m_slots.size(); ++i) {
+        for (u32 index = 0; index < m_slots.size(); ++index) {
 
-            const slot& slot = m_slots[i];
+            const slot& slot = m_slots[index];
             if (slot.handle == entt::null)
                 continue;
 
-            const entity_id id{ i, slot.generation };
-            const glm::vec3 wp = glm::vec3(world_transform_of(id)[3]);
-            const glm::ivec3 cell = cell_coord_of(wp);
+            const entity_id id{ index, slot.generation };
+            const glm::vec3 world_pos = glm::vec3(world_transform_of(id)[3]);
+            const glm::ivec3 cell = cell_coord_of(world_pos);
 
-            const GLT::UUID rid = ensure_region_for_cell(cell);
-            if (rid != GLT::UUID{})
-                m_region_states[rid].entities.push_back(id);
+            const GLT::UUID region_id = ensure_region_for_cell(cell);
+            if (region_id)
+                m_region_states[region_id].entities.push_back(id);
         }
     }
 
@@ -973,26 +975,29 @@ namespace GLT::world::world_ecs_entt {
 
     bool ecs_world_plugin::should_be_active(const GLT::asset::region::region& region) const noexcept {
 
-        if (region.flags & 0x01)
-            return true;        // always_loaded
-        auto b = region.bounds;
-        b.min -= glm::vec3(m_streaming_radius);
-        b.max += glm::vec3(m_streaming_radius);
-        return b.contains(m_streaming_anchor);
+        if (region.flags & 0x01)            // TODO: replace with GLT::asset::region::flag::always_loaded
+            return true;                    // always_loaded
+
+        auto bounds = region.bounds;
+        bounds.min -= glm::vec3(m_streaming_radius);
+        bounds.max += glm::vec3(m_streaming_radius);
+        return bounds.contains(m_streaming_anchor);
     }
 
 
     void ecs_world_plugin::stream_pass() {
 
-        for (auto& region : m_regions) {
-
-            const bool want = should_be_active(region);
-            if (want && !region.is_active)
+        // Pass 1: activate everything that should be hot. Loading is the slow half, so getting it in first means pass
+        // 2 never tears down a region whose neighbors aren't ready yet
+        for (auto& region : m_regions)
+            if (should_be_active(region) && !region.is_active)
                 activate(region);
 
-            else if (!want && region.is_active)
+        // Pass 2: deactivate the ones that shouldn't be. Entities in the just-activated regions are already live, 
+        // so anything moving across a boundary has a valid destination by the time we release the source
+        for (auto& region : m_regions)
+            if (!should_be_active(region) && region.is_active)
                 deactivate(region);
-        }
     }
 
 
@@ -1023,13 +1028,13 @@ namespace GLT::world::world_ecs_entt {
 
             for (const entity_id child : state.entities) {
 
-                auto* h = m_registry.try_get<component::hierarchy>(entt_of(child));
-                if (!h || !h->parent.is_valid())
+                auto* hierarchy = m_registry.try_get<component::hierarchy>(entt_of(child));
+                if (!hierarchy || !hierarchy->parent.is_valid())
                     continue;
 
-                if (auto* p = hierarchy_of(h->parent)) {
-                    if (std::find(p->children.begin(), p->children.end(), child) == p->children.end())
-                        p->children.push_back(child);
+                if (auto* parent = hierarchy_of(hierarchy->parent)) {
+                    if (std::find(parent->children.begin(), parent->children.end(), child) == parent->children.end())
+                        parent->children.push_back(child);
                 }
             }
         }
@@ -1115,6 +1120,77 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
+    void ecs_world_plugin::prune_empty_regions() {
+
+        auto registry = GLT::asset::registry::get_ref();
+        if (!registry)
+            return;
+
+        std::vector<GLT::UUID> to_remove;
+        to_remove.reserve(m_regions.size());
+
+        for (const auto& region : m_regions) {
+
+            // Core region: kept unconditionally so the world always has at least one region and always has a spawn
+            // target at the origin
+            if (region.flags & 0x01)
+                continue;
+
+            // Inactive regions may still hold entities on disk that weren't loaded into the slot table this session
+            // Skip them - saving will re-emit their old data, and the next session's activation will reload them
+            if (!region.is_active)
+                continue;
+
+            // state.entities was just refreshed by reassign_all_entities(), so an empty list here means no live entity
+            // is currently in this cell
+            const auto it = m_region_states.find(region.id);
+            if (it != m_region_states.end() && !it->second.entities.empty())
+                continue;
+
+            to_remove.push_back(region.id);
+        }
+
+        // Don't let the world end up with zero regions. Drop the last candidate so one empty region survives; the core
+        // region usually covers this, but hand-edited worlds might not have one
+        if (!to_remove.empty() && to_remove.size() == m_regions.size())
+            to_remove.pop_back();
+
+        if (to_remove.empty())
+            return;
+
+        for (GLT::UUID id : to_remove) {
+
+            const auto it = std::find_if(m_regions.begin(), m_regions.end(),
+                [id](const GLT::asset::region::region& r) { return r.id == id; });
+
+            if (it == m_regions.end())
+                continue;
+
+            // Use the registry's canonical path rather than recomputing from the cell. If the world was ever Save-As'd,
+            // older regions may live under a different stem than the current world file
+            if (it->asset != INVALID_HANDLE) {
+
+                const std::filesystem::path region_path = registry->info(it->asset).virtual_path;
+
+                if (!region_path.empty()) {
+
+                    std::error_code ec{};
+                    std::filesystem::remove(PROJECT_CONTENT_DIR / region_path, ec);
+                    if (ec)
+                        LOG(warn, "failed to delete region file [{}]: {}", region_path.generic_string(), ec.message());
+                }
+
+                registry->release(it->asset);
+            }
+
+            m_region_states.erase(id);
+            m_regions.erase(it);
+        }
+
+        LOG(info, "pruned {} empty region(s)", to_remove.size());
+    }
+
+
     glm::mat4 ecs_world_plugin::world_transform_of(entity_id id) const noexcept {
 
         const entt::entity entity = entt_of(id);
@@ -1145,14 +1221,15 @@ namespace GLT::world::world_ecs_entt {
     void ecs_world_plugin::sync_world_asset() {
 
         auto registry = GLT::asset::registry::get_ref();
-        auto* wa = registry->data_as<GLT::asset::world::world_asset>(m_world);
-        if (!wa)
+        auto* world_asset = registry->data_as<GLT::asset::world::world_asset>(m_world);
+        if (!world_asset)
             return;
 
-        wa->region_index = m_regions;
-        wa->region_cell_size = m_region_cell_size;
-        wa->active_camera_index = m_active_camera.index;
-        wa->active_camera_generation = m_active_camera.generation;
+        world_asset->region_index = m_regions;
+        world_asset->region_cell_size = m_region_cell_size;
+        world_asset->streaming_radius = m_streaming_radius;
+        world_asset->active_camera_index = m_active_camera.index;
+        world_asset->active_camera_generation = m_active_camera.generation;
     }
 
 
@@ -1243,53 +1320,54 @@ namespace GLT::world::world_ecs_entt {
     glm::ivec3 ecs_world_plugin::cell_coord_of(const glm::vec3& world_pos) const noexcept {
 
         const glm::vec3 half = m_region_cell_size * 0.5f;
-        const glm::vec3 c = (world_pos + half) / m_region_cell_size;
+        const glm::vec3 cell = (world_pos + half) / m_region_cell_size;
 
         return glm::ivec3{
-            static_cast<int>(std::floor(c.x)),
-            static_cast<int>(std::floor(c.y)),
-            static_cast<int>(std::floor(c.z)),
+            static_cast<int>(std::floor(cell.x)),
+            static_cast<int>(std::floor(cell.y)),
+            static_cast<int>(std::floor(cell.z)),
         };
     }
 
 
     GLT::AABB ecs_world_plugin::cell_bounds(const glm::ivec3& cell) const noexcept {
 
-        GLT::AABB b{};
+        GLT::AABB bounds{};
         const glm::vec3 half = m_region_cell_size * 0.5f;
-        b.min = glm::vec3(cell) * m_region_cell_size - half;
-        b.max = b.min + m_region_cell_size;
-        return b;
+        bounds.min = glm::vec3(cell) * m_region_cell_size - half;
+        bounds.max = bounds.min + m_region_cell_size;
+        return bounds;
     }
 
 
     GLT::UUID ecs_world_plugin::ensure_region_for_cell(const glm::ivec3& cell) {
 
         // Already have an in-memory entry for this cell?
-        for (const auto& r : m_regions) {
-            const glm::ivec3 rc = cell_coord_of((r.bounds.min + r.bounds.max) * 0.5f);
-            if (rc == cell)
-                return r.id;
+        for (const auto& region : m_regions) {
+            const glm::ivec3 region_cell = cell_coord_of((region.bounds.min + region.bounds.max) * 0.5f);
+            if (region_cell == cell)
+                return region.id;
         }
 
         auto registry = GLT::asset::registry::get_ref();
         if (!registry)
             return {};
 
-        const GLT::asset::handle h = resolve_region_handle(cell, 0);
-        if (h == INVALID_HANDLE)
+        const GLT::asset::handle handle = resolve_region_handle(cell, 0);
+        if (handle == INVALID_HANDLE)
             return {};
 
-        GLT::asset::region::region r{};
-        r.id     = registry->info(h).id;
-        r.asset  = h;
-        r.bounds = cell_bounds(cell);
-        r.is_active = true;
+        GLT::asset::region::region region{};
+        region.id = registry->info(handle).id;
+        region.asset = handle;
+        region.bounds = cell_bounds(cell);
+        region.is_active = true;
+        region.flags = (cell.x == 0 && cell.y == 0 && cell.z == 0) ? 0x01 : 0; 
 
-        m_regions.push_back(r);
-        m_region_states[r.id] = {};
+        m_regions.push_back(region);
+        m_region_states[region.id] = {};
 
-        return r.id;
+        return region.id;
     }
 
 
@@ -1301,7 +1379,7 @@ namespace GLT::world::world_ecs_entt {
         const glm::vec3 wp = glm::vec3(world_transform_of(id)[3]);
         const glm::ivec3 cell = cell_coord_of(wp);
         const GLT::UUID target = ensure_region_for_cell(cell);
-        if (target == GLT::UUID{})
+        if (target == 0)
             return;
 
         // Where is this entity right now?
@@ -1316,7 +1394,7 @@ namespace GLT::world::world_ecs_entt {
         if (current == target)
             return;
 
-        if (current != GLT::UUID{}) {
+        if (current != 0) {
             if (auto it = m_region_states.find(current); it != m_region_states.end()) {
                 auto& v = it->second.entities;
                 v.erase(std::remove(v.begin(), v.end(), id), v.end());

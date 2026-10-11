@@ -175,6 +175,9 @@ namespace GLT::world::world_ecs_entt {
         if (const auto cell = reader.get_as<glm::vec3>(GLT::asset::world::CHUNK_WORLD_REGION_CELL_SIZE); cell.size() == 1)
             asset->region_cell_size = cell[0];
 
+        if (const auto radius = reader.get_as<f32>(GLT::asset::world::CHUNK_WORLD_STREAMING_RADIUS); radius.size() == 1)
+            asset->streaming_radius = radius[0];
+
         LOG(info, "loaded world [{}] - {} region(s)", info.name, asset->region_index.size());
 
         return GLT::unique_ref<GLT::asset::i_runtime_asset>(std::move(asset));
@@ -273,6 +276,7 @@ namespace GLT::world::world_ecs_entt {
         }
 
         write_chunk_as(out, GLT::asset::world::CHUNK_WORLD_REGION_CELL_SIZE, asset.region_cell_size);
+        write_chunk_as(out, GLT::asset::world::CHUNK_WORLD_STREAMING_RADIUS, asset.streaming_radius);
 
         return {};
     }

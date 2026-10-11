@@ -41,6 +41,9 @@ namespace GLT::editor {
     // whose cell size is user-controlled acts as a preview of the region layout the eventual region-builder
     // will use. Cells that contain at least one entity are highlighted.
     //
+    // The streaming anchor and radius reported by the world plugin are drawn as a ring so designers can
+    // see which regions fall inside the streaming window without entering play mode.
+    //
     // Bound to exactly one .glt_world file, so it derives from asset_editor and the layer will dedupe opens.
     class world_topdown_editor final : public asset_editor {
     public:
@@ -71,12 +74,19 @@ namespace GLT::editor {
 
         void draw_view();
 
+        // Floating, half-transparent overlay pinned to the top-right of the canvas.
+        // Currently hosts "Fit to entities" and "Center on origin".
+        void draw_floating_buttons(const ImVec2& canvas_min, const ImVec2& canvas_max);
+
         void fit_to_entities(const ImVec2& canvas_size);
 
         void refresh_entities();
 
         // --- asset ----------------------------------------------------------------------------------------
 
+        // RAII handle: keeps the underlying world asset retained by the registry for as long as
+        // this editor exists. Releasing it (destructor / reset / reassignment) is what lets the
+        // registry actually unload the world.
         std::filesystem::path           m_asset_path{};
         GLT::asset::asset_ref           m_world{};
         bool                            m_load_failed{ false };
@@ -111,6 +121,7 @@ namespace GLT::editor {
         bool                            m_show_entity_dots{ true };
         bool                            m_show_occupied_cells{ true };
         bool                            m_show_axes{ true };
+        bool                            m_show_streaming_radius{ true };
     };
 
 }

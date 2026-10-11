@@ -17,6 +17,7 @@
 #include <world/i_world_scene.h>
 
 #include "util/ui/pannel_collection.h"
+#include "resource_manager/icon_manager.h"
 
 
 
@@ -42,6 +43,15 @@ namespace GLT::editor {
 
     constexpr f32                           DOT_HOVER_RADIUS = 5.0f;
 
+    // Floating button strip (top-right overlay)
+    constexpr f32                           FLOATING_BUTTON_SIZE = 32.0f;
+
+    constexpr f32                           FLOATING_BUTTON_GAP = 6.0f;
+
+    constexpr f32                           FLOATING_BUTTON_EDGE_PAD = 10.0f;
+
+    constexpr f32                           FLOATING_STRIP_PAD = 6.0f;
+
     constexpr ImU32                         BG_COLOR = IM_COL32( 24,  24,  28, 255);
 
     constexpr ImU32                         GRID_COLOR = IM_COL32( 90,  90, 100, 140);
@@ -58,7 +68,15 @@ namespace GLT::editor {
 
     constexpr ImU32                         OCCUPIED_CELL_BORDER = IM_COL32(100, 160, 240, 170);
 
+    constexpr ImU32                         STREAMING_RADIUS_FILL = IM_COL32(120, 200, 120,  28);
+
+    constexpr ImU32                         STREAMING_RADIUS_LINE = IM_COL32(120, 200, 120, 190);
+
+    constexpr ImU32                         STREAMING_ANCHOR_COLOR = IM_COL32(190, 240, 190, 235);
+
     constexpr ImU32                         HUD_TEXT_COLOR = IM_COL32(180, 180, 190, 255);
+
+    constexpr ImU32                         FLOATING_STRIP_BG = IM_COL32( 18,  18,  22, 140);
 
     // MACROS ==========================================================================================================
 
@@ -129,7 +147,8 @@ namespace GLT::editor {
         }
 
         // load() hands back a raw handle with refcount 0; wrapping it in asset_ref takes ownership of one
-        // reference so the world stays resident for as long as this editor is alive.
+        // reference so the world stays resident for as long as this editor is alive. On destruction the
+        // asset_ref releases that reference and the registry is free to unload the world.
         if (auto loaded = registry->load(path); loaded)
             m_world = GLT::asset::asset_ref{ *loaded };
         else
@@ -182,6 +201,7 @@ namespace GLT::editor {
         for (const auto& p : positions)
             m_entities.push_back(editor_entity{ { p.world_position.x, p.world_position.z }, p.id.index, p.id.generation });
     }
+
     // CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
@@ -283,10 +303,9 @@ namespace GLT::editor {
         ImGui::Checkbox("Show axes", &m_show_axes);
         ImGui::Checkbox("Show entity dots", &m_show_entity_dots);
         ImGui::Checkbox("Highlight occupied cells", &m_show_occupied_cells);
+        ImGui::Checkbox("Show streaming radius", &m_show_streaming_radius);
 
-        ImGui::Dummy(ImVec2(0.0f, 10.0f));
-        if (ImGui::Button("Fit to entities", ImVec2(-1.0f, 0.0f)))
-            m_fit_pending = true;
+        // NOTE: "Fit to entities" moved out of the sidebar. See draw_floating_buttons().
 
         ImGui::Dummy(ImVec2(0.0f, 12.0f));
         ImGui::Separator();
@@ -304,6 +323,7 @@ namespace GLT::editor {
             m_cell_size_from_world.x, m_cell_size_from_world.y, m_cell_size_from_world.z);
     }
 
+
     void world_topdown_editor::draw_view() {
 
         const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
@@ -315,8 +335,11 @@ namespace GLT::editor {
         ImDrawList* draw = ImGui::GetWindowDrawList();
         draw->AddRectFilled(canvas_min, canvas_max, BG_COLOR);
 
+        // Reserve the canvas for interaction on all three primary mouse buttons. SetNextItemAllowOverlap()
+        // lets the floating buttons (submitted later, on top) win hover/clicks where they overlap.
+        ImGui::SetNextItemAllowOverlap();
         ImGui::InvisibleButton("##world_view", canvas_size,
-            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
+            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle | ImGuiButtonFlags_MouseButtonRight);
 
         const bool hovered = ImGui::IsItemHovered();
         const bool active = ImGui::IsItemActive();
@@ -345,7 +368,10 @@ namespace GLT::editor {
         }
 
         // ---- input: pan ----------------------------------------------------------------------------------
-        if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+        // Middle mouse OR right mouse drags the view. Right mouse is the "primary" pan for users
+        // coming from a 3D viewport, middle mouse is the classic fallback.
+        if (active && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+                       ImGui::IsMouseDragging(ImGuiMouseButton_Right))) {
 
             const ImVec2 delta = ImGui::GetIO().MouseDelta;
             m_view_center.x -= delta.x / m_pixels_per_meter;
@@ -383,30 +409,58 @@ namespace GLT::editor {
             const f32 cx = static_cast<f32>(m_cell_x);
             const f32 cz = static_cast<f32>(m_cell_z);
 
-            const int first_col = static_cast<int>(std::floor(world_min.x / cx));
-            const int last_col = static_cast<int>(std::ceil (world_max.x / cx));
+            const f32 half_x = cx * 0.5f;
+            const f32 half_z = cz * 0.5f;
+
+            // cell k spans [k*size - size/2, k*size + size/2]
+            // boundary positions are at k*size - size/2
+            const int first_col = static_cast<int>(std::floor((world_min.x + half_x) / cx));
+            const int last_col  = static_cast<int>(std::ceil ((world_max.x + half_x) / cx));
             for (int col = first_col; col <= last_col; ++col) {
 
-                const f32 wx = static_cast<f32>(col) * cx;
+                const f32 wx = static_cast<f32>(col) * cx - half_x;
                 const f32 sx = canvas_center.x + (wx - m_view_center.x) * m_pixels_per_meter;
 
-                add_dashed_line(draw,
-                    { sx, canvas_min.y },
-                    { sx, canvas_max.y },
-                    GRID_COLOR, 1.0f, 4.0f, 4.0f);
+                add_dashed_line(draw, { sx, canvas_min.y }, { sx, canvas_max.y }, GRID_COLOR, 1.0f, 4.0f, 4.0f);
             }
 
-            const int first_row = static_cast<int>(std::floor(world_min.y / cz));
-            const int last_row = static_cast<int>(std::ceil (world_max.y / cz));
+            const int first_row = static_cast<int>(std::floor((world_min.y + half_z) / cz));
+            const int last_row  = static_cast<int>(std::ceil ((world_max.y + half_z) / cz));
             for (int row = first_row; row <= last_row; ++row) {
 
-                const f32 wz = static_cast<f32>(row) * cz;
+                const f32 wz = static_cast<f32>(row) * cz - half_z;
                 const f32 sy = canvas_center.y + (wz - m_view_center.y) * m_pixels_per_meter;
 
-                add_dashed_line(draw,
-                    { canvas_min.x, sy },
-                    { canvas_max.x, sy },
-                    GRID_COLOR, 1.0f, 4.0f, 4.0f);
+                add_dashed_line(draw, { canvas_min.x, sy }, { canvas_max.x, sy }, GRID_COLOR, 1.0f, 4.0f, 4.0f);
+            }
+        }
+
+        // ---- streaming radius ----------------------------------------------------------------------------
+        // Only meaningful when THIS editor's world is the one currently bound to the world plugin;
+        // otherwise we'd render some other world's anchor.
+        if (m_show_streaming_radius && !m_load_failed && m_world.valid()) {
+
+            auto world = GLT::world::manager::get_ref();
+            if (world && world->world_handle() == m_world.get()) {
+
+                const glm::vec3 anchor = world->get_streaming_anchor();
+                const f32 streaming_radius = world->get_streaming_radius();
+
+                const ImVec2 anchor_screen = w2s({ anchor.x, anchor.z });
+
+                if (streaming_radius > 0.0f) {
+
+                    const f32 radius_pixels = streaming_radius * m_pixels_per_meter;
+
+                    // Filled disc first (subtle tint), then the outline on top so the edge reads clearly.
+                    draw->AddCircleFilled(anchor_screen, radius_pixels, STREAMING_RADIUS_FILL, 96);
+                    draw->AddCircle(anchor_screen, radius_pixels, STREAMING_RADIUS_LINE, 96, 1.5f);
+                }
+
+                // Anchor marker: a small filled dot with a thin outer ring so it stays visible
+                // against both the grid and the streaming disc.
+                draw->AddCircleFilled(anchor_screen, 4.0f, STREAMING_ANCHOR_COLOR);
+                draw->AddCircle(anchor_screen, 7.0f, STREAMING_ANCHOR_COLOR, 0, 1.5f);
             }
         }
 
@@ -429,12 +483,15 @@ namespace GLT::editor {
             const f32 cx = static_cast<f32>(m_cell_x);
             const f32 cz = static_cast<f32>(m_cell_z);
 
+            const f32 half_x = cx * 0.5f;
+            const f32 half_z = cz * 0.5f;
+
             // bucket entities into cells, draw once per occupied cell
             std::vector<u64> keys;
             keys.reserve(m_entities.size());
             for (const auto& e : m_entities) {
-                const i64 col = static_cast<i64>(std::floor(e.xz.x / cx));
-                const i64 row = static_cast<i64>(std::floor(e.xz.y / cz));
+                const i64 col = static_cast<i64>(std::floor((e.xz.x + half_x) / cx));
+                const i64 row = static_cast<i64>(std::floor((e.xz.y + half_z) / cz));
                 keys.push_back((static_cast<u64>(col) << 32) ^ static_cast<u32>(row));
             }
             std::sort(keys.begin(), keys.end());
@@ -445,14 +502,14 @@ namespace GLT::editor {
                 const i32 col = static_cast<i32>(key >> 32);
                 const i32 row = static_cast<i32>(static_cast<u32>(key));
 
-                const f32 wx0 = static_cast<f32>(col) * cx;
-                const f32 wz0 = static_cast<f32>(row) * cz;
+                const f32 wx0 = static_cast<f32>(col) * cx - half_x;
+                const f32 wz0 = static_cast<f32>(row) * cz - half_z;
 
                 const ImVec2 a = w2s({ wx0,       wz0       });
                 const ImVec2 b = w2s({ wx0 + cx,  wz0 + cz  });
 
                 draw->AddRectFilled(a, b, OCCUPIED_CELL_FILL);
-                draw->AddRect      (a, b, OCCUPIED_CELL_BORDER, 0.0f, 0, 1.0f);
+                draw->AddRect(a, b, OCCUPIED_CELL_BORDER, 0.0f, 0, 1.0f);
             }
         }
 
@@ -517,6 +574,67 @@ namespace GLT::editor {
                   (canvas_min.y + canvas_max.y - sz.y) * 0.5f },
                 IM_COL32(140, 140, 140, 255), msg);
         }
+
+        // ---- floating overlay (fit / center-on-origin) ---------------------------------------------------
+        draw_floating_buttons(canvas_min, canvas_max);
+    }
+
+
+    void world_topdown_editor::draw_floating_buttons(const ImVec2& canvas_min, const ImVec2& canvas_max) {
+
+        constexpr int button_count = 2;
+
+        const f32 strip_width  = FLOATING_BUTTON_SIZE * static_cast<f32>(button_count) +
+            FLOATING_BUTTON_GAP  * static_cast<f32>(button_count - 1);
+
+        const ImVec2 strip_min(
+            canvas_max.x - FLOATING_BUTTON_EDGE_PAD - strip_width - FLOATING_STRIP_PAD,
+            canvas_min.y + FLOATING_BUTTON_EDGE_PAD - FLOATING_STRIP_PAD);
+
+        const ImVec2 strip_max(
+            canvas_max.x - FLOATING_BUTTON_EDGE_PAD + FLOATING_STRIP_PAD,
+            canvas_min.y + FLOATING_BUTTON_EDGE_PAD + FLOATING_BUTTON_SIZE + FLOATING_STRIP_PAD);
+
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(strip_min, strip_max, FLOATING_STRIP_BG, 8.0f);
+
+        // Half-transparency for the whole strip.
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.65f);
+
+        const ImVec4 button_bg(0.15f, 0.15f, 0.18f, 0.85f);
+        const ImVec4 button_tint(1.0f, 1.0f, 1.0f, 0.95f);
+        const ImVec2 icon_size(FLOATING_BUTTON_SIZE, FLOATING_BUTTON_SIZE);
+
+        f32 cursor_x = canvas_max.x - FLOATING_BUTTON_EDGE_PAD - strip_width;
+        const f32 cursor_y = canvas_min.y + FLOATING_BUTTON_EDGE_PAD;
+
+        auto place_icon_button = [&](const char* id, const icon_manager::icon icon_type) -> bool {
+
+            const icon_manager::icon_data icon = icon_manager::get(icon_type);
+            if (icon.image_size.x <= 0.0f) {
+                cursor_x += FLOATING_BUTTON_SIZE + FLOATING_BUTTON_GAP;
+                return false;
+            }
+
+            ImGui::SetCursorScreenPos(ImVec2(cursor_x, cursor_y));
+            const bool clicked = ImGui::ImageButton(id, icon.tex_ref, icon_size,
+                icon.uv0, icon.uv1, button_bg, button_tint);
+
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", id);      // pass a friendlier label in if you like
+
+            cursor_x += FLOATING_BUTTON_SIZE + FLOATING_BUTTON_GAP;
+            return clicked;
+        };
+
+        // Top-right, left-to-right: Fit to entities, then Center on origin.
+        if (place_icon_button("##world_fit_to_entities", icon_manager::icon::world))
+            m_fit_pending = true;
+
+        if (place_icon_button("##world_center_on_origin", icon_manager::icon::transfrom_translation))
+            m_view_center = { 0.0f, 0.0f };
+
+        ImGui::PopStyleVar();
     }
 
 
@@ -528,8 +646,8 @@ namespace GLT::editor {
             return;
         }
 
-        f32 min_x =  std::numeric_limits<f32>::max();
-        f32 min_z =  std::numeric_limits<f32>::max();
+        f32 min_x = std::numeric_limits<f32>::max();
+        f32 min_z = std::numeric_limits<f32>::max();
         f32 max_x = -std::numeric_limits<f32>::max();
         f32 max_z = -std::numeric_limits<f32>::max();
 

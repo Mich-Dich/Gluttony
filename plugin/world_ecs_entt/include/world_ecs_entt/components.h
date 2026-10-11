@@ -23,7 +23,7 @@ namespace GLT::world::world_ecs_entt::component {
 
     // TYPES ===========================================================================================================
 
-    // Per-entity local transform. World transform is computed by walking the hierarchy on demand (see ecs_world_plugin::world_transform).
+    // Per-entity local transform. World transform is computed by walking the hierarchy on demand (see ecs_world_plugin::world_transform)
     struct transform {
 
         // glm::mat4                                   transform{ 1.f };
@@ -36,7 +36,7 @@ namespace GLT::world::world_ecs_entt::component {
 
 
 
-    // Editor-visible display name. Non-trivial (std::string), so it goes through the codec's custom serializer path.
+    // Editor-visible display name. Non-trivial (std::string), so it goes through the codec's custom serializer path
     struct name {
 
         std::string                                 name;
@@ -45,7 +45,7 @@ namespace GLT::world::world_ecs_entt::component {
 
 
 
-    // Parent + children links. Both sides are kept consistent by ecs_world_plugin::set_parent(); never mutate this directly.
+    // Parent + children links. Both sides are kept consistent by ecs_world_plugin::set_parent(); never mutate this directly
     struct hierarchy {
 
         entity_id                                   parent{ INVALID_ENTITY };
@@ -55,7 +55,7 @@ namespace GLT::world::world_ecs_entt::component {
 
 
 
-    // Renders a single mesh. material_override may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference.
+    // Renders a single mesh. material_override may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference
     struct mesh {
 
         GLT::asset::asset_ref                       mesh{};
@@ -90,7 +90,7 @@ namespace GLT::world::world_ecs_entt::component {
     static_assert(std::is_trivially_copyable_v<light>);
 
 
-    // Plays a single clip. Looping / attenuation / etc. live in `config` so the entity doesn't need to copy them on spawn.
+    // Plays a single clip. Looping / attenuation / etc. live in `config` so the entity doesn't need to copy them on spawn
     struct audio_source {
 
         GLT::asset::asset_ref                       clip{};
@@ -99,8 +99,8 @@ namespace GLT::world::world_ecs_entt::component {
     };
 
 
-    // Marker: this entity's local transform is NOT combined with its parent's.
-    // Useful for UI overlays, skyboxs, editor gizmos parented to something but meant to stay in world space.
+    // Marker: this entity's local transform is NOT combined with its parent's
+    // Useful for UI overlays, skyboxs, editor gizmos parented to something but meant to stay in world space
     struct no_inherit_transform {};
     static_assert(std::is_trivially_copyable_v<no_inherit_transform>);
 

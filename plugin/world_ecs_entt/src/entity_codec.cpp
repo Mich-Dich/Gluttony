@@ -133,7 +133,7 @@ namespace GLT::world::world_ecs_entt {
 
                 if (const entry* e = find(hash))
                     e->load(reg, ent, sub);
-                // else: unknown component - skip silently (forward compat).
+                // else: unknown component - skip silently (forward compat)
             }
         }
 

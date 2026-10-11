@@ -284,6 +284,17 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] std::expected<void, GLT::asset::load_error> flush_regions();
 
 
+        // Reaps regions that are no longer needed: active, non-core, and empty after reassign_all_entities() has run
+        //
+        // Only active regions are candidates. An inactive region may still have entity data on disk that hasn't been
+        // loaded into the slot table since the last save - pruning it would silently drop that data. Since activation
+        // happens before saving, everything that should be checked will be
+        //
+        // The core region (cell 0,0,0) is preserved by flag; if pruning would empty m_regions entirely, one candidate is
+        // kept so the world still satisfies "at least one region"
+        void prune_empty_regions();
+
+
         [[nodiscard]] glm::mat4 world_transform_of(entity_id id) const noexcept;
 
 
@@ -335,7 +346,7 @@ namespace GLT::world::world_ecs_entt {
         std::vector<u32>                                    m_free{};
         GLT::asset::handle                                  m_world{};
         glm::vec3                                           m_streaming_anchor{ 0.f };
-        f32                                                 m_streaming_radius{ 0.f };
+        f32                                                 m_streaming_radius{ 1024.f };
         component_registry                                  m_components{ *this };
         entity_id                                           m_active_camera{ INVALID_ENTITY };
         glm::vec3                                           m_region_cell_size{ 256.f, 256.f, 256.f };
