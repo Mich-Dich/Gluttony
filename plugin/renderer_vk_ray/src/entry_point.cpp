@@ -34,11 +34,11 @@ namespace GLT::renderer::vk_ray {
 
     constexpr u32                                               MAX_CONCURRENT_FRAMES = 3;
 
-    static constexpr u32                                        TLAS_MAX_INSTANCES   = 1024;
+    static constexpr u32                                        TLAS_MAX_INSTANCES = 1024;
 
-    static constexpr u32                                        VERTEX_HEADROOM_MIN  = 64 * 1024;       // 64k verts
+    static constexpr u32                                        VERTEX_HEADROOM_MIN = 64 * 1024;       // 64k verts
 
-    static constexpr u32                                        INDEX_HEADROOM_MIN   = 128 * 1024;      // 128k indices
+    static constexpr u32                                        INDEX_HEADROOM_MIN = 128 * 1024;      // 128k indices
 
     static constexpr u32                                        MATERIAL_HEADROOM_MIN = 1024;
 
@@ -598,14 +598,14 @@ namespace GLT::renderer::vk_ray {
 
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
-        .name                                                   = GLT_MODULE_NAME,
-        .load_phase                                             = GLT::plugin_manager::phase::pre_application,
-        .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
-        .target                                                 = GLT::plugin_manager::interface::renderer,
-        .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
-        .dependency_names                                       = dependencies_names,
-        .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
-        .dependency_interfaces                                  = dependencies_interfaces,
+        .name = GLT_MODULE_NAME,
+        .load_phase = GLT::plugin_manager::phase::pre_application,
+        .unload_phase = GLT::plugin_manager::phase::post_application_shutdown,
+        .target = GLT::plugin_manager::interface::renderer,
+        .dependency_names_count = ARRAY_SIZE(dependencies_names),
+        .dependency_names = dependencies_names,
+        .dependency_interface_count = ARRAY_SIZE(dependencies_interfaces),
+        .dependency_interfaces = dependencies_interfaces,
     };
 
     // FUNCTION IMPLEMENTATION =========================================================================================

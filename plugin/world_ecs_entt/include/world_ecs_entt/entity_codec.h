@@ -36,7 +36,7 @@ namespace GLT::world::world_ecs_entt {
     public:
 
         // Called during save for each entity, so the codec can write the player-visible GLT::world::entity_id rather than the raw entt::entity handle.
-        using resolve_fn  = std::function<GLT::world::entity_id(entt::entity)>;
+        using resolve_fn = std::function<GLT::world::entity_id(entt::entity)>;
 
         // Called during load for each saved entity. `preferred` is the GLT::world::entity_id that was written. The plugin returns the actual
         // (GLT::world::entity_id, entt::entity) it allocated - often identical.

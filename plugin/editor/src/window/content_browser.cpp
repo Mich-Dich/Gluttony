@@ -170,10 +170,10 @@ namespace GLT::editor {
 
     ImU32 hsv_to_u32(const f32 h, const f32 s, const f32 v) {
 
-        const f32 c  = v * s;
+        const f32 c = v * s;
         const f32 hp = h / 60.0f;
-        const f32 x  = c * (1.0f - std::fabs(std::fmod(hp, 2.0f) - 1.0f));
-        const int i  = static_cast<int>(hp) % 6;
+        const f32 x = c * (1.0f - std::fabs(std::fmod(hp, 2.0f) - 1.0f));
+        const int i = static_cast<int>(hp) % 6;
 
         f32 r = 0.0f, g = 0.0f, b = 0.0f;
         switch (i) {
@@ -249,7 +249,7 @@ namespace GLT::editor {
         constexpr f32 GOLDEN_CONJ = 0.6180339887498948f;
 
         const f32 frac = static_cast<f32>(t.value) * GOLDEN_CONJ;
-        const f32 hue  = (frac - std::floor(frac)) * 360.0f;
+        const f32 hue = (frac - std::floor(frac)) * 360.0f;
 
         return hsv_to_u32(hue, 0.55f, 1.0f);
     }
@@ -588,8 +588,8 @@ namespace GLT::editor {
     void content_browser_window::draw_toolbar() {
 
         const bool can_back = m_history_index > 0;
-        const bool can_fwd  = m_history_index >= 0 && (m_history_index + 1) < m_history_size;
-        const bool can_up   = !m_current_dir.empty() && !paths_equal(m_current_dir, m_content_dir);
+        const bool can_fwd = m_history_index >= 0 && (m_history_index + 1) < m_history_size;
+        const bool can_up = !m_current_dir.empty() && !paths_equal(m_current_dir, m_content_dir);
 
         ImGui::BeginDisabled(!can_back);
 
@@ -833,7 +833,7 @@ namespace GLT::editor {
 
             // Single click: apply the modifier-aware selection policy
             const ImGuiIO& io = ImGui::GetIO();
-            const bool ctrl  = io.KeyCtrl;
+            const bool ctrl = io.KeyCtrl;
             const bool shift = io.KeyShift;
 
             if (shift && !m_selection_anchor.empty())
@@ -860,7 +860,7 @@ namespace GLT::editor {
 
             const ImU32 accent = type_to_color(resolve_entry_type(entry.extension));
 
-            constexpr f32 STRIP_HEIGHT  = 2.f;
+            constexpr f32 STRIP_HEIGHT = 2.f;
             constexpr f32 STRIP_INSET_X = 6.f;
             constexpr f32 STRIP_OFFSET_Y = 32.f;
 
@@ -886,7 +886,7 @@ namespace GLT::editor {
                 const auto thumb = icon_manager::get_thumbnail(entry.path);
                 if (thumb.state == icon_manager::thumbnail_state::ready && thumb.image_size.x > 0.0f) {
 
-                    const f32 scale  = std::min(ICON_RENDER_SIZE / thumb.image_size.x, ICON_RENDER_SIZE / thumb.image_size.y);
+                    const f32 scale = std::min(ICON_RENDER_SIZE / thumb.image_size.x, ICON_RENDER_SIZE / thumb.image_size.y);
                     const f32 draw_w = thumb.image_size.x * scale;
                     const f32 draw_h = thumb.image_size.y * scale;
                     const ImVec2 t_min(origin.x + (cell_size.x - draw_w) * 0.5f, 
@@ -1058,7 +1058,7 @@ namespace GLT::editor {
             std::snprintf(m_rename_buffer, sizeof(m_rename_buffer), "%s", entry.name.c_str());
             m_open_rename_popup = true;
             m_rename_focus_pending = true;
-            m_rename_deletes_on_cancel  = false;
+            m_rename_deletes_on_cancel = false;
         }
 
         if (ImGui::MenuItem("Delete")) {
@@ -1118,7 +1118,7 @@ namespace GLT::editor {
 
             const bool confirm = ImGui::Button("OK", ImVec2(80, 0));
             ImGui::SameLine();
-            const bool cancel  = ImGui::Button("Cancel", ImVec2(80, 0));
+            const bool cancel = ImGui::Button("Cancel", ImVec2(80, 0));
 
             if (confirm && m_rename_buffer[0] != '\0') {
 
@@ -1379,7 +1379,7 @@ namespace GLT::editor {
         std::snprintf(m_rename_buffer, sizeof(m_rename_buffer), "%s", candidate.filename().string().c_str());
         m_open_rename_popup = true;
         m_rename_focus_pending = true;
-        m_rename_deletes_on_cancel  = true;
+        m_rename_deletes_on_cancel = true;
     }
 
 
@@ -1390,7 +1390,7 @@ namespace GLT::editor {
 
         // The picker speaks project-relative paths; m_current_dir is absolute. extract_path_from_project_content_dir gives us the registry's dialect
         const std::string stem = "New Material";
-        const std::string ext  = "." + std::string(GLT::asset::type_to_extension(GLT::asset::core_types::material));
+        const std::string ext = "." + std::string(GLT::asset::type_to_extension(GLT::asset::core_types::material));
 
         std::filesystem::path relative_target{};
         std::error_code error{};

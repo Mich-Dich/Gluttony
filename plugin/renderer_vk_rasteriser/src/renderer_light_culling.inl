@@ -170,8 +170,8 @@ namespace GLT::renderer::vk_rasterizer {
         // must not be touched.
         const u32 frame_index = m_current_frame;
 
-        util::allocated_buffer* grid_allocation    = m_graph->buffer_allocation(m_light_grid_handles[frame_index]);
-        util::allocated_buffer* list_allocation    = m_graph->buffer_allocation(m_light_index_list_handles[frame_index]);
+        util::allocated_buffer* grid_allocation = m_graph->buffer_allocation(m_light_grid_handles[frame_index]);
+        util::allocated_buffer* list_allocation = m_graph->buffer_allocation(m_light_index_list_handles[frame_index]);
         util::allocated_buffer* counter_allocation = m_graph->buffer_allocation(m_light_counter_handles[frame_index]);
 
         ASSERT(grid_allocation && list_allocation && counter_allocation, "",
@@ -199,15 +199,12 @@ namespace GLT::renderer::vk_rasterizer {
         descriptor_items.emplace_back(5, VKDT::eUniformBuffer, VKSF::eCompute, 1, &m_light_meta_ubos[frame_index]);
         descriptor_items.emplace_back(6, VKDT::eCombinedImageSampler, VKSF::eCompute, 1, &depth_image);
 
-        if (m_light_cull_desc_buffers[frame_index].buffer.buffer == nullptr) {
-
-            // First time this slot is used: allocate with combined usage so the sampler binding is legal.
+        if (m_light_cull_desc_buffers[frame_index].buffer.buffer == nullptr)
             m_light_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_light_cull_set_layout, descriptor_items,
                 util::descriptor_buffer_type::combined, 1);
 
-        } else
-            m_dev->update_descriptor_buffer(m_light_cull_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::combined);
-
+        m_dev->compute_descriptor_binding_offsets(m_light_cull_set_layout, descriptor_items);
+        m_dev->update_descriptor_buffer(m_light_cull_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::combined);
     }
 
 }

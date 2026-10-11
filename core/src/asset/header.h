@@ -47,7 +47,7 @@ namespace GLT::asset {
     struct header {
 
         static constexpr u32                    MAGIC = 0x544C4741; // "AGLT"
-        static constexpr u16                    CURRENT_VERSION  = 1;
+        static constexpr u16                    CURRENT_VERSION = 1;
 
         u32                                     magic{};
         u16                                     format_version{};

@@ -274,7 +274,7 @@ namespace GLT::asset::registry_default {
                 continue;
 
             s.data.reset();
-            s.alive   = false;
+            s.alive = false;
             s.handler = nullptr;
         }
         m_slots.clear();
@@ -474,7 +474,7 @@ namespace GLT::asset::registry_default {
 
         // Normalize on both sides so the prefix match below is reliable.
         auto from_rel = GLT::project::to_content_relative(from).lexically_normal();
-        auto to_rel   = GLT::project::to_content_relative(to).lexically_normal();
+        auto to_rel = GLT::project::to_content_relative(to).lexically_normal();
         if (from_rel.empty() || to_rel.empty())
             return std::unexpected{ GLT::asset::load_error::not_found };
 
@@ -541,7 +541,7 @@ namespace GLT::asset::registry_default {
                 m_by_path.erase(old_key);
 
                 const std::filesystem::path new_path{ new_key };
-                s->canonical_path          = new_path;
+                s->canonical_path = new_path;
                 s->asset_info.virtual_path = new_path;
                 m_by_path.emplace(new_key, h);
             }
@@ -698,7 +698,7 @@ namespace GLT::asset::registry_default {
         for (auto& s : m_slots) {
             if (s.alive && s.handler == handler) {
                 s.data.reset();
-                s.alive   = false;
+                s.alive = false;
                 s.handler = nullptr;
             }
         }
@@ -926,7 +926,7 @@ namespace GLT::asset::registry_default {
             b->dependents_storage.push_back(from);
 
         a->asset_info.dependencies = a->deps_storage;
-        b->asset_info.dependents   = b->dependents_storage;
+        b->asset_info.dependents = b->dependents_storage;
     }
 
 
@@ -1290,7 +1290,7 @@ namespace GLT::asset::registry_default {
         slot->canonical_path = path;
         slot->chunks_storage = std::move(chunks);
         slot->deps_storage = std::move(resolved_deps);
-        slot->dep_ids_storage  = std::move(resolved_dep_ids); 
+        slot->dep_ids_storage = std::move(resolved_dep_ids); 
 
         GLT::asset::info& asset_info = slot->asset_info;
         asset_info.id = hdr.id;

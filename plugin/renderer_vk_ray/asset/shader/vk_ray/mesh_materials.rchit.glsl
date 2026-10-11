@@ -86,17 +86,17 @@ float rand_float(inout uint seed) {
 }
 
 vec3 cosine_hemisphere(inout uint seed, vec3 n) {
-    const float r1  = rand_float(seed);
-    const float r2  = rand_float(seed);
+    const float r1 = rand_float(seed);
+    const float r2 = rand_float(seed);
     const float phi = 6.28318530718 * r1;
-    const float r   = sqrt(r2);
-    const float x   = r * cos(phi);
-    const float y   = r * sin(phi);
-    const float z   = sqrt(max(0.0, 1.0 - r2));
+    const float r = sqrt(r2);
+    const float x = r * cos(phi);
+    const float y = r * sin(phi);
+    const float z = sqrt(max(0.0, 1.0 - r2));
 
     const vec3 up = abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-    const vec3 t  = normalize(cross(up, n));
-    const vec3 b  = cross(n, t);
+    const vec3 t = normalize(cross(up, n));
+    const vec3 b = cross(n, t);
 
     return t * x + b * y + n * z;
 }
@@ -114,7 +114,7 @@ void main() {
     const int indirect_samples_base = clamp(int(cam.visual_uints.y), 1, 64);
 
     const GpuGeometry geom = geometries[gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT];
-    const GpuMaterial mat  = materials[geom.material_index];
+    const GpuMaterial mat = materials[geom.material_index];
 
     const uint prim = gl_PrimitiveID;
     const uvec3 idx = uvec3(
@@ -214,13 +214,13 @@ void main() {
 
     if (NdotL_raw > 0.0) {
         const vec3 up = abs(L.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-        const vec3 t  = normalize(cross(up, L));
-        const vec3 b  = cross(L, t);
+        const vec3 t = normalize(cross(up, L));
+        const vec3 b = cross(L, t);
         const vec3 org = hit_world + N * ao_ray_bias;
 
         float lit = 0.0;
         for (int i = 0; i < sun_samples; ++i) {
-            const float r   = sun_angular_radius * sqrt(rand_float(seed));
+            const float r = sun_angular_radius * sqrt(rand_float(seed));
             const float phi = 6.28318530718 * rand_float(seed);
             const vec3  dir = normalize(L + t * (r * cos(phi)) + b * (r * sin(phi)));
 
@@ -248,9 +248,9 @@ void main() {
     const float shininess = mix(4.0, 256.0, 1.0 - roughness);
     const float spec_term = pow(NdotH, shininess) * (1.0 - roughness) * mat.reflectance;
 
-    const vec3 diffuse  = albedo * (1.0 - metallic) * sun_rgb * NdotL;
+    const vec3 diffuse = albedo * (1.0 - metallic) * sun_rgb * NdotL;
     const vec3 specular = F * spec_term * sun_rgb * NdotL;
-    const vec3 ambient  = albedo * 0.15 * ao * (1.0 - metallic);
+    const vec3 ambient = albedo * 0.15 * ao * (1.0 - metallic);
 
     vec3 result = ambient + diffuse + specular + emissive;
 

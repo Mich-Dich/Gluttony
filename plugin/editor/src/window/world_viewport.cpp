@@ -215,7 +215,7 @@ namespace GLT::editor {
         ImGui::SetCursorScreenPos(ImVec2(image_min.x + INSET, image_min.y + INSET));
 
         // resolve the current mode's label
-        const auto modes   = m_renderer->supported_modes();
+        const auto modes = m_renderer->supported_modes();
         const u32  current = m_renderer->get_render_mode();
 
         const char* current_label = "Render mode";

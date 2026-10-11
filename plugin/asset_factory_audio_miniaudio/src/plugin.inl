@@ -111,7 +111,7 @@ namespace GLT::asset::factory::audio_miniaudio {
 
         decoded_audio out{};
         out.sample_rate = decoder.outputSampleRate;
-        out.channels    = static_cast<u16>(decoder.outputChannels);
+        out.channels = static_cast<u16>(decoder.outputChannels);
 
         // Fast path: file length is known (WAV, FLAC, …).
         ma_uint64 frame_count = 0;
@@ -225,8 +225,8 @@ namespace GLT::asset::factory::audio_miniaudio {
 
             GLT::asset::audio::loop_points lp{};
             lp.loop_start_frame = decoded.loop_start;
-            lp.loop_end_frame   = decoded.loop_end;
-            lp.has_loop         = 1;
+            lp.loop_end_frame = decoded.loop_end;
+            lp.has_loop = 1;
             out.write_chunk(GLT::asset::audio::CHUNK_LOOP_POINTS, std::as_bytes(std::span{ &lp, 1 }));
         }
 
@@ -237,7 +237,7 @@ namespace GLT::asset::factory::audio_miniaudio {
         GLT::asset::factory::import_result result{
 
             .output_path = {},                                  // let the registry pick
-            .id          = UUID(),
+            .id = UUID(),
             .source_hash = hash_bytes(bytes),
             .payload_hash = hash,
         };

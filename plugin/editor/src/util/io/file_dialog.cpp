@@ -116,7 +116,7 @@ namespace GLT::editor::io {
             out.append(buf.data(), n);
 
         const int status = ::pclose(pipe);
-        const int code   = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        const int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
         while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
             out.pop_back();
 
@@ -365,16 +365,16 @@ namespace GLT::editor::io {
 
             wchar_t szFiles[4096] = { 0 };
             ZeroMemory(&ofn, sizeof(ofn));
-            ofn.lStructSize  = sizeof(ofn);
-            ofn.hwndOwner    = hwndOwner;
-            ofn.lpstrFile    = szFiles;
-            ofn.nMaxFile     = sizeof(szFiles) / sizeof(wchar_t);
-            ofn.lpstrFilter  = filterStr.c_str();
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = hwndOwner;
+            ofn.lpstrFile = szFiles;
+            ofn.nMaxFile = sizeof(szFiles) / sizeof(wchar_t);
+            ofn.lpstrFilter = filterStr.c_str();
             ofn.nFilterIndex = 1;
-            ofn.Flags        = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST
                             | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
             std::wstring wtitle(title.begin(), title.end());
-            ofn.lpstrTitle   = wtitle.c_str();
+            ofn.lpstrTitle = wtitle.c_str();
 
             if (GetOpenFileNameW(&ofn)) {
                 std::vector<std::filesystem::path> results;

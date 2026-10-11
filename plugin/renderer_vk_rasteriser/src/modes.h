@@ -21,29 +21,19 @@ namespace GLT::renderer::vk_rasterizer::modes {
     [[=display_name{"Lit"}]]
     [[=tooltip{"Full shading with lighting"}]]
     [[=category{"Shading"}]]
-    inline constexpr GLT::render::render_mode lit{ .id = 0, .is_default = true };
+    inline constexpr GLT::render::render_mode Lit{ .id = 0, .is_default = true };
 
 
-    [[=display_name{"Unlit"}]]
-    [[=tooltip{"Flat surface color, no lighting"}]]
-    [[=category{"Shading"}]]
-    inline constexpr GLT::render::render_mode unlit{ .id = 1 };
+    // [[=display_name{"Unlit"}]]
+    // [[=tooltip{"Flat surface color, no lighting"}]]
+    // [[=category{"Shading"}]]
+    // inline constexpr GLT::render::render_mode Unlit{ .id = 1 };
 
 
-    [[=display_name{"Albedo"}]]
-    [[=category{"Material"}]]
-    inline constexpr GLT::render::render_mode albedo{ .id = 2 };
-
-
-    [[=display_name{"Normals"}]]
-    [[=tooltip{"World-space normals, remapped to [0,1]"}]]
-    [[=category{"Geometry"}]]
-    inline constexpr GLT::render::render_mode normals{ .id = 3 };
-
-
-    [[=display_name{"Depth"}]]
-    [[=category{"Geometry"}]]
-    inline constexpr GLT::render::render_mode depth{ .id = 4 };
+    [[=display_name{"Light Culling"}]]
+    [[=tooltip{"Heatmap of lights per cluster (debug)"}]]
+    [[=category{"Debug"}]]
+    inline constexpr GLT::render::render_mode Light_cull{ .id = 2 };
 
     // STATIC VARIABLES ================================================================================================
 

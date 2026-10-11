@@ -189,14 +189,14 @@ namespace GLT::vfs {
             localtime_r(&tt, &tm_buf);
         #endif
 
-        result.year         = static_cast<u16>(tm_buf.tm_year + 1900);
-        result.month        = static_cast<u8>(tm_buf.tm_mon + 1);
-        result.day          = static_cast<u8>(tm_buf.tm_mday);
-        result.day_of_week  = static_cast<u8>(tm_buf.tm_wday);     // 0 = Sunday, matches your struct
-        result.hour         = static_cast<u8>(tm_buf.tm_hour);
-        result.minute       = static_cast<u8>(tm_buf.tm_min);
-        result.secund       = static_cast<u8>(tm_buf.tm_sec);
-        result.millisecond  = static_cast<u16>(ms);
+        result.year = static_cast<u16>(tm_buf.tm_year + 1900);
+        result.month = static_cast<u8>(tm_buf.tm_mon + 1);
+        result.day = static_cast<u8>(tm_buf.tm_mday);
+        result.day_of_week = static_cast<u8>(tm_buf.tm_wday);     // 0 = Sunday, matches your struct
+        result.hour = static_cast<u8>(tm_buf.tm_hour);
+        result.minute = static_cast<u8>(tm_buf.tm_min);
+        result.secund = static_cast<u8>(tm_buf.tm_sec);
+        result.millisecond = static_cast<u16>(ms);
 
         return result;
     }

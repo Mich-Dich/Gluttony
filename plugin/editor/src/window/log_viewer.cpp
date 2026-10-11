@@ -23,13 +23,13 @@ namespace GLT::editor {
     // CONSTANTS =======================================================================================================
 
     // Cap a single poll's read so a burst of logging can't stall the frame.
-    constexpr size_t            MAX_READ_PER_POLL         = 256 * 1024;
+    constexpr size_t            MAX_READ_PER_POLL = 256 * 1024;
 
     // Cap the initial read of a pre-existing log file so opening the window is always cheap. Any earlier content is simply skipped.
-    constexpr std::uintmax_t    MAX_INITIAL_READ_BYTES    = 4 * 1024 * 1024;
+    constexpr std::uintmax_t    MAX_INITIAL_READ_BYTES = 4 * 1024 * 1024;
 
     // If a "line" grows beyond this without ever hitting a newline, treat it as garbage and discard - protects against binary files.
-    constexpr size_t            MAX_PARTIAL_LINE_BYTES    = 64 * 1024;
+    constexpr size_t            MAX_PARTIAL_LINE_BYTES = 64 * 1024;
 
     // Marker colours aligned with the logger plugin's console_color_table.
     constexpr ImU32 severity_colors[] = {
@@ -269,7 +269,7 @@ namespace GLT::editor {
         // Cap a single poll so a logging burst doesn't hitch the frame;
         // whatever is left over is picked up on the next poll.
         const std::streamoff remaining = size_off - m_last_read_pos;
-        const std::streamoff to_read   = std::min(remaining, static_cast<std::streamoff>(MAX_READ_PER_POLL));
+        const std::streamoff to_read = std::min(remaining, static_cast<std::streamoff>(MAX_READ_PER_POLL));
 
         std::ifstream file(m_log_file_path, std::ios::binary);
         if (!file.is_open())
@@ -323,7 +323,7 @@ namespace GLT::editor {
 
         log_line entry;
         entry.severity = detect_severity(line);
-        entry.text     = std::move(line);
+        entry.text = std::move(line);
 
         m_lines.push_back(std::move(entry));
 
@@ -475,10 +475,10 @@ namespace GLT::editor {
                     // Always reserve the column so plain lines and coloured
                     // lines stay left-aligned with each other.
                     {
-                        const ImVec2 cursor    = ImGui::GetCursorScreenPos();
-                        const f32    marker_w  = 3.0f;
+                        const ImVec2 cursor = ImGui::GetCursorScreenPos();
+                        const f32    marker_w = 3.0f;
                         const f32    marker_gap= 4.0f;
-                        const f32    marker_h  = ImGui::GetTextLineHeight();
+                        const f32    marker_h = ImGui::GetTextLineHeight();
 
                         if (line.severity < 6) {
 
@@ -520,7 +520,7 @@ namespace GLT::editor {
 
     void log_viewer_window::draw_status_bar() {
 
-        const size_t total    = m_lines.size();
+        const size_t total = m_lines.size();
         const size_t filtered = m_filtered_indices.size();
 
         if (filtered == total)

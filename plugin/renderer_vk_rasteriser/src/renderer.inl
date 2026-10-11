@@ -65,6 +65,7 @@ namespace GLT::renderer::vk_rasterizer {
         create_light_resources();
         create_cluster_resources();
         create_light_culling_pipeline();
+        create_debug_view_resources();
         imgui_init();
 
         m_framebuffer_resize_sub = GLT::event_bus::subscribe<GLT::window_framebuffer_resize_event>(
@@ -88,6 +89,7 @@ namespace GLT::renderer::vk_rasterizer {
             if (m_in_flight_fences[i])
                 VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[i], VK_TRUE, UINT64_MAX))
 
+        destroy_debug_view_resources();
         destroy_light_culling_pipeline();
         destroy_cluster_resources();
         destroy_light_resources();
@@ -220,6 +222,10 @@ namespace GLT::renderer::vk_rasterizer {
         update_light_meta_ubo();
         update_light_cull_descriptors();
 
+        // Refresh the mesh pass descriptor buffer to include the current frame's light grid + index list. Must run after
+        // update_cluster_dimensions() so the graph-owned cluster buffers have been created
+        update_mesh_descriptors();
+
         // -------- Reset the draw count to 0 (transfer write) --------
         m_graph->add_pass("reset_draw_count",
             [&](graph::pass_builder& builder) {
@@ -317,31 +323,70 @@ namespace GLT::renderer::vk_rasterizer {
                 ctx.cmd.dispatch(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z);
             });
 
-        // Forward shading ---------------------------------------------------------------------------------------------
-        m_graph->add_pass("scene",
-            [&](graph::pass_builder& builder) {
-                builder.color_attachment(m_scene_color, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
-                    vk::ClearColorValue(std::array<f32,4>{m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a}));
-                builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore, 1.0f, 0);
-                builder.read(m_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
-                builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
-            },
-            [this](graph::pass_context& ctx) {
+        // Refresh debug view descriptors after cluster dimensions / depth are known this frame
+        update_debug_view_descriptors();
 
-                if (m_instance_count == 0)
-                    return;
+        if (m_active_mode == modes::Light_cull.id) {
 
-                ctx.begin_rendering();
-                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_mesh_pipeline);
-                m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame] }, ctx.cmd);
-                m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-                draw_scene_indirect(ctx.cmd,
-                    ctx.get_buffer(m_draw_commands_handles[m_current_frame]),
-                    ctx.get_buffer(m_draw_count_handles[m_current_frame]));
-                ctx.end_rendering();
+            // Debug: visualise the light grid. Runs instead of the forward pass so we skip the
+            // shading cost. Needs the depth prepass (already done) as the cluster-slice source.
+            m_graph->add_pass("light_cull_debug",
+                [&](graph::pass_builder& builder) {
+                    builder.color_attachment(m_scene_color, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
+                        vk::ClearColorValue(std::array<f32,4>{0.f, 0.f, 0.f, 1.f}));
+                    builder.read(m_depth_target, graph::texture_usage::depth_sampled);
+                    builder.read(m_light_grid_handles[m_current_frame], graph::buffer_usage::storage_read);
+                    builder.set_side_effects(true);
+                },
+                [this](graph::pass_context& ctx) {
 
-                m_frame_render_passes++;
-            });
+                    if (m_instance_count == 0)
+                        return;
+
+                    ctx.begin_rendering();
+                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_light_cull_debug_pipeline);
+                    m_dev->bind_descriptor_buffer({ m_light_cull_debug_desc_buffers[m_current_frame] }, ctx.cmd);
+                    m_dev->bind_descriptor_set(m_light_cull_debug_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                    ctx.cmd.setViewport(0, vk::Viewport(0.f, 0.f, static_cast<f32>(m_render_size.x), static_cast<f32>(m_render_size.y), 0.f, 1.f));
+                    ctx.cmd.setScissor(0, vk::Rect2D({0, 0}, {static_cast<u32>(m_render_size.x), static_cast<u32>(m_render_size.y)}));
+
+                    ctx.cmd.draw(3, 1, 0, 0);   // fullscreen triangle
+                    ctx.end_rendering();
+
+                    m_frame_draw_calls++;
+                    m_frame_render_passes++;
+                });
+
+        } else {
+
+            // Forward shading (existing pass, unchanged)
+            m_graph->add_pass("scene",
+                [&](graph::pass_builder& builder) {
+                    builder.color_attachment(m_scene_color, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
+                        vk::ClearColorValue(std::array<f32,4>{m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a}));
+                    builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore, 1.0f, 0);
+                    builder.read(m_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
+                    builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
+                    builder.read(m_light_grid_handles[m_current_frame], graph::buffer_usage::storage_read);
+                    builder.read(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_read);
+                },
+                [this](graph::pass_context& ctx) {
+
+                    if (m_instance_count == 0)
+                        return;
+
+                    ctx.begin_rendering();
+                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_mesh_pipeline);
+                    m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame] }, ctx.cmd);
+                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+                    draw_scene_indirect(ctx.cmd, ctx.get_buffer(m_draw_commands_handles[m_current_frame]), 
+                        ctx.get_buffer(m_draw_count_handles[m_current_frame]));
+                    ctx.end_rendering();
+
+                    m_frame_render_passes++;
+                });
+        }
 
         // Pass: ImGui -------------------------------------------------------------------------------------------------
         m_graph->add_pass("imgui",
@@ -377,6 +422,8 @@ namespace GLT::renderer::vk_rasterizer {
                 }
             });
 
+        // LOG(info, "instances={} lights={} clusters={}x{}x{}",
+        //     m_instance_count, m_light_count, m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z);
         m_graph->compile();
     }
 
@@ -395,7 +442,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         // static u32 dup_counter = 0;
         // if (dup_counter >= 250) {
-        //     LOG(info, "[{}]", m_graph->dump())
+        //     LOG(info, "{}", m_graph->dump())
         //     dup_counter = 0;
         // }
         // dup_counter++;
@@ -415,9 +462,9 @@ namespace GLT::renderer::vk_rasterizer {
         submit_info.pSignalSemaphores = &m_render_semaphores[m_current_frame];
         try {
 
-            m_queues.graphics_queue.submit(submit_info, m_in_flight_fences[m_current_frame]); }
-
-        catch (...) { LOG(error, "submit failed"); }
+            m_queues.graphics_queue.submit(submit_info, m_in_flight_fences[m_current_frame]); 
+        
+        } catch (...) { LOG(error, "submit failed"); }
 
         vk::PresentInfoKHR pi{};
         pi.waitSemaphoreCount = 1;
@@ -427,9 +474,9 @@ namespace GLT::renderer::vk_rasterizer {
         pi.pImageIndices = &m_current_swapchain_image;
         try { 
 
-            (void)m_queues.present_queue.presentKHR(pi); }
-
-        catch (const vk::OutOfDateKHRError&) { resize_swapchain(m_target_framebuffer_size); }
+            (void)m_queues.present_queue.presentKHR(pi);
+        
+        } catch (const vk::OutOfDateKHRError&) { resize_swapchain(m_target_framebuffer_size); }
 
         m_current_frame = (m_current_frame + 1) % MAX_CONCURRENT_FRAMES;
     }
@@ -485,9 +532,9 @@ namespace GLT::renderer::vk_rasterizer {
         vk::FenceCreateInfo fci{};
         fci.flags = vk::FenceCreateFlagBits::eSignaled;
         for (u32 i = 0; i < m_image_count; i++) {
-            m_render_semaphores[i]  = m_device.createSemaphore(sci);
+            m_render_semaphores[i] = m_device.createSemaphore(sci);
             m_present_semaphores[i] = m_device.createSemaphore(sci);
-            m_in_flight_fences[i]   = m_device.createFence(fci);
+            m_in_flight_fences[i] = m_device.createFence(fci);
         }
 
         vk::CommandPoolCreateInfo pci{};

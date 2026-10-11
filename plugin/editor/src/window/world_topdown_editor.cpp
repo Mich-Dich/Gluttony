@@ -415,7 +415,7 @@ namespace GLT::editor {
             // cell k spans [k*size - size/2, k*size + size/2]
             // boundary positions are at k*size - size/2
             const int first_col = static_cast<int>(std::floor((world_min.x + half_x) / cx));
-            const int last_col  = static_cast<int>(std::ceil ((world_max.x + half_x) / cx));
+            const int last_col = static_cast<int>(std::ceil ((world_max.x + half_x) / cx));
             for (int col = first_col; col <= last_col; ++col) {
 
                 const f32 wx = static_cast<f32>(col) * cx - half_x;
@@ -425,7 +425,7 @@ namespace GLT::editor {
             }
 
             const int first_row = static_cast<int>(std::floor((world_min.y + half_z) / cz));
-            const int last_row  = static_cast<int>(std::ceil ((world_max.y + half_z) / cz));
+            const int last_row = static_cast<int>(std::ceil ((world_max.y + half_z) / cz));
             for (int row = first_row; row <= last_row; ++row) {
 
                 const f32 wz = static_cast<f32>(row) * cz - half_z;
@@ -584,7 +584,7 @@ namespace GLT::editor {
 
         constexpr int button_count = 2;
 
-        const f32 strip_width  = FLOATING_BUTTON_SIZE * static_cast<f32>(button_count) +
+        const f32 strip_width = FLOATING_BUTTON_SIZE * static_cast<f32>(button_count) +
             FLOATING_BUTTON_GAP  * static_cast<f32>(button_count - 1);
 
         const ImVec2 strip_min(

@@ -68,12 +68,12 @@ vec4 sample_accum_bilinear(vec2 uvn, ivec2 sz, uint idx) {
 void main() {
 
     const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    const ivec2 size  = imageSize(out_image);
+    const ivec2 size = imageSize(out_image);
     if (any(greaterThanEqual(pixel, size)))
         return;
 
     const uint write_idx = cam.temporal.z;
-    const uint prev_idx  = 1u - write_idx;
+    const uint prev_idx = 1u - write_idx;
 
     // ---- current frame's raw colour ---------------------------------------------
     const vec3 current_color = imageLoad(current_raw, pixel).rgb;
@@ -117,7 +117,7 @@ void main() {
     const vec4 gnrm_curr = load_gbuffer_nrm(pixel, write_idx);
 
     vec3 result_color = current_color;
-    float history_len  = 1.0;
+    float history_len = 1.0;
 
     const bool can_try_reproject = (cam.temporal.x == 0u) && (gpos_curr.w > 0.5);
     if (can_try_reproject) {
@@ -126,7 +126,7 @@ void main() {
         if (prev_clip.w > 0.0) {
 
             const vec2 prev_ndc = prev_clip.xy / prev_clip.w;
-            const vec2 prev_uv  = prev_ndc * 0.5 + 0.5;
+            const vec2 prev_uv = prev_ndc * 0.5 + 0.5;
             const ivec2 prev_pixel = ivec2(round(prev_uv * vec2(size)));
 
             if (all(greaterThanEqual(prev_pixel, ivec2(0))) &&
@@ -148,7 +148,7 @@ void main() {
                 if (pos_ok && nrm_ok) {
 
                     const vec4 prev_accum = sample_accum_bilinear(prev_uv, size, prev_idx);
-                    const float prev_len  = prev_accum.a;
+                    const float prev_len = prev_accum.a;
 
                     if (prev_len > 0.5) {
 

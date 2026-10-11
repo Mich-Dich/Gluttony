@@ -111,7 +111,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
             resource_state                                      state{};               // current GPU state
             u32                                                 first_use = UINT32_MAX;
-            u32                                                 last_use  = 0;
+            u32                                                 last_use = 0;
             bool                                                write_dirty = false;
         };
 
@@ -123,7 +123,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
             util::allocated_buffer                              allocated{};
             resource_state                                      state{};
             u32                                                 first_use = UINT32_MAX;
-            u32                                                 last_use  = 0;
+            u32                                                 last_use = 0;
             bool                                                write_dirty = false;
         };
 

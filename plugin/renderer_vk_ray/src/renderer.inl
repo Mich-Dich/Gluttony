@@ -439,7 +439,7 @@ namespace GLT::renderer::vk_ray {
         });
 
         m_temporal_valid = false;       // new sizes -> no valid history
-        m_gbuffer_index  = 0;
+        m_gbuffer_index = 0;
 
         update_descriptor_set();
     }
@@ -860,7 +860,7 @@ namespace GLT::renderer::vk_ray {
         reserve_material_space(1);
         gpu_material default_mat{};
         default_mat.base_color = { 0.8f, 0.8f, 0.8f, 1.0f };
-        default_mat.roughness  = 0.7f;
+        default_mat.roughness = 0.7f;
         default_mat.textures.fill(0);       // white fallback index
         auto* dst = static_cast<gpu_material*>(m_vr_dev->map_buffer(m_material_buffer));
         dst[0] = default_mat;

@@ -184,8 +184,7 @@ Next steps for the renderer:
 **Goal:** Validate the cluster grid and light counts.
 
 - Add a debug compute or fragment shader that outputs a heatmap of light count per cluster.
-- Add a render graph pass that writes to a debug texture or directly to the scene color when a toggle is enabled.
-- Add ImGui controls to switch visualization modes (light count, cluster index, etc.).
+- Add a render graph pass that writes to the scene color when a toggle is enabled.
 
 **Outcome:** You can visually verify that light culling is working correctly.
 
@@ -197,9 +196,11 @@ Next steps for the renderer:
 - Create a shadow map texture (depth only) and a light-space matrix.
 - Add a render graph pass `"shadow_pass"` that renders the scene from the light’s point of view. Reuse the depth-only pipeline.
 - Update `mesh.frag.glsl` to sample the shadow map and attenuate the directional light.
-- Later extend to point/spot shadows using cube maps or multiple shadow maps.
 
 **Outcome:** Directional shadows work; Forward+ has basic shadowing.
+
+- Extend to point/spot shadows using cube maps or multiple shadow maps.
+
 
 ---
 

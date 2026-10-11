@@ -213,7 +213,7 @@ namespace GLT::asset::factory::texture_stb {
 
                     const f32 top = v00 + (v01 - v00) * fx;
                     const f32 bot = v10 + (v11 - v10) * fx;
-                    const f32 v   = top + (bot - top) * fy;
+                    const f32 v = top + (bot - top) * fy;
 
                     if constexpr (std::is_same_v<T, u8>)
                         d[doff + c] = static_cast<u8>(std::clamp(v + 0.5f, 0.0f, 255.0f));
@@ -452,7 +452,7 @@ namespace GLT::asset::factory::texture_stb {
             const f32 x = (static_cast<f32>(std::to_integer<u8>(pixels[i + 0])) / 255.0f) * 2.0f - 1.0f;
             const f32 y = (static_cast<f32>(std::to_integer<u8>(pixels[i + 1])) / 255.0f) * 2.0f - 1.0f;
             const f32 d2 = x * x + y * y;
-            const f32 z  = (d2 >= 1.0f) ? 0.0f : std::sqrt(1.0f - d2);
+            const f32 z = (d2 >= 1.0f) ? 0.0f : std::sqrt(1.0f - d2);
             const f32 z_enc = z * 0.5f + 0.5f;
             pixels[i + 2] = static_cast<std::byte>(std::clamp(z_enc * 255.0f + 0.5f, 0.0f, 255.0f));
         }
@@ -579,68 +579,68 @@ namespace GLT::asset::factory::texture_stb {
 
         static constexpr desc schema[] = {
             {   // 1
-                .key                = "flip_vertical",
-                .label              = "Flip vertical",
-                .type               = desc::kind::boolean,
-                .default_value      = "false",
+                .key = "flip_vertical",
+                .label = "Flip vertical",
+                .type = desc::kind::boolean,
+                .default_value = "false",
                 .enumeration_values = "",
-                .tooltip            = "Mirror the image top-to-bottom. Use for sources authored with a bottom-left origin (OpenGL convention).",
+                .tooltip = "Mirror the image top-to-bottom. Use for sources authored with a bottom-left origin (OpenGL convention).",
             },
             {   // 2
-                .key                = "flip_horizontal",
-                .label              = "Flip horizontal",
-                .type               = desc::kind::boolean,
-                .default_value      = "false",
+                .key = "flip_horizontal",
+                .label = "Flip horizontal",
+                .type = desc::kind::boolean,
+                .default_value = "false",
                 .enumeration_values = "",
-                .tooltip            = "Mirror the image left-to-right. Tick together with Flip vertical for a 180° rotation.",
+                .tooltip = "Mirror the image left-to-right. Tick together with Flip vertical for a 180° rotation.",
             },
             {   // 3
-                .key                = "generate_mips",
-                .label              = "Generate mipmaps",
-                .type               = desc::kind::boolean,
-                .default_value      = "true",
+                .key = "generate_mips",
+                .label = "Generate mipmaps",
+                .type = desc::kind::boolean,
+                .default_value = "true",
                 .enumeration_values = "",
-                .tooltip            = "Emit a full mip chain down to 1x1 using a box filter. Turn off for UI / cursor textures that are never minified.",
+                .tooltip = "Emit a full mip chain down to 1x1 using a box filter. Turn off for UI / cursor textures that are never minified.",
             },
             {   // 4
-                .key                = "max_size",
-                .label              = "Max size (px)",
-                .type               = desc::kind::integer,
-                .default_value      = "0",
+                .key = "max_size",
+                .label = "Max size (px)",
+                .type = desc::kind::integer,
+                .default_value = "0",
                 .enumeration_values = "",
-                .tooltip            = "Downscale the image so its longest side is at most N pixels. Aspect ratio preserved. 0 = no limit. Common values: 512, 1024, 2048, 4096.",
+                .tooltip = "Downscale the image so its longest side is at most N pixels. Aspect ratio preserved. 0 = no limit. Common values: 512, 1024, 2048, 4096.",
             },
             {   // 5
-                .key                = "color_space",
-                .label              = "Color space",
-                .type               = desc::kind::enumeration,
-                .default_value      = "auto",
+                .key = "color_space",
+                .label = "Color space",
+                .type = desc::kind::enumeration,
+                .default_value = "auto",
                 .enumeration_values = "auto|srgb|linear",
-                .tooltip            = "'auto' trusts the decoder and the usage tag. Pick 'srgb' for color/UI, 'linear' for data (roughness, metallic, masks).",
+                .tooltip = "'auto' trusts the decoder and the usage tag. Pick 'srgb' for color/UI, 'linear' for data (roughness, metallic, masks).",
             },
             {   // 6
-                .key                = "usage",
-                .label              = "Usage",
-                .type               = desc::kind::enumeration,
-                .default_value      = "default",
+                .key = "usage",
+                .label = "Usage",
+                .type = desc::kind::enumeration,
+                .default_value = "default",
                 .enumeration_values = "default|normal_map|mask|ui|albedo|emission",
-                .tooltip            = "Semantic tag. Drives the auto color-space default and, once block compression is wired up, the codec choice (BC5 for normal_map, BC4 for mask, BC7 for albedo/ui, BC6H for emission).",
+                .tooltip = "Semantic tag. Drives the auto color-space default and, once block compression is wired up, the codec choice (BC5 for normal_map, BC4 for mask, BC7 for albedo/ui, BC6H for emission).",
             },
             {   // 7
-                .key                = "compression_quality",
-                .label              = "Compression quality",
-                .type               = desc::kind::integer,
-                .default_value      = "85",
+                .key = "compression_quality",
+                .label = "Compression quality",
+                .type = desc::kind::integer,
+                .default_value = "85",
                 .enumeration_values = "",
-                .tooltip            = "0 = smallest (most lossy), 100 = best fidelity. Stored as a hint; consumed once BCn/ASTC encoding is enabled.",
+                .tooltip = "0 = smallest (most lossy), 100 = best fidelity. Stored as a hint; consumed once BCn/ASTC encoding is enabled.",
             },
             {   // 8
-                .key                = "premultiply_alpha",
-                .label              = "Premultiply alpha",
-                .type               = desc::kind::boolean,
-                .default_value      = "false",
+                .key = "premultiply_alpha",
+                .label = "Premultiply alpha",
+                .type = desc::kind::boolean,
+                .default_value = "false",
                 .enumeration_values = "",
-                .tooltip            = "Multiply RGB by A. Use for sprite / particle textures composited with one/one-minus-src-alpha blending.",
+                .tooltip = "Multiply RGB by A. Use for sprite / particle textures composited with one/one-minus-src-alpha blending.",
             },
         };
         return schema;
@@ -722,7 +722,7 @@ namespace GLT::asset::factory::texture_stb {
                 if (!resized.empty()) {
 
                     img.pixels = std::move(resized);
-                    img.width  = nw;
+                    img.width = nw;
                     img.height = nh;
                 }
             }
@@ -757,7 +757,7 @@ namespace GLT::asset::factory::texture_stb {
             if (!thumb_pixels.empty() && tw > 0 && th > 0) {
 
                 GLT::asset::thumbnail_header thdr{};
-                thdr.width  = static_cast<u16>(tw);
+                thdr.width = static_cast<u16>(tw);
                 thdr.height = static_cast<u16>(th);
                 thdr.format = static_cast<u16>(GLT::asset::texture::pixel_format::u8_rgba);
 

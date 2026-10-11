@@ -144,9 +144,9 @@ namespace GLT::renderer::vk_ray {
         m_vr_dev->destroy_buffer(staging);
 
         vk::ImageViewCreateInfo view_info{};
-        view_info.image    = gpu_img.image;
+        view_info.image = gpu_img.image;
         view_info.viewType = vk::ImageViewType::e2D;
-        view_info.format   = vk::Format::eR8G8B8A8Unorm;
+        view_info.format = vk::Format::eR8G8B8A8Unorm;
         view_info.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
         vk::ImageView default_view = m_device.createImageView(view_info);
 
@@ -157,14 +157,14 @@ namespace GLT::renderer::vk_ray {
             m_free_texture_slots.push_back(i);
 
         texture_slot& slot = m_texture_slots[0];
-        slot.asset          = INVALID_HANDLE;
-        slot.image          = gpu_img.image;
-        slot.allocation     = gpu_img.allocation;
-        slot.view           = default_view;
-        slot.sampler        = m_default_sampler_nearest;    // was m_default_sampler_linear
-        slot.ref_count      = 1;                            // permanent
+        slot.asset = INVALID_HANDLE;
+        slot.image = gpu_img.image;
+        slot.allocation = gpu_img.allocation;
+        slot.view = default_view;
+        slot.sampler = m_default_sampler_nearest;    // was m_default_sampler_linear
+        slot.ref_count = 1;                            // permanent
         slot.bindless_index = 0;
-        slot.alive          = true;
+        slot.alive = true;
 
         // every descriptor defaults to the checkerboard --------------------------------------------------------------
         const vr::accessible_image default_desc{
@@ -266,7 +266,7 @@ namespace GLT::renderer::vk_ray {
             const GLT::asset::handle tex = mat->textures[i];
             if (tex == INVALID_HANDLE)
                 continue;
-            gpu.textures[i]  = load_texture(tex);
+            gpu.textures[i] = load_texture(tex);
             slot.textures[i] = tex;
         }
 

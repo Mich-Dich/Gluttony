@@ -530,8 +530,8 @@ namespace GLT::editor {
 
         m_edit = {};
         m_edit.base_color = { 0.8f, 0.8f, 0.8f, 1.0f };
-        m_edit.roughness  = 0.5f;
-        m_edit.metallic   = 0.0f;
+        m_edit.roughness = 0.5f;
+        m_edit.metallic = 0.0f;
         m_edit.reflectance = 0.5f;
         m_edit.normal_scale = 1.0f;
         m_edit.occlusion_strength = 1.0f;
@@ -548,7 +548,7 @@ namespace GLT::editor {
         m_asset_handle = INVALID_HANDLE;    // not registered with the registry
 
         m_preview_camera_pos = { 0.0f, 0.0f, 3.0f };
-        m_preview_target     = { 0.0f, 0.0f, 0.0f };
+        m_preview_target = { 0.0f, 0.0f, 0.0f };
     }
 
 
@@ -575,7 +575,7 @@ namespace GLT::editor {
         m_load_failed = false;
 
         m_preview_camera_pos = { 0.0f, 0.0f, 3.0f };
-        m_preview_target     = { 0.0f, 0.0f, 0.0f };
+        m_preview_target = { 0.0f, 0.0f, 0.0f };
         return true;
     }
 
@@ -630,7 +630,7 @@ namespace GLT::editor {
         // Reset.
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             m_preview_camera_pos = { 0.0f, 0.0f, 3.0f };
-            m_preview_target     = { 0.0f, 0.0f, 0.0f };
+            m_preview_target = { 0.0f, 0.0f, 0.0f };
         }
     }
 

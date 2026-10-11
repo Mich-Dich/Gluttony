@@ -161,7 +161,7 @@ namespace GLT::renderer::vk_rasterizer {
 
             // Build the cull descriptor set for this frame. The descriptor items point into the graph's buffers via the graph's own lookup helper
             util::allocated_buffer* draw_commands_allocation = m_graph->buffer_allocation(m_draw_commands_handles[frame_index]);
-            util::allocated_buffer* draw_count_allocation    = m_graph->buffer_allocation(m_draw_count_handles[frame_index]);
+            util::allocated_buffer* draw_count_allocation = m_graph->buffer_allocation(m_draw_count_handles[frame_index]);
             ASSERT(draw_commands_allocation && draw_count_allocation, "", "Graph failed to allocate draw buffers");
 
             std::vector<util::descriptor_item> descriptor_items;

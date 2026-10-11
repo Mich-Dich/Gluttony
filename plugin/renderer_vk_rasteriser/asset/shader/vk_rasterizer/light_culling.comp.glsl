@@ -35,44 +35,31 @@ layout(set = 0, binding = 6) uniform sampler2D depth_texture;
 // Convert a window-space depth value in [0,1] to a positive view-space Z.
 // Works for any projection whose inverse is available, regardless of Z-range convention.
 float linearize_depth(float d, mat4 inv_proj) {
+
     vec4 clip = vec4(0.0, 0.0, d, 1.0);
     vec4 view = inv_proj * clip;
     return -view.z / view.w;    // view-space Z is negative in front
 }
 
 
-void cluster_aabb_view(uvec3 cluster, out vec3 aabb_min, out vec3 aabb_max) {
+void cluster_aabb_view(uvec3 cluster, float min_linear, float max_linear, out vec3 aabb_min, out vec3 aabb_max) {
 
     const uint  slices = camera.cluster_dims.z;
     const float near_z = camera.cluster_depth.x;
-    const float far_z  = camera.cluster_depth.y;
-
-    // ---- 1. Tighten the slice range from the actual depth in this tile ----
-    // Sample a 4x4 grid across the 16x16 footprint. The subsample is conservative: if any
-    // pixel that was sampled is at background depth, its linear value clamps toward far_z,
-    // which only makes the range wider — never narrower. Worst case is the un-tightened
-    // slice range, which is what the shader would have used anyway.
+    const float far_z = camera.cluster_depth.y;
     const ivec2 tile_origin = ivec2(cluster.xy) * ivec2(16, 16);
-    const int   sub_step    = 4;    // 4 samples per axis
-    float min_linear = 1e30;
-    float max_linear = -1e30;
 
-    for (int y = 0; y < 16; y += sub_step) {
-        for (int x = 0; x < 16; x += sub_step) {
-            const ivec2 pixel = tile_origin + ivec2(x, y);
-            const float d     = texelFetch(depth_texture, pixel, 0).r;
-            const float lz    = linearize_depth(d, camera.inv_projection);
-            min_linear = min(min_linear, lz);
-            max_linear = max(max_linear, lz);
-        }
-    }
+    // Small relative padding: the cull and fragment shaders linearize in different
+    // places, so rounding could otherwise put a boundary pixel a hair outside the range
+    min_linear *= 0.999;
+    max_linear *= 1.001;
 
     const float log_ratio = log(far_z / near_z);
     const float slice_near_nominal = near_z * exp(log_ratio * (float(cluster.z)     / float(slices)));
-    const float slice_far_nominal  = near_z * exp(log_ratio * (float(cluster.z + 1) / float(slices)));
+    const float slice_far_nominal = near_z * exp(log_ratio * (float(cluster.z + 1) / float(slices)));
 
     const float slice_near = max(slice_near_nominal, min_linear);
-    const float slice_far  = min(slice_far_nominal,  max_linear);
+    const float slice_far = min(slice_far_nominal,  max_linear);
 
     // If the entire slice is empty (min > max), collapse to an empty range. Light tests
     // against an empty AABB reject everything, which is the correct behavior
@@ -90,18 +77,22 @@ void cluster_aabb_view(uvec3 cluster, out vec3 aabb_min, out vec3 aabb_max) {
     const vec2 ndc_min = (tile_px_min / render_size) * 2.0 - 1.0;
     const vec2 ndc_max = (tile_px_max / render_size) * 2.0 - 1.0;
 
-    vec4 n00 = camera.inv_projection * vec4(ndc_min.x, ndc_min.y, -1.0, 1.0); n00 /= n00.w;
-    vec4 n10 = camera.inv_projection * vec4(ndc_max.x, ndc_min.y, -1.0, 1.0); n10 /= n10.w;
-    vec4 n01 = camera.inv_projection * vec4(ndc_min.x, ndc_max.y, -1.0, 1.0); n01 /= n01.w;
-    vec4 n11 = camera.inv_projection * vec4(ndc_max.x, ndc_max.y, -1.0, 1.0); n11 /= n11.w;
+    vec4 p00 = camera.inv_projection * vec4(ndc_min.x, ndc_min.y, 0.0, 1.0);
+    vec4 p10 = camera.inv_projection * vec4(ndc_max.x, ndc_min.y, 0.0, 1.0);
+    vec4 p01 = camera.inv_projection * vec4(ndc_min.x, ndc_max.y, 0.0, 1.0);
+    vec4 p11 = camera.inv_projection * vec4(ndc_max.x, ndc_max.y, 0.0, 1.0);
 
-    const float sn = slice_near / near_z;
-    const float sf = slice_far  / near_z;
+    // Rays through the tile corners, normalised so that view-space z == -1
+    const vec3 r00 = p00.xyz / -p00.z;
+    const vec3 r10 = p10.xyz / -p10.z;
+    const vec3 r01 = p01.xyz / -p01.z;
+    const vec3 r11 = p11.xyz / -p11.z;
 
-    vec3 c0n = n00.xyz * sn; vec3 c1n = n10.xyz * sn;
-    vec3 c2n = n01.xyz * sn; vec3 c3n = n11.xyz * sn;
-    vec3 c0f = n00.xyz * sf; vec3 c1f = n10.xyz * sf;
-    vec3 c2f = n01.xyz * sf; vec3 c3f = n11.xyz * sf;
+    // Corner at view depth d is simply ray * d
+    const vec3 c0n = r00 * slice_near;const vec3 c1n = r10 * slice_near;
+    const vec3 c2n = r01 * slice_near;const vec3 c3n = r11 * slice_near;
+    const vec3 c0f = r00 * slice_far; const vec3 c1f = r10 * slice_far;
+    const vec3 c2f = r01 * slice_far; const vec3 c3f = r11 * slice_far;
 
     aabb_min = min(min(min(c0n, c1n), min(c2n, c3n)), min(min(c0f, c1f), min(c2f, c3f)));
     aabb_max = max(max(max(c0n, c1n), max(c2n, c3n)), max(max(c0f, c1f), max(c2f, c3f)));
@@ -140,7 +131,8 @@ shared uint s_light_count;
 shared uint s_light_indices[MAX_PER_CLUSTER_LDS];
 shared vec3 s_aabb_min;
 shared vec3 s_aabb_max;
-
+shared uint s_min_bits;
+shared uint s_max_bits;
 
 
 void main() {
@@ -151,8 +143,33 @@ void main() {
     // Decode the linear cluster id from the 3D dispatch
     const uint cluster_id = cluster.x + cluster.y * camera.cluster_dims.x + cluster.z * camera.cluster_dims.x * camera.cluster_dims.y;
 
+    if (local_id == 0u) {
+        s_min_bits = floatBitsToUint(1e30);
+        s_max_bits = 0u;
+    }
+    barrier();
+
+    {
+        const ivec2 tile_origin = ivec2(cluster.xy) * 16;
+        const ivec2 max_pixel = textureSize(depth_texture, 0) - 1;   // partial edge tiles
+
+        float local_min = 1e30;
+        float local_max = 0.0;
+
+        for (uint i = local_id; i < 256u; i += LOCAL_SIZE) {
+            const ivec2 pixel = min(tile_origin + ivec2(i % 16u, i / 16u), max_pixel);
+            const float lz = max(linearize_depth(texelFetch(depth_texture, pixel, 0).r, camera.inv_projection), 0.0);
+            local_min = min(local_min, lz);
+            local_max = max(local_max, lz);
+        }
+
+        atomicMin(s_min_bits, floatBitsToUint(local_min));
+        atomicMax(s_max_bits, floatBitsToUint(local_max));
+    }
+    barrier();
+
     if (local_id == 0u)
-        cluster_aabb_view(cluster, s_aabb_min, s_aabb_max);
+        cluster_aabb_view(cluster, uintBitsToFloat(s_min_bits), uintBitsToFloat(s_max_bits), s_aabb_min, s_aabb_max);
     barrier();
 
     const uint max_per_cluster = min(min(light_meta.meta.z, MAX_PER_CLUSTER_LDS), 256u);

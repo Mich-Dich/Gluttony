@@ -26,8 +26,8 @@ namespace GLT::UI {
 	// TYPES ===========================================================================================================
 
 	struct PickerState {
-		bool open        = false;
-		bool just_opened = false;
+		bool 													open = false;
+		bool 													just_opened = false;
 	};
 
 	// STATIC VARIABLES ================================================================================================
@@ -313,18 +313,18 @@ namespace GLT::UI {
 
 		size_t orig = string.size();
 		string.reserve(orig * 2 + 16);
-		size_t read_pos   = 0, write_pos = 0;
+		size_t read_pos = 0, write_pos = 0;
 		size_t line_start = 0;
 		size_t last_delim = std::string::npos;
 		int    line_count = 0;
 	
 		// // SIMD constants
-		// constexpr __m128i space  = _mm_set1_epi8(' ');
+		// constexpr __m128i space = _mm_set1_epi8(' ');
 		// constexpr __m128i uscore = _mm_set1_epi8('_');
-		// constexpr __m128i dash   = _mm_set1_epi8('-');
-		// constexpr __m128i slash  = _mm_set1_epi8('/');
+		// constexpr __m128i dash = _mm_set1_epi8('-');
+		// constexpr __m128i slash = _mm_set1_epi8('/');
 		// constexpr __m128i bslash = _mm_set1_epi8('\\');
-		// constexpr __m128i dot    = _mm_set1_epi8('.');
+		// constexpr __m128i dot = _mm_set1_epi8('.');
 	
 		auto insert_char = [&](size_t pos, char c) {
 
@@ -333,7 +333,7 @@ namespace GLT::UI {
 		};
 	
 		while (read_pos < string.size()) {
-			size_t rem   = string.size() - read_pos;
+			size_t rem = string.size() - read_pos;
 			size_t chunk = rem >= 16 ? 16 : rem;
 			// __m128i block = _mm_loadu_si128((__m128i*)(string.data()+read_pos));
 			// __m128i m = _mm_or_si128(
@@ -858,7 +858,7 @@ namespace GLT::UI {
         // Capture the button rect now - the item will be gone by the time we draw the popup.
         const ImVec2 btn_min = ImGui::GetItemRectMin();
         const ImVec2 btn_max = ImGui::GetItemRectMax();
-        const f32 btn_w   = btn_max.x - btn_min.x;
+        const f32 btn_w = btn_max.x - btn_min.x;
 
         // ---- popup: dropdown anchored beneath the button, same width ----
         if (ImGui::IsPopupOpen("##picker")) {
@@ -1031,13 +1031,13 @@ namespace GLT::UI {
 		ImGui::Text("%s", label.data());
 		ImGui::TableSetColumnIndex(1);
 
-		std::string key       = std::string("picker_") + label.data();
-		auto&      state      = g_picker_states[key];
-		const char* popup_id  = (key + "_popup").c_str();
-		std::string btn_id    = "Pick##btn_" + key;
+		std::string key = std::string("picker_") + label.data();
+		auto&      state = g_picker_states[key];
+		const char* popup_id = (key + "_popup").c_str();
+		std::string btn_id = "Pick##btn_" + key;
 
 		if (ImGui::Button(btn_id.c_str())) {
-			state.open        = true;
+			state.open = true;
 			state.just_opened = true;
 		}
 
@@ -1055,7 +1055,7 @@ namespace GLT::UI {
 				state.just_opened = false;
 
 			else {
-				bool hover_popup  = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
+				bool hover_popup = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
 				bool hover_button = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 				if (!hover_popup && !hover_button)
 					state.open = false;

@@ -69,8 +69,8 @@ namespace GLT::editor {
         make_window_name("Import Assets");
         m_window_specs.can_be_deleted = true;
 
-        m_target_dir      = std::move(target_dir);
-        m_importing       = false;
+        m_target_dir = std::move(target_dir);
+        m_importing = false;
         m_imports_pending = 0;
 
         m_items.clear();
@@ -79,14 +79,14 @@ namespace GLT::editor {
         for (auto& src : sources) {
 
             import_item item{};
-            item.source      = std::move(src);
+            item.source = std::move(src);
             item.target_name = item.source.stem().string();
             m_items.push_back(std::move(item));
         }
 
         rebuild_candidates();
 
-        m_show_window       = true;
+        m_show_window = true;
         m_center_next_frame = true;
     }
 
@@ -253,7 +253,7 @@ namespace GLT::editor {
             std::snprintf(name_buf, sizeof(name_buf), "%s", item.target_name.c_str());
             if (ImGui::InputText("##name", name_buf, sizeof(name_buf))) {
                 item.target_name = name_buf;
-                item.imported    = false;               // any edit invalidates the prior import
+                item.imported = false;               // any edit invalidates the prior import
                 item.status.clear();
             }
 
@@ -272,12 +272,12 @@ namespace GLT::editor {
                 for (const auto& cand : item.candidates) {
 
                     const bool selected = (cand.target_type == item.target_type);
-                    const auto label    = display_name_for(cand.target_type);
+                    const auto label = display_name_for(cand.target_type);
 
                     if (ImGui::Selectable(label.c_str(), selected)) {
                         if (item.target_type != cand.target_type) {
                             item.target_type = cand.target_type;
-                            item.imported    = false;
+                            item.imported = false;
                             item.status.clear();
                             rebuild_options_for(item);
                         }
@@ -460,7 +460,7 @@ namespace GLT::editor {
 
         const f32 cancel_w = ImGui::CalcTextSize(cancel_label).x + style.FramePadding.x * 2.0f;
         const f32 import_w = ImGui::CalcTextSize(import_label).x + style.FramePadding.x * 2.0f;
-        const f32 total_w  = cancel_w + import_w + style.ItemSpacing.x;
+        const f32 total_w = cancel_w + import_w + style.ItemSpacing.x;
 
         const f32 avail = ImGui::GetContentRegionAvail().x;
         if (avail > total_w)
@@ -590,7 +590,7 @@ namespace GLT::editor {
         }
 
         if (jobs.empty()) {
-            m_importing           = false;
+            m_importing = false;
             m_close_when_all_done = false;
             return;
         }

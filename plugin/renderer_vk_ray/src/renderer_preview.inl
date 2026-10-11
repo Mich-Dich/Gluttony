@@ -140,7 +140,7 @@ namespace GLT::renderer::vk_ray {
 
         m_preview_vertex_buffer = m_vr_dev->create_buffer(sphere_verts.size() * sizeof(GLT::asset::mesh::vertex), geom_usage,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        m_preview_index_buffer  = m_vr_dev->create_buffer(sphere_indices.size() * sizeof(u32), geom_usage,
+        m_preview_index_buffer = m_vr_dev->create_buffer(sphere_indices.size() * sizeof(u32), geom_usage,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
         std::memcpy(m_vr_dev->map_buffer(m_preview_vertex_buffer), sphere_verts.data(), sphere_verts.size() * sizeof(GLT::asset::mesh::vertex));

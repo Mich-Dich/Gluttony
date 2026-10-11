@@ -119,7 +119,7 @@ namespace GLT::input::input_manager_default {
                 continue;
 
             auto& action_runtime = action_slot.runtime;
-            action_runtime.prev_value  = action_runtime.value;
+            action_runtime.prev_value = action_runtime.value;
             action_runtime.prev_active = action_runtime.active;
 
             glm::vec3 accumulated_value{0.0f};
@@ -167,7 +167,7 @@ namespace GLT::input::input_manager_default {
             action_runtime.held_time = any_binding_active ? action_runtime.held_time + delta_time : 0.0f;
         }
 
-        m_raw.mouse_delta  = glm::vec2{0.0f};
+        m_raw.mouse_delta = glm::vec2{0.0f};
         m_raw.mouse_scroll = glm::vec2{0.0f};
     }
 

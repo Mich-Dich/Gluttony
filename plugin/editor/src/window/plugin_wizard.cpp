@@ -16,11 +16,11 @@ namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr f32                           SETTINGS_PANEL_WIDTH    = 450.0f;
+    constexpr f32                           SETTINGS_PANEL_WIDTH = 450.0f;
 
-    constexpr const char*                   ADD_DEP_POPUP_ID        = "##pw_add_dependency_popup";
+    constexpr const char*                   ADD_DEP_POPUP_ID = "##pw_add_dependency_popup";
 
-    constexpr const char*                   ADD_VENDOR_POPUP_ID     = "##pw_add_vendor_popup";
+    constexpr const char*                   ADD_VENDOR_POPUP_ID = "##pw_add_vendor_popup";
 
     const std::string                       BUILD_FILE_NAME("CMakeLists.txt");
 
@@ -445,7 +445,7 @@ namespace GLT::editor {
         if (!GLT::UI::begin_collapsing_header_section("Dependencies"))
             return;
 
-        i32 remove_name_idx  = -1;
+        i32 remove_name_idx = -1;
         i32 remove_iface_idx = -1;
 
         if (GLT::UI::begin_table("plugin_editor_details", false)) {
@@ -723,7 +723,7 @@ namespace GLT::editor {
         std::string error;
         if (!validate_form(error)) {
 
-            m_status_message  = std::move(error);
+            m_status_message = std::move(error);
             m_status_is_error = true;
             return;
         }
@@ -731,12 +731,12 @@ namespace GLT::editor {
         try {
 
             write_files(m_plugin_path);
-            m_status_message  = "Plugin created at [" + m_plugin_path.generic_string() + "]";
+            m_status_message = "Plugin created at [" + m_plugin_path.generic_string() + "]";
             m_status_is_error = false;
 
         } catch (const std::exception& e) {
 
-            m_status_message  = std::string("Failed to create plugin: ") + e.what();
+            m_status_message = std::string("Failed to create plugin: ") + e.what();
             m_status_is_error = true;
         }
     }
@@ -823,7 +823,7 @@ namespace GLT::editor {
         std::vector<std::string>                    name_deps{};
         std::vector<GLT::plugin_manager::interface> iface_deps{};
 
-        name_deps  = m_plugin_dependencies_name;
+        name_deps = m_plugin_dependencies_name;
         iface_deps = m_plugin_dependencies_interface;
 
         std::ostringstream s{};
@@ -867,17 +867,17 @@ namespace GLT::editor {
 
         // --- descriptor ---
         s << "    static constexpr GLT::plugin_manager::plugin_descriptor descriptor = {\n\n";
-        s << "        .name                                                   = GLT_MODULE_NAME,\n";
-        s << "        .load_phase                                             = GLT::plugin_manager::phase::"
+        s << "        .name = GLT_MODULE_NAME,\n";
+        s << "        .load_phase = GLT::plugin_manager::phase::"
           << GLT::util::enum_to_string(m_load_phase) << ",\n";
-        s << "        .unload_phase                                           = GLT::plugin_manager::phase::"
+        s << "        .unload_phase = GLT::plugin_manager::phase::"
           << GLT::util::enum_to_string(m_unload_phase) << ",\n";
-        s << "        .target                                                 = GLT::plugin_manager::interface::"
+        s << "        .target = GLT::plugin_manager::interface::"
           << GLT::util::enum_to_string(m_target_interface) << ",\n";
-        s << "        .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),\n";
-        s << "        .dependency_names                                       = dependencies_names,\n";
-        s << "        .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),\n";
-        s << "        .dependency_interfaces                                  = dependencies_interfaces,\n";
+        s << "        .dependency_names_count = ARRAY_SIZE(dependencies_names),\n";
+        s << "        .dependency_names = dependencies_names,\n";
+        s << "        .dependency_interface_count = ARRAY_SIZE(dependencies_interfaces),\n";
+        s << "        .dependency_interfaces = dependencies_interfaces,\n";
         s << "    };\n\n";
 
         // --- plugin class ---
@@ -963,7 +963,7 @@ namespace GLT::editor {
 
             for (const auto& v : m_vendors) {
 
-                const std::string alias       = v.alias.empty() ? url_stem(v.url) : v.alias;
+                const std::string alias = v.alias.empty() ? url_stem(v.url) : v.alias;
                 const std::string alias_upper = to_upper_identifier(alias);
 
                 s << "set(" << alias_upper << "_DIR"

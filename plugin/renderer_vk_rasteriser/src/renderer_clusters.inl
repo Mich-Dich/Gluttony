@@ -114,7 +114,7 @@ namespace GLT::renderer::vk_rasterizer {
         const u32 grid_x = (static_cast<u32>(m_render_size.x) + CLUSTER_TILE_SIZE_X - 1) / CLUSTER_TILE_SIZE_X;
         const u32 grid_y = (static_cast<u32>(m_render_size.y) + CLUSTER_TILE_SIZE_Y - 1) / CLUSTER_TILE_SIZE_Y;
         const u32 grid_z = CLUSTER_DEPTH_SLICES;
-        const u32 count  = grid_x * grid_y * grid_z;
+        const u32 count = grid_x * grid_y * grid_z;
 
         if (count == m_cluster_params.cluster_count &&
             grid_x == m_cluster_params.grid_x &&

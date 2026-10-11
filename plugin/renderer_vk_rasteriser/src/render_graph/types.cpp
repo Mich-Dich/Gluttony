@@ -99,7 +99,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
         resource_state state_b = derive_state(b);
         resource_state state{};
         state.access = state_a.access | state_b.access;
-        state.stage  = state_a.stage  | state_b.stage;
+        state.stage = state_a.stage  | state_b.stage;
         
         // Prefer the "more writable / more general" layout. Order matters
         auto pick = [](vk::ImageLayout x, vk::ImageLayout y) {

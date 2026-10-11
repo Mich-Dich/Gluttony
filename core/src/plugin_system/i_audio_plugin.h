@@ -56,7 +56,7 @@ namespace GLT::audio {
 
         // @brief Initializes the audio backend
         // @return true on success
-        virtual bool create()  = 0;
+        virtual bool create() = 0;
 
 
         // @brief Shuts the audio backend down and releases every voice
@@ -77,7 +77,7 @@ namespace GLT::audio {
 
         // @brief Stops a single voice
         // @param handle  Voice handle returned by [play()]
-        virtual void stop(handle handle)  = 0;
+        virtual void stop(handle handle) = 0;
 
 
         // @brief Stops every active voice

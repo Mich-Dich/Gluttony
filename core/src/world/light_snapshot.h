@@ -18,7 +18,7 @@ namespace GLT::world {
     // stays stable forever.
     enum class light_type : u8 {
 
-        directional     = 0,
+        directional = 0,
         point,
         spot,
     };

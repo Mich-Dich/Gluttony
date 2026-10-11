@@ -96,6 +96,10 @@ namespace GLT::renderer::vk_rasterizer::util {
             std::vector<vk::DeviceSize> offset,
             vk::CommandBuffer command_buffer, vk::PipelineBindPoint bindPoint = vk::PipelineBindPoint::eRayTracingKHR);
 
+        // Fills item.binding_offset for every item. Must be called before update_descriptor_buffer
+        // whenever the caller builds the item vector fresh (i.e. did not just call create_descriptor_buffer).
+        void compute_descriptor_binding_offsets(vk::DescriptorSetLayout layout, std::vector<descriptor_item>& items);
+
     private:
         vk::detail::DispatchLoaderDynamic                       m_dyn_loader;
         vk::Instance                                            m_instance;

@@ -68,7 +68,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
         vk::ImageLayout                                         layout = vk::ImageLayout::eUndefined;
         vk::AccessFlags2                                        access = {};
-        vk::PipelineStageFlags2                                 stage  = vk::PipelineStageFlagBits2::eNone;
+        vk::PipelineStageFlags2                                 stage = vk::PipelineStageFlagBits2::eNone;
 
         bool operator==(const resource_state& o) const;
     };
@@ -105,7 +105,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
     struct attachment_info {
 
         texture_handle                                          handle;
-        vk::AttachmentLoadOp                                    load_op  = vk::AttachmentLoadOp::eClear;
+        vk::AttachmentLoadOp                                    load_op = vk::AttachmentLoadOp::eClear;
         vk::AttachmentStoreOp                                   store_op = vk::AttachmentStoreOp::eStore;
         vk::ClearValue                                          clear_value = {};
     };

@@ -164,7 +164,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
             texture = texture_resource{};
         }
 
-        texture.desc  = desc;
+        texture.desc = desc;
         texture.state = { vk::ImageLayout::eUndefined, {}, vk::PipelineStageFlagBits2::eNone };
 
         // derive usage

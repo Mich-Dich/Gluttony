@@ -43,7 +43,7 @@ namespace GLT::undo_system {
         
         step s;
         s.id = id;
-        s.do_fn   = std::forward<Do>(d);
+        s.do_fn = std::forward<Do>(d);
         s.undo_fn = std::forward<Undo>(u);
         s.can_combine = false;   // callbacks never merge
         s.timestamp = now;

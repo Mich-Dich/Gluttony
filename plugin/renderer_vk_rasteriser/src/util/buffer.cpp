@@ -80,23 +80,18 @@ namespace GLT::renderer::vk_rasterizer::util {
     }
 
 
-    descriptor_buffer device::create_descriptor_buffer(vk::DescriptorSetLayout layout, std::vector<descriptor_item> &items, descriptor_buffer_type type, u32 set_count) {
+    descriptor_buffer device::create_descriptor_buffer(vk::DescriptorSetLayout layout, std::vector<descriptor_item>& items,
+        descriptor_buffer_type type, u32 set_count) {
 
         descriptor_buffer out_buffer = {};
-        vk::BufferUsageFlags usage_flags = (vk::BufferUsageFlagBits)type; // descriptor_buffer_type is a vulkan buffer usage flag enum
+        vk::BufferUsageFlags usage_flags = (vk::BufferUsageFlagBits)type;
         vk::DeviceSize size = m_device.getDescriptorSetLayoutSizeEXT(layout, m_dyn_loader);
         size = align_up(size, m_descriptor_buffer_properties.descriptorBufferOffsetAlignment);
 
-        // create a buffer that is big enough to hold all the descriptor sets and with the proper alignment
         out_buffer.buffer = create_buffer(size * set_count, usage_flags, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
             m_descriptor_buffer_properties.descriptorBufferOffsetAlignment);
 
-        // fill the offsets to the items
-        for (auto &item : items)
-        {
-            u32 offset = m_device.getDescriptorSetLayoutBindingOffsetEXT(layout, item.binding, m_dyn_loader);
-            item.binding_offset = offset;
-        }
+        compute_descriptor_binding_offsets(layout, items);
 
         out_buffer.set_count = set_count;
         out_buffer.single_descriptor_size = size;

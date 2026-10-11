@@ -195,6 +195,11 @@ namespace GLT::renderer::vk_rasterizer {
         // called once per frame from begin_frame()
         void update_light_cull_descriptors();
 
+        // Rebuild the mesh pass descriptor buffer to point at the current frame's light grid/index list. Called from begin_frame()
+        // after update_cluster_dimensions(), since the graph-owned cluster buffers may only exist after the first
+        // update_cluster_dimensions() call (and after any render-size change)
+        void update_mesh_descriptors();
+
         // Write the light meta UBO (light_count, index list capacity, per-cluster cap) for the current frame
         void update_light_meta_ubo();
 
@@ -224,6 +229,11 @@ namespace GLT::renderer::vk_rasterizer {
         void transition_image_layout(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldL,
             vk::ImageLayout newL, vk::ImageSubresourceRange range = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
 
+        // Debug view ---------------------------------------------------------------------------------------------------
+
+        void create_debug_view_resources();
+        void destroy_debug_view_resources();
+        void update_debug_view_descriptors();
 
         // Configuration -----------------------------------------------------------------------------------------------
 
@@ -388,6 +398,13 @@ namespace GLT::renderer::vk_rasterizer {
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_count_handles{};
         vk::Sampler                                                         m_depth_sampler = nullptr;
 
+        // Debug view ---------------------------------------------------------------------------------------------------
+
+        vk::DescriptorSetLayout                                             m_light_cull_debug_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_light_cull_debug_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_light_cull_debug_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_light_cull_debug_desc_buffers{};
+
     };
 
 
@@ -503,6 +520,7 @@ namespace GLT::renderer::vk_rasterizer {
 #include "renderer_lights.inl"
 #include "renderer_clusters.inl"
 #include "renderer_light_culling.inl"
+#include "renderer_debug_view.inl"
 // #include "renderer_material_texture.inl"
 // #include "renderer_preview.inl"
 

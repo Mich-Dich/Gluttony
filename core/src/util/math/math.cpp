@@ -181,7 +181,7 @@ namespace GLT::math {
 
 	glm::vec3 get_forward_vector(const glm::vec3 direction) {
 
-		const f32 yaw   = direction.y;
+		const f32 yaw = direction.y;
 		const f32 pitch = direction.x;
 		return glm::vec3{cos(pitch) * sin(yaw), sin(pitch), cos(pitch) * cos(yaw)};
 	}

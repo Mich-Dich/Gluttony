@@ -208,16 +208,26 @@ namespace GLT::renderer::vk_rasterizer {
 
     void renderer::create_mesh_resources() {
 
-        // Descriptor set layout: binding 0 = camera UBO, binding 1 = instance SSBO ------------------------------------
+        using VKDT = vk::DescriptorType;
+        using VKSF = vk::ShaderStageFlagBits;
+
+        // Descriptor set layout:
+        //   0  Camera UBO       (per frame, vertex + fragment)
+        //   1  Instance SSBO    (per frame, vertex)
+        //   2  Lights SSBO      (per frame, fragment) — Forward+ light data
+        //   3  Light grid SSBO  (per frame, fragment) — {offset, count} per cluster
+        //   4  Light index list (per frame, fragment) — packed light indices
         std::vector<util::descriptor_item> descriptor_layout_items;
-        descriptor_layout_items.emplace_back(0, vk::DescriptorType::eUniformBuffer, 
-            vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 1, nullptr);
-        descriptor_layout_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eVertex, 1, nullptr);
+        descriptor_layout_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);
+        descriptor_layout_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, nullptr);
+        descriptor_layout_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
+        descriptor_layout_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
+        descriptor_layout_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
 
         m_mesh_set_layout = m_dev->create_descriptor_set_layout(descriptor_layout_items);
         m_live_descriptor_set_count++;
 
-        // No push constants — everything the shader needs is in the descriptor set
+        // Pipeline layout unchanged (no push constants; everything via descriptors)
         vk::PipelineLayoutCreateInfo pipeline_layout_info{};
         pipeline_layout_info.setLayoutCount = 1;
         pipeline_layout_info.pSetLayouts = &m_mesh_set_layout;
@@ -225,7 +235,8 @@ namespace GLT::renderer::vk_rasterizer {
         pipeline_layout_info.pPushConstantRanges = nullptr;
         m_mesh_pipeline_layout = m_device.createPipelineLayout(pipeline_layout_info);
 
-        // Per-frame camera UBO + instance SSBO + a single descriptor buffer holding both -----------------------------
+        // Per-frame camera UBO + instance SSBO. The descriptor buffer is created lazily in
+        // update_mesh_descriptors() once the cluster buffers exist
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
 
             m_camera_ubos[frame_index] = m_dev->create_buffer(sizeof(camera_ubo_data), vk::BufferUsageFlagBits::eUniformBuffer,
@@ -234,19 +245,6 @@ namespace GLT::renderer::vk_rasterizer {
 
             m_instance_buffers[frame_index] = m_dev->create_buffer(MAX_INSTANCES * sizeof(gpu_instance_data),
                 vk::BufferUsageFlagBits::eStorageBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-            m_live_buffer_count++;
-
-            std::vector<util::descriptor_item> descriptor_items;
-            descriptor_items.emplace_back(0, vk::DescriptorType::eUniformBuffer,
-                vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 1, &m_camera_ubos[frame_index]);
-            descriptor_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eVertex, 1,
-                &m_instance_buffers[frame_index]);
-
-            m_frame_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_mesh_set_layout, descriptor_items,
-                util::descriptor_buffer_type::resource, 1);
-
-            m_dev->update_descriptor_buffer(m_frame_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::resource);
-
             m_live_buffer_count++;
         }
 
@@ -529,6 +527,38 @@ namespace GLT::renderer::vk_rasterizer {
 
         std::memcpy(m_dev->map_buffer(m_camera_ubos[m_current_frame]), &camera_data, sizeof(camera_data));
         m_dev->unmap_buffer(m_camera_ubos[m_current_frame]);
+    }
+
+
+    void renderer::update_mesh_descriptors() {
+
+        const u32 frame_index = m_current_frame;
+
+        if (!m_light_grid_handles[frame_index].is_valid() || !m_light_index_list_handles[frame_index].is_valid())
+            return;
+
+        util::allocated_buffer* grid_allocation = m_graph->buffer_allocation(m_light_grid_handles[frame_index]);
+        util::allocated_buffer* list_allocation = m_graph->buffer_allocation(m_light_index_list_handles[frame_index]);
+        ASSERT(grid_allocation && list_allocation, "", "Graph failed to allocate mesh light-culling buffers");
+
+        using VKDT = vk::DescriptorType;
+        using VKSF = vk::ShaderStageFlagBits;
+
+        std::vector<util::descriptor_item> descriptor_items;
+        descriptor_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_camera_ubos[frame_index]);
+        descriptor_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex,                    1, &m_instance_buffers[frame_index]);
+        descriptor_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment,                  1, &m_light_buffers[frame_index]);
+        descriptor_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment,                  1, grid_allocation);
+        descriptor_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment,                  1, list_allocation);
+
+        if (m_frame_desc_buffers[frame_index].buffer.buffer == nullptr)
+            m_frame_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_mesh_set_layout, descriptor_items,
+                util::descriptor_buffer_type::resource, 1);
+
+        // The item vector was rebuilt this call, so binding_offset is 0 on every item. Refresh it
+        // from the layout before writing — otherwise every descriptor writes to offset 0
+        m_dev->compute_descriptor_binding_offsets(m_mesh_set_layout, descriptor_items);
+        m_dev->update_descriptor_buffer(m_frame_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::resource);
     }
 
 }

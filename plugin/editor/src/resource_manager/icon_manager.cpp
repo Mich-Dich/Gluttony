@@ -105,8 +105,8 @@ namespace GLT::editor::icon_manager {
     struct thumbnail_slot {
 
         thumbnail_state                                     state = thumbnail_state::pending;
-        u32                                                 page  = 0;
-        u32                                                 cell  = 0;
+        u32                                                 page = 0;
+        u32                                                 cell = 0;
         ImVec2                                              image_size{};
         ImVec2                                              uv0{};
         ImVec2                                              uv1{};
@@ -204,7 +204,7 @@ namespace GLT::editor::icon_manager {
 
         grid_dimensions best{1, 1};
         u32 best_max_dim = std::numeric_limits<u32>::max();
-        u32 best_area    = std::numeric_limits<u32>::max();
+        u32 best_area = std::numeric_limits<u32>::max();
 
         for (u32 cols = 1; cols <= icon_count; ++cols) {
 
@@ -285,10 +285,10 @@ namespace GLT::editor::icon_manager {
         const u32 cell = icon_size + padding * 2;
 
         atlas_layout out;
-        out.grid           = g;
-        out.cell_size      = cell;
-        out.icon_padding   = padding;
-        out.texture_width  = g.cols * cell;
+        out.grid = g;
+        out.cell_size = cell;
+        out.icon_padding = padding;
+        out.texture_width = g.cols * cell;
         out.texture_height = g.rows * cell;
         return out;
     }
@@ -419,7 +419,7 @@ namespace GLT::editor::icon_manager {
     void reupload_thumbnail_page(u32 page_idx) {
 
         auto& state = tm();
-        auto& page  = state.pages[page_idx];
+        auto& page = state.pages[page_idx];
 
         if (!page.image || page.dirty_rects.empty())
             return;
@@ -455,7 +455,7 @@ namespace GLT::editor::icon_manager {
 
         for (icon i : GLT::util::enum_values<icon>) {
 
-            const auto file_name  = std::string(GLT::util::enum_to_string(i)) + ".png";
+            const auto file_name = std::string(GLT::util::enum_to_string(i)) + ".png";
             const auto image_path = base_path / file_name;
             const bool image_exists = GLT::vfs::exists(image_path, error);
             VALIDATE(!error && image_exists, continue, "",
@@ -478,7 +478,7 @@ namespace GLT::editor::icon_manager {
             const u32 icon_h = size.rows;
             ASSERT(icon_w == icon_h, "", "Only square icons supported for now");
 
-            const u32 count  = (u32)sources.size();
+            const u32 count = (u32)sources.size();
             const atlas_layout layout = plan_atlas(count, icon_w, PADDING);
 
             // RGBA8, zero-initialised (so the padding ring is transparent)
@@ -492,8 +492,8 @@ namespace GLT::editor::icon_manager {
                 VALIDATE(pixels, continue, "", "Failed to load icon [{}] for atlas", sources[idx].path.generic_string())
                 ASSERT((u32)w == icon_w && (u32)h == icon_h, "", "Icon [{}] changed size between passes", sources[idx].path.generic_string());
 
-                const u32 cx    = idx % layout.grid.cols;
-                const u32 cy    = idx / layout.grid.cols;
+                const u32 cx = idx % layout.grid.cols;
+                const u32 cy = idx / layout.grid.cols;
                 const u32 dst_x = cx * layout.cell_size + layout.icon_padding;
                 const u32 dst_y = cy * layout.cell_size + layout.icon_padding;
 
@@ -546,7 +546,7 @@ namespace GLT::editor::icon_manager {
         // Start the thumbnail worker thread.
         auto& state = tm();
         state.worker_stop = false;
-        state.worker      = std::thread(thumbnail_worker_main);
+        state.worker = std::thread(thumbnail_worker_main);
     }
 
 

@@ -280,14 +280,14 @@ namespace GLT {
 			scoped_resource& operator=(scoped_resource&& other) noexcept {
 				if (this != &other) {
 					reset();
-					m_handle  = std::move(other.m_handle);
+					m_handle = std::move(other.m_handle);
 					m_deleter = std::move(other.m_deleter);
-					m_active  = std::exchange(other.m_active, false);
+					m_active = std::exchange(other.m_active, false);
 				}
 				return *this;
 			}
 
-			scoped_resource(const scoped_resource&)            = delete;
+			scoped_resource(const scoped_resource&) = delete;
 			scoped_resource& operator=(const scoped_resource&) = delete;
 
 			~scoped_resource() { reset(); }

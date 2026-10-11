@@ -63,9 +63,9 @@ namespace GLT::editor {
     template <typename F>
     void toolbar_menu(const char* label, const char* popup_label, F&& popup_content) {
 
-        constexpr f32 pad_x    = 12.0f;
-        constexpr f32 pad_y    =  6.0f;
-        constexpr f32 buffer   = 10.0f;   // <-- hover-leave tolerance in pixels
+        constexpr f32 pad_x = 12.0f;
+        constexpr f32 pad_y =  6.0f;
+        constexpr f32 buffer = 10.0f;   // <-- hover-leave tolerance in pixels
 
         const ImVec2 text_size = ImGui::CalcTextSize(label);
         const ImVec2 item_size = ImVec2(text_size.x + pad_x * 2.0f, text_size.y + pad_y * 2.0f);
@@ -253,8 +253,8 @@ namespace GLT::editor {
 
     void editor_layer::render_toolbar() {
 
-        constexpr f32 logo_side  = 50.0f;
-        constexpr f32 win_pad    =  4.0f;
+        constexpr f32 logo_side = 50.0f;
+        constexpr f32 win_pad =  4.0f;
         constexpr f32 menu_pad_y =  6.0f;
         constexpr f32 toolbar_height = logo_side + win_pad * 2.0f;
 
@@ -281,8 +281,8 @@ namespace GLT::editor {
                 GLT::imgui_config::get_main_color_ref(), ImVec4(0, 0, 0, 0));
 
             ImGui::SameLine();
-            const f32 line_h    = ImGui::GetTextLineHeight();
-            const f32 menu_h    = line_h + menu_pad_y * 2.0f;
+            const f32 line_h = ImGui::GetTextLineHeight();
+            const f32 menu_h = line_h + menu_pad_y * 2.0f;
 
             ImGui::SetCursorPosY(win_pad + (logo_side - menu_h) * 0.5f);
             toolbar_menu("File", MAIN_MENU_BAR_POPUP, []{
@@ -418,8 +418,8 @@ namespace GLT::editor {
     void editor_layer::render_dockspace() {
 
         // Same math as render_toolbar() - keep these in sync if you tweak the toolbar.
-        constexpr f32 logo_side      = 50.0f;
-        constexpr f32 win_pad        =  4.0f;
+        constexpr f32 logo_side = 50.0f;
+        constexpr f32 win_pad =  4.0f;
         constexpr f32 toolbar_height = logo_side + win_pad * 2.0f;
 
         const ImGuiViewport* vp = ImGui::GetMainViewport();

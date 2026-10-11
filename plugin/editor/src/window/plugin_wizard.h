@@ -146,8 +146,8 @@ namespace GLT::editor {
         std::filesystem::path                           m_plugin_path{};
         target_root                                     m_target_root = target_root::project;
 
-        GLT::plugin_manager::phase                      m_load_phase    = GLT::plugin_manager::phase::application_ready;
-        GLT::plugin_manager::phase                      m_unload_phase  = GLT::plugin_manager::phase::pre_application_shutdown;
+        GLT::plugin_manager::phase                      m_load_phase = GLT::plugin_manager::phase::application_ready;
+        GLT::plugin_manager::phase                      m_unload_phase = GLT::plugin_manager::phase::pre_application_shutdown;
         GLT::plugin_manager::interface                  m_target_interface = GLT::plugin_manager::interface::custom;
 
         std::vector<std::string>                        m_plugin_dependencies_name{};

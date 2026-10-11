@@ -41,7 +41,7 @@ namespace GLT::undo_system {
     private:
 
         std::array<step, max_steps>             m_steps{};
-        size_t                                  m_size   = 0;
+        size_t                                  m_size = 0;
         size_t                                  m_cursor = 0;
 
     };

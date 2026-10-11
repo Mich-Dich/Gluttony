@@ -305,7 +305,7 @@ namespace GLT::renderer::vk_rasterizer {
         if (!data || !m_renderer || !m_allocated_image.image || width == 0 || height == 0)
             return;
 
-        const u32 level_width  = std::max(1u, m_allocated_image.width  >> mip_level);
+        const u32 level_width = std::max(1u, m_allocated_image.width  >> mip_level);
         const u32 level_height = std::max(1u, m_allocated_image.height >> mip_level);
 
         if (mip_level >= m_mip_levels || x + width > level_width || y + height > level_height) {

@@ -159,14 +159,14 @@ namespace GLT::editor {
         out_peaks.clear();
         out_peak_count = 0;
 
-        const u32 channels    = asset.format.channels;
+        const u32 channels = asset.format.channels;
         const u32 sample_rate = asset.format.sample_rate;
         if (channels == 0 || sample_rate == 0 || asset.samples.empty())
             return;
 
-        const u64 total_frames     = asset.samples.size() / channels;
+        const u64 total_frames = asset.samples.size() / channels;
         const u64 samples_per_peak = std::max<u64>(1, sample_rate / PEAKS_PER_SECOND);
-        const u64 peak_count       = (total_frames + samples_per_peak - 1) / samples_per_peak;
+        const u64 peak_count = (total_frames + samples_per_peak - 1) / samples_per_peak;
 
         out_peak_count = static_cast<u32>(peak_count);
         out_peaks.resize(channels);
@@ -175,7 +175,7 @@ namespace GLT::editor {
         for (u64 p = 0; p < peak_count; ++p) {
 
             const u64 start = p * samples_per_peak;
-            const u64 end   = std::min(start + samples_per_peak, total_frames);
+            const u64 end = std::min(start + samples_per_peak, total_frames);
 
             for (u32 ch = 0; ch < channels; ++ch) {
 
@@ -568,7 +568,7 @@ namespace GLT::editor {
             m_fit_pending = false;
             const f32 center = 0.5f * (m_visible_start_sec + m_visible_end_sec);
             m_visible_start_sec = std::max(0.0f, center - 0.5f);
-            m_visible_end_sec   = std::min(m_details.duration_sec, m_visible_start_sec + 1.0f);
+            m_visible_end_sec = std::min(m_details.duration_sec, m_visible_start_sec + 1.0f);
         }
     }
 
@@ -606,16 +606,16 @@ namespace GLT::editor {
 
         // Input: pan & zoom -------------------------------------------------------------------------------------------
         const bool hovered = ImGui::IsItemHovered();
-        const bool active  = ImGui::IsItemActive();
+        const bool active = ImGui::IsItemActive();
 
         if (m_fit_pending) {
             m_visible_start_sec = 0.0f;
-            m_visible_end_sec   = std::max(MIN_VISIBLE_SEC, m_details.duration_sec);
+            m_visible_end_sec = std::max(MIN_VISIBLE_SEC, m_details.duration_sec);
             m_fit_pending = false;
         }
 
         m_visible_start_sec = std::clamp(m_visible_start_sec, 0.0f, std::max(0.0f, m_details.duration_sec - MIN_VISIBLE_SEC));
-        m_visible_end_sec   = std::clamp(m_visible_end_sec, m_visible_start_sec + MIN_VISIBLE_SEC, m_details.duration_sec);
+        m_visible_end_sec = std::clamp(m_visible_end_sec, m_visible_start_sec + MIN_VISIBLE_SEC, m_details.duration_sec);
 
         const f32 visible_duration = m_visible_end_sec - m_visible_start_sec;
         const f32 width = avail.x;
@@ -632,10 +632,10 @@ namespace GLT::editor {
                 const f32 new_duration = std::clamp(visible_duration * scale, MIN_VISIBLE_SEC, m_details.duration_sec);
 
                 m_visible_start_sec = cursor_sec - cursor_t * new_duration;
-                m_visible_end_sec   = m_visible_start_sec + new_duration;
+                m_visible_end_sec = m_visible_start_sec + new_duration;
 
                 m_visible_start_sec = std::clamp(m_visible_start_sec, 0.0f, std::max(0.0f, m_details.duration_sec - new_duration));
-                m_visible_end_sec   = m_visible_start_sec + new_duration;
+                m_visible_end_sec = m_visible_start_sec + new_duration;
             }
         }
 
@@ -647,7 +647,7 @@ namespace GLT::editor {
 
             const f32 new_dur = m_visible_end_sec - m_visible_start_sec;
             m_visible_start_sec = std::clamp(m_visible_start_sec, 0.0f, std::max(0.0f, m_details.duration_sec - new_dur));
-            m_visible_end_sec   = m_visible_start_sec + new_dur;
+            m_visible_end_sec = m_visible_start_sec + new_dur;
         }
 
         if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
@@ -656,10 +656,10 @@ namespace GLT::editor {
             transport_seek(m_visible_start_sec + t * visible_duration);
         }
 
-        const f32 ruler_top    = canvas_min.y;
+        const f32 ruler_top = canvas_min.y;
         const f32 ruler_bottom = ruler_top + RULER_HEIGHT;
-        const f32 wave_top     = ruler_bottom + 4.0f;
-        const f32 wave_bottom  = canvas_max.y;
+        const f32 wave_top = ruler_bottom + 4.0f;
+        const f32 wave_bottom = canvas_max.y;
         const ImVec2 ruler_min(canvas_min.x, ruler_top);
         const ImVec2 ruler_max(canvas_max.x, ruler_bottom);
 
@@ -667,7 +667,7 @@ namespace GLT::editor {
 
         const int n_channels = static_cast<int>(m_peaks.size());
         const f32 ch_total = wave_bottom - wave_top;
-        const f32 ch_each  = (ch_total - CHANNEL_GAP * (n_channels - 1)) / std::max(1, n_channels);
+        const f32 ch_each = (ch_total - CHANNEL_GAP * (n_channels - 1)) / std::max(1, n_channels);
         for (int ch = 0; ch < n_channels; ++ch) {
 
             const f32 y0 = wave_top + ch * (ch_each + CHANNEL_GAP);
@@ -700,11 +700,11 @@ namespace GLT::editor {
         if (peaks.empty())
             return;
 
-        const f32 width    = ch_max.x - ch_min.x;
-        const f32 height   = ch_max.y - ch_min.y;
+        const f32 width = ch_max.x - ch_min.x;
+        const f32 height = ch_max.y - ch_min.y;
         const f32 center_y = ch_min.y + height * 0.5f;
-        const f32 half_h   = std::max(1.0f, height * 0.5f - WAVEFORM_PADDING);
-        const ImU32 line_color   = IM_COL32(160, 160, 160, 220);
+        const f32 half_h = std::max(1.0f, height * 0.5f - WAVEFORM_PADDING);
+        const ImU32 line_color = IM_COL32(160, 160, 160, 220);
         const ImU32 center_color = IM_COL32(255, 255, 255, 255);
         draw->AddLine(ImVec2(ch_min.x, center_y), ImVec2(ch_max.x, center_y), center_color, 1.0f);
 
@@ -713,12 +713,12 @@ namespace GLT::editor {
             return;
 
         const f32 sec_per_peak = 1.0f / static_cast<f32>(PEAKS_PER_SECOND);
-        const i64 peak_count   = static_cast<i64>(peaks.size());
-        const i32 pixel_count  = static_cast<i32>(width);
+        const i64 peak_count = static_cast<i64>(peaks.size());
+        const i32 pixel_count = static_cast<i32>(width);
         for (i32 px = 0; px < pixel_count; ++px) {
 
-            const f32 t0   = static_cast<f32>(px)     / static_cast<f32>(pixel_count);
-            const f32 t1   = static_cast<f32>(px + 1) / static_cast<f32>(pixel_count);
+            const f32 t0 = static_cast<f32>(px)     / static_cast<f32>(pixel_count);
+            const f32 t1 = static_cast<f32>(px + 1) / static_cast<f32>(pixel_count);
             const f32 sec0 = visible_start_sec + t0 * visible_duration;
             const f32 sec1 = visible_start_sec + t1 * visible_duration;
 
@@ -735,7 +735,7 @@ namespace GLT::editor {
 
             const f32 y_top = center_y - mx * half_h;
             const f32 y_bot = center_y - mn * half_h;
-            const f32 x     = ch_min.x + static_cast<f32>(px);
+            const f32 x = ch_min.x + static_cast<f32>(px);
             draw->AddLine(ImVec2(x, y_top), ImVec2(x, y_bot), line_color, 1.0f);
         }
     }
@@ -750,7 +750,7 @@ namespace GLT::editor {
         if (visible_duration <= 0.0f) return;
 
         const f32 interval = nice_time_interval(visible_duration, RULER_TARGET_TICKS);
-        const f32 width    = max.x - min.x;
+        const f32 width = max.x - min.x;
 
         const f32 first = std::ceil(visible_start_sec / interval) * interval;
 
@@ -873,7 +873,7 @@ namespace GLT::editor {
         m_audio_manager = GLT::audio::manager::get_ref();
         m_asset_handle = result.asset_handle;
 
-        m_has_audio   = true;
+        m_has_audio = true;
         m_fit_pending = true;
     }
 

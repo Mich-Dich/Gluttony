@@ -185,7 +185,7 @@ namespace GLT::renderer::vk_ray {
             grew = true;
         }
         if (need_i > m_index_capacity) {
-            m_index_capacity  = std::max(need_i, m_index_capacity + std::max(m_index_capacity / 2, INDEX_HEADROOM_MIN));
+            m_index_capacity = std::max(need_i, m_index_capacity + std::max(m_index_capacity / 2, INDEX_HEADROOM_MIN));
             grew = true;
         }
         if (need_m > m_material_capacity) {
@@ -275,7 +275,7 @@ namespace GLT::renderer::vk_ray {
             gd.index_format = vk::IndexType::eUint32;
             gd.primitive_count = sm.index_count / 3;
             gd.data_addresses.vertex_dev_address = base_vertex_addr;
-            gd.data_addresses.index_dev_address  = base_index_addr + sm.first_index * sizeof(u32);
+            gd.data_addresses.index_dev_address = base_index_addr + sm.first_index * sizeof(u32);
             bci.geometries.push_back(gd);
         }
 

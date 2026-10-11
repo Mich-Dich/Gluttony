@@ -243,6 +243,13 @@ namespace GLT::renderer::vk_rasterizer::util {
     }
 
 
+    void device::compute_descriptor_binding_offsets(vk::DescriptorSetLayout layout, std::vector<descriptor_item>& items) {
+
+        for (auto& item : items)
+            item.binding_offset = m_device.getDescriptorSetLayoutBindingOffsetEXT(layout, item.binding, m_dyn_loader);
+    }
+
+
     vk::PipelineLayout device::create_pipeline_layout(const std::vector<vk::DescriptorSetLayout> &descriptor_set_layout) {
 
         // create pipeline layout

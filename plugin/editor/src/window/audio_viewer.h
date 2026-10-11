@@ -175,7 +175,7 @@ namespace GLT::editor {
 
         // Display state.
         f32                                             m_visible_start_sec = 0.0f;
-        f32                                             m_visible_end_sec   = 0.0f;
+        f32                                             m_visible_end_sec = 0.0f;
         bool                                            m_fit_pending = true;
 
         // Playback state.

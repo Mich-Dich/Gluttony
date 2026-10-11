@@ -74,10 +74,10 @@ namespace GLT::logger {
     // put this next to message_data in logger.h
     struct owned_source_location {
 
-        std::string file_name_str;
-        std::string function_name_str;
-        u32         line_n   = 0;
-        u32         column_n = 0;
+        std::string                 file_name_str;
+        std::string                 function_name_str;
+        u32                         line_n = 0;
+        u32                         column_n = 0;
 
         owned_source_location() = default;
 

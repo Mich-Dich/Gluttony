@@ -49,7 +49,7 @@ namespace GLT::editor::file_watcher {
 
     int                                                 s_inotify_fd = -1;
 
-    int                                                 s_wakeup_fd  = -1;
+    int                                                 s_wakeup_fd = -1;
 
     std::jthread                                        s_thread;
 
@@ -89,7 +89,7 @@ namespace GLT::editor::file_watcher {
             if (wd < 0) 
                 return false;
             s_watches_by_wd[wd] = { canonical, recursive };
-            s_wd_by_path[key]   = wd;
+            s_wd_by_path[key] = wd;
         
         } else if (recursive) {
 

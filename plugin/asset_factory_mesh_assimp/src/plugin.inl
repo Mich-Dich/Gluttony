@@ -249,14 +249,14 @@ namespace GLT::asset::factory::mesh_assimp {
         const glm::mat4 world = parent * to_glm(node->mTransformation);
         const glm::mat3 nrm_m = glm::mat3(glm::transpose(glm::inverse(world)));
 
-        const bool want_normals  = (opt.normals_tangents != normals_tangents_mode::ignore);
+        const bool want_normals = (opt.normals_tangents != normals_tangents_mode::ignore);
         const bool want_tangents = (opt.normals_tangents != normals_tangents_mode::ignore);
 
         for (unsigned int mi = 0; mi < node->mNumMeshes; ++mi) {
 
             const aiMesh* mesh = scene->mMeshes[node->mMeshes[mi]];
             const u32 base_vertex = static_cast<u32>(vertices.size());
-            const u32 base_index  = static_cast<u32>(indices.size());
+            const u32 base_index = static_cast<u32>(indices.size());
 
             // --- vertices ---
             vertices.reserve(vertices.size() + mesh->mNumVertices);
@@ -307,8 +307,8 @@ namespace GLT::asset::factory::mesh_assimp {
 
             // --- submesh (one per Assimp mesh node) ---
             submesh sm{
-                .first_index   = base_index,
-                .index_count   = static_cast<u32>(indices.size()) - base_index,
+                .first_index = base_index,
+                .index_count = static_cast<u32>(indices.size()) - base_index,
                 .material_slot = static_cast<u32>(material_paths.size()),
             };
             submeshes.push_back(sm);
@@ -392,76 +392,76 @@ namespace GLT::asset::factory::mesh_assimp {
 
         static constexpr desc schema[] = {
             {   // 1
-                .key                = "scale",
-                .label              = "Scale factor",
-                .type               = desc::kind::real,
-                .default_value      = "1.0",
+                .key = "scale",
+                .label = "Scale factor",
+                .type = desc::kind::real,
+                .default_value = "1.0",
                 .enumeration_values = "",
-                .tooltip            = "Uniform scale applied to all vertex positions after import. Use 0.01 for centimeters -> meters, 0.0254 for inches -> meters.",
+                .tooltip = "Uniform scale applied to all vertex positions after import. Use 0.01 for centimeters -> meters, 0.0254 for inches -> meters.",
             },
             {   // 2
-                .key                = "use_file_units",
-                .label              = "Use file units",
-                .type               = desc::kind::boolean,
-                .default_value      = "false",
+                .key = "use_file_units",
+                .label = "Use file units",
+                .type = desc::kind::boolean,
+                .default_value = "false",
                 .enumeration_values = "",
-                .tooltip            = "Honor the source file's declared unit (FBX / glTF / Collada). Applied BEFORE the scale factor above.",
+                .tooltip = "Honor the source file's declared unit (FBX / glTF / Collada). Applied BEFORE the scale factor above.",
             },
             {   // 3
-                .key                = "weld_vertices",
-                .label              = "Weld vertices",
-                .type               = desc::kind::boolean,
-                .default_value      = "true",
+                .key = "weld_vertices",
+                .label = "Weld vertices",
+                .type = desc::kind::boolean,
+                .default_value = "true",
                 .enumeration_values = "",
-                .tooltip            = "Merge vertices with identical position / normal / UV. Shrinks the index buffer without changing the silhouette.",
+                .tooltip = "Merge vertices with identical position / normal / UV. Shrinks the index buffer without changing the silhouette.",
             },
             {   // 4
-                .key                = "optimize_mesh",
-                .label              = "Optimize mesh",
-                .type               = desc::kind::boolean,
-                .default_value      = "true",
+                .key = "optimize_mesh",
+                .label = "Optimize mesh",
+                .type = desc::kind::boolean,
+                .default_value = "true",
                 .enumeration_values = "",
-                .tooltip            = "Reorder triangles for better vertex-cache locality. Costs a moment on import, saves GPU time every frame.",
+                .tooltip = "Reorder triangles for better vertex-cache locality. Costs a moment on import, saves GPU time every frame.",
             },
             {   // 5
-                .key                = "normals_tangents",
-                .label              = "Normals / tangents",
-                .type               = desc::kind::enumeration,
-                .default_value      = "calculate",
+                .key = "normals_tangents",
+                .label = "Normals / tangents",
+                .type = desc::kind::enumeration,
+                .default_value = "calculate",
                 .enumeration_values = "import|calculate|ignore",
-                .tooltip            = "'import' trusts the source. 'calculate' regenerates from geometry (recommended for procedural / non-DCC meshes). 'ignore' drops them; the shader must derive its own.",
+                .tooltip = "'import' trusts the source. 'calculate' regenerates from geometry (recommended for procedural / non-DCC meshes). 'ignore' drops them; the shader must derive its own.",
             },
             {   // 6
-                .key                = "smoothing_angle",
-                .label              = "Smoothing angle (°)",
-                .type               = desc::kind::real,
-                .default_value      = "60.0",
+                .key = "smoothing_angle",
+                .label = "Smoothing angle (°)",
+                .type = desc::kind::real,
+                .default_value = "60.0",
                 .enumeration_values = "",
-                .tooltip            = "Only used when normals are calculated. Edges sharper than this stay faceted; smoother ones get averaged.",
+                .tooltip = "Only used when normals are calculated. Edges sharper than this stay faceted; smoother ones get averaged.",
             },
             {   // 7
-                .key                = "swap_uvs",
-                .label              = "Swap UVs",
-                .type               = desc::kind::boolean,
-                .default_value      = "false",
+                .key = "swap_uvs",
+                .label = "Swap UVs",
+                .type = desc::kind::boolean,
+                .default_value = "false",
                 .enumeration_values = "",
-                .tooltip            = "Swap U and V of UV0. Fixes textures that come in rotated 90° from certain exporters (Maya -> glTF, some FBX presets).",
+                .tooltip = "Swap U and V of UV0. Fixes textures that come in rotated 90° from certain exporters (Maya -> glTF, some FBX presets).",
             },
             {   // 8
-                .key                = "generate_lightmap_uvs",
-                .label              = "Generate lightmap UVs",
-                .type               = desc::kind::boolean,
-                .default_value      = "false",
+                .key = "generate_lightmap_uvs",
+                .label = "Generate lightmap UVs",
+                .type = desc::kind::boolean,
+                .default_value = "false",
                 .enumeration_values = "",
-                .tooltip            = "Author a non-overlapping UV1 for baked lighting. Reserved - a lightmap UV unwrapper is not wired up yet; the option is accepted but currently logged and ignored.",
+                .tooltip = "Author a non-overlapping UV1 for baked lighting. Reserved - a lightmap UV unwrapper is not wired up yet; the option is accepted but currently logged and ignored.",
             },
             {   // 9
-                .key                = "compression_quality",
-                .label              = "Compression quality",
-                .type               = desc::kind::integer,
-                .default_value      = "85",
+                .key = "compression_quality",
+                .label = "Compression quality",
+                .type = desc::kind::integer,
+                .default_value = "85",
                 .enumeration_values = "",
-                .tooltip            = "0 = smallest (most lossy), 100 = best fidelity. Reserved - consumed once vertex-data quantization is implemented.",
+                .tooltip = "0 = smallest (most lossy), 100 = best fidelity. Reserved - consumed once vertex-data quantization is implemented.",
             },
         };
         return schema;
@@ -578,9 +578,9 @@ namespace GLT::asset::factory::mesh_assimp {
 
         GLT::asset::factory::import_result result{          // result metadata
 
-            .output_path  = {},                             // Let the registry pick the output path.
-            .id           = UUID(),
-            .source_hash  = hash_bytes(bytes),
+            .output_path = {},                             // Let the registry pick the output path.
+            .id = UUID(),
+            .source_hash = hash_bytes(bytes),
             .payload_hash = hash,
         };
 

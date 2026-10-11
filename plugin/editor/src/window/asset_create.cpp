@@ -67,7 +67,7 @@ namespace GLT::editor {
         make_window_name("Create Asset");
         m_window_specs.can_be_deleted = true;
 
-        m_target_dir  = std::move(target_dir);
+        m_target_dir = std::move(target_dir);
         m_target_type = creatable_types().front().type;
 
         std::snprintf(m_name_buffer, sizeof(m_name_buffer), "New Material");
@@ -284,8 +284,8 @@ namespace GLT::editor {
         // We draw the separator + tinted background ourselves because the footer is
         // not a real ImGui window - it is the space left at the bottom of the parent.
         const ImVec2 footer_p0 = ImGui::GetCursorScreenPos();
-        const f32    footer_w  = ImGui::GetContentRegionAvail().x;
-        ImDrawList*  dl        = ImGui::GetWindowDrawList();
+        const f32    footer_w = ImGui::GetContentRegionAvail().x;
+        ImDrawList*  dl = ImGui::GetWindowDrawList();
 
         dl->AddLine(
             ImVec2(footer_p0.x,             footer_p0.y + 0.5f),
@@ -302,9 +302,9 @@ namespace GLT::editor {
 
         // ---- left: status hint ---------------------------------------------------------
         const bool has_validation_error = !m_validation_error.empty();
-        const bool has_operation_error  = !m_operation_error.empty();
-        const bool has_error            = has_validation_error || has_operation_error;
-        const std::string& msg          = has_validation_error ? m_validation_error : m_operation_error;
+        const bool has_operation_error = !m_operation_error.empty();
+        const bool has_error = has_validation_error || has_operation_error;
+        const std::string& msg = has_validation_error ? m_validation_error : m_operation_error;
 
         ImGui::AlignTextToFramePadding();
         if (has_error)
@@ -317,9 +317,9 @@ namespace GLT::editor {
         const char* create_label = "Create";
 
         // Extra horizontal padding so the labels breathe.
-        const f32 pad_x     = style.FramePadding.x * 2.0f + 14.0f;
-        const f32 cancel_w  = ImGui::CalcTextSize(cancel_label).x + pad_x;
-        const f32 create_w  = ImGui::CalcTextSize(create_label).x + pad_x;
+        const f32 pad_x = style.FramePadding.x * 2.0f + 14.0f;
+        const f32 cancel_w = ImGui::CalcTextSize(cancel_label).x + pad_x;
+        const f32 create_w = ImGui::CalcTextSize(create_label).x + pad_x;
         const f32 buttons_w = cancel_w + create_w + style.ItemSpacing.x;
 
         ImGui::SameLine();

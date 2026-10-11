@@ -128,7 +128,7 @@ namespace GLT::UI {
 
                     std::lock_guard lock(m_mutex);
                     if (auto it = m_entries.find(key); it != m_entries.end()) {
-                        it->second.current  = std::move(snap);
+                        it->second.current = std::move(snap);
                         it->second.scanning = false;
                     }
                 });
