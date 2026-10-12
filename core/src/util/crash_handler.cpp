@@ -74,7 +74,7 @@ namespace GLT::crash_handler {
 		LOG(trace, "Executing [{}] registered functions", s_user_functions.size());
 
 		// Execute in reverse order of registration
-		for (auto it = s_user_functions.rbegin(); it != s_user_functions.rend(); ++it) {
+		for (auto it = s_user_functions.rbegin(); it != s_user_functions.rend(); it++) {
 			if (!*it)
 				continue;
 

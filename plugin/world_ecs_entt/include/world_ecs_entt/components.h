@@ -55,18 +55,45 @@ namespace GLT::world::world_ecs_entt::component {
 
 
 
-    // Renders a single mesh. material_override may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference
+    // Renders a single mesh. override material may be INVALID_HANDLE, in which case the renderer uses whatever the mesh's submeshes reference
     struct mesh {
 
         GLT::asset::asset_ref                       mesh{};
-        GLT::asset::asset_ref                       material_override{};
+        std::vector<GLT::asset::asset_ref>          material_overrides{};
         bool                                        visible{ true };
+
+        // Empty is always valid. Otherwise every slot must have an entry, with INVALID_HANDLE meaning "use the mesh asset's default 
+        // for this slot"
+        [[nodiscard]] bool overrides_match(u32 submesh_count) const noexcept { 
+
+            return material_overrides.empty() || material_overrides.size() == submesh_count;
+        }
+
+        // Resize the override vector to exactly [submesh_count] entries. If growing, new entries are INVALID_HANDLE 
+        // (i.e. "inherit the default"). Call this from the editor when the user wants to start overriding
+        void begin_override(u32 submesh_count) {
+            if (submesh_count == 0) {
+                material_overrides.clear();
+                return;
+            }
+            material_overrides.resize(submesh_count, GLT::asset::asset_ref{ INVALID_HANDLE });
+        }
+
+        // Return the effective material handle for submesh [i], given the asset's default
+        [[nodiscard]] GLT::asset::handle resolve(u32 submesh_index, GLT::asset::handle default_handle) const noexcept {
+
+            if (material_overrides.empty() || submesh_index >= material_overrides.size())
+                return default_handle;
+            const GLT::asset::handle h = material_overrides[submesh_index];
+            return h != INVALID_HANDLE ? h : default_handle;
+        }
     };
 
 
     // Makes this entity a camera. Position + rotation come from `transform` (like mesh_renderer); this holds only the projection parameters
     // A world can have many cameras; the active one is chosen via i_world_scene::set_active_camera()
     struct camera {
+
         f32                                         fov{ 45.f };
         f32                                         near_plane{ 0.1f };
         f32                                         far_plane{ 1000.f };

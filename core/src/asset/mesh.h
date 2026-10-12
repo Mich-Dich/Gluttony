@@ -47,30 +47,26 @@ namespace GLT::asset::mesh {
 
 
     // @brief One draw range inside the index buffer
-    //
-    // [material_slot] is a positional index into the mesh's material table (the runtime [mesh_asset::material_handles] array)
     struct submesh {
 
         u32                                             first_index;
         u32                                             index_count;
-        u32                                             material_slot;      // index into the (future) material table
+        GLT::asset::handle                              material = INVALID_HANDLE;
     };
-    static_assert(sizeof(submesh) == 12);
+    static_assert(sizeof(submesh) == 16);
 
 
     // @brief A single renderable instance of a mesh asset
     //
-    // [transform] is a full world-space 4x4. [material_override] may be INVALID_HANDLE, in which case the renderer falls
-    // back to whatever the mesh's submeshes reference
+    // [transform] is a full world-space 4x4
     struct instance {
 
         GLT::asset::handle                              mesh{ INVALID_HANDLE };
-        GLT::asset::handle                              material_override{ INVALID_HANDLE };
         glm::mat4                                       transform{ 1.0f };
         u32                                             flags{ 0 };                     // reserved (frustum-cull bits, etc.)
+        std::vector<GLT::asset::handle>                 material_overrides{};
     };
-    static_assert(std::is_trivially_copyable_v<instance>);
-    static_assert(sizeof(instance) == 88);
+    static_assert(sizeof(instance) == 104);
 
     // STATIC VARIABLES ================================================================================================
 
@@ -97,10 +93,16 @@ namespace GLT::asset::mesh {
         std::vector<GLT::asset::mesh::submesh>          submeshes;
         GLT::AABB                                       bounds{};
 
-        // Positional. material_handles[i] corresponds to submesh.material_slot == i
-        // Entries may be INVALID_HANDLE when a material reference couldn't be resolved
-        // the renderer is expected to substitute a fallback
-        std::vector<GLT::asset::handle>                 material_handles;
+
+        FORCE_INLINE_R u32 submesh_count() const noexcept { return static_cast<u32>(submeshes.size()); }
+
+
+        FORCE_INLINE_R GLT::asset::handle default_material_for(u32 submesh_index) const noexcept {
+
+            if (submesh_index >= submeshes.size())
+                return INVALID_HANDLE;
+            return submeshes[submesh_index].material;
+        }
 
 
         // @brief Returns the asset-type tag used by the registry
@@ -113,8 +115,7 @@ namespace GLT::asset::mesh {
             return sizeof(*this)
                 + vertices.capacity() * sizeof(GLT::asset::mesh::vertex)
                 + indices.capacity() * sizeof(u32)
-                + submeshes.capacity() * sizeof(GLT::asset::mesh::submesh)
-                + material_handles.capacity() * sizeof(GLT::asset::handle);
+                + submeshes.capacity() * sizeof(GLT::asset::mesh::submesh);
         }
         
     };

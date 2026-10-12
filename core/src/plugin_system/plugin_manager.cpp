@@ -338,14 +338,14 @@ namespace GLT::plugin_manager {
             };
 
             info.dependencies_names.reserve(desc->dependency_names_count);              // name dependencies
-            for (int i = 0; i < desc->dependency_names_count; ++i)
-                if (desc->dependency_names && desc->dependency_names[i])
-                    info.dependencies_names.emplace_back(desc->dependency_names[i]);
+            for (int index = 0; index < desc->dependency_names_count; index++)
+                if (desc->dependency_names && desc->dependency_names[index])
+                    info.dependencies_names.emplace_back(desc->dependency_names[index]);
 
             info.dependencies_interfaces.reserve(desc->dependency_interface_count);     // interface dependencies
-            for (int i = 0; i < desc->dependency_interface_count; ++i)
+            for (int index = 0; index < desc->dependency_interface_count; index++)
                 if (desc->dependency_interfaces)
-                    info.dependencies_interfaces.push_back(desc->dependency_interfaces[i]);
+                    info.dependencies_interfaces.push_back(desc->dependency_interfaces[index]);
 
             free_library(handle);                                                       // descriptor copied to [info] close temporary handle
 
@@ -502,7 +502,7 @@ namespace GLT::plugin_manager {
         s_shutdown = true;
 
         // Unload in reverse order to respect dependencies.
-        for (auto it = s_loaded_plugins.rbegin(); it != s_loaded_plugins.rend(); ++it) {
+        for (auto it = s_loaded_plugins.rbegin(); it != s_loaded_plugins.rend(); it++) {
             if (it->instance) {
                 it->instance->on_unload();
                 // The shared_ptr will call its custom deleter, which calls destroy_plugin and free_library.

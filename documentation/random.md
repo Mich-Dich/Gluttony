@@ -155,10 +155,13 @@ ssh -T git@github.com
 ---
 
 ### Step 8 — Material system and textures
-**Goal:** Support per-material albedo, normal, roughness, metalness.
+**Goal:** Support per-material albedo, normal, roughness, metal.
+
+The material system should have material and material-instance. 
+Materials have a dedicated shader, material-instances allow the user to supply different resources to the same shader code (texture, variables, ...)
 
 - Extend `mesh_asset` with material indices per submesh.
-- Create a material buffer (SSBO) and a texture array or bindless descriptor set.
+- Create a material buffer (SSBO) and a bindless descriptor set.
 - Update `mesh.vert.glsl` to pass `material_index` to the fragment shader.
 - Update `mesh.frag.glsl` to sample material textures and compute PBR lighting.
 - Update descriptor set layout and buffers accordingly.
@@ -203,3 +206,14 @@ Your existing render graph, depth prepass, and GPU-driven culling give you a gre
 5. Update forward shader to use light lists  
 
 After that, shadow mapping, materials, HiZ, and post-processing are natural extensions. Each step is roughly the same size: one new shader, one new pipeline, or one new render graph pass. This keeps the work incremental and testable.
+
+
+
+
+# One shader per Material
+- Template field. Use gpu_submesh_data._pad0 as the draw bucket, set from the material’s template id and raster flags (double-sided, alpha test).
+- Bucketed cull. cull.comp writes into commands[bucket * MAX_PER_BUCKET + slot] and counts[bucket]. The reset pass clears all counts.
+- Draw loop. The scene pass loops over buckets, each with its own pipeline (a template fragment shader plus cull mode) and one drawIndexedIndirectCount.
+- Depth and shadow passes. The depth prepass and the directional shadow pass loop the same buckets with depth-only pipelines. Alpha-tested buckets get a depth shader with discard.
+- Local shadow cull. It already stays bucket-agnostic.
+- New templates. Adding one is then one GLSL file plus one entry in the template table.

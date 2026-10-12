@@ -9,6 +9,7 @@
 #include <asset/i_asset_registry.h>
 #include <asset/mesh.h>
 #include <asset/material.h> 
+#include <asset/texture.h>
 #include <render/image.h>
 #include <application.h>
 
@@ -115,6 +116,7 @@ namespace GLT::renderer::vk_rasterizer {
             u32                                                     index_offset = 0;       // in indices
             u32                                                     index_count = 0;
             bool                                                    alive = false;
+            std::vector<u32>                                        material_slots{};    // per submesh, SSBO slot (default)
         };
 
         // Lifecycle ---------------------------------------------------------------------------------------------------
@@ -140,8 +142,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         bool reserve_mesh_space(u32 vertex_count, u32 index_count);
         void upload_mesh_slice(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh);
-        mesh_slot* find_slot(GLT::asset::handle h) noexcept;
-        const mesh_slot* find_slot(GLT::asset::handle h) const noexcept;
+        FORCE_INLINE_R mesh_slot* find_slot(GLT::asset::handle h) noexcept;
+        FORCE_INLINE_R const mesh_slot* find_slot(GLT::asset::handle h) const noexcept;
         void process_pending_meshes();
 
         // Lights ------------------------------------------------------------------------------------------------------
@@ -218,6 +220,24 @@ namespace GLT::renderer::vk_rasterizer {
         void destroy_local_shadow_resources();
         void update_local_shadows();                        // called from update_lights()
         glm::mat4 camera_projection() const;
+
+        // materials & textures ----------------------------------------------------------------------------------------
+
+        void create_material_resources();
+        void destroy_material_resources();
+        void update_materials();                                // per frame: poll for edits, upload SSBO + descriptor table when stale
+
+        u32  acquire_material(GLT::asset::handle material);     // ref++ and returns the SSBO slot (default slot for INVALID_HANDLE)
+        void release_material(u32 slot);
+        void pack_material(u32 slot);                           // asset -> m_material_cpu[slot]; bumps the version if it changed
+        void poll_material_changes();
+        void refresh_material(GLT::asset::handle material);     // call from the editor after editing a material asset
+
+        u32  acquire_texture(GLT::asset::handle texture);       // ref++ and returns the bindless slot (fallback on failure)
+        void release_texture(u32 slot);
+        bool create_gpu_texture(vk::Format format, u32 width, u32 height, const std::byte* pixels, u64 pixel_bytes, 
+            std::span<const texture_upload_mip> mips, bool generate_mips, gpu_texture& out);
+        void destroy_gpu_texture(gpu_texture& texture);
 
 
         // Configuration -----------------------------------------------------------------------------------------------
@@ -414,6 +434,33 @@ namespace GLT::renderer::vk_rasterizer {
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_local_shadow_commands_handles{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_local_shadow_counts_handles{};
 
+        // materials & textures ----------------------------------------------------------------------------------------
+
+        vk::DescriptorSetLayout                                             m_material_set_layout = nullptr;    // set 1
+        vk::Sampler                                                         m_material_sampler = nullptr;       // set 0, binding 8
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_material_buffers{};
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_material_desc_buffers{};
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_material_uploaded_version{};
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_texture_uploaded_version{};
+
+        std::vector<material_slot>                                          m_material_slots{};
+        std::vector<u32>                                                    m_free_material_slots{};
+        std::unordered_map<GLT::asset::handle, u32>                         m_material_slot_by_asset{};
+        std::vector<gpu_material>                                           m_material_cpu{};                   // MAX_MATERIALS entries
+        u32                                                                 m_material_version = 1;
+        u32                                                                 m_material_poll_counter = 0;
+
+        std::vector<gpu_texture>                                            m_gpu_textures{};                   // indexed by bindless slot
+        std::vector<u32>                                                    m_free_texture_slots{};
+        std::unordered_map<GLT::asset::handle, u32>                         m_texture_slot_by_asset{};
+        std::vector<util::accessible_image>                                 m_texture_table{};                  // mirrors the bindless array (MAX_TEXTURES)
+        u32                                                                 m_texture_version = 1;
+        u32                                                                 m_texture_high_water = 0;
+
+        std::vector<u32>                                                    m_instance_material_slots{};   // size = instances * MAX_SUBMESHES_PER_MESH
+        std::vector<GLT::asset::handle>                                     m_instance_material_handles{}; // parallel, for change detection
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_instance_override_buffers{}; // per-frame GPU mirror
+
     };
 
 
@@ -531,6 +578,7 @@ namespace GLT::renderer::vk_rasterizer {
 #include "renderer_light_culling.inl"
 #include "renderer_debug_view.inl"
 #include "renderer_shadow.inl"
+#include "renderer_material.inl"
 // #include "renderer_material_texture.inl"
 // #include "renderer_preview.inl"
 

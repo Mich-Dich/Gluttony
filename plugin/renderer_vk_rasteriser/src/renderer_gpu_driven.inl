@@ -36,7 +36,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     // mesh ssbo packing -----------------------------------------------------------------------------------------------
 
-    void renderer::pack_mesh_into_ssbo(mesh_slot& mesh_slot, const GLT::asset::mesh::mesh_asset& mesh_asset) {
+    void renderer::pack_mesh_into_ssbo(renderer::mesh_slot& mesh_slot, const GLT::asset::mesh::mesh_asset& mesh_asset) {
 
         // mesh_slot.vertex_offset and .index_offset are absolute offsets into the shared vertex/index buffers; the shader uses them directly
         u32 mesh_index = static_cast<u32>(&mesh_slot - m_mesh_slots.data());
@@ -54,6 +54,12 @@ namespace GLT::renderer::vk_rasterizer {
         const u32 submesh_count = static_cast<u32>(std::min<size_t>(mesh_asset.submeshes.size(), MAX_SUBMESHES_PER_MESH));
         VALIDATE(m_submesh_used + submesh_count <= MAX_SUBMESHES, return, "", "Submesh SSBO capacity exceeded");
 
+        // Resolve every submesh's material. First use uploads its textures (immediate_submit), so do it before mapping the SSBO
+        std::vector<u32> material_slots(submesh_count);
+        for (u32 i = 0; i < submesh_count; ++i)
+            material_slots[i] = acquire_material(mesh_asset.submeshes[i].material);
+        mesh_slot.material_slots = material_slots;
+
         const u32 first_submesh = m_submesh_used;
         m_submesh_used += submesh_count;
 
@@ -62,6 +68,7 @@ namespace GLT::renderer::vk_rasterizer {
         for (u32 i = 0; i < submesh_count; ++i) {
             submesh_mapped[first_submesh + i].first_index = mesh_asset.submeshes[i].first_index;
             submesh_mapped[first_submesh + i].index_count = mesh_asset.submeshes[i].index_count;
+            submesh_mapped[first_submesh + i].material_index = material_slots[i];
         }
         m_dev->unmap_buffer(m_submesh_data_buffer);
 
@@ -82,6 +89,10 @@ namespace GLT::renderer::vk_rasterizer {
 
     void renderer::clear_mesh_ssbo_entry(mesh_slot& mesh_slot) {
 
+        for (const u32 material_slot : mesh_slot.material_slots)
+            release_material(material_slot);
+        mesh_slot.material_slots.clear();
+
         u32 mesh_index = static_cast<u32>(&mesh_slot - m_mesh_slots.data());
         if (mesh_index >= MAX_MESHES)
             return;
@@ -99,13 +110,17 @@ namespace GLT::renderer::vk_rasterizer {
 
     void renderer::create_cull_pipeline() {
 
+        using VKDT = vk::DescriptorType;
+        using VKSF = vk::ShaderStageFlagBits;
+
         std::vector<util::descriptor_item> layout_items;
-        layout_items.emplace_back(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
-        layout_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
-        layout_items.emplace_back(2, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
-        layout_items.emplace_back(3, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
-        layout_items.emplace_back(4, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
-        layout_items.emplace_back(5, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
+        layout_items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
+        layout_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
+        layout_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
+        layout_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
+        layout_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
+        layout_items.emplace_back(5, VKDT::eUniformBuffer, VKSF::eCompute, 1, nullptr);
+        layout_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
 
         m_cull_set_layout = m_dev->create_descriptor_set_layout(layout_items);
         m_live_descriptor_set_count++;
@@ -165,12 +180,13 @@ namespace GLT::renderer::vk_rasterizer {
             ASSERT(draw_commands_allocation && draw_count_allocation, "", "Graph failed to allocate draw buffers");
 
             std::vector<util::descriptor_item> descriptor_items;
-            descriptor_items.emplace_back(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_instance_buffers[frame_index]);
-            descriptor_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_mesh_data_buffer);
-            descriptor_items.emplace_back(2, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_submesh_data_buffer);
-            descriptor_items.emplace_back(3, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, draw_commands_allocation);
-            descriptor_items.emplace_back(4, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, draw_count_allocation);
-            descriptor_items.emplace_back(5, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eCompute, 1, &m_camera_ubos[frame_index]);
+            descriptor_items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_buffers[frame_index]);
+            descriptor_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_mesh_data_buffer);
+            descriptor_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_submesh_data_buffer);
+            descriptor_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, draw_commands_allocation);
+            descriptor_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, draw_count_allocation);
+            descriptor_items.emplace_back(5, VKDT::eUniformBuffer, VKSF::eCompute, 1, &m_camera_ubos[frame_index]);
+            descriptor_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_override_buffers[frame_index]);
 
             m_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_cull_set_layout, descriptor_items,
                 util::descriptor_buffer_type::resource, 1);
@@ -214,12 +230,22 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_packed_instances.clear();
 
+        // empty scene: release everything we were holding
         if (m_scene_instances.empty()) {
+            for (u32 slot : m_instance_material_slots)
+                release_material(slot);
+            m_instance_material_slots.clear();
+            m_instance_material_handles.clear();
             m_instance_count = 0;
             return;
         }
 
         m_packed_instances.reserve(m_scene_instances.size());
+
+        std::vector<GLT::asset::handle> desired_handles;
+        std::vector<u32> desired_slots;
+        desired_handles.reserve(m_scene_instances.size() * MAX_SUBMESHES_PER_MESH);
+        desired_slots.reserve(m_scene_instances.size() * MAX_SUBMESHES_PER_MESH);
 
         for (const auto& scene_instance : m_scene_instances) {
 
@@ -230,32 +256,89 @@ namespace GLT::renderer::vk_rasterizer {
             if (!mesh_slot || !mesh_slot->alive)
                 continue;
 
-            if (m_packed_instances.size() >= MAX_INSTANCES) {
-                LOG(warn, "Instance SSBO capacity exceeded ({} instances); scene truncated", MAX_INSTANCES);
-                break;
-            }
+            VALIDATE(m_packed_instances.size() < MAX_INSTANCES, break,
+                "", "Instance SSBO capacity exceeded ({} instances); scene truncated", MAX_INSTANCES);
 
             const u32 mesh_index = static_cast<u32>(mesh_slot - m_mesh_slots.data());
+            const u32 instance_index = static_cast<u32>(m_packed_instances.size());
+            const glm::mat3 upper_left(scene_instance.transform);
 
             gpu_instance_data instance_data{};
             instance_data.model = scene_instance.transform;
-
-            const glm::mat3 upper_left(scene_instance.transform);
             instance_data.normal_matrix = glm::mat4(glm::transpose(glm::inverse(upper_left)));
             instance_data.mesh_index = mesh_index;
             instance_data.material_index = 0;
-
             m_packed_instances.push_back(instance_data);
+
+            // resolve per-submesh materials for this instance
+            const u32 submesh_count = static_cast<u32>(mesh_slot->material_slots.size());
+
+            for (u32 sm = 0; sm < MAX_SUBMESHES_PER_MESH; ++sm) {
+
+                GLT::asset::handle desired = INVALID_HANDLE;
+
+                if (sm < submesh_count) {
+
+                    const bool has_override =
+                        sm < scene_instance.material_overrides.size() &&
+                        scene_instance.material_overrides[sm] != INVALID_HANDLE;
+
+                    if (has_override)
+                        desired = scene_instance.material_overrides[sm];
+                    else
+                        desired = m_material_slots[mesh_slot->material_slots[sm]].asset;    // Default: the handle behind the slot we acquired at mesh load time
+                }
+
+                const u32 flat_index = instance_index * MAX_SUBMESHES_PER_MESH + sm;
+                desired_handles.push_back(desired);
+
+                // Change detection against last frame's state
+                const bool unchanged =
+                    flat_index < m_instance_material_handles.size() &&
+                    m_instance_material_handles[flat_index] == desired;
+
+                if (unchanged)
+                    desired_slots.push_back(m_instance_material_slots[flat_index]);
+                else {
+                    if (flat_index < m_instance_material_slots.size())
+                        release_material(m_instance_material_slots[flat_index]);
+                    desired_slots.push_back(acquire_material(desired));
+                }
+            }
         }
+
+        // release tail slots if the scene shrank this frame
+        for (size_t i = desired_handles.size(); i < m_instance_material_slots.size(); ++i)
+            release_material(m_instance_material_slots[i]);
+
+        m_instance_material_handles = std::move(desired_handles);
+        m_instance_material_slots = std::move(desired_slots);
 
         m_instance_count = static_cast<u32>(m_packed_instances.size());
 
         if (m_packed_instances.empty())
             return;
 
-        void* mapped = m_dev->map_buffer(m_instance_buffers[m_current_frame]);
-        std::memcpy(mapped, m_packed_instances.data(), m_packed_instances.size() * sizeof(gpu_instance_data));
-        m_dev->unmap_buffer(m_instance_buffers[m_current_frame]);
+        // upload instance SSBO
+        {
+            void* mapped = m_dev->map_buffer(m_instance_buffers[m_current_frame]);
+            std::memcpy(mapped, m_packed_instances.data(), m_packed_instances.size() * sizeof(gpu_instance_data));
+            m_dev->unmap_buffer(m_instance_buffers[m_current_frame]);
+        }
+
+        // upload per-instance material slot SSBO
+        if (!m_instance_material_slots.empty()) {
+
+            const vk::DeviceSize bytes = m_instance_material_slots.size() * sizeof(u32);
+            util::allocated_buffer& buffer = m_instance_override_buffers[m_current_frame];
+
+            // Sanity: buffer was pre-allocated at MAX_INSTANCES * MAX_SUBMESHES_PER_MESH
+            VALIDATE(bytes <= MAX_INSTANCES * MAX_SUBMESHES_PER_MESH * sizeof(u32), return, "", "Instance material override buffer overflow");
+
+            void* mapped = m_dev->map_buffer(buffer);
+            std::memcpy(mapped, m_instance_material_slots.data(), bytes);
+            m_dev->unmap_buffer(buffer);
+        }
     }
 
 

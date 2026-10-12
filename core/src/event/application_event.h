@@ -305,9 +305,9 @@ namespace GLT {
 
         FORCE_INLINE_R std::string to_string() const override {
             std::string result = "window drop event [";
-            for (size_t i = 0; i < m_paths.size(); ++i) {
-                result += m_paths[i];
-                if (i < m_paths.size() - 1) result += ", ";
+            for (size_t index = 0; index < m_paths.size(); index++) {
+                result += m_paths[index];
+                if (index < m_paths.size() - 1) result += ", ";
             }
             result += "]";
             return result;

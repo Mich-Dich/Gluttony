@@ -152,7 +152,7 @@ namespace GLT::renderer::vk_ray {
 
         // light -------------------------------------------------------------------------------------------------------
 
-        void submit_lights(std::span<const GLT::world::light_snapshot> lights) override { }
+        void submit_lights(std::span<const GLT::world::light_snapshot> /*lights*/) override { }
 
         // scene management --------------------------------------------------------------------------------------------
     

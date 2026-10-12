@@ -44,14 +44,15 @@ namespace GLT::renderer::vk_ray {
             if (instance.mesh == INVALID_HANDLE)                                continue;
             m_scene_meshes.insert(instance.mesh);
 
-            if (instance.material_override != INVALID_HANDLE)
-                m_scene_materials.insert(instance.material_override);
+            // TODO: needs an update after mesh/material were redesigned
+            // if (instance.material_override != INVALID_HANDLE)
+            //     m_scene_materials.insert(instance.material_override);
 
-            if (auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(instance.mesh)) {
-                for (auto mat : mesh->material_handles)
-                    if (mat != INVALID_HANDLE)
-                        m_scene_materials.insert(mat);
-            }
+            // if (auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(instance.mesh)) {
+            //     for (auto mat : mesh->material_handles)
+            //         if (mat != INVALID_HANDLE)
+            //             m_scene_materials.insert(mat);
+            // }
         }
 
         // Schedule loads ----------------------------------------------------------
@@ -128,20 +129,20 @@ namespace GLT::renderer::vk_ray {
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
-    renderer::mesh_slot* renderer::find_slot(GLT::asset::handle h) noexcept {
+    renderer::mesh_slot* renderer::find_slot(GLT::asset::handle handle) noexcept {
 
         for (auto& s : m_mesh_slots)
-            if (s.alive && s.asset == h)
+            if (s.alive && s.asset == handle)
                 return &s;
 
         return nullptr;
     }
 
 
-    const renderer::mesh_slot* renderer::find_slot(GLT::asset::handle h) const noexcept {
+    const renderer::mesh_slot* renderer::find_slot(GLT::asset::handle handle) const noexcept {
 
         for (const auto& s : m_mesh_slots)
-            if (s.alive && s.asset == h)
+            if (s.alive && s.asset == handle)
                 return &s;
 
         return nullptr;
@@ -206,12 +207,13 @@ namespace GLT::renderer::vk_ray {
             if (!mesh)
                 continue;
 
-            // Instance-level material override, or per-submesh from the mesh
-            const GLT::asset::handle override_mat = inst.material_override;
-            if (override_mat != INVALID_HANDLE) {
-                // ensure the override is resident (scene didn't necessarily list it before)
-                // — it did, because submit_scene inserted it into m_scene_materials
-            }
+            // TODO: needs an update after mesh/material were redesigned
+            // // Instance-level material override, or per-submesh from the mesh
+            // const GLT::asset::handle override_mat = inst.material_override;
+            // if (override_mat != INVALID_HANDLE) {
+            //     // ensure the override is resident (scene didn't necessarily list it before)
+            //     // — it did, because submit_scene inserted it into m_scene_materials
+            // }
 
             const u32 geom_base = static_cast<u32>(geom_scratch.size());
 
@@ -222,11 +224,12 @@ namespace GLT::renderer::vk_ray {
                 if (sm.index_count < 3)
                     continue;
 
-                GLT::asset::handle mat_handle = override_mat;
-                if (mat_handle == INVALID_HANDLE) {
-                    if (sm.material_slot < mesh->material_handles.size())
-                        mat_handle = mesh->material_handles[sm.material_slot];
-                }
+                GLT::asset::handle mat_handle = INVALID_HANDLE;
+                // TODO: needs an update after mesh/material were redesigned
+                // if (mat_handle == INVALID_HANDLE) {
+                //     if (sm.material_slot < mesh->material_handles.size())
+                //         mat_handle = mesh->material_handles[sm.material_slot];
+                // }
 
                 const material_slot* ms = find_material_slot(mat_handle);
                 const u32 mat_index = ms ? ms->gpu_index : 0;   // 0xFFFFFFFF = no material, shader must handle

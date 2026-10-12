@@ -16,6 +16,7 @@
 #include <source_location>
 #include <cstddef>
 #include <expected>
+#include <bit>
 
 // Strings and Text Manipulation
 #include <string>

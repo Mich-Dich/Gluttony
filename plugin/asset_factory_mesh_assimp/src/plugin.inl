@@ -309,7 +309,7 @@ namespace GLT::asset::factory::mesh_assimp {
             submesh sm{
                 .first_index = base_index,
                 .index_count = static_cast<u32>(indices.size()) - base_index,
-                .material_slot = static_cast<u32>(material_paths.size()),
+                .material = INVALID_HANDLE,   // resolved at load time from info.dependencies
             };
             submeshes.push_back(sm);
 

@@ -61,6 +61,7 @@ namespace GLT::renderer::vk_rasterizer {
         init_vulkan();
         m_graph = GLT::create_unique_ref<graph::render_graph>(m_dev);
         create_render_target();
+        create_material_resources();
         create_mesh_resources();
         create_shadow_resources();
         create_local_shadow_resources();        // after create_shadow_resources(), needs m_mesh_set_layout + instance buffers
@@ -98,6 +99,7 @@ namespace GLT::renderer::vk_rasterizer {
         destroy_local_shadow_resources();
         destroy_shadow_resources();
         destroy_mesh_resources();
+        destroy_material_resources();
         destroy_render_target();
         imgui_shutdown();
 
@@ -175,6 +177,7 @@ namespace GLT::renderer::vk_rasterizer {
         update_lights();
         update_shadow();
         update_camera_ubo();
+        update_materials();
 
         using VKIU = vk::ImageUsageFlagBits;
 
@@ -536,8 +539,9 @@ namespace GLT::renderer::vk_rasterizer {
 
                     ctx.begin_rendering();
                     ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_mesh_pipeline);
-                    m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame] }, ctx.cmd);
+                    m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame], m_material_desc_buffers[m_current_frame] }, ctx.cmd);
                     m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);   // set 1 -> buffer index 1
                     draw_scene_indirect(ctx.cmd, ctx.get_buffer(m_draw_commands_handles[m_current_frame]), 
                         ctx.get_buffer(m_draw_count_handles[m_current_frame]));
                     ctx.end_rendering();
@@ -662,11 +666,14 @@ namespace GLT::renderer::vk_rasterizer {
         u32 count;
         const char** ext = mp_window->get_required_render_extensions(&count);
 
+
         util::vulkan_builder builder;                     // from util/builders.h
         builder.enable_debug = USE_VULKAN_VALIDATION;
         builder.debug_callback = util::vulkan_debug_callback;
         builder.physical_device_features10.samplerAnisotropy = true;
-        for (u32 i = 0; i < count; i++) builder.instance_extensions.push_back(ext[i]);
+        builder.physical_device_features12.shaderSampledImageArrayNonUniformIndexing = true;
+        for (u32 i = 0; i < count; i++)
+            builder.instance_extensions.push_back(ext[i]);
 
         m_instance = builder.create_instance();
         m_surface = mp_window->create_vulkan_surface(m_instance.instance_handle);

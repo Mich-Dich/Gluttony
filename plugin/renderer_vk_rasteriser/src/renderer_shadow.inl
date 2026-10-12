@@ -132,6 +132,7 @@ namespace GLT::renderer::vk_rasterizer {
             items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, commands_allocation);
             items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, count_allocation);
             items.emplace_back(5, VKDT::eUniformBuffer, VKSF::eCompute, 1, &m_shadow_camera_ubos[frame_index]);
+            items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_override_buffers[frame_index]);
 
             m_shadow_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_cull_set_layout, items,
                 util::descriptor_buffer_type::resource, 1);

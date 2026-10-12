@@ -50,9 +50,9 @@ namespace GLT::config {
         VALIDATE(!error, return false, "", "Failed to create config dir [{}]: [{}]", config_path.generic_string(), error.message());
 
         bool success = true;
-        for (int i = 0; i <= static_cast<int>(type::launcher); ++i) {
+        for (int index = 0; index <= static_cast<int>(type::launcher); index++) {
 
-            std::filesystem::path file_path = config_path / (file_type_to_string(static_cast<type>(i)) + FILE_EXTENSION_CONFIG);
+            std::filesystem::path file_path = config_path / (file_type_to_string(static_cast<type>(index)) + FILE_EXTENSION_CONFIG);
             std::error_code error{};
             vfs::create_file(file_path, error);
             VALIDATE(!error, success = false; continue, "", "Failed to open/create config file: [{}]: [{}]", 

@@ -3,6 +3,8 @@
 
 layout(local_size_x = 64) in;
 
+const uint                  MAX_SUBMESHES_PER_MESH = 32u;   // keep in sync with types.h
+
 struct InstanceData {
     mat4                    model;
     mat4                    normal_matrix;
@@ -24,8 +26,10 @@ struct MeshData {
 };
 
 struct SubmeshData {
-    uint                    first_index;
-    uint                    index_count;
+    uint first_index;
+    uint index_count;
+    uint material_index;
+    uint _pad0;
 };
 
 struct DrawIndexedIndirectCommand {
@@ -48,6 +52,7 @@ layout(set = 0, binding = 5) uniform CameraUBO {
     vec4                    frustum_planes[6];
     uvec4                   flags;
 } camera;
+layout(std430, set = 0, binding = 6) readonly buffer InstanceMaterialBuffer { uint slots[]; } instance_materials;
 
 
 
@@ -89,7 +94,7 @@ void main() {
     if (mesh.submesh_count == 0u)
         return;
 
-    // Transform the local AABB to world space, then test against the frustum.
+    // Transform the local AABB to world space, then test against the frustum
     vec3 world_min = vec3( 1e30);
     vec3 world_max = vec3(-1e30);
     for (uint corner_index = 0u; corner_index < 8u; ++corner_index) {
@@ -101,7 +106,7 @@ void main() {
     if (!frustum_test(world_min, world_max))
         return;
 
-    // Visible. Emit one command per submesh, each drawing a single instance.
+    // Visible. Emit one command per submesh, each drawing a single instance
     for (uint submesh_offset = 0u; submesh_offset < mesh.submesh_count; ++submesh_offset) {
 
         const SubmeshData submesh = submeshes[mesh.first_submesh + submesh_offset];
@@ -112,10 +117,14 @@ void main() {
         if (command_index >= uint(commands.length()))
             continue;
 
+        // Per-instance-per-submesh material: overrides the mesh's default, resolved on the CPU
+        const uint mat_slot = instance_materials.slots[
+            instance_index * MAX_SUBMESHES_PER_MESH + submesh_offset];
+
         commands[command_index].indexCount = submesh.index_count;
         commands[command_index].instanceCount = 1u;
         commands[command_index].firstIndex = mesh.index_offset + submesh.first_index;
         commands[command_index].vertexOffset = int(mesh.vertex_offset);
-        commands[command_index].firstInstance = instance_index;
+        commands[command_index].firstInstance = instance_index | (mat_slot << 16u);
     }
 }

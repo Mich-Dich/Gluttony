@@ -212,20 +212,21 @@ namespace GLT::world::world_ecs_entt {
 
         m_codec.register_custom_component<component::mesh>("glt.mesh_renderer",
 
-            // Layout:
-            //   [mesh_path_length     : u32][mesh_path     : bytes]   // length == 0 ⇒ INVALID_HANDLE
-            //   [material_path_length : u32][material_path : bytes]   // length == 0 ⇒ INVALID_HANDLE
-            //   [visible              : u8]
-
             [](const entt::registry& entity_registry, entt::entity entity_handle, std::vector<std::byte>& out_bytes) {
 
                 const auto& mesh_component = entity_registry.get<component::mesh>(entity_handle);
                 auto asset_registry = GLT::asset::registry::get_ref();
 
                 write_asset_handle(asset_registry, mesh_component.mesh, out_bytes);
-                write_asset_handle(asset_registry, mesh_component.material_override, out_bytes);
 
-                out_bytes.push_back(mesh_component.visible ? std::byte{ 1 } : std::byte{ 0 });
+                const u32 count = static_cast<u32>(mesh_component.material_overrides.size());
+                const auto* comp_bytes = reinterpret_cast<const std::byte*>(&count);
+                out_bytes.insert(out_bytes.end(), comp_bytes, comp_bytes + sizeof(count));
+
+                for (const auto& ov : mesh_component.material_overrides)
+                    write_asset_handle(asset_registry, ov, out_bytes);
+
+                out_bytes.push_back(mesh_component.visible ? std::byte{1} : std::byte{0});
             },
 
             [](entt::registry& entity_registry, entt::entity entity_handle, std::span<const std::byte> in_bytes) {
@@ -234,12 +235,32 @@ namespace GLT::world::world_ecs_entt {
                 auto& mesh_component = entity_registry.emplace_or_replace<component::mesh>(entity_handle);
 
                 size_t offset = 0;
-
                 mesh_component.mesh = GLT::asset::asset_ref{ read_asset_handle(asset_registry, in_bytes, offset) };
-                mesh_component.material_override = GLT::asset::asset_ref{ read_asset_handle(asset_registry, in_bytes, offset) };
 
-                // Trailing byte, optional for forward compatibility
-                mesh_component.visible = (in_bytes.size() > offset) ? (in_bytes[offset] != std::byte{ 0 }) : true;
+                if (in_bytes.size() < offset + sizeof(u32))
+                    return;
+                u32 count = 0;
+                std::memcpy(&count, in_bytes.data() + offset, sizeof(count));
+                offset += sizeof(count);
+
+                mesh_component.material_overrides.clear();
+                mesh_component.material_overrides.reserve(count);
+                for (u32 i = 0; i < count; ++i)
+                    mesh_component.material_overrides.emplace_back(
+                        GLT::asset::asset_ref{ read_asset_handle(asset_registry, in_bytes, offset) });
+
+                mesh_component.visible = (in_bytes.size() > offset) ? (in_bytes[offset] != std::byte{0}) : true;
+
+                // Defence in depth: if the asset is already resident, verify the count.
+                // (If it isn't loaded yet we can't validate here — do it on first submit.)
+                if (const auto* asset = asset_registry->data_as<GLT::asset::mesh::mesh_asset>(mesh_component.mesh)) {
+                    if (!mesh_component.overrides_match(asset->submesh_count())) {
+                        LOG(warn, "mesh component override count {} doesn't match submesh count {} - clearing",
+                            mesh_component.material_overrides.size(), asset->submesh_count());
+                        mesh_component.material_overrides.clear();
+                    }
+                }
+                
             });
 
 
@@ -939,7 +960,7 @@ namespace GLT::world::world_ecs_entt {
 
             GLT::asset::mesh::instance inst{};
             inst.mesh = mesh_comp.mesh;
-            inst.material_override = mesh_comp.material_override;
+            inst.material_overrides.assign(mesh_comp.material_overrides.begin(), mesh_comp.material_overrides.end());
             inst.transform = world_transform_of(id);
             out.push_back(inst);
         }

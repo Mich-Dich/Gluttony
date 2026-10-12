@@ -3,18 +3,46 @@
 
 layout(local_size_x = 64) in;
 
-struct InstanceData { mat4 model; mat4 normal_matrix; uint mesh_index; uint material_index; uint _pad0; uint _pad1; };
-struct MeshData { vec3 local_min; uint first_submesh; vec3 local_max; uint submesh_count; uint vertex_offset; uint index_offset; uint _pad0; uint _pad1; };
-struct SubmeshData { uint first_index; uint index_count; };
-struct DrawIndexedIndirectCommand { uint indexCount; uint instanceCount; uint firstIndex; int vertexOffset; uint firstInstance; };
+struct InstanceData { mat4 model;
+    mat4        normal_matrix;
+    uint        mesh_index;
+    uint        material_index;
+    uint        _pad0;
+    uint        _pad1;
+};
+
+struct MeshData { vec3 local_min;
+    uint        first_submesh;
+    vec3        local_max;
+    uint        submesh_count;
+    uint        vertex_offset;
+    uint        index_offset;
+    uint        _pad0;
+    uint        _pad1;
+};
+
+struct SubmeshData {
+    uint        first_index;
+    uint        index_count;
+    uint        material_index;
+    uint        _pad0;
+};
+
+struct DrawIndexedIndirectCommand {
+    uint        indexCount;
+    uint        instanceCount;
+    uint        firstIndex;
+    int         vertexOffset;
+    uint        firstInstance;
+};
 
 struct ShadowView {
-    mat4 view_proj;
-    vec4 atlas_rect;
-    vec4 params;
-    vec4 sphere;
-    vec4 planes[6];
-    vec4 _pad[3];
+    mat4        view_proj;
+    vec4        atlas_rect;
+    vec4        params;
+    vec4        sphere;
+    vec4        planes[6];
+    vec4        _pad[3];
 };
 
 const uint COMMANDS_PER_VIEW = 4096u;   // SHADOW_COMMANDS_PER_VIEW

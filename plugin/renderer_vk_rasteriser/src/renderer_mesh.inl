@@ -209,18 +209,18 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    renderer::mesh_slot* renderer::find_slot(GLT::asset::handle h) noexcept {
+    renderer::mesh_slot* renderer::find_slot(GLT::asset::handle handle) noexcept {
 
         for (auto& slot : m_mesh_slots)
-            if (slot.alive && slot.asset == h)
+            if (slot.alive && slot.asset == handle)
                 return &slot;
         return nullptr;
     }
 
 
-    const renderer::mesh_slot* renderer::find_slot(GLT::asset::handle h) const noexcept { 
+    const renderer::mesh_slot* renderer::find_slot(GLT::asset::handle handle) const noexcept { 
 
-        return const_cast<renderer*>(this)->find_slot(h);
+        return const_cast<renderer*>(this)->find_slot(handle);
     }
 
     // mesh resources --------------------------------------------------------------------------------------------------
@@ -231,31 +231,30 @@ namespace GLT::renderer::vk_rasterizer {
         using VKSF = vk::ShaderStageFlagBits;
 
         // Descriptor set layout:
-        //   0  Camera UBO       (per frame, vertex + fragment)
-        //   1  Instance SSBO    (per frame, vertex)
-        //   2  Lights SSBO      (per frame, fragment) — Forward+ light data
-        //   3  Light grid SSBO  (per frame, fragment) — {offset, count} per cluster
-        //   4  Light index list (per frame, fragment) — packed light indices
-        //   5  Shadow map
-        //   6  Shadow views
-        //   7  Shadow atlas
         std::vector<util::descriptor_item> descriptor_layout_items;
-        descriptor_layout_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);
-        descriptor_layout_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, nullptr);
-        descriptor_layout_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
-        descriptor_layout_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
-        descriptor_layout_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
-        descriptor_layout_items.emplace_back(5, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, nullptr);
-        descriptor_layout_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
-        descriptor_layout_items.emplace_back(7, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, nullptr);
+        descriptor_layout_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);     // 0  Camera UBO
+        descriptor_layout_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, nullptr);                       // 1  Instance SSBO
+        descriptor_layout_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 2  Lights SSBO
+        descriptor_layout_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 3  Light grid SSBO
+        descriptor_layout_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 4  Light index list
+        descriptor_layout_items.emplace_back(5, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, nullptr);              // 5  Shadow map
+        descriptor_layout_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 6  Shadow views
+        descriptor_layout_items.emplace_back(7, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, nullptr);              // 7  Shadow atlas
+        descriptor_layout_items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, nullptr);                           // 8  Material sampler
 
         m_mesh_set_layout = m_dev->create_descriptor_set_layout(descriptor_layout_items);
         m_live_descriptor_set_count++;
+        
+        // set 0 = per frame, set 1 = materials + bindless textures (created by create_material_resources())
+        const std::array<vk::DescriptorSetLayout, 2> set_layouts = { 
+            m_mesh_set_layout,
+            m_material_set_layout
+        };
 
         // Pipeline layout unchanged (no push constants; everything via descriptors)
         vk::PipelineLayoutCreateInfo pipeline_layout_info{};
-        pipeline_layout_info.setLayoutCount = 1;
-        pipeline_layout_info.pSetLayouts = &m_mesh_set_layout;
+        pipeline_layout_info.setLayoutCount = static_cast<u32>(set_layouts.size());
+        pipeline_layout_info.pSetLayouts = set_layouts.data();
         pipeline_layout_info.pushConstantRangeCount = 0;
         pipeline_layout_info.pPushConstantRanges = nullptr;
         m_mesh_pipeline_layout = m_device.createPipelineLayout(pipeline_layout_info);
@@ -271,7 +270,14 @@ namespace GLT::renderer::vk_rasterizer {
             m_instance_buffers[frame_index] = m_dev->create_buffer(MAX_INSTANCES * sizeof(gpu_instance_data),
                 vk::BufferUsageFlagBits::eStorageBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
             m_live_buffer_count++;
+
+            // per-instance-per-submesh material slots (MAX_INSTANCES * MAX_SUBMESHES_PER_MESH u32s = 512 KB at current values)
+            m_instance_override_buffers[frame_index] = m_dev->create_buffer(MAX_INSTANCES * MAX_SUBMESHES_PER_MESH * sizeof(u32),
+                vk::BufferUsageFlagBits::eStorageBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+
+            m_live_buffer_count++;
         }
+
 
         // Pipelines ----------------------------------------------------------------------------------------------------
         // (identical to before, minus the push constant range — the pipeline layout above already handles that)
@@ -477,6 +483,10 @@ namespace GLT::renderer::vk_rasterizer {
             if (instance_buffer.buffer)
                 m_dev->destroy_buffer(instance_buffer);
 
+        for (auto& override_buffer : m_instance_override_buffers)
+            if (override_buffer.buffer)
+                m_dev->destroy_buffer(override_buffer);
+
         for (auto& camera_buffer : m_camera_ubos)
             if (camera_buffer.buffer)
                 m_dev->destroy_buffer(camera_buffer);
@@ -564,6 +574,9 @@ namespace GLT::renderer::vk_rasterizer {
         atlas_image.sampler = m_shadow_sampler;
         atlas_image.layout = vk::ImageLayout::eDepthStencilReadOnlyOptimal;
 
+        util::accessible_image material_sampler_image{};
+        material_sampler_image.sampler = m_material_sampler;
+
         std::vector<util::descriptor_item> descriptor_items;
         descriptor_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_camera_ubos[frame_index]);
         descriptor_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, &m_instance_buffers[frame_index]);
@@ -573,6 +586,7 @@ namespace GLT::renderer::vk_rasterizer {
         descriptor_items.emplace_back(5, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, &shadow_image);
         descriptor_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_shadow_view_buffers[frame_index]);
         descriptor_items.emplace_back(7, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, &atlas_image);
+        descriptor_items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, &material_sampler_image);
 
         constexpr auto buffer_type = util::descriptor_buffer_type::combined;
 

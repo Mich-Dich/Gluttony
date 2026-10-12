@@ -98,19 +98,77 @@ namespace GLT::world::world_ecs_entt::component {
                 auto& mr = plugin->registry().get<component::mesh>(plugin->entt_of(id));
 
                 ImGui::PushID("mesh");
-                
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
+
                 GLT::UI::table_row_asset_picker("Mesh", mr.mesh, GLT::asset::core_types::static_mesh);
-                GLT::UI::table_row_asset_picker("Material Override", mr.material_override, GLT::asset::core_types::material);
+
+                // Submesh count only known once the mesh asset is resident
+                u32 submesh_count = 0;
+                if (auto registry = GLT::asset::registry::get_ref(); registry && mr.mesh != INVALID_HANDLE) {
+                    if (const auto* asset = registry->data_as<GLT::asset::mesh::mesh_asset>(mr.mesh))
+                        submesh_count = asset->submesh_count();
+                }
+
+                if (submesh_count > 0) {
+
+                    // The codec + begin_override() both keep this invariant; if a hand-edited file slipped
+                    // through, clear rather than rendering with a mismatched vector
+                    if (!mr.material_overrides.empty() && !mr.overrides_match(submesh_count))
+                        mr.material_overrides.clear();
+
+                    if (mr.material_overrides.empty()) {
+
+                        // Zero-override state: one picker that, when set, fills every slot with the same
+                        // handle. Leaving it at INVALID_HANDLE keeps the asset defaults.
+                        GLT::asset::handle uniform = INVALID_HANDLE;
+                        if (GLT::UI::table_row_asset_picker("Material Override", uniform, GLT::asset::core_types::material)) {
+                            mr.begin_override(submesh_count);
+                            for (auto& slot : mr.material_overrides)
+                                slot = GLT::asset::asset_ref{ uniform };
+                        }
+
+                    } else {
+
+                        for (u32 i = 0; i < submesh_count; ++i) {
+                            ImGui::PushID(static_cast<int>(i));
+                            char label[24];
+                            std::snprintf(label, sizeof(label), "Material [%u]", i);
+                            GLT::UI::table_row_asset_picker(label, mr.material_overrides[i],
+                                GLT::asset::core_types::material);
+                            ImGui::PopID();
+                        }
+
+                        if (GLT::UI::gray_button("Reset material overrides"))
+                            mr.material_overrides.clear();
+                    }
+
+                } else if (!mr.material_overrides.empty()) {
+
+                    // Handle is set but asset isn't resident (or it has zero submeshes) - keep the user's
+                    // overrides and let them clear if they want
+                    ImGui::TextDisabled("(%zu pending override slot(s) - mesh asset not loaded)",
+                        mr.material_overrides.size());
+                    if (GLT::UI::gray_button("Clear material overrides"))
+                        mr.material_overrides.clear();
+                }
+
                 GLT::UI::table_row("visible", mr.visible);
                 GLT::UI::end_table();
-
                 ImGui::PopID();
             },
 
-            {},     // no summary
+            [](entity_id id) {      // outliner summary
+                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
+                if (!plugin)
+                    return std::string{};
+                const auto& mr = plugin->registry().get<component::mesh>(plugin->entt_of(id));
+                if (mr.material_overrides.empty())
+                    return std::string{};
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "(%zu overrides)", mr.material_overrides.size());
+                return std::string(buf);
+            },
 
-            // mesh has no meaning without a transform to place it in the world
             { component_name_hash("transform") });
     }
 

@@ -95,20 +95,16 @@ namespace GLT::asset::handler::mesh {
 
         // ---- material handles ---------------------------------------------------------------------------------------
 
-        // Positional alignment is guaranteed by the factory: it wrote one dependency per submesh, in submesh order. 
-        // Unresolved references come through as INVALID_HANDLE and are preserved here so submesh.material_slot keeps indexing correctly.
-        asset->material_handles.assign(info.dependencies.begin(), info.dependencies.end());
-
-        // Sanity check: every submesh must point at a valid slot. If the file was hand-edited or the factory changed, 
-        // catch it here rather than blowing up in the renderer.
-        for (const GLT::asset::mesh::submesh& sm : asset->submeshes) {
-            if (sm.material_slot >= asset->material_handles.size()) {
-                LOG(warn, "[{}] submesh references material slot {} but only {} dependencies exist - clamping to invalid",
-                    info.name, sm.material_slot, asset->material_handles.size());
-                // We do not fail the load; the renderer will substitute a
-                // fallback material. But we also don't want garbage indices.
-            }
+        // Positional: dependency [i] belongs to submesh [i]. The factory wrote one dependency per submesh, in submesh order
+        // Unresolved references come through as INVALID_HANDLE and are preserved here so submesh.material still indexes correctly
+        const size_t dep_count = info.dependencies.size();
+        if (asset->submeshes.size() > dep_count) {
+            LOG(warn, "[{}] {} submeshes but only {} dependency slots - remaining submeshes get the default material",
+                info.name, asset->submeshes.size(), dep_count);
         }
+
+        for (size_t i = 0; i < asset->submeshes.size(); ++i)
+            asset->submeshes[i].material = (i < dep_count) ? info.dependencies[i] : INVALID_HANDLE;
 
         LOG(trace, "loaded [{}] - {} verts, {} tris, {} submeshes", info.name, asset->vertices.size(), 
             asset->indices.size() / 3, asset->submeshes.size());
