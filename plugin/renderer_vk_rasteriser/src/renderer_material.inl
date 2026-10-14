@@ -470,15 +470,14 @@ namespace GLT::renderer::vk_rasterizer {
 
         using TS = GLT::asset::material::texture_slot;
         const auto tex = [&](TS s) { return slot.texture_slots[static_cast<u32>(s)]; };
-        const auto& params = asset->params;
 
         gpu_material packed{};
-        packed.base_color = params.base_color;
-        packed.emissive_roughness = glm::vec4(params.emissive, params.roughness);
-        packed.metallic_reflectance = glm::vec4(params.metallic, params.reflectance, params.normal_scale, params.occlusion_strength);
+        packed.base_color ={};
+        packed.emissive_roughness = glm::vec4(0.f);
+        packed.metallic_reflectance = glm::vec4(0.f);
         packed.textures_a = glm::uvec4(tex(TS::base_color), tex(TS::metallic_roughness), tex(TS::normal), tex(TS::emissive));
-        packed.textures_b = glm::uvec4(tex(TS::occlusion), tex(TS::height), params.flags,
-            (params.flags & MATERIAL_TEMPLATE_MASK) >> MATERIAL_TEMPLATE_SHIFT);
+        packed.textures_b = glm::uvec4(tex(TS::occlusion), tex(TS::height), 0,
+            (0 & MATERIAL_TEMPLATE_MASK) >> MATERIAL_TEMPLATE_SHIFT);
 
         if (std::memcmp(&m_material_cpu[slot_index], &packed, sizeof(gpu_material)) != 0) {
             m_material_cpu[slot_index] = packed;

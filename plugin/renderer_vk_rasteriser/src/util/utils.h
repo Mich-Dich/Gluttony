@@ -61,7 +61,6 @@ namespace GLT::renderer::vk_rasterizer::util {
     void destroy_imgui_resources(vk::Device& device, std::vector<vk::Framebuffer>& imgui_framebuffers, 
         vk::RenderPass& imgui_render_pass, vk::DescriptorPool& imgui_descriptor_pool, bool& imgui_initialized);
 
-
     // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================

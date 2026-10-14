@@ -60,12 +60,12 @@ target_compile_options(${CORE_NAME}                                     PRIVATE
 
 
 # ------------- Copy assets directory to output ---------------------------------------------------
-if(EXISTS ${CMAKE_SOURCE_DIR}/asset)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/asset)
     add_custom_target(${CORE_NAME}_copy_assets ALL
         COMMAND                                                         ${CMAKE_COMMAND} -E copy_directory
-                ${CMAKE_SOURCE_DIR}/asset
+                ${CMAKE_CURRENT_SOURCE_DIR}/asset
                 ${COMPILE_OUTPUT_DIR}/asset
-        COMMENT "Copying assets to build directory: ${COMPILE_OUTPUT_DIR}/asset"
+        COMMENT "Copying assets from component [${CORE_NAME}] to build directory: ${COMPILE_OUTPUT_DIR}/asset"
         VERBATIM
     )
     # Make sure assets are only copied after the executable is linked
@@ -73,6 +73,24 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/asset)
 else()
     message(WARNING "Assets directory not found at ${CMAKE_SOURCE_DIR}/asset")
 endif()
+
+
+
+# ------------- Clone wiki to output directory ----------------------------------------------------
+set(WIKI_URL                                                            "git@github.com:Mich-Dich/Gluttony.wiki.git")
+set(WIKI_DIR                                                            "${COMPILE_OUTPUT_DIR}/wiki")
+
+add_custom_command(
+    OUTPUT                                                              ${WIKI_DIR}/.git
+    COMMAND                                                             sh -c "if [ -d ${WIKI_DIR}/.git ]; then git -C ${WIKI_DIR} pull; else git clone --depth 1 ${WIKI_URL} ${WIKI_DIR}; fi"
+    COMMENT                                                             "Cloning/updating wiki: ${WIKI_DIR}"
+    VERBATIM
+)
+
+add_custom_target(${CORE_NAME}_clone_wiki
+    DEPENDS                                                             ${WIKI_DIR}/.git
+)
+add_dependencies(${CORE_NAME}_clone_wiki ${CORE_NAME})
 
 
 

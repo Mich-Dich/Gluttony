@@ -20,9 +20,12 @@
 #include "util/data_structures.h"
 #include "util/shader_compiler.h"
 #include "util/builders.h"
+#include "util/shader_compiler.h"
+#include "util/slang_compiler.h"
 #include "render_graph/render_graph.h"
 #include "settings.inl"
 #include "types.h"
+
 
 
 
@@ -36,11 +39,15 @@ namespace GLT::renderer::vk_rasterizer {
 
     // CONSTANTS =======================================================================================================
 
+    // Renderer codegen revision. Bump when the renderer's material pipeline changes in a way that invalidates bytecode
+    // (descriptor layout, entry-point ABI, ...)
+    static constexpr u32 VK_MATERIAL_CODEGEN_REVISION = 1;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
 
-    class renderer : public GLT::render::i_renderer_plugin {
+    class renderer : public GLT::render::i_renderer_plugin, public GLT::render::i_shader_compiler {
     public:
 
         DEFAULT_GETTER(util::device*, dev);
@@ -104,8 +111,25 @@ namespace GLT::renderer::vk_rasterizer {
         void on_settings_changed() override;
         FORCE_INLINE void set_sun_settings(const GLT::render::sun_settings& s) override { (void)s; }
         FORCE_INLINE_R const GLT::render::sun_settings& get_sun_settings() const override { return m_sun_settings; }
-        [[nodiscard]] void* render_material_preview(GLT::asset::handle /*material*/, const GLT::asset::material::material_params& /*params*/,
-            std::span<const GLT::asset::handle> /*textures*/, const glm::vec3& /*camera_pos*/) override { return nullptr; }
+
+        // preview -----------------------------------------------------------------------------------------------------
+
+        // DISABLED DURING MATERIAL REFACTOR
+        // TODO: reenable after refactor is done
+
+        // [[nodiscard]] void* render_material_preview(GLT::asset::handle /*material*/, const GLT::asset::material::material_params& /*params*/,
+        //     std::span<const GLT::asset::handle> /*textures*/, const glm::vec3& /*camera_pos*/) override { return nullptr; }
+
+    public:
+
+        // i_shader_compiler -------------------------------------------------------------------------------------------
+
+        [[nodiscard]] std::string_view name() const override;
+        [[nodiscard]] u64 implementation_hash() const override;
+        [[nodiscard]] u32 contract_version() const override;
+        [[nodiscard]] std::expected<GLT::render::compiled_shader, GLT::render::shader_compile_error> compile(
+            std::string_view slang_source, GLT::asset::material::blend_mode blend) override;
+
 
     private:
 
@@ -238,6 +262,20 @@ namespace GLT::renderer::vk_rasterizer {
         bool create_gpu_texture(vk::Format format, u32 width, u32 height, const std::byte* pixels, u64 pixel_bytes, 
             std::span<const texture_upload_mip> mips, bool generate_mips, gpu_texture& out);
         void destroy_gpu_texture(gpu_texture& texture);
+
+        // i_shader_compiler -------------------------------------------------------------------------------------------
+
+        // mask over [GLT::render::compiled_shader] to give the compiled bytecode more meaning
+        struct compiled_shader_bytecode_meaning {
+
+            std::vector<std::byte>                  vertex_bytecode{};
+            std::vector<std::byte>                  fragment_bytecode{};
+            std::vector<std::byte>                  depth_bytecode{};
+        };
+
+        void create_shader_compiler();
+        void destroy_shader_compiler();
+
 
 
         // Configuration -----------------------------------------------------------------------------------------------
@@ -461,6 +499,10 @@ namespace GLT::renderer::vk_rasterizer {
         std::vector<GLT::asset::handle>                                     m_instance_material_handles{}; // parallel, for change detection
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_instance_override_buffers{}; // per-frame GPU mirror
 
+        // Material shader compiler (i_shader_compiler)
+        util::slang_compiler                                                m_slang{};
+        u64                                                                 m_shader_compiler_hash = 0;
+
     };
 
 
@@ -579,6 +621,7 @@ namespace GLT::renderer::vk_rasterizer {
 #include "renderer_debug_view.inl"
 #include "renderer_shadow.inl"
 #include "renderer_material.inl"
+#include "renderer_shader_compiler.inl"
 // #include "renderer_material_texture.inl"
 // #include "renderer_preview.inl"
 

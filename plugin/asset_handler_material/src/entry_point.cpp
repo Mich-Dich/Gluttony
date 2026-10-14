@@ -74,12 +74,10 @@ namespace GLT::asset::handler::material {
             deserialize(const GLT::asset::info& info, GLT::asset::chunk_reader& reader) override;
 
 
-        // Materials created at runtime (register_runtime) are the only writer
-        // of material files in this project until an importer exists, so we
-        // have to be able to round-trip them back to disk.
-        [[nodiscard]] std::expected<void, GLT::asset::load_error>
-            serialize(const GLT::asset::info& info, const GLT::asset::i_runtime_asset& asset,
-                GLT::asset::asset_writer& out) const override;
+        // Materials created at runtime (register_runtime) are the only writer of material files in this project until an importer exists,
+        // so we have to be able to round-trip them back to disk
+        [[nodiscard]] std::expected<void, GLT::asset::load_error> serialize(const GLT::asset::info& info,
+            const GLT::asset::i_runtime_asset& asset, GLT::asset::asset_writer& out) const override;
 
     private:
 

@@ -14,7 +14,9 @@ ssh -T git@github.com
 [ ] update the asset path reference of an editor if the asset is moved
 [x] let CMake compile even without internet connection (currently it fails)
 [ ] Add a function to the plugins (new interface) that lets the plugin manager check if that plugin is even supported for the current users architecture (like my main renderer needs WR-TR)
-
+[ ] render debug stuff in lines (light cones/radius, Colliders, AABBs, ...)
+[ ] HiZ occlusion culling
+[ ] Post-processing: Complete the render pipeline with tonemapping, bloom, etc.
 
 
 # Existing Editors
@@ -34,186 +36,292 @@ ssh -T git@github.com
 
 
 
-    ## Roadmap rasterizer
 
-    ### Step 1 — Light data infrastructure
-    **Goal:** Represent lights on the CPU and upload them to a GPU buffer.
 
-    - Define a `gpu_light` struct: position, radius, color, intensity, type (point/spot), spot direction, etc.
-    - Add `std::vector<gpu_light> m_lights` and `u32 m_light_count` to `renderer`.
-    - Create a persistent host-visible `util::allocated_buffer m_light_buffer`.
-    - Add a method `update_lights()` that maps the buffer, copies the light array, and unmaps.
-    - Call it from `begin_frame()` before building the render graph.
-    - Add a simple ImGui panel to add/remove lights for testing.
 
-    **Outcome:** Lights exist on the GPU and can be inspected.
 
-    ---
 
-    ### Step 2 — Cluster grid buffers + clear pass
-    **Goal:** Allocate the data structures that light culling will write.
 
-    - Choose a cluster grid: e.g., `16x16` tiles, `24` depth slices.
-    - Compute cluster count from render size: `clusters_x = ceil(width / 16)`, `clusters_y = ceil(height / 16)`, `clusters = clusters_x * clusters_y * 24`.
-    - Create two **persistent graph buffers**:
-    - `m_light_grid_buffer`: `u32` per cluster (offset into light index list) + `u32` per cluster (count). Or two separate buffers.
-    - `m_light_index_list_buffer`: `u32` array of light indices, sized `MAX_LIGHTS_PER_CLUSTER * cluster_count`.
-    - Add a render graph pass `"clear_light_grid"` that uses `vkCmdFillBuffer` to zero the grid and the global light index counter.  
-    This pass should run **before** light culling.
-    - Use `builder.write(...)` for the buffers so the graph inserts barriers.
 
-    **Outcome:** Light grid and index list are allocated and cleared each frame.
 
-    ---
 
-    ### Step 3 — Light culling compute pipeline
-    **Goal:** Create the compute shader and pipeline that builds the light lists.
 
-    - Write `light_culling.comp.glsl`:
-    - Inputs: depth texture (sampled), camera UBO, lights SSBO, light grid SSBO, light index list SSBO.
-    - For each cluster, compute its screen-space AABB and depth range.
-    - Test each light against the cluster. For point lights, use sphere-vs-AABB. For spot lights, add cone test.
-    - Use `atomicAdd` on a global counter and per-cluster count to append light indices.
-    - Create a new descriptor set layout for light culling:
-    - binding 0: depth sampler
-    - binding 1: camera UBO
-    - binding 2: lights SSBO
-    - binding 3: light grid SSBO
-    - binding 4: light index list SSBO
-    - Create the pipeline layout and compute pipeline in `create_mesh_resources()` or a new `create_light_culling_pipeline()`.
-    - Create per-frame descriptor buffers for the light culling pipeline.
 
-    **Outcome:** A compute pipeline that can fill the light grid from depth.
 
-    ---
 
-    ### Step 4 — Integrate light culling into the render graph
-    **Goal:** Run light culling after the depth prepass.
 
-    - In `begin_frame()`, after the `"depth_prepass"` pass and before `"scene"`, add:
-    ```cpp
-    m_graph->add_pass("light_culling",
-        [&](graph::pass_builder& builder) {
-            builder.read(m_depth_target, graph::texture_usage::depth_sampled);
-            builder.write(m_light_grid_buffer, graph::buffer_usage::storage_readwrite);
-            builder.write(m_light_index_list_buffer, graph::buffer_usage::storage_readwrite);
-        },
-        [this](graph::pass_context& ctx) {
-            // bind pipeline, descriptor buffer, dispatch
-            const u32 cluster_count = ...;
-            ctx.cmd.dispatch((cluster_count + 63) / 64, 1, 1);
-        });
-    ```
-    - Ensure the `"clear_light_grid"` pass runs before this.
-    - The render graph will insert the correct barrier from `eDepthStencilAttachmentOptimal` to `eDepthStencilReadOnlyOptimal`.
 
-    **Outcome:** Light culling runs every frame using the depth prepass result.
 
-    ---
 
-    ### Step 5 — Forward pass consumes light lists
-    **Goal:** Update the forward shading pass to use the light grid.
 
-    - Extend `m_mesh_set_layout` with new bindings:
-    - binding 2: lights SSBO
-    - binding 3: light grid SSBO
-    - binding 4: light index list SSBO
-    - binding 5: cluster params UBO (grid size, depth slices, near/far)
-    - Update `m_frame_desc_buffers` creation to include these new bindings.
-    - Modify `mesh.frag.glsl`:
-    - Compute cluster index from `gl_FragCoord.xy` and linear depth.
-    - Fetch light count and offset from the light grid.
-    - Loop over light indices, fetch light data, and accumulate lighting.
-    - Keep the existing depth prepass pipeline using the same layout; it just won’t use the extra bindings.
 
-    **Outcome:** Forward pass shades with many point/spot lights efficiently.
 
-    ---
 
-    ### Step 6 — Debug visualization for light culling
-    **Goal:** Validate the cluster grid and light counts.
 
-    - Add a debug compute or fragment shader that outputs a heatmap of light count per cluster.
-    - Add a render graph pass that writes to the scene color when a toggle is enabled.
 
-    **Outcome:** You can visually verify that light culling is working correctly.
 
-    ---
 
-    ### Step 7 — Shadow mapping (directional light first)
-    **Goal:** Add shadows to the forward pass
 
-    - Create a shadow map texture (depth only) and a light-space matrix
-    - Add a render graph pass `"shadow_pass"` that renders the scene from the light’s point of view. Reuse the depth-only pipeline
-    - Update `mesh.frag.glsl` to sample the shadow map and attenuate the directional light
 
-    **Outcome:** Directional shadows work; Forward+ has basic shadowing
+## Roadmap
 
-    - Extend to point/spot shadows using cube maps or multiple shadow maps
+### Phase 1 — Contract package + shader compiler service
 
+**Goal:** Make it possible to compile Slang material source through a renderer-provided compiler.
+
+Tasks:
+- Add `material_contract/v0/` Slang module: `Globals`, `vertex_input/output`, `surface_input/output`, `material_textures`, helpers.
+- Add `i_shader_compiler` interface and `compiled_shader` type.
+- Implement Vulkan `i_shader_compiler`:
+  - Slang → SPIR-V.
+  - Produce reflection schema.
+  - Produce packed default params.
+  - Produce `implementation_hash()` covering Slang version, SPIR-V target, reflection schema, renderer codegen.
+- Add `matc` skeleton:
+  - Reads source + blend mode.
+  - Calls registered renderer shader compiler.
+  - Validates `MATERIAL_CONTRACT_VERSION`.
+  - Writes derived chunks.
+
+Exit criteria:
+- A test Slang material compiles to SPIR-V + reflection + default params.
+- `matc` runs headlessly on one test material.
 
 ---
 
-### Step 8 — Material system and textures
-**Goal:** Support per-material albedo, normal, roughness, metal.
+### Phase 2 — Asset format and material handlers
 
-The material system should have material and material-instance. 
-Materials have a dedicated shader, material-instances allow the user to supply different resources to the same shader code (texture, variables, ...)
+**Goal:** Store the new contract data in material assets and add material instances.
 
-- Extend `mesh_asset` with material indices per submesh.
-- Create a material buffer (SSBO) and a bindless descriptor set.
-- Update `mesh.vert.glsl` to pass `material_index` to the fragment shader.
-- Update `mesh.frag.glsl` to sample material textures and compute PBR lighting.
-- Update descriptor set layout and buffers accordingly.
+Tasks:
+- Update `asset/material.h`:
+  - Add chunk IDs `0x0302`–`0x0306`.
+  - Replace or deprecate fixed `material_params` C++ struct in the asset path.
+  - Add `material_instance` type and chunks `0x0310`, `0x0311`.
+- Update material handler:
+  - Load Slang source, bytecode, reflection, compiler hash, blend mode, texture refs.
+  - Validate blend mode against `alpha_test` presence.
+  - Repack `CHUNK_MATERIAL_PARAMS` when reflection schema changes.
+- Add material instance handler:
+  - Base UUID + override list.
+  - Validate overrides against base reflection schema.
+- Keep legacy load path for old assets until migration is complete.
 
-**Outcome:** Forward+ renders textured PBR materials.
-
----
-
-### Step 9 — HiZ occlusion culling
-**Goal:** Use the existing HiZ code in `cull.comp.glsl`.
-
-- Build a HiZ pyramid after the depth prepass (compute pass).
-- Keep the previous frame’s HiZ texture alive.
-- In the cull compute shader, add binding 6 for the HiZ sampler.
-- Use the previous frame’s HiZ to occlude instances before emitting draw commands.
-- Handle the first frame (no HiZ) by disabling occlusion.
-
-**Outcome:** GPU-driven culling also rejects occluded objects.
+Exit criteria:
+- A material asset round-trips all new chunks.
+- A masked material without `alpha_test` fails import.
+- A material instance overrides a scalar parameter.
 
 ---
 
-### Step 10 — Post-processing
-**Goal:** Complete the render pipeline with tonemapping, bloom, etc.
+### Phase 3 — `matc` import pipeline integration
 
-- Add a post-processing pass that reads `m_scene_color` and writes to the backbuffer.
-- Implement tonemapping (ACES, Reinhard) and gamma correction.
-- add bloom, SSAO, or TAA (as optional parts, use the settings system)
-- Use the render graph to manage intermediate textures.
+**Goal:** Make material import/save automatically compile and cache.
 
-**Outcome:** A polished Forward+ renderer ready for a game engine.
+Tasks:
+- Hook `matc` into material import and save.
+- Write compiler hash into `CHUNK_MATERIAL_COMPILER_HASH`.
+- On compiler-hash mismatch:
+  - User assets: recompile and update in place.
+  - Engine-shipped assets: cache under per-renderer cache directory.
+- Packaged builds: bake derived chunks for shipping renderer.
+- Add error path for missing compiler / unsupported contract version.
+
+Exit criteria:
+- Editing Slang source regenerates bytecode, reflection, params, hash.
+- Switching renderer triggers recompile or cache lookup.
 
 ---
 
-## Summary
+### Phase 4 — Renderer material pipeline
 
-Your existing render graph, depth prepass, and GPU-driven culling give you a great foundation. The critical path to Forward+ is:
+**Goal:** Replace hardcoded PBR GLSL with contract-driven material pipelines.
 
-1. Lights on GPU  
-2. Cluster grid buffers  
-3. Light culling compute  
-4. Integrate into render graph  
-5. Update forward shader to use light lists  
+Tasks:
+- Add renderer material pipeline cache keyed by:
+  - material asset / compiler hash
+  - entry point set
+  - blend mode
+  - render pass variant
+- Compile `CHUNK_MATERIAL_BYTECODE` into `vk::ShaderModule`.
+- Implement binding for:
+  - Contract `Globals` UBO.
+  - Reflection-driven `material_params` buffer.
+  - Six texture slots + sampler.
+- Replace `mesh.vert.glsl` / `mesh.frag.glsl` material path with compiled material stages.
+- Keep hardcoded PBR fallback for legacy materials until migration ends.
 
-After that, shadow mapping, materials, HiZ, and post-processing are natural extensions. Each step is roughly the same size: one new shader, one new pipeline, or one new render graph pass. This keeps the work incremental and testable.
+Exit criteria:
+- A Slang `surface_evaluate` material renders correctly.
+- Material params are packed per reflection offsets, not fixed C++ struct.
+
+---
+
+### Phase 5 — Entry points, alpha test, vertex transform
+
+**Goal:** Implement the full v0 entry-point surface.
+
+Tasks:
+- `surface_evaluate`: mandatory fragment path.
+- `alpha_test`: required for masked, forbidden otherwise.
+- `vertex_transform`: optional vertex path.
+- Integrate `alpha_test` into:
+  - depth prepass
+  - shadow passes
+  - local shadow atlas passes
+- Add pipeline variants for masked/opaque/translucent.
+- Resolve culling with `vertex_transform`:
+  - Conservative bounds, or
+  - Disable GPU culling for displaced materials, or
+  - Add a contract-level displacement bound.
+  - This is an open design issue; do not silently ignore it.
+
+Exit criteria:
+- Masked material discards fragments in main and shadow passes.
+- Vertex-displaced material does not get incorrectly culled.
+
+---
+
+### Phase 6 — Material instances and editor tooling
+
+**Goal:** Make parameters editable and instance overrides usable.
+
+Tasks:
+- Expose reflection schema to editor.
+- Editor reads `material_params` from reflection, not fixed C++ fields.
+- Defaults ownership: `CHUNK_MATERIAL_PARAMS` is authoritative after first compile.
+- Instance overrides:
+  - Preserve values by `(parameter_name_hash, type)`.
+  - Drop removed params.
+  - Reset type-changed params.
+- Add `pbr.mat_asset` as engine-shipped Slang material.
+
+Exit criteria:
+- Editor exposes sliders from reflection.
+- Instance override survives base material schema evolution.
+
+---
+
+### Phase 7 — Renderer switching, caching, packaged builds
+
+**Goal:** Make compiler hash and renderer portability robust.
+
+Tasks:
+- Store `implementation_hash()` in every material.
+- On mismatch:
+  - Recompile from `CHUNK_MATERIAL_SLANG_SRC`.
+  - Update asset or external cache.
+- Implement per-renderer cache path for engine-shipped read-only assets.
+- Packaged builds bake only shipping renderer bytecode.
+- Add fallback material when packaged build hits mismatch.
+
+Exit criteria:
+- Vulkan material asset does not attempt to use D3D12 bytecode.
+- Compiler update transparently recompiles.
+
+---
+
+### Phase 8 — Migration and cleanup
+
+**Goal:** Remove legacy path once all assets are reimported.
+
+Tasks:
+- Migrate existing materials through new importer.
+- Rebuild `pbr.mat_asset` as Slang contract material.
+- Remove legacy `material_params` C++ struct from runtime asset path.
+- Remove hardcoded `mesh.frag.glsl` PBR path.
+- Update tests and docs.
+
+Exit criteria:
+- No material asset uses old `0x0300`-only layout.
+- No renderer path consumes fixed `material_asset::params`.
+
+---
+
+## Suggested PR order
+
+1. Add contract Slang package + `i_shader_compiler`.
+2. Add `matc` skeleton + reflection schema format.
+3. Add new material chunks to `material.h` and material handler.
+4. Add material instance handler.
+5. Integrate `matc` into import/save.
+6. Add renderer material pipeline cache and Globals UBO.
+7. Add `surface_evaluate`.
+8. Add `alpha_test` + blend mode validation.
+9. Add `vertex_transform` and culling strategy.
+10. Add editor reflection UI and instance overrides.
+11. Add compiler-hash cache and packaged build path.
+12. Migrate assets, remove legacy.
+
+---
+
+## Additional files I need to make this exact
+
+I can keep the roadmap generic, but to turn it into concrete API-level tasks I need these files:
+
+- `asset/i_asset_handler.h`
+- `asset/i_asset_registry.h` and the registry plugin interface
+- `asset/header.h`
+- `chunk_reader` / `asset_writer` definitions
+- `util/shader_compiler.h` / `.cpp`
+- `plugin_system/plugin_manager.h`
+- `plugin_system/i_project_manager.h`
+- `render/i_renderer.h`
+- `render_graph/render_graph.h`
+- `util/descriptors.h`
+- `util/device.h`
+- `util/buffer.h`
+- `util/shader.h`
+- `util/builders.h`
+- `renderer_lights.inl`
+- `renderer_clusters.inl`
+- `renderer_light_culling.inl`
+- `renderer_shadow.inl`
+- `renderer_debug_view.inl`
+- `renderer_swapchain.inl`
+- `settings.inl`
+- Any existing material importer / editor material UI code
+- Any existing Slang SDK integration or build configuration
+- A sample `pbr.mat_asset` or current material source/import file
+
+With those, I can turn this roadmap into a file-by-file migration plan with exact function signatures and chunk read/write changes.
 
 
 
 
-# One shader per Material
-- Template field. Use gpu_submesh_data._pad0 as the draw bucket, set from the material’s template id and raster flags (double-sided, alpha test).
-- Bucketed cull. cull.comp writes into commands[bucket * MAX_PER_BUCKET + slot] and counts[bucket]. The reset pass clears all counts.
-- Draw loop. The scene pass loops over buckets, each with its own pipeline (a template fragment shader plus cull mode) and one drawIndexedIndirectCount.
-- Depth and shadow passes. The depth prepass and the directional shadow pass loop the same buckets with depth-only pipelines. Alpha-tested buckets get a depth shader with discard.
-- Local shadow cull. It already stays bucket-agnostic.
-- New templates. Adding one is then one GLSL file plus one entry in the template table.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

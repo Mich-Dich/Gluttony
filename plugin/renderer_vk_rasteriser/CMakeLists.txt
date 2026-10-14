@@ -32,12 +32,16 @@ set(VK_STB_IMAGE_DIR                                                    "${VENDO
 set(VULKAN_HEADERS_DIR                                                  "${VENDOR_DIR}/Vulkan-Headers")
 set(VK_BOOTSTRAP_DIR                                                    "${VENDOR_DIR}/vk-bootstrap")
 set(VMA_DIR                                                             "${VENDOR_DIR}/VulkanMemoryAllocator")
+set(SLANG_DIR                                                           "${VENDOR_DIR}/slang")
 file(MAKE_DIRECTORY                                                     "${VENDOR_DIR}")
 
 git_clone_or_update("git@github.com:franko/stb_image.git"                                       "${VK_STB_IMAGE_DIR}")
 git_clone_or_update("https://github.com/KhronosGroup/Vulkan-Headers.git"                        "${VULKAN_HEADERS_DIR}" BRANCH "vulkan-sdk-1.4.357")
 git_clone_or_update("git@github.com:charles-lunarg/vk-bootstrap.git"                            "${VK_BOOTSTRAP_DIR}" TAG "v1.4.328")
 git_clone_or_update("https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"     "${VMA_DIR}")
+git_clone_or_update("https://github.com/shader-slang/slang.git"                                 "${SLANG_DIR}" TAG "v2025.1")
+
+
 
 target_include_directories(${PLUGIN_NAME}                               PRIVATE "${VK_STB_IMAGE_DIR}/include")
 target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${VK_STB_IMAGE_DIR}/include")
@@ -69,19 +73,93 @@ target_include_directories(${PLUGIN_NAME}                               PRIVATE 
 target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${IMGUI_DIR}")
 
 
+# --- Slang SDK, used only by the Vulkan material shader compiler --------------------------------
+
+set(SLANG_VERSION      "2025.1"       CACHE STRING "Slang prebuilt release tag (without the leading v)")
+set(SLANG_ARCHIVE_NAME "slang-${SLANG_VERSION}-linux-x86_64")
+set(SLANG_PREBUILT_ROOT "${VENDOR_DIR}/slang-prebuilt")
+set(SLANG_PREFIX_DIR   "${SLANG_PREBUILT_ROOT}/slang-${SLANG_VERSION}")
+set(SLANG_TARBALL      "${SLANG_PREBUILT_ROOT}/${SLANG_ARCHIVE_NAME}.tar.gz")
+
+# The tarball has no wrapper directory (bin/, include/, lib/, cmake/ sit at the top level),
+# so we extract INTO a version-named folder that we control. This makes the on-disk layout
+# deterministic regardless of what the archive contains.
+if(NOT EXISTS "${SLANG_PREFIX_DIR}/lib/libslang.so")
+
+    message(STATUS "Slang ${SLANG_VERSION} not present at ${SLANG_PREFIX_DIR}, fetching ...")
+    file(MAKE_DIRECTORY "${SLANG_PREFIX_DIR}")
+
+    if(NOT EXISTS "${SLANG_TARBALL}")
+        message(STATUS "Downloading ${SLANG_ARCHIVE_NAME}.tar.gz ...")
+        file(DOWNLOAD
+            "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/${SLANG_ARCHIVE_NAME}.tar.gz"
+            "${SLANG_TARBALL}"
+            SHOW_PROGRESS
+            STATUS dl_status
+        )
+        list(GET dl_status 0 dl_code)
+        if(NOT dl_code EQUAL 0)
+            list(GET dl_status 1 dl_msg)
+            message(FATAL_ERROR
+                "Slang download failed (${dl_msg}).\n"
+                "URL: https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/${SLANG_ARCHIVE_NAME}.tar.gz\n"
+                "Check the tag/asset name at https://github.com/shader-slang/slang/releases")
+        endif()
+    endif()
+
+    file(ARCHIVE_EXTRACT INPUT "${SLANG_TARBALL}" DESTINATION "${SLANG_PREFIX_DIR}")
+
+    if(NOT EXISTS "${SLANG_PREFIX_DIR}/lib/libslang.so")
+        file(GLOB _slang_extracted "${SLANG_PREFIX_DIR}/*")
+        message(FATAL_ERROR
+            "Extracted Slang archive, but ${SLANG_PREFIX_DIR}/lib/libslang.so is missing.\n"
+            "Contents of ${SLANG_PREFIX_DIR}:\n  ${_slang_extracted}")
+    endif()
+endif()
+
+message(STATUS "Using Slang prebuilt at: ${SLANG_PREFIX_DIR}")
+
+# --- Imported target ---------------------------------------------------------------------------
+# Deliberately NOT using find_package(slang CONFIG). Slang's generated slangTargets.cmake does an
+# EXISTS check on its runtime libs at include time and aborts on layouts it doesn't recognize.
+# We only need the shared lib + headers, so a hand-rolled target is simpler and more robust.
+if(NOT TARGET slang)
+    add_library(slang SHARED IMPORTED)
+    set_target_properties(slang PROPERTIES
+        IMPORTED_LOCATION              "${SLANG_PREFIX_DIR}/lib/libslang.so"
+        INTERFACE_INCLUDE_DIRECTORIES  "${SLANG_PREFIX_DIR}/include"
+    )
+endif()
+
+target_link_libraries(${PLUGIN_NAME}          PRIVATE slang)
+target_link_libraries(${PLUGIN_NAME}_static   PRIVATE slang)
+
+# libslang.so has DT_NEEDED entries for libslang-llvm.so / libslang-glslang.so living in the
+# same directory. Bake an rpath so the dynamic loader finds them without LD_LIBRARY_PATH.
+foreach(_slang_target IN ITEMS ${PLUGIN_NAME} ${PLUGIN_NAME}_static)
+    set_target_properties(${_slang_target} PROPERTIES
+        BUILD_RPATH   "${SLANG_PREFIX_DIR}/lib"
+        INSTALL_RPATH "${SLANG_PREFIX_DIR}/lib"
+        BUILD_WITH_INSTALL_RPATH TRUE
+    )
+endforeach()
+
+
+
 
 # ------------- Copy assets directory to output ---------------------------------------------------
 set(COMPILE_OUTPUT_DIR                                                  "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
-if(EXISTS ${CMAKE_SOURCE_DIR}/asset)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/asset)
     add_custom_target(${PLUGIN_NAME}_copy_assets                          ALL
         COMMAND                                                         ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/asset
             ${COMPILE_OUTPUT_DIR}/asset
-        COMMENT "Copying assets to build directory: ${COMPILE_OUTPUT_DIR}/asset"
+        COMMENT "Copying assets from component [${PLUGIN_NAME}] to build directory: ${COMPILE_OUTPUT_DIR}/asset"
         VERBATIM
     )
     # Make sure assets are only copied after the executable is linked
     add_dependencies(${PLUGIN_NAME}_copy_assets ${PLUGIN_NAME})
+    add_dependencies(${PLUGIN_NAME}_copy_assets ${PLUGIN_NAME}_static)
 else()
     message(WARNING "Assets directory not found at ${CMAKE_SOURCE_DIR}/asset")
 endif()

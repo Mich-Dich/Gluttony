@@ -47,8 +47,6 @@ namespace GLT::world {
     //   - a single "streaming anchor" (usually the active camera) drives which regions are hot
     //
     // Everything else (transform, health, AI, whatever) is layered on top by concrete plugins that COUPLE to a specific world implementation.
-    //
-    // Implementations that want to expose richer access (e.g. entt::registry&) do so via as<T>() - not by widening this interface.
     class i_world_plugin : public GLT::plugin_manager::i_plugin {
     public:
 
@@ -210,25 +208,6 @@ namespace GLT::world {
         // Implementations that don't have a hierarchy can leave the default
         // (everything is a root).
         [[nodiscard]] virtual entity_id parent_of(entity_id /*id*/) const noexcept { return INVALID_ENTITY; }
-
-        // capability cast ---------------------------------------------------------------------------------------------
-
-        // Escape hatch for plugins that want to reach past this interface to a concrete implementation
-        // (e.g. `world.as<ecs_world>()` -> entt::registry&).
-        //
-        // Rule of thumb:
-        //   - Engine-shipped, perf-sensitive plugins (actors, scripting, netcode) couple directly to the concrete type and 
-        //     call as<T>() once on init, caching the result. They do NOT call as<T>() per frame.
-        //   - Third-party / swappable plugins stay on i_world_plugin only.
-        template<typename T>
-        requires std::is_polymorphic_v<T>
-        [[nodiscard]] T* as() noexcept { return dynamic_cast<T*>(this); }
-
-
-        // and the const version:
-        template<typename T>
-        requires std::is_polymorphic_v<T>
-        [[nodiscard]] const T* as() const noexcept { return dynamic_cast<const T*>(this); }
 
     };
 

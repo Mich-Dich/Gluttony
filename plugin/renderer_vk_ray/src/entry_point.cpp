@@ -130,8 +130,8 @@ namespace GLT::renderer::vk_ray {
         void set_active_camera(const GLT::world::camera_snapshot& camera) override;
 
 
-        [[nodiscard]] void* render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
-            std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) override;
+        // [[nodiscard]] void* render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
+        //     std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) override;
 
 
         void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);

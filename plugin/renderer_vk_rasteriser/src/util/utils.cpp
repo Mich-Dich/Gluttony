@@ -137,56 +137,6 @@ namespace GLT::renderer::vk_rasterizer::util {
     }
 
 
-    // void begin_imgui_frame(f32 delta_time) {
-    //     if (!m_imgui_initialized) return;
-    //
-    //     ImGui_ImplVulkan_NewFrame();
-    //     ImGui_ImplGlfw_NewFrame();
-    //     ImGui::NewFrame();
-    //
-    //     // Example UI - you can customize this
-    //     static bool show_demo = true;
-    //     if (show_demo) {
-    //         ImGui::ShowDemoWindow(&show_demo);
-    //     }
-    //
-    //     // Stats window
-    //     ImGui::Begin("Renderer Stats");
-    //     ImGui::Text("Frame: %llu", m_frame_count);
-    //     ImGui::Text("FPS: %.1f", 1.0f / delta_time);
-    //     ImGui::Text("Resolution: %u x %u", m_render_width, m_render_height);
-    //     ImGui::Text("Camera Pos: %.2f, %.2f, %.2f",
-    //                 m_active_camera->m_position.x,
-    //                 m_active_camera->m_position.y,
-    //                 m_active_camera->m_position.z);
-    //     ImGui::End();
-    // }
-    //
-    // void render_imgui(vk::CommandBuffer cmd_buffer) {
-    //     if (!m_imgui_initialized) return;
-    //
-    //     ImGui::Render();
-    //
-    //     // Begin render pass
-    //     vk::RenderPassBeginInfo rp_info = {};
-    //     rp_info.renderPass = m_imgui_render_pass;
-    //     rp_info.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
-    //     rp_info.renderArea.offset = vk::Offset2D(0, 0);
-    //     rp_info.renderArea.extent = m_swapchain_resources.swapchain_extent;
-    //
-    //     cmd_buffer.beginRenderPass(rp_info, vk::SubpassContents::eInline);
-    //     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd_buffer);
-    //     cmd_buffer.endRenderPass();
-    //
-    //     // Update and Render additional Platform Windows
-    //     ImGuiIO& io = ImGui::GetIO();
-    //     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-    //         ImGui::UpdatePlatformWindows();
-    //         ImGui::RenderPlatformWindowsDefault();
-    //     }
-    // }
-
-
     void transition_image(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout current_layout, vk::ImageLayout new_layout) {
 
         vk::ImageAspectFlags aspect_mask = (new_layout == vk::ImageLayout::eDepthAttachmentOptimal) ?

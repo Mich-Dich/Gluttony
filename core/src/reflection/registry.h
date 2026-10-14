@@ -15,7 +15,7 @@ namespace GLT::reflect {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr u32                               INVALID_TYPE_HASH = 0;
+    constexpr u32                                       INVALID_TYPE_HASH = 0;
 
     // MACROS ==========================================================================================================
 
@@ -125,6 +125,17 @@ namespace GLT::reflect {
 
     // FUNCTION DECLARATION ============================================================================================
     
+    consteval u32 hash_of(std::meta::info info);
+
+
+    // Fold an arbitrary trivially-copyable value into a running FNV-1a state.
+    // Doesn't reset the state — callers chain it.
+    consteval void fnv1a_mix(u32& h, const void* data, std::size_t size) noexcept;
+
+
+    consteval void fnv1a_mix_string(u32& h, std::string_view s) noexcept;
+
+
     FORCE_INLINE_R constexpr u32 fnv1a_32(std::string_view s) noexcept;
 
 
@@ -176,6 +187,14 @@ namespace GLT::reflect {
     [[nodiscard]] const editor_draw_override* editor_draw_override_for(u32 type_hash) noexcept;
 
     // TEMPLATE DECLARATION ============================================================================================
+
+    template <typename T> requires std::is_trivially_copyable_v<T>
+    consteval void fnv1a_mix(u32& h, const T& value) noexcept;
+
+
+    // Convenience: start fresh, fold every argument, return the result.
+    template <typename... Args>
+    consteval u32 fnv1a_combine(Args&&... args) noexcept;
 
     // ---- registration API -------------------------------------------------------
 

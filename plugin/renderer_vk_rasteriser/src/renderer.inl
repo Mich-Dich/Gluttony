@@ -5,6 +5,7 @@
 #include <event/event_bus.h>
 #include <event/application_event.h>
 #include <platform/i_window.h>
+#include <asset/material.h>
 
 
 
@@ -69,6 +70,7 @@ namespace GLT::renderer::vk_rasterizer {
         create_cluster_resources();
         create_light_culling_pipeline();
         create_debug_view_resources();
+        create_shader_compiler();
         imgui_init();
 
         m_framebuffer_resize_sub = GLT::event_bus::subscribe<GLT::window_framebuffer_resize_event>(
@@ -92,6 +94,7 @@ namespace GLT::renderer::vk_rasterizer {
             if (m_in_flight_fences[i])
                 VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[i], VK_TRUE, UINT64_MAX))
 
+        destroy_shader_compiler();
         destroy_debug_view_resources();
         destroy_light_culling_pipeline();
         destroy_cluster_resources();
@@ -598,7 +601,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph->execute(cmd);                      // The graph emits all its barriers and invokes every pass's execute lambda
 
         m_output_image->get_accessible_image_ref().layout = m_graph->texture_layout(m_scene_color); // Sync image layout to graph last use
-        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;         // imgui sets layout to ePresentSrcKHR
+        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;     // imgui sets layout to ePresentSrcKHR
 
         m_graph->end_frame();
 

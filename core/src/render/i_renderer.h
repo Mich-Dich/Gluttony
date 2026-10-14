@@ -10,6 +10,7 @@
 #include "plugin_system/i_plugin.h"
 #include "render/image.h"
 #include "render/render_mode.h"
+#include "render/i_shader_compiler.h"
 #include "debug/profiler.h"
 #include "plugin_system/plugin_manager.h"
 #include "asset/mesh.h"
@@ -318,15 +319,18 @@ namespace GLT::render {
 
         // preview -----------------------------------------------------------------------------------------------------
 
-        // Queues a material preview render for the next frame. The sphere is at world origin, radius 1; the camera orbits at
-        // radius |camera_pos| looking at origin. [params] is what gets rendered - pass an edit buffer to see unsaved changes
-        // [material] supplies the texture handles; pass INVALID_HANDLE for a texture-less preview
-        //
-        // Returns an ImGui-compatible texture handle (ImTextureID) for the internal 256x256 preview image. 
-        // The handle is stable across calls and valid until the renderer is destroyed. The first call returns a blank image; 
-        // subsequent calls show the previous frame's render.
-        [[nodiscard]] virtual void* render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
-            std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) = 0;
+        // DISABLED DURING MATERIAL REFACTOR
+        // TODO: reenable after refactor is done
+
+        // // Queues a material preview render for the next frame. The sphere is at world origin, radius 1; the camera orbits at
+        // // radius |camera_pos| looking at origin. [params] is what gets rendered - pass an edit buffer to see unsaved changes
+        // // [material] supplies the texture handles; pass INVALID_HANDLE for a texture-less preview
+        // //
+        // // Returns an ImGui-compatible texture handle (ImTextureID) for the internal 256x256 preview image. 
+        // // The handle is stable across calls and valid until the renderer is destroyed. The first call returns a blank image; 
+        // // subsequent calls show the previous frame's render.
+        // [[nodiscard]] virtual void* render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
+        //     std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) = 0;
 
 
         // render output modes -----------------------------------------------------------------------------------------

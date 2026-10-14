@@ -89,24 +89,24 @@ namespace GLT::renderer::vk_ray {
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    void* renderer::render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
-        std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) {
-
-        if (!m_preview_ready)
-            return nullptr;
-
-        m_preview_material = material;
-        m_preview_params = params;
-        m_preview_camera_pos = camera_pos;
-
-        m_preview_textures.fill(INVALID_HANDLE);
-        const std::size_t count = std::min(textures.size(), m_preview_textures.size());
-        for (std::size_t index = 0; index < count; ++index)
-            m_preview_textures[index] = textures[index];
-
-        m_preview_queued = true;
-        return m_preview_image->get_descriptor_set();
-    }
+    // void* renderer::render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
+    //     std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) {
+    //
+    //     if (!m_preview_ready)
+    //         return nullptr;
+    //
+    //     m_preview_material = material;
+    //     m_preview_params = params;
+    //     m_preview_camera_pos = camera_pos;
+    //
+    //     m_preview_textures.fill(INVALID_HANDLE);
+    //     const std::size_t count = std::min(textures.size(), m_preview_textures.size());
+    //     for (std::size_t index = 0; index < count; ++index)
+    //         m_preview_textures[index] = textures[index];
+    //
+    //     m_preview_queued = true;
+    //     return m_preview_image->get_descriptor_set();
+    // }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

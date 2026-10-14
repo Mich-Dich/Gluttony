@@ -26,6 +26,14 @@ namespace GLT::util {
 
     FORCE_INLINE_R std::string format_bytes(u64 bytes);
 
+
+    // Mix several 64-bit values into one. XOR + FNV-1a-style multiply; deterministic.
+    FORCE_INLINE_R u64 mix_u64(u64 acc, u64 value);
+
+
+    // FNV-1a-64 over a string_view.
+    FORCE_INLINE_R u64 fnv1a_64(std::string_view s);
+
     // TEMPLATE DECLARATION ============================================================================================
 
     template <typename E>
@@ -64,6 +72,15 @@ namespace GLT::util {
     template <typename E>
     requires std::is_enum_v<E>
     inline constexpr auto enum_name_ptrs = make_enum_name_ptrs<E>(std::make_index_sequence<GLT::util::enum_enumerators<E>.size()>{});
+
+
+    // Appends the bytes at the end of the vector
+    template<std::unsigned_integral T>
+    FORCE_INLINE constexpr void set_bytes(std::vector<std::byte>& array, T value) noexcept;
+
+
+    template<typename T> requires(std::is_arithmetic_v<T> && sizeof(T) <= 8)
+    FORCE_INLINE_R constexpr T get_bytes(const std::vector<std::byte>& array, const size_t startIndex);
 
     // CLASS DECLARATION ===============================================================================================
 

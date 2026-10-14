@@ -184,6 +184,8 @@ namespace GLT::plugin_manager {
     //
     // Concrete plugin classes are declared in their own translation unit and exported via EXPORT_PLUGIN_CLASS();
     // they should never be instantiated directly by user code
+    //
+    // Implementations that want to expose richer access do so via as<T>() - not by widening the plugin interface
     class i_plugin {
     public:
 
@@ -204,6 +206,25 @@ namespace GLT::plugin_manager {
         //
         // @param delta_time  Seconds elapsed since the previous frame
         virtual void update(const f32 /*delta_time*/) {}
+
+        // capability cast ---------------------------------------------------------------------------------------------
+
+        // Escape hatch for plugins that want to reach past this interface to a concrete implementation
+        // (e.g. `world.as<ecs_world>()` -> entt::registry&).
+        //
+        // Rule of thumb:
+        //   - Engine-shipped, perf-sensitive plugins (actors, scripting, netcode) couple directly to the concrete type and 
+        //     call as<T>() once on init, caching the result. They do NOT call as<T>() per frame.
+        //   - Third-party / swappable plugins stay on i_world_plugin only.
+        template<typename T>
+        requires std::is_polymorphic_v<T>
+        [[nodiscard]] T* as() noexcept { return dynamic_cast<T*>(this); }
+
+
+        // and the const version:
+        template<typename T>
+        requires std::is_polymorphic_v<T>
+        [[nodiscard]] const T* as() const noexcept { return dynamic_cast<const T*>(this); }
 
     };
 

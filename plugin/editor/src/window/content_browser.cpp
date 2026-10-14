@@ -1407,16 +1407,9 @@ namespace GLT::editor {
         VALIDATE(!relative_target.empty(), return, "",
             "content_browser: could not find a free filename for a new material in [{}]", m_current_dir.generic_string())
 
-        // ---- build the in-memory material ---------------------------------------
+        // ---- build in-memory material ---------------------------------------
         auto asset = GLT::create_unique_ref<GLT::asset::material::material_asset>();
         asset->asset_type = GLT::asset::core_types::material;
-        asset->params.base_color = { 0.8f, 0.8f, 0.8f, 1.0f };
-        asset->params.roughness = 0.5f;
-        asset->params.metallic = 0.0f;
-        asset->params.reflectance = 0.5f;
-        asset->params.normal_scale = 1.0f;
-        asset->params.occlusion_strength = 1.0f;
-        asset->params.flags = 0;
         asset->textures.fill(INVALID_HANDLE);
         asset->name = relative_target.stem().string();
 

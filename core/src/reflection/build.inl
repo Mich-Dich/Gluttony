@@ -275,7 +275,57 @@ namespace GLT::reflect {
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
+    consteval std::string qualified_name_of(std::meta::info info) {
+
+        std::string result;
+        std::vector<std::string_view> parts;
+
+        while (true) {
+            if (std::meta::has_identifier(info))
+                parts.push_back(std::meta::identifier_of(info));
+
+            if (std::meta::parent_of(info) == info)   // reached the global namespace
+                break;
+            info = std::meta::parent_of(info);
+        }
+
+        // parts are collected innermost-first; reverse and join with "::"
+        for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
+            if (!result.empty()) result += "::";
+            result += *it;
+        }
+        return result;
+    }
+
+
+    // Fold an arbitrary trivially-copyable value into a running FNV-1a state.
+    // Doesn't reset the state — callers chain it.
+    consteval void fnv1a_mix(u32& h, const void* data, std::size_t size) noexcept {
+        const auto* p = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            h ^= p[i];
+            h *= 16777619u;
+        }
+    }
+
+
+    consteval void fnv1a_mix_string(u32& h, std::string_view s) noexcept { fnv1a_mix(h, s.data(), s.size()); }
+
     // TEMPLATE IMPLEMENTATION =========================================================================================
+
+    template <typename T> requires std::is_trivially_copyable_v<T>
+    consteval void fnv1a_mix(u32& h, const T& value) noexcept { fnv1a_mix(h, &value, sizeof(T)); }
+
+
+    // Convenience: start fresh, fold every argument, return the result.
+    template <typename... Args>
+    consteval u32 fnv1a_combine(Args&&... args) noexcept {
+
+        u32 h = 2166136261u;
+        (fnv1a_mix_one(h, std::forward<Args>(args)), ...);
+        return h;
+    }
+
 
     template <typename T>
     inline constexpr const type_descriptor& type_descriptor_of = detail::descriptor_v<T>;

@@ -117,6 +117,9 @@
 #include "layer/layer.h"
 #include "layer/layer_stack.h"
 
+#include "reflection/annotations.h"
+#include "reflection/registry.h"
+
 // #include "event/event.h"
 // #include "event/event_bus.h"
 
