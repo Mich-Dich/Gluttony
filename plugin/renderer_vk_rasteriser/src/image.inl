@@ -167,7 +167,7 @@ namespace GLT::renderer::vk_rasterizer {
         const auto image_exists = GLT::vfs::exists(image_path, error);
 
         VALIDATE(image_exists && !error, allocate_memory(nullptr, glm::uvec3{2, 2, 1}, GLT::render::image_format::RGBA, false); return, 
-            "", "Failed to find image at [{}]", image_path)
+            "", "Failed to find image at [{}]", (image_path))
 
         int channels;
         int width = 0, height = 0;
@@ -211,7 +211,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         int width, height, channels;
         u8* buffer = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
-        VALIDATE(buffer != nullptr, return nullptr, "", "Could not load image from path [{}]", path.generic_string())
+        VALIDATE(buffer != nullptr, return nullptr, "", "Could not load image from path [{}]", (path.generic_string()))
 
         out_width = width;
         out_height = height;

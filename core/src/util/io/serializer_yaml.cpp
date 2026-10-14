@@ -43,11 +43,11 @@ namespace GLT::serializer {
         std::error_code error{};
 		if (option == option::load) {			// check if file can be loaded
 			VALIDATE(GLT::vfs::exists(m_file_path, error), /* DEBUG_BREAK(); */ if (success) { *success = false; } return,
-				"", "Can not load from provided file [{}], it does not exist", m_file_path.generic_string())
+				"", "Can not load from provided file [{}], it does not exist", (m_file_path.generic_string()))
 
             error.clear();
 			VALIDATE(GLT::vfs::is_regular_file(m_file_path, error), if (success) { *success = false; } return,
-				"", "Provided filepath is not a file [{}]", m_file_path.generic_string());
+				"", "Provided filepath is not a file [{}]", (m_file_path.generic_string()))
 
 		} else {								// saving to file
 
@@ -55,13 +55,13 @@ namespace GLT::serializer {
 			std::filesystem::path path = file_path.parent_path();
             error.clear();
             GLT::vfs::create_directories(path, error);
-			VALIDATE(!error, if (success) { *success = false; } return, "",
-                "Failed to create directories for [{}] [{}]", path.generic_string(), error.message());
+			VALIDATE(!error, if (success) { *success = false; } return,
+				"", "Failed to create directories for [{}] [{}]", (path.generic_string(), error.message()))
 
             error.clear();
             GLT::vfs::create_file(m_file_path, error);
-            VALIDATE(!error, if (success) { *success = false; } return, "",
-                "Failed to create file for [{}] [{}]", path.generic_string(), error.message());
+            VALIDATE(!error, if (success) { *success = false; } return,
+				"", "Failed to create file for [{}] [{}]", (path.generic_string(), error.message()))
 		}
 
 		m_initalized = true;							// From here the serializer assumes that the file setup is dealt with
@@ -86,7 +86,8 @@ namespace GLT::serializer {
 		m_target = target::string;
 		if (option == option::load) {			// check if file can be loaded
 
-			VALIDATE(!m_content_buffer->empty(), if (success) { *success = false; } return, "", "Provided [m_content_buffer] is empty, can load from empty string")
+			VALIDATE(!m_content_buffer->empty(), if (success) { *success = false; } return,
+			"", "Provided [m_content_buffer] is empty, can load from empty string")
 		}
 
 		m_initalized = true;							// From here the serializer assumes that the file setup is dealt with

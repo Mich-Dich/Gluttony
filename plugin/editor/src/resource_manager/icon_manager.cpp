@@ -458,13 +458,12 @@ namespace GLT::editor::icon_manager {
             const auto file_name = std::string(GLT::util::enum_to_string(i)) + ".png";
             const auto image_path = base_path / file_name;
             const bool image_exists = GLT::vfs::exists(image_path, error);
-            VALIDATE(!error && image_exists, continue, "",
-                "Image [{}] was not at expected location [{}]",
-                GLT::util::enum_to_string(i), image_path.generic_string())
+            VALIDATE(!error && image_exists, continue, 
+                "", "Image [{}] was not at expected location [{}]", (GLT::util::enum_to_string(i), image_path.generic_string()))
 
             int channels = 0, width = 0, height = 0;
             u8* data = stbi_load(image_path.string().c_str(), &width, &height, &channels, 4);
-            VALIDATE(data, continue, "", "stbi_load failed for [{}]", image_path.generic_string())
+            VALIDATE(data, continue, "", "stbi_load failed for [{}]", (image_path.generic_string()))
             stbi_image_free(data);
 
             icons_sorted_by_atlas[{ (u32)width, (u32)height }].push_back({ i, image_path });
@@ -489,8 +488,8 @@ namespace GLT::editor::icon_manager {
                 int w = 0, h = 0, channels = 0;
                 u8* pixels = stbi_load(sources[idx].path.string().c_str(), &w, &h, &channels, 4);
                 
-                VALIDATE(pixels, continue, "", "Failed to load icon [{}] for atlas", sources[idx].path.generic_string())
-                ASSERT((u32)w == icon_w && (u32)h == icon_h, "", "Icon [{}] changed size between passes", sources[idx].path.generic_string());
+                VALIDATE(pixels, continue, "", "Failed to load icon [{}] for atlas", (sources[idx].path.generic_string()))
+                ASSERT((u32)w == icon_w && (u32)h == icon_h, "", "Icon [{}] changed size between passes", (sources[idx].path.generic_string()))
 
                 const u32 cx = idx % layout.grid.cols;
                 const u32 cy = idx / layout.grid.cols;

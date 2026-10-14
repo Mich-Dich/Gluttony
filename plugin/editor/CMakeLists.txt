@@ -36,8 +36,8 @@ set(IMGUIZMO_DIR                                                        "${VENDO
 git_clone_or_update("git@github.com:epezent/implot.git"                 "${IMPLOT_DIR}")
 git_clone_or_update("git@github.com:franko/stb_image.git"               "${STB_IMAGE_DIR}")
 git_clone_or_update("https://github.com/mackron/dr_libs.git"            "${DR_LIBS_DIR}")
-git_clone_or_update("https://github.com/goossens/ImGuiColorTextEdit"    "${IMGUI_COLOR_TEXT_EDIT_DIR}")
-git_clone_or_update("https://github.com/CedricGuillemet/ImGuizmo.git" "${IMGUIZMO_DIR}")
+git_clone_or_update("git@github.com:Mich-Dich/ImGuiColorTextEdit.git"   "${IMGUI_COLOR_TEXT_EDIT_DIR}")
+git_clone_or_update("https://github.com/CedricGuillemet/ImGuizmo.git"   "${IMGUIZMO_DIR}")
 
 # ImGuizmo ---------------------------------------------------------------------------------------
 target_include_directories(${PLUGIN_NAME}                               PRIVATE "${IMGUIZMO_DIR}/src")

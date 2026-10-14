@@ -68,28 +68,25 @@ namespace GLT::asset::handler::material {
         // required: slang source --------------------------------------------------------------------------------------
 
         const auto slang_bytes = reader.get(CHUNK_MATERIAL_SLANG_SRC);
-        VALIDATE(!slang_bytes.empty(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] missing or empty CHUNK_MATERIAL_SLANG_SRC", info.name)
+        VALIDATE(!slang_bytes.empty(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] missing or empty CHUNK_MATERIAL_SLANG_SRC", (info.name))
 
         // required: reflection schema ---------------------------------------------------------------------------------
 
         const auto reflect_bytes = reader.get(CHUNK_MATERIAL_REFLECT);
-        VALIDATE(reflect_bytes.size() >= sizeof(reflection_header),
-            return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] CHUNK_MATERIAL_REFLECT is missing or too small ({} byte(s))", info.name, reflect_bytes.size())
+        VALIDATE(reflect_bytes.size() >= sizeof(reflection_header), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] CHUNK_MATERIAL_REFLECT is missing or too small ({} byte(s))", (info.name, reflect_bytes.size()))
 
         const auto* refl_hdr = reinterpret_cast<const reflection_header*>(reflect_bytes.data());
-        VALIDATE(refl_hdr->magic == REFLECT_SCHEMA_MAGIC,
-            return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] CHUNK_MATERIAL_REFLECT has bad magic (0x{:08X})", info.name, refl_hdr->magic)
+        VALIDATE(refl_hdr->magic == REFLECT_SCHEMA_MAGIC, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] CHUNK_MATERIAL_REFLECT has bad magic (0x{:08X})", (info.name, refl_hdr->magic))
 
         // required: packed params -------------------------------------------------------------------------------------
 
         const auto params_bytes = reader.get(CHUNK_MATERIAL_PARAMS);
-        VALIDATE(params_bytes.size() == refl_hdr->packed_param_size,
-            return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] CHUNK_MATERIAL_PARAMS size {} does not match reflection's packed_param_size {}",
-            info.name, params_bytes.size(), refl_hdr->packed_param_size)
+        VALIDATE(params_bytes.size() == refl_hdr->packed_param_size, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] CHUNK_MATERIAL_PARAMS size {} does not match reflection's packed_param_size {}", 
+            (info.name, params_bytes.size(), refl_hdr->packed_param_size))
 
         // build runtime asset -----------------------------------------------------------------------------------------
 
@@ -123,7 +120,7 @@ namespace GLT::asset::handler::material {
         if (const auto b = reader.get_as<u32>(CHUNK_MATERIAL_BLEND_MODE); b.size() == 1) {
             const auto bm = static_cast<blend_mode>(b[0]);
             VALIDATE(static_cast<u8>(bm) < static_cast<u8>(blend_mode::count), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
-                "", "[{}] CHUNK_MATERIAL_BLEND_MODE has out-of-range value {}", info.name, b[0])
+                "", "[{}] CHUNK_MATERIAL_BLEND_MODE has out-of-range value {}", (info.name, b[0]))
             asset->blend = bm;
         }
 
@@ -147,7 +144,7 @@ namespace GLT::asset::handler::material {
 
             const auto slot = static_cast<size_t>(ref.slot);
             VALIDATE(slot < static_cast<size_t>(texture_slot::count), continue, 
-                "", "[{}] texture_ref names slot {} which is out of range - skipping", info.name, slot);
+                "", "[{}] texture_ref names slot {} which is out of range - skipping", (info.name, slot));
 
             if (auto it = by_id.find(ref.id); it != by_id.end())
                 asset->textures[slot] = it->second;

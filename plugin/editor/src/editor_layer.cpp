@@ -157,7 +157,7 @@ namespace GLT::editor {
         if (!editor_world_path.empty()) {
 
             auto registry = GLT::asset::registry::get_ref();
-            VALIDATE(registry, return, "", "Failed to get asset-registry");
+            VALIDATE(registry, return, "", "Failed to get asset-registry")
 
             const auto result = registry->load(editor_world_path);                                      // registry CAN find the editor world
             if (result) {
@@ -479,14 +479,14 @@ namespace GLT::editor {
 
     void editor_layer::on_asset_open_event(const asset_open_event& event) {
 
-        VALIDATE(!event.get_path().empty(), return, "", "Can't open a asset editor for an empty path");
+        VALIDATE(!event.get_path().empty(), return, "", "Can't open a asset editor for an empty path")
         m_asset_open_event_buffer.push_back(event);
     }
 
 
     void editor_layer::on_asset_import_request_event(const asset_import_request_event& event) {
 
-        VALIDATE(!event.get_sources().empty(), return, "", "No assets to import provided");
+        VALIDATE(!event.get_sources().empty(), return, "", "No assets to import provided")
         m_asset_import_request_event_buffer.push_back(event);
     }
 
@@ -543,7 +543,7 @@ namespace GLT::editor {
 
         const GLT::asset::type type = event.get_asset_type();
         const auto& path = event.get_path();
-        VALIDATE(!path.empty(), return, "", "asset_open_event with empty path (type {})", type.value);
+        VALIDATE(!path.empty(), return, "", "asset_open_event with empty path (type {})", (type.value))
 
         // Already open? Bring it forward
         const auto wanted = path.lexically_normal();
@@ -564,7 +564,7 @@ namespace GLT::editor {
 
         // Not open yet: create
         auto window = GLT::editor::asset_editor_registry::create(type, path);
-        VALIDATE(window, return, "", "No editor registered for asset type [{}] (path: {})", type.value, path.generic_string());
+        VALIDATE(window, return, "", "No editor registered for asset type [{}] (path: {})", (type.value, path.generic_string()))
 
         if (m_dockspace_id != 0)
             window->dock_to(m_dockspace_id);

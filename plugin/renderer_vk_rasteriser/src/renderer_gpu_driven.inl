@@ -40,7 +40,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         // mesh_slot.vertex_offset and .index_offset are absolute offsets into the shared vertex/index buffers; the shader uses them directly
         u32 mesh_index = static_cast<u32>(&mesh_slot - m_mesh_slots.data());
-        VALIDATE(mesh_index < MAX_MESHES, return, "", "Mesh SSBO capacity exceeded");
+        VALIDATE(mesh_index < MAX_MESHES, return, "", "Mesh SSBO capacity exceeded")
 
         // Compute the local-space AABB from the mesh's vertices
         glm::vec3 local_min(std::numeric_limits<f32>::max());
@@ -52,7 +52,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Claim a contiguous run of submesh slots
         const u32 submesh_count = static_cast<u32>(std::min<size_t>(mesh_asset.submeshes.size(), MAX_SUBMESHES_PER_MESH));
-        VALIDATE(m_submesh_used + submesh_count <= MAX_SUBMESHES, return, "", "Submesh SSBO capacity exceeded");
+        VALIDATE(m_submesh_used + submesh_count <= MAX_SUBMESHES, return, "", "Submesh SSBO capacity exceeded")
 
         // Resolve every submesh's material. First use uploads its textures (immediate_submit), so do it before mapping the SSBO
         std::vector<u32> material_slots(submesh_count);
@@ -132,7 +132,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         const auto shader_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "vk_rasterizer";
         auto compute_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "cull.comp.glsl");
-        ASSERT(!compute_spv.empty(), "", "Failed to compile cull compute shader");
+        ASSERT(!compute_spv.empty(), "", "Failed to compile cull compute shader")
 
         vk::ShaderModule compute_shader = m_dev->create_shader_module(compute_spv);
 
@@ -146,7 +146,7 @@ namespace GLT::renderer::vk_rasterizer {
         pipeline_info.stage = shader_stage;
 
         auto result = m_device.createComputePipeline(nullptr, pipeline_info);
-        VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create cull pipeline");
+        VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create cull pipeline")
         m_cull_pipeline = result.value;
         m_live_pipeline_count++;
 
@@ -177,7 +177,7 @@ namespace GLT::renderer::vk_rasterizer {
             // Build the cull descriptor set for this frame. The descriptor items point into the graph's buffers via the graph's own lookup helper
             util::allocated_buffer* draw_commands_allocation = m_graph->buffer_allocation(m_draw_commands_handles[frame_index]);
             util::allocated_buffer* draw_count_allocation = m_graph->buffer_allocation(m_draw_count_handles[frame_index]);
-            ASSERT(draw_commands_allocation && draw_count_allocation, "", "Graph failed to allocate draw buffers");
+            ASSERT(draw_commands_allocation && draw_count_allocation, "", "Graph failed to allocate draw buffers")
 
             std::vector<util::descriptor_item> descriptor_items;
             descriptor_items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_buffers[frame_index]);
@@ -257,7 +257,7 @@ namespace GLT::renderer::vk_rasterizer {
                 continue;
 
             VALIDATE(m_packed_instances.size() < MAX_INSTANCES, break,
-                "", "Instance SSBO capacity exceeded ({} instances); scene truncated", MAX_INSTANCES);
+                "", "Instance SSBO capacity exceeded ({} instances); scene truncated", (MAX_INSTANCES))
 
             const u32 mesh_index = static_cast<u32>(mesh_slot - m_mesh_slots.data());
             const u32 instance_index = static_cast<u32>(m_packed_instances.size());
@@ -333,7 +333,7 @@ namespace GLT::renderer::vk_rasterizer {
             util::allocated_buffer& buffer = m_instance_override_buffers[m_current_frame];
 
             // Sanity: buffer was pre-allocated at MAX_INSTANCES * MAX_SUBMESHES_PER_MESH
-            VALIDATE(bytes <= MAX_INSTANCES * MAX_SUBMESHES_PER_MESH * sizeof(u32), return, "", "Instance material override buffer overflow");
+            VALIDATE(bytes <= MAX_INSTANCES * MAX_SUBMESHES_PER_MESH * sizeof(u32), return, "", "Instance material override buffer overflow")
 
             void* mapped = m_dev->map_buffer(buffer);
             std::memcpy(mapped, m_instance_material_slots.data(), bytes);

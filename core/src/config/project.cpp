@@ -38,16 +38,16 @@ namespace GLT {
         std::error_code error{};
         const bool path_is_dir = GLT::vfs::is_directory(project_dir_path, error);
         VALIDATE(path_is_dir && !error, return false, "", "Provided path is not a directory [{}]: [{}]", 
-            project_dir_path.generic_string(), error.message())
+            (project_dir_path.generic_string(), error.message()))
 
         const bool project_exists = GLT::vfs::exists(project_dir_path, error);
         VALIDATE(project_exists && !error, return false, "", "Project directory does not exist [{}]: [{}]", 
-            project_dir_path.generic_string(), error.message())
+            (project_dir_path.generic_string(), error.message()))
 
         bool project_file_found = false;
         const bool project_file_exists = GLT::vfs::exists(project_dir_path / (GLT::config::PROJECT_NAME + GLT::config::PROJECT_EXTENTION), error);
         VALIDATE(project_file_exists && !error, return false, "", "Project file does not exist [{}]: [{}]", 
-            project_dir_path.generic_string(), error.message())
+            (project_dir_path.generic_string(), error.message()))
 
         return true;
     }
@@ -59,7 +59,7 @@ namespace GLT {
 
         std::error_code error{};
         auto iterator = GLT::vfs::directory_iterator(project_path, error);
-        VALIDATE(!error, return, "", "Failed to create directory_iterator for [{}]: [{}]", project_path, error.message())
+        VALIDATE(!error, return, "", "Failed to create directory_iterator for [{}]: [{}]", (project_path, error.message()))
 
         GLT::serializer::yaml(project_path / (GLT::config::PROJECT_NAME + GLT::config::PROJECT_EXTENTION), "project_data", option)
             .entry(KEY_VALUE(display_name))
@@ -80,7 +80,8 @@ namespace GLT {
 
     void project::serialize_projects_data(const std::filesystem::path& project_dir_path, const GLT::serializer::option option) {
 
-        VALIDATE(is_valid_project_path(project_dir_path), return, "", "Provided path is not valid project path [{}]", project_dir_path.generic_string())
+        VALIDATE(is_valid_project_path(project_dir_path), return, "", "Provided path is not valid project path [{}]", 
+            (project_dir_path.generic_string()))
         project_path = project_dir_path;
         serialize_projects_data(option);
     }

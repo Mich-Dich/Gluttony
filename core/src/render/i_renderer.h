@@ -385,6 +385,14 @@ namespace GLT::render {
         // accumulation, re-upload constants, invalidate caches)
         virtual void on_settings_changed() = 0;
 
+
+        // @brief Tells the renderer whether any system currently needs the world image
+        // While false, the renderer may skip all world/scene passes and only present UI
+        virtual void set_world_render_enabled(bool enabled) = 0;
+
+
+        [[nodiscard]] virtual bool is_world_render_enabled() const = 0;
+
     };
 
 }

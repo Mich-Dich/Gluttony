@@ -191,7 +191,7 @@ namespace GLT::world::world_ecs_entt {
 
         const auto bounds_span = reader.get_as<GLT::AABB>(GLT::asset::region::CHUNK_REGION_BOUNDS);
         VALIDATE(bounds_span.size() == 1, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] missing or malformed bounds chunk (got {})", info.name, bounds_span.size())
+            "[{}] missing or malformed bounds chunk (got {})", (info.name, bounds_span.size()))
 
         // ---- build the runtime asset --------------------------------------------------------------------------------
 
@@ -204,7 +204,7 @@ namespace GLT::world::world_ecs_entt {
         if (const auto blob = reader.get(GLT::asset::region::CHUNK_REGION_ENTITIES); !blob.empty()) {
 
             VALIDATE(blob.size() >= sizeof(entity_blob_header), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
-                "", "[{}] entity chunk too small for header ({} bytes)", info.name, blob.size())
+                "", "[{}] entity chunk too small for header ({} bytes)", (info.name, blob.size()))
 
             entity_blob_header hdr;
             std::memcpy(&hdr, blob.data(), sizeof(hdr));

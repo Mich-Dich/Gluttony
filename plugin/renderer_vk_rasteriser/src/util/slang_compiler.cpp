@@ -13,6 +13,8 @@ namespace GLT::renderer::vk_rasterizer::util {
 
     // CONSTANTS =======================================================================================================
 
+    inline constexpr u32                        RECREATE_SESSION_THRESHOLD = 200;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -135,11 +137,11 @@ namespace GLT::renderer::vk_rasterizer::util {
     }
 
 
-    std::expected<slang_compiler, raw_slang_error> slang_compiler::create(const std::filesystem::path& contract_dir) {
+    std::expected<slang_compiler, slang_error> slang_compiler::create(const std::filesystem::path& contract_dir) {
 
         slang::IGlobalSession* global = ensure_global_session();
         if (!global)
-            return std::unexpected{ raw_slang_error::session_creation_failed };
+            return std::unexpected{ slang_error{ raw_slang_error_code::session_creation_failed, ""} };
 
         // ---- Target: SPIR-V 1.5 / Vulkan 1.2, matching the glslang path -----------------
 
@@ -162,7 +164,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         slang::ISession* session = nullptr;
         const SlangResult res = global->createSession(session_desc, &session);
         if (SLANG_FAILED(res) || !session)
-            return std::unexpected{ raw_slang_error::session_creation_failed };
+            return std::unexpected{ slang_error{ raw_slang_error_code::session_creation_failed, ""} };
 
         auto out = slang_compiler{};
         out.m_impl = new impl{};
@@ -172,51 +174,88 @@ namespace GLT::renderer::vk_rasterizer::util {
     }
 
 
-    std::expected<raw_slang_result, raw_slang_error> slang_compiler::compile(std::string_view source, std::string_view entry_point_name,
+    std::expected<raw_slang_result, slang_error> slang_compiler::compile(std::string_view source, std::string_view entry_point_name,
         const std::filesystem::path& source_virtual_name) {
 
 
         if (!m_impl || !m_impl->session)
-            return std::unexpected{ raw_slang_error::session_creation_failed };
+            return std::unexpected{ slang_error{ raw_slang_error_code::session_creation_failed, ""} };
 
-        Slang::ComPtr<slang::IBlob> diagnostics;
+        // Inside slang_compiler::compile(), before loading the module:
+        if (++m_compile_count > RECREATE_SESSION_THRESHOLD) {
+            // Destroy the old session
+            if (m_impl->session)
+                m_impl->session->release();
+            m_impl->session = nullptr;
 
-        // Distinct module name per virtual path so Slang doesn't hand back a cached module.
-        const std::string module_name = source_virtual_name.stem().string();
+            // Recreate from the same global session
+            slang::ISession* new_session = nullptr;
+            const SlangResult res = m_impl->global_session->createSession(session_desc, &new_session);
+            if (SLANG_SUCCEEDED(res) && new_session) {
+                m_impl->session = new_session;
+                m_compile_count = 0;
+            }
+        }
+
+        // Slang caches loaded modules by name for the lifetime of the session. A stable name (e.g. "material.vert") combined with
+        // an edited source trips E38202 ("module already loaded with different source"). Folding a hash of the source into the
+        // name means:
+        //   - identical sources hit the cache (no recompile)
+        //   - edited sources resolve to a fresh slot
+        // The virtual path stays stable so relative imports keep working
         const std::string virtual_name = source_virtual_name.string();
+        const u64 source_hash = GLT::util::fnv1a_64(source);
+        const std::string module_name = std::format("{}_{:016X}", source_virtual_name.stem().string(), source_hash);
+        const std::string unique_virtual_path = std::format("{}_{:016X}{}", source_virtual_name.stem().string(), source_hash,
+            source_virtual_name.extension().string());
         const std::string source_copy{ source };
 
-        slang::IModule* module = m_impl->session->loadModuleFromSourceString(module_name.c_str(), virtual_name.c_str(), 
+        Slang::ComPtr<slang::IBlob> diagnostics;
+        slang::IModule* module = m_impl->session->loadModuleFromSourceString(module_name.c_str(), unique_virtual_path.c_str(), 
             source_copy.c_str(), diagnostics.writeRef());
 
         if (!module) {
-            raw_slang_result err{};
-            if (diagnostics)
-                err.diagnostics.assign(static_cast<const char*>(diagnostics->getBufferPointer()), diagnostics->getBufferSize());
-            return std::unexpected{ raw_slang_error::source_load_failed };
+
+            slang_error error{};
+            error.code = raw_slang_error_code::source_load_failed;
+
+            if (diagnostics) {
+                error.message.assign(static_cast<const char*>(diagnostics->getBufferPointer()),
+                    diagnostics->getBufferSize());
+
+                // The pinned Slang version doesn't expose a structured "already cached" status, so we key off the diagnostic text
+                // E38202 is the documented error code for "module already loaded with different source"; anything else is a 
+                // genuine load failure
+                if (error.message.find("E38202") != std::string::npos || error.message.find("already loaded") != std::string::npos)
+                    error.code = raw_slang_error_code::already_compiled;
+            }
+
+            LOG(warn, "Slang error {}", error.message)
+            return std::unexpected{ error };
         }
 
         Slang::ComPtr<slang::IEntryPoint> entry_point;
         const std::string entry_name{ entry_point_name };
         if (SLANG_FAILED(module->findEntryPointByName(entry_name.c_str(), entry_point.writeRef())))
-            return std::unexpected{ raw_slang_error::entry_point_missing };
+            return std::unexpected{ slang_error{raw_slang_error_code::entry_point_missing, ""} };
 
         slang::IComponentType* components[] = { module, entry_point.get() };
         Slang::ComPtr<slang::IComponentType> program;
         if (SLANG_FAILED(m_impl->session->createCompositeComponentType(components, 2, program.writeRef(), diagnostics.writeRef())))
-            return std::unexpected{ raw_slang_error::link_failed };
+            return std::unexpected{ slang_error{ raw_slang_error_code::link_failed, ""} };
 
         Slang::ComPtr<slang::IComponentType> linked;
         if (SLANG_FAILED(program->link(linked.writeRef(), diagnostics.writeRef()))) {
-            raw_slang_result err{};
+            slang_error error{};
+            error.code = raw_slang_error_code::link_failed;
             if (diagnostics)
-                err.diagnostics.assign(static_cast<const char*>(diagnostics->getBufferPointer()), diagnostics->getBufferSize());
-            return std::unexpected{ raw_slang_error::link_failed };
+                error.message.assign(static_cast<const char*>(diagnostics->getBufferPointer()), diagnostics->getBufferSize());
+            return std::unexpected{ error };
         }
 
         Slang::ComPtr<slang::IBlob> spv_blob;
         if (SLANG_FAILED(linked->getEntryPointCode(0, 0, spv_blob.writeRef(), diagnostics.writeRef())))
-            return std::unexpected{ raw_slang_error::spirv_emission_failed };
+            return std::unexpected{ slang_error{ raw_slang_error_code::spirv_emission_failed, ""} };
 
         raw_slang_result result{};
         result.slang_module_name = module_name;

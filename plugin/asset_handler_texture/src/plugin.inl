@@ -66,22 +66,22 @@ namespace GLT::asset::handler::texture {
         // required chunks ---------------------------------------------------------------------------------------------
 
         const auto fmt_span = reader.get_as<GLT::asset::texture::texture_format>(GLT::asset::texture::CHUNK_TEXTURE_FORMAT);
-        VALIDATE(fmt_span.size() == 1, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] missing or malformed texture_format chunk (got {})", info.name, fmt_span.size())
+        VALIDATE(fmt_span.size() == 1, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] missing or malformed texture_format chunk (got {})", (info.name, fmt_span.size()))
 
         const auto pixel_bytes = reader.get(GLT::asset::texture::CHUNK_PIXEL_DATA);
-        VALIDATE(!pixel_bytes.empty(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] missing pixel data chunk", info.name)
+        VALIDATE(!pixel_bytes.empty(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] missing pixel data chunk", (info.name))
 
         const GLT::asset::texture::texture_format fmt = fmt_span[0];
 
         // Sanity checks -----------------------------------------------------------------------------------------------
 
-        VALIDATE(fmt.width > 0 && fmt.height > 0, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] texture_format claims {}x{}", info.name, fmt.width, fmt.height)
+        VALIDATE(fmt.width > 0 && fmt.height > 0, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] texture_format claims {}x{}", (info.name, fmt.width, fmt.height))
 
-        VALIDATE(fmt.format != GLT::asset::texture::pixel_format::unknown, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] texture_format has unknown pixel format", info.name)
+        VALIDATE(fmt.format != GLT::asset::texture::pixel_format::unknown, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] texture_format has unknown pixel format", (info.name))
 
         const u64 expected_base = [&]() -> u64 {                            // Compute expected base-level byte size.
 
@@ -104,13 +104,13 @@ namespace GLT::asset::handler::texture {
             return static_cast<u64>(fmt.width) * fmt.height * fmt.depth * bytes_per_pixel;
         }();
 
-        VALIDATE(expected_base > 0, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] unsupported pixel format {} in texture_format", info.name, static_cast<int>(fmt.format))
+        VALIDATE(expected_base > 0, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] unsupported pixel format {} in texture_format", (info.name, static_cast<int>(fmt.format)))
 
         if (fmt.mip_levels <= 1) {                                          // If there's no mip chunk, the pixel chunk must be exactly base level.
 
-            VALIDATE(pixel_bytes.size() == expected_base, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-                "[{}] pixel data size mismatch: expected {}, got {}", info.name, expected_base, pixel_bytes.size())
+            VALIDATE(pixel_bytes.size() == expected_base, return std::unexpected{ GLT::asset::load_error::corrupt_header },
+                "", "[{}] pixel data size mismatch: expected {}, got {}", (info.name, expected_base, pixel_bytes.size()))
         }
 
         // build the runtime asset -------------------------------------------------------------------------------------

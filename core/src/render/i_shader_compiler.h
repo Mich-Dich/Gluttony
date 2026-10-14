@@ -15,7 +15,7 @@ namespace GLT::render {
 
     // TYPES ===========================================================================================================
 
-    enum class shader_compile_error : u32 {
+    enum class shader_compile_error_code : u32 {
 
         none = 0,
         slang_unavailable,          // SDK not linked / global session creation failed
@@ -26,6 +26,14 @@ namespace GLT::render {
         unsupported_param_type,
         reflection_schema_error,
         backend_error,
+        already_compiled,           // asset already holds a successful compile for this exact source; no work was done
+    };
+
+
+    struct shader_compile_error {
+
+        shader_compile_error_code               code = shader_compile_error_code::none;
+        std::string                             message{};
     };
 
 

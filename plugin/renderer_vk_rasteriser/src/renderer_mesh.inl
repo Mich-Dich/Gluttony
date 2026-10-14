@@ -55,7 +55,7 @@ namespace GLT::renderer::vk_rasterizer {
         ASSERT(registry, "", "No asset registry");
 
         auto handle = registry->load(content_relative_path);
-        VALIDATE(handle.has_value(), return false, "", "Failed to load mesh [{}]", content_relative_path.generic_string());
+        VALIDATE(handle.has_value(), return false, "", "Failed to load mesh [{}]", (content_relative_path.generic_string()))
 
         return load_mesh(*handle);
     }
@@ -70,7 +70,7 @@ namespace GLT::renderer::vk_rasterizer {
             return true;
 
         auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(handle);
-        VALIDATE(mesh, return false, "", "Asset [{}] is not a mesh_asset", registry->info(handle).name);
+        VALIDATE(mesh, return false, "", "Asset [{}] is not a mesh_asset", (registry->info(handle).name))
 
         reserve_mesh_space(static_cast<u32>(mesh->vertices.size()), static_cast<u32>(mesh->indices.size()));
 
@@ -113,7 +113,7 @@ namespace GLT::renderer::vk_rasterizer {
             }
         }
 
-        VALIDATE(slot_index != UINT32_MAX, return, "", "handle not loaded");
+        VALIDATE(slot_index != UINT32_MAX, return, "", "handle not loaded")
 
         m_device.waitIdle();
 
@@ -378,7 +378,7 @@ namespace GLT::renderer::vk_rasterizer {
                 pipeline_info.subpass = 0;
 
                 auto result = m_device.createGraphicsPipeline(nullptr, pipeline_info);
-                VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create depth-only pipeline");
+                VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create depth-only pipeline")
                 m_depth_pipeline = result.value;
                 m_live_pipeline_count++;
             }
@@ -432,7 +432,7 @@ namespace GLT::renderer::vk_rasterizer {
                 pipeline_info.subpass = 0;
 
                 auto result = m_device.createGraphicsPipeline(nullptr, pipeline_info);
-                VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create mesh pipeline");
+                VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create mesh pipeline")
                 m_mesh_pipeline = result.value;
                 m_live_pipeline_count++;
             }

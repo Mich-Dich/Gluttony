@@ -226,11 +226,11 @@ namespace GLT::editor {
         make_window_name((std::string("AUD: ") + m_details.name).c_str());
 
         std::error_code error{};
-        VALIDATE(GLT::vfs::exists(PROJECT_CONTENT_DIR / path, error) && !error, m_load_failed = true; return, "",
-            "file not found [{}]", path.generic_string())
+        VALIDATE(GLT::vfs::exists(PROJECT_CONTENT_DIR / path, error) && !error, m_load_failed = true; return,
+            "", "file not found [{}]", (path.generic_string()))
 
-        VALIDATE(!GLT::vfs::is_directory(PROJECT_CONTENT_DIR /path, error) && !error, m_load_failed = true; return, "",
-            "path is a directory [{}]", path.generic_string())
+        VALIDATE(!GLT::vfs::is_directory(PROJECT_CONTENT_DIR /path, error) && !error, m_load_failed = true; return, 
+            "", "path is a directory [{}]", (path.generic_string()))
 
         // background load through the asset registry ------------------------------------------------------------------
         m_loading = true;

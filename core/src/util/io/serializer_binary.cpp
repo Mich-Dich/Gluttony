@@ -27,12 +27,12 @@ namespace GLT::serializer {
 		if (m_option == option::save) {
 
 			m_ostream = std::ofstream(m_filename, std::ios::out | std::ios::binary | std::ios::trunc);
-			VALIDATE(m_ostream, return, "", "Failed to save to file: [{}]", m_filename);
+			VALIDATE(m_ostream, return, "", "Failed to save to file: [{}]", (m_filename));
 
 		} else {
 
 			m_istream = std::ifstream(m_filename, std::ios::in | std::ios::binary);
-			VALIDATE(m_istream, return, "", "Failed to load file: [{}]", m_filename);
+			VALIDATE(m_istream, return, "", "Failed to load file: [{}]", (m_filename));
 
 		}
 

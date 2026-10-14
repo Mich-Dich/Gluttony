@@ -363,68 +363,145 @@ namespace GLT::logger {
 #define LOG_UNLOADED                                                        LOG(trace, "unloaded");
 
 // Assertion & Validation ----------------------------------------------------------------------------------------------
-// In logger.h
+
+// expands (a, b) -> ", a, b"   and  () -> ""
+#define _VAL_ARGS(...)                                                      __VA_OPT__(,) __VA_ARGS__
+
+
+// Shared dispatcher for ASSERT (defined once, before the platform branches)
+#define _ASSERT_PICK(_1,_2,_3,_4,_5,NAME,...) NAME
+
 
 // For ASSERT macro
 #if defined (PLATFORM_WINDOWS)
     #if ENABLE_LOGGING_FOR_ASSERTS
-        #define ASSERT(expr, message_success, message_failure, ...)                                                     \
+
+        #define ASSERT_3(expr, success_fmt, failure_fmt)                                                                \
             if (expr)                                                                                                   \
-                LOG(trace, message_success __VA_OPT__(,) __VA_ARGS__)                                                   \
+                LOG(trace, success_fmt)                                                                                 \
             else {                                                                                                      \
-                LOG(fatal, message_failure __VA_OPT__(,) __VA_ARGS__)                                                   \
+                LOG(fatal, failure_fmt)                                                                                 \
                 DEBUG_BREAK();                                                                                          \
             }
+
+        #define ASSERT_4(expr, success_fmt, failure_fmt, failure_args)                                                  \
+            if (expr)                                                                                                   \
+                LOG(trace, success_fmt)                                                                                 \
+            else {                                                                                                      \
+                LOG(fatal, failure_fmt _VAL_ARGS failure_args)                                                          \
+                DEBUG_BREAK();                                                                                          \
+            }
+
+        #define ASSERT_5(expr, success_fmt, success_args, failure_fmt, failure_args)                                    \
+            if (expr)                                                                                                   \
+                LOG(trace, success_fmt _VAL_ARGS success_args)                                                          \
+            else {                                                                                                      \
+                LOG(fatal, failure_fmt _VAL_ARGS failure_args)                                                          \
+                DEBUG_BREAK();                                                                                          \
+            }
+
+        #define ASSERT_BAD(...) static_assert(false, "ASSERT: wrong number of arguments");
+
+        #define ASSERT(...)                                                                                             \
+            _ASSERT_PICK(__VA_ARGS__, ASSERT_5, ASSERT_4, ASSERT_3, ASSERT_BAD)(__VA_ARGS__)
 
         #define ASSERT_S(expr)                                                                                          \
             if (!(expr)) {                                                                                              \
                 LOG(fatal, "Assertion failed: {}", #expr)                                                               \
                 DEBUG_BREAK();                                                                                          \
             }
+
     #else
-        #define ASSERT(expr, message_success, message_failure, ...)         if (!(expr)) { DEBUG_BREAK(); }
-        #define ASSERT_S(expr)                                              if (!(expr)) { DEBUG_BREAK(); }
+        #define ASSERT(expr, ...)   if (!(expr)) { DEBUG_BREAK(); }
+        #define ASSERT_S(expr)      if (!(expr)) { DEBUG_BREAK(); }
     #endif
 
 #elif defined (PLATFORM_LINUX)
-
     #if ENABLE_LOGGING_FOR_ASSERTS
-        #define ASSERT(expr, message_success, message_failure, ...)                                                     \
+
+        #define ASSERT_3(expr, success_fmt, failure_fmt)                                                                \
             if (expr)                                                                                                   \
-                LOG(trace, message_success __VA_OPT__(,) __VA_ARGS__)                                                   \
+                LOG(trace, success_fmt)                                                                                 \
             else {                                                                                                      \
-                LOG(fatal, message_failure __VA_OPT__(,) __VA_ARGS__)                                                   \
-                LOGGED_EXCEPTION(message_failure __VA_OPT__(,) __VA_ARGS__);                                            \
+                LOG(fatal, failure_fmt)                                                                                 \
+                LOGGED_EXCEPTION(failure_fmt);                                                                          \
             }
+
+        #define ASSERT_4(expr, success_fmt, failure_fmt, failure_args)                                                  \
+            if (expr)                                                                                                   \
+                LOG(trace, success_fmt)                                                                                 \
+            else {                                                                                                      \
+                LOG(fatal, failure_fmt _VAL_ARGS failure_args)                                                          \
+                LOGGED_EXCEPTION(failure_fmt _VAL_ARGS failure_args);                                                   \
+            }
+
+        #define ASSERT_5(expr, success_fmt, s_args, failure_fmt, failure_args)                                          \
+            if (expr)                                                                                                   \
+                LOG(trace, success_fmt _VAL_ARGS s_args)                                                                \
+            else {                                                                                                      \
+                LOG(fatal, failure_fmt _VAL_ARGS failure_args)                                                          \
+                LOGGED_EXCEPTION(failure_fmt _VAL_ARGS failure_args);                                                   \
+            }
+
+        #define ASSERT_BAD(...) static_assert(false, "ASSERT: wrong number of arguments");
+
+        #define ASSERT(...)                                                                                             \
+            _ASSERT_PICK(__VA_ARGS__, ASSERT_5, ASSERT_4, ASSERT_3, ASSERT_BAD, ASSERT_BAD)(__VA_ARGS__)
 
         #define ASSERT_S(expr)                                                                                          \
             if (!(expr)) {                                                                                              \
                 LOG(fatal, "Assertion failed: {}", #expr)                                                               \
                 LOGGED_EXCEPTION("Assertion failed: {}", #expr);                                                        \
             }
+
     #else
-        #define ASSERT(expr, message_success, message_failure, ...)         if (!(expr)) { LOGGED_EXCEPTION("Assertion failed: {}", #expr); }
-        #define ASSERT_S(expr)                                              if (!(expr)) { LOGGED_EXCEPTION("Assertion failed: {}", #expr); }
+        #define ASSERT(expr, ...)   if (!(expr)) { LOGGED_EXCEPTION("Assertion failed: {}", #expr); }
+        #define ASSERT_S(expr)      if (!(expr)) { LOGGED_EXCEPTION("Assertion failed: {}", #expr); }
     #endif
 
 #endif
 
 // For VALIDATE macro
 #if ENABLE_LOGGING_FOR_VALIDATION
-    #define VALIDATE(expr, command, message_success, message_failure, ...)                                              \
+
+    // 4-arg form: no format arguments at all
+    #define VALIDATE_4(expr, command, success_fmt, failure_fmt)                                                         \
         if (expr) {                                                                                                     \
-            LOG(trace, message_success __VA_OPT__(,) __VA_ARGS__)                                                       \
+            LOG(trace, success_fmt)                                                                                     \
         } else {                                                                                                        \
-            LOG(error, message_failure __VA_OPT__(,) __VA_ARGS__)                                                       \
+            LOG(error, failure_fmt)                                                                                     \
             command;                                                                                                    \
         }
 
-    #define VALIDATE_S(expr, command)                                                                                   \
-        if (!(expr)) {                                                                                                  \
-            LOG(error, "Validation failed: {}", #expr)                                                                  \
+    // 5-arg form: failure args (parenthesized)
+    #define VALIDATE_5(expr, command, success_fmt, failure_fmt, failure_args)                                           \
+        if (expr) {                                                                                                     \
+            LOG(trace, success_fmt)                                                                                     \
+        } else {                                                                                                        \
+            LOG(error, failure_fmt _VAL_ARGS failure_args)                                                              \
             command;                                                                                                    \
         }
+
+    // 6-arg form: success args and failure args (each parenthesized)
+    #define VALIDATE_6(expr, command, success_fmt, s_args, failure_fmt, failure_args)                                   \
+        if (expr) {                                                                                                     \
+            LOG(trace, success_fmt _VAL_ARGS s_args)                                                                    \
+        } else {                                                                                                        \
+            LOG(error, failure_fmt _VAL_ARGS failure_args)                                                              \
+            command;                                                                                                    \
+        }
+
+    #define VALIDATE_BAD(...) static_assert(false, "VALIDATE: wrong number of arguments")
+
+    // Dispatch on argument count
+    #define _VALIDATE_PICK(_1,_2,_3,_4,_5,_6,NAME,...) NAME
+    #define VALIDATE(...) \
+        _VALIDATE_PICK(__VA_ARGS__, VALIDATE_6, VALIDATE_5, VALIDATE_4, VALIDATE_BAD)(__VA_ARGS__)
+
 #else
-    #define VALIDATE(expr, command, message_success, message_failure, ...)  if (!(expr)) { command; }
+    #define VALIDATE(expr, command, ...)                                    if (!(expr)) { command; }
     #define VALIDATE_S(expr, command)                                       if (!(expr)) { command; }
 #endif
+
+// A small helper for the disabled path
+#define _VALIDATE_GET_EXPR(expr, ...) expr

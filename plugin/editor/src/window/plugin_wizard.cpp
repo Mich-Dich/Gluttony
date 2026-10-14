@@ -1024,25 +1024,25 @@ namespace GLT::editor {
         // create src/
         const auto src_dir = plugin_root / "src";
         GLT::vfs::create_directories(src_dir, error);
-        VALIDATE(!error, return, "", "Failed to create directories [{}]", error.message())
+        VALIDATE(!error, return, "", "Failed to create directories [{}]", (error.message()))
 
         {
             const std::string data = build_entry_point_cpp();
             VALIDATE(GLT::vfs::write_text_file(src_dir / ENTRY_FILE_NAME, data), return, 
-                "", "Failed to write [src/{}]", ENTRY_FILE_NAME)
+                "", "Failed to write [src/{}]", (ENTRY_FILE_NAME))
         }
 
         {
             const std::string data = build_cmake_lists();
             VALIDATE(GLT::vfs::write_text_file(plugin_root / BUILD_FILE_NAME, data), return, 
-                "", "Failed to write [{}]", BUILD_FILE_NAME)
+                "", "Failed to write [{}]", (BUILD_FILE_NAME))
         }
 
         // optional asset/
         if (m_create_asset_dir) {
             const auto asset_dir = plugin_root / "asset";
             GLT::vfs::create_directories(asset_dir, error);
-            VALIDATE(!error, return, "", "Failed to create directories [{}]", error.message())
+            VALIDATE(!error, return, "", "Failed to create directories [{}]", (error.message()))
         }
     
     }

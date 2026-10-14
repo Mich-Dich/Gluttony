@@ -379,8 +379,8 @@ namespace GLT::editor {
             auto registered = registry->register_runtime(
                 std::move(asset), rel_target, filename.stem().string());
 
-            VALIDATE(registered.has_value(), return false, "",
-                "asset_create: register_runtime failed for [{}]", rel_target.generic_string())
+            VALIDATE(registered.has_value(), return false, 
+                "", "asset_create: register_runtime failed for [{}]", (rel_target.generic_string()))
 
             auto save_result = registry->save(*registered);
             if (!save_result) {

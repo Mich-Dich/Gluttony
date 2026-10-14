@@ -1,4 +1,3 @@
-
 #include "util/pch.h"
 #include "material_viewer.h"
 
@@ -11,6 +10,7 @@
 #include <plugin_system/plugin_manager.h>
 #include <render/i_renderer.h>
 
+#include "material/material_compiler.h"
 #include "util/ui/pannel_collection.h"
 #include "util/ui/asset_picker.h"
 
@@ -84,18 +84,6 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
-
-    // Preserve the user's edited parameter values across a schema change produced by a recompile.
-    //
-    // Walks the NEW reflection table, and for each row tries to find a matching row in the OLD table
-    // keyed by (name_hash, type, byte_size, array_count). On a match, the old value bytes are copied
-    // into the new layout at the row's declared offset. Everything else keeps its compiler-provided default.
-    //
-    // A mismatch between old/new blob sizes or a missing header just returns the defaults unchanged -
-    // the caller is on a fresh material and there is nothing to preserve.
-    static std::vector<std::byte> repack_params_for_recompile(const std::vector<std::byte>& old_reflection,
-        const std::vector<std::byte>& old_params, std::span<const std::byte> new_reflection, std::span<const std::byte> new_defaults);
-        
         
     static const char* blend_mode_label(GLT::asset::material::blend_mode b);
 
@@ -109,72 +97,6 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
     static void write_packed(std::vector<std::byte>& blob, u32 offset, const T& v);
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
-
-    // Preserve the user's edited parameter values across a schema change produced by a recompile.
-    //
-    // Walks the NEW reflection table, and for each row tries to find a matching row in the OLD table keyed by (name_hash, 
-    // type, byte_size, array_count). On a match, the old value bytes are copied into the new layout at the row's declared offset
-    // Everything else keeps its compiler-provided default
-    //
-    // A mismatch between old/new blob sizes or a missing header just returns the defaults unchanged - the caller is on a fresh
-    // material and there is nothing to preserve
-    static std::vector<std::byte> repack_params_for_recompile(const std::vector<std::byte>& old_reflection,
-        const std::vector<std::byte>& old_params, std::span<const std::byte> new_reflection, std::span<const std::byte> new_defaults) {
-
-        using namespace GLT::asset::material;
-
-        std::vector<std::byte> out(new_defaults.begin(), new_defaults.end());
-
-        if (old_reflection.size() < sizeof(reflection_header)
-            || new_reflection.size() < sizeof(reflection_header))
-            return out;
-
-        const auto* old_hdr = reinterpret_cast<const reflection_header*>(old_reflection.data());
-        const auto* new_hdr = reinterpret_cast<const reflection_header*>(new_reflection.data());
-
-        if (old_hdr->magic != REFLECT_SCHEMA_MAGIC || new_hdr->magic != REFLECT_SCHEMA_MAGIC)
-            return out;
-
-        if (old_params.size() != old_hdr->packed_param_size)
-            return out;
-
-        if (out.size() != new_hdr->packed_param_size)
-            return out;
-
-        const auto* old_table = reinterpret_cast<const reflection_param*>(old_reflection.data() + old_hdr->param_table_offset);
-        const auto* new_table = reinterpret_cast<const reflection_param*>(new_reflection.data() + new_hdr->param_table_offset);
-
-        for (u32 i = 0; i < new_hdr->param_count; ++i) {
-
-            const auto& np = new_table[i];
-            const reflection_param* match = nullptr;
-            for (u32 j = 0; j < old_hdr->param_count; ++j) {
-
-                const auto& op = old_table[j];
-                if (op.name_hash == np.name_hash
-                    && op.type == np.type
-                    && op.byte_size == np.byte_size
-                    && op.array_count == np.array_count) {
-                    match = &op;
-                    break;
-                }
-            }
-
-            if (!match)
-                continue;   // new parameter - keep the compiler's default
-
-            // Bounds-check both sides before the memcpy
-            if (static_cast<std::size_t>(match->byte_offset) + match->byte_size > old_params.size())
-                continue;
-            if (static_cast<std::size_t>(np.byte_offset) + np.byte_size > out.size())
-                continue;
-
-            std::memcpy(out.data() + np.byte_offset, old_params.data() + match->byte_offset, np.byte_size);
-        }
-
-        return out;
-    }
-
 
     static const char* blend_mode_label(GLT::asset::material::blend_mode b) {
 
@@ -243,10 +165,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         close_material();
 
         m_material_path = path;
-        m_material_name = path.empty()
-            ? std::string("New Material")
-            : path.filename().replace_extension("").string();
-
+        m_material_name = path.empty() ? std::string("New Material") : path.filename().replace_extension("").string();
         m_load_failed = false;
 
         cache_window_state();
@@ -260,23 +179,19 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         }
 
         std::error_code error{};
-        VALIDATE(GLT::vfs::exists(PROJECT_CONTENT_DIR / path, error) && !error,
-            m_load_failed = true; m_has_material = false; m_show_window = true; return, "",
-            "file not found [{}]", path.generic_string())
+        VALIDATE(GLT::vfs::exists(PROJECT_CONTENT_DIR / path, error) && !error, 
+            m_load_failed = true; m_has_material = false; m_show_window = true; return, 
+            "", "file not found [{}]", (path.generic_string()))
 
         VALIDATE(!GLT::vfs::is_directory(PROJECT_CONTENT_DIR / path, error) && !error,
-            m_load_failed = true; m_has_material = false; m_show_window = true; return, "",
-            "path is a directory [{}]", path.generic_string())
+            m_load_failed = true; m_has_material = false; m_show_window = true; return, 
+            "", "path is a directory [{}]", (path.generic_string()))
 
         auto registry = GLT::asset::registry::get_ref();
-        VALIDATE(registry,
-            m_load_failed = true; m_show_window = true; return, "",
-            "no asset registry")
+        VALIDATE(registry, m_load_failed = true; m_show_window = true; return, "", "no asset registry")
 
         auto loaded = registry->load(path);
-        VALIDATE(loaded,
-            m_load_failed = true; m_show_window = true; return, "",
-            "failed to load material [{}]", path.generic_string())
+        VALIDATE(loaded, m_load_failed = true; m_show_window = true; return, "", "failed to load material [{}]", (path.generic_string()))
 
         if (!load_from_handle(*loaded)) {
             registry->unload(*loaded);
@@ -312,6 +227,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         m_bytecode_blob.clear();
         m_compiler_hash = 0;
         m_compiler_hash_matches = true;
+        m_compile_error_message.clear();
     }
 
 
@@ -351,7 +267,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
             return false;
 
         if (m_asset_handle == INVALID_HANDLE) {
-            LOG(warn, "material_viewer: no destination path for [{}] - cannot save", m_material_name);
+            LOG(warn, "no destination path for [{}] - cannot save", m_material_name);
             return false;
         }
 
@@ -361,7 +277,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
         auto* asset = registry->data_as<GLT::asset::material::material_asset>(m_asset_handle);
         if (!asset) {
-            LOG(error, "material_viewer: asset for [{}] disappeared before save", m_material_name);
+            LOG(error, "asset for [{}] disappeared before save", m_material_name);
             return false;
         }
 
@@ -380,7 +296,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
         auto result = registry->save(m_asset_handle);
         if (!result) {
-            LOG(error, "material_viewer: save failed for [{}] (error {})",
+            LOG(error, "save failed for [{}] (error {})",
                 m_material_name, static_cast<int>(result.error()));
             return false;
         }
@@ -401,59 +317,51 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         if (!m_has_material)
             return false;
 
-        using namespace GLT::asset::material;
+        // The material compiler owns the compile + validate + repack pipeline. The editor only pushes the result
+        // into the live asset, mirrors the derived artifacts back for display, and surfaces any diagnostic
+        auto result = GLT::material_compiler::compile(m_edit_slang, m_edit_blend, m_reflection_blob, m_edit_params);
 
-        // Reach the active renderer's shader compiler 
-        auto renderer = GLT::render::renderer::get_ref();
-        VALIDATE(renderer, return false, "", "material_viewer: no renderer available")
+        // ---- Failure --------------------------------------------------------------------------------------------
+        if (!result) {
 
-        auto* compiler = renderer->as<GLT::render::i_shader_compiler>();
-        VALIDATE(compiler, return false, "", "material_viewer: renderer does not expose an i_shader_compiler")
+            // "Already compiled" surfaces as a status, not an error
+            if (result.error().shader_code == GLT::render::shader_compile_error_code::already_compiled) {
 
-        // Compile the edited source
-        auto compiled = compiler->compile(m_edit_slang, m_edit_blend);
-        VALIDATE(compiled, return false, "", "material_viewer: compile failed for [{}] (error {})",
-            m_material_name, static_cast<u32>(compiled.error()))
+                m_compile_error_message.clear();
+                append_compile_log(compile_log_level::success, "Already compiled - asset still holds a valid compile for this source.");
+                return true;
+            }
 
-        // Validate the returned reflection blob
-        VALIDATE(compiled->reflection.size() >= sizeof(reflection_header), return false, "",
-            "material_viewer: compiler returned a reflection blob that is too small")
+            m_compile_error_message = result.error().message;
+            append_compile_log(compile_log_level::error, result.error().message);
+            LOG(error, "material_viewer: compile failed for [{}] - {}", m_material_name, result.error().message);
+            return false;
+        }
 
-        const auto* hdr = reinterpret_cast<const reflection_header*>(compiled->reflection.data());
-        VALIDATE(hdr->magic == REFLECT_SCHEMA_MAGIC
-            && hdr->schema_version == REFLECT_SCHEMA_VERSION
-            && hdr->contract_version == MATERIAL_CONTRACT_VERSION,
-            return false, "", "material_viewer: compiler returned an incompatible reflection schema")
+        // ---- Success (no-op) ------------------------------------------------------------------------------------
+        if (result->already_compiled) {
 
-        VALIDATE((hdr->entry_flags & surface_evaluate) != 0,
-            return false, "",
-            "material_viewer: material does not declare surface_evaluate()")
+            m_compile_error_message.clear();
+            append_compile_log(compile_log_level::success, "Already compiled - asset still holds a valid compile for this source.");
+            return true;
+        }
 
-        // Blend-mode / entry-point contract
-        const bool has_alpha = (hdr->entry_flags & alpha_test) != 0;
-        VALIDATE(!(m_edit_blend == blend_mode::masked && !has_alpha), return false, 
-            "", "material_viewer: masked blend mode requires an alpha_test() entry point")
-        VALIDATE(!(m_edit_blend != blend_mode::masked && has_alpha), return false, 
-            "", "material_viewer: alpha_test() declared but blend mode is not masked")
+        // ---- Success (real) -------------------------------------------------------------------------------------
 
-        // Repack the edited params against the new schema
-        std::vector<std::byte> new_params = repack_params_for_recompile(m_reflection_blob, m_edit_params, compiled->reflection,
-            compiled->default_params);
-
-        // Push the results into the live asset
+        m_compile_error_message.clear();
 
         auto registry = GLT::asset::registry::get_ref();
-        VALIDATE(registry, return false, "", "material_viewer: asset registry unavailable")
+        VALIDATE(registry, return false, "", "asset registry unavailable")
 
         auto* asset = registry->data_as<GLT::asset::material::material_asset>(m_asset_handle);
-        VALIDATE(asset, return false, "", "material_viewer: material asset for [{}] disappeared", m_material_name)
+        VALIDATE(asset, return false, "", "material asset for [{}] disappeared", (m_material_name))
 
         asset->slang_source = m_edit_slang;
         asset->blend = m_edit_blend;
-        asset->bytecode = std::move(compiled->bytecode);
-        asset->reflection = std::move(compiled->reflection);
-        asset->packed_params = std::move(new_params);
-        asset->compiler_hash = compiler->implementation_hash();
+        asset->bytecode = std::move(result->bytecode);
+        asset->reflection = std::move(result->reflection);
+        asset->packed_params = std::move(result->packed_params);
+        asset->compiler_hash = result->compiler_hash;
         asset->compiler_hash_matches = true;
 
         // Refresh the editor's mirrors
@@ -465,7 +373,12 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
         // Compile is an in-memory operation - the file on disk is still stale
         mark_dirty();
-        LOG(info, "material_viewer: compiled [{}] - {} byte(s) bytecode, {} param byte(s)", 
+
+        append_compile_log(compile_log_level::info, std::format("Compile succeeded - {} byte(s) bytecode, {} byte(s) reflection,"
+            " {} byte(s) params, compiler hash 0x{:016X}", m_bytecode_blob.size(), m_reflection_blob.size(), m_edit_params.size(),
+            m_compiler_hash));
+
+        LOG(info, "compiled [{}] - {} byte(s) bytecode, {} param byte(s)",
             m_material_name, m_bytecode_blob.size(), m_edit_params.size());
 
         return true;
@@ -569,15 +482,40 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
             return;
         }
 
+        constexpr f32 SPLITTER_THICKNESS = 6.0f;
+        constexpr f32 MIN_EDITOR_HEIGHT = 120.0f;
+        constexpr f32 MIN_TERMINAL_HEIGHT = 80.0f;
+
         const ImVec2 avail = ImGui::GetContentRegionAvail();
 
-        ImGui::BeginChild("##slang_host", avail, false);
+        // Clamp the persisted terminal height so the editor always keeps its minimum, and vice versa
+        m_terminal_height = std::clamp(m_terminal_height, MIN_TERMINAL_HEIGHT,
+            std::max(MIN_TERMINAL_HEIGHT, avail.y - MIN_EDITOR_HEIGHT - SPLITTER_THICKNESS));
+
+        f32 editor_height = avail.y - m_terminal_height - SPLITTER_THICKNESS;
+
+        // slang editor
+
+        ImGui::BeginChild("##slang_host", ImVec2(0, editor_height), false);
 
         ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::monospace_regular));
         m_slang_editor.Render("##slang_editor");
         ImGui::PopFont();
 
         ImGui::EndChild();
+
+        // splitter
+        {
+            const ImVec2 item_min = ImGui::GetItemRectMin();
+            const ImVec2 item_max = ImGui::GetItemRectMax();
+            ImRect bb(ImVec2(item_min.x, item_max.y), ImVec2(item_max.x, item_max.y + SPLITTER_THICKNESS));
+            ImGui::SplitterBehavior(bb, ImGui::GetID("##source_splitter"), ImGuiAxis_Y, &editor_height, &m_terminal_height,
+                MIN_EDITOR_HEIGHT, MIN_TERMINAL_HEIGHT, 2.0f, 0.0f, ImGui::GetColorU32(ImGuiCol_Separator));
+        }
+
+        // compile output
+
+        draw_compile_terminal();
 
         // Sync back to the edit buffer so mark_dirty() / revert() see the change.
         const std::string current = m_slang_editor.GetText();
@@ -587,6 +525,63 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         }
     }
 
+
+        void material_viewer_window::draw_compile_terminal() {
+
+        // Fixed header: label on the left, Clear on the right
+        if (ImGui::BeginTable("##compile_terminal_header", 2, ImGuiTableFlags_SizingStretchProp)) {
+
+            ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("##btn",   ImGuiTableColumnFlags_WidthFixed);
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Compile Output");
+
+            ImGui::TableSetColumnIndex(1);
+            if (ImGui::SmallButton("Clear"))
+                clear_compile_log();
+
+            ImGui::EndTable();
+        }
+
+        // Scrolling log body
+        ImGui::BeginChild("##compile_terminal", ImVec2(0, 0), true);
+
+        if (m_compile_log.empty()) {
+
+            ImGui::TextDisabled("No compile output yet. Press Compile to build the material.");
+        } else {
+
+            ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::monospace_regular));
+
+            for (const auto& entry : m_compile_log) {
+
+                ImVec4 color;
+                const char* prefix;
+
+                switch (entry.level) {
+                    case compile_log_level::error:      color = ImVec4(0.90f, 0.40f, 0.40f, 1.0f); prefix = "[ERROR] "; break;
+                    case compile_log_level::warning:    color = ImVec4(0.95f, 0.75f, 0.35f, 1.0f); prefix = "[WARN]  "; break;
+                    case compile_log_level::success:    color = ImVec4(0.55f, 0.85f, 0.55f, 1.0f); prefix = "[OK]    "; break;
+                    default:                            color = ImVec4(0.70f, 0.75f, 0.70f, 1.0f); prefix = "[INFO]  "; break;
+                }
+
+                ImGui::PushStyleColor(ImGuiCol_Text, color);
+                ImGui::TextWrapped("%s%s", prefix, entry.text.c_str());
+                ImGui::PopStyleColor();
+            }
+
+            ImGui::PopFont();
+
+            if (m_scroll_terminal_to_bottom) {
+                ImGui::SetScrollHereY(1.0f);
+                m_scroll_terminal_to_bottom = false;
+            }
+        }
+
+        ImGui::EndChild();
+    }
 
     // -----------------------------------------------------------------------------------------------------------------
     // Blend section
@@ -932,6 +927,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         m_bytecode_blob.clear();
         m_compiler_hash = 0;
         m_compiler_hash_matches = false;
+        m_compile_error_message.clear();
+        clear_compile_log();
 
         m_dirty = false;
         m_has_material = true;
@@ -975,6 +972,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         m_bytecode_blob = asset->bytecode;
         m_compiler_hash = asset->compiler_hash;
         m_compiler_hash_matches = asset->compiler_hash_matches;
+        m_compile_error_message.clear();
 
         m_slang_editor.SetText(m_edit_slang);
 
@@ -1034,6 +1032,25 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         const char* msg = m_has_material ? "Preview unavailable (renderer hook not wired)" : "No material loaded";
         const ImVec2 s = ImGui::CalcTextSize(msg);
         draw->AddText(ImVec2((min.x + max.x - s.x) * 0.5f, (min.y + max.y - s.y) * 0.5f), IM_COL32(180, 180, 180, 220), msg);
+    }
+
+
+    void material_viewer_window::append_compile_log(compile_log_level level, std::string text) {
+
+        m_compile_log.push_back({ level, std::move(text) });
+
+        constexpr std::size_t MAX_LOG_ENTRIES = 200;
+        if (m_compile_log.size() > MAX_LOG_ENTRIES)
+            m_compile_log.erase(m_compile_log.begin(), m_compile_log.begin() + (m_compile_log.size() - MAX_LOG_ENTRIES));
+
+        m_scroll_terminal_to_bottom = true;
+    }
+
+
+    void material_viewer_window::clear_compile_log() {
+
+        m_compile_log.clear();
+        m_scroll_terminal_to_bottom = false;
     }
 
 }

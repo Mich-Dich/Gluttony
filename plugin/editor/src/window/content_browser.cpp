@@ -260,7 +260,7 @@ namespace GLT::editor {
         std::vector<std::filesystem::path> out;
         std::error_code error{};
         auto iterator = GLT::vfs::directory_iterator(dir, error);
-        VALIDATE(!error, return {}, "", "Failed to create directory iterator for [{}]", dir.generic_string())
+        VALIDATE(!error, return {}, "", "Failed to create directory iterator for [{}]", (dir.generic_string()))
         for (auto& entry : iterator) {
 
             if (entry.is_directory(error) && !is_hidden_entry(entry.path()))
@@ -1169,7 +1169,7 @@ namespace GLT::editor {
                     
                     std::error_code error{};
                     GLT::vfs::remove(path, error);
-                    VALIDATE(!error, continue, "", "Failed to delete [{}]", path.generic_string())
+                    VALIDATE(!error, continue, "", "Failed to delete [{}]", (path.generic_string()))
                 }
 
                 clear_selection();
@@ -1314,7 +1314,7 @@ namespace GLT::editor {
 
             // Ask the registry which factories can handle this file.
             auto bindings = registry->candidate_imports(src);
-            VALIDATE(!bindings.empty(), continue, "", "content_browser: no factory for [{}]", src.generic_string());
+            VALIDATE(!bindings.empty(), continue, "", "content_browser: no factory for [{}]", (src.generic_string()))
 
             // Pick a target type. If multiple candidates, prompt (deferred to a
             // modal - for now take the first one).
@@ -1328,7 +1328,7 @@ namespace GLT::editor {
                 .replace_extension(std::string(".") + std::string(GLT::asset::type_to_extension(target)));
             std::error_code error{};
             VALIDATE(!GLT::vfs::exists(target_path, error) && !error, continue, 
-                "", "Asset under that name already exists [{}]", target_path.generic_string())
+                "", "Asset under that name already exists [{}]", (target_path.generic_string()))
 
             // Fire and forget on the thread pool.
             // The Assimp parse and vertex processing happen on the worker thread.
@@ -1337,7 +1337,7 @@ namespace GLT::editor {
             GLT::thread_pool::push([registry, src, target, target_path]() {
 
                 auto result = registry->import(src, target, target_path);
-                VALIDATE(result, return, "", "import [{}] -> type {} failed", src.generic_string(), target.value);
+                VALIDATE(result, return, "", "import [{}] -> type {} failed", (src.generic_string(), target.value))
                 const GLT::asset::handle h = *result;
                 LOG(info, "imported [{}] -> [{}]", src.generic_string(), registry->info(h).virtual_path.generic_string());
 
@@ -1369,7 +1369,7 @@ namespace GLT::editor {
             candidate = m_current_dir / ("New Folder " + std::to_string(suffix));
 
         GLT::vfs::create_directory(candidate, error);
-        VALIDATE(!error, return, "", "content_browser: failed to create folder [{}]", candidate.generic_string())
+        VALIDATE(!error, return, "", "content_browser: failed to create folder [{}]", (candidate.generic_string()))
 
         m_entries_dirty = true;
 
@@ -1405,7 +1405,7 @@ namespace GLT::editor {
         }
 
         VALIDATE(!relative_target.empty(), return, "",
-            "content_browser: could not find a free filename for a new material in [{}]", m_current_dir.generic_string())
+            "content_browser: could not find a free filename for a new material in [{}]", (m_current_dir.generic_string()))
 
         // ---- build in-memory material ---------------------------------------
         auto asset = GLT::create_unique_ref<GLT::asset::material::material_asset>();
@@ -1416,8 +1416,8 @@ namespace GLT::editor {
         // ---- register + persist -------------------------------------------------
         auto registered = registry->register_runtime(std::move(asset), relative_target, relative_target.stem().string());
 
-        VALIDATE(registered.has_value(), return, "", "content_browser: register_runtime failed for [{}]",
-            relative_target.generic_string())
+        VALIDATE(registered.has_value(), return, 
+            "", "content_browser: register_runtime failed for [{}]", (relative_target.generic_string()))
 
         auto save_result = registry->save(*registered);
         if (!save_result) {

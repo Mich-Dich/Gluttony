@@ -24,6 +24,36 @@ namespace GLT::renderer::vk_rasterizer {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
+    // Slang doesn't expose default-value reflection through a stable API, so we parse the source directly. The parser is
+    // deliberately small and only understands what the v0 contract allows on material_params fields
+    namespace {
+
+        // Skip whitespace and //, /* */ comments
+        static std::size_t skip_ws(std::string_view s, std::size_t i);
+
+
+        // Find `struct <name> { ... }` and return the byte range of the body (exclusive of braces)
+        static std::optional<std::pair<std::size_t, std::size_t>> find_struct_body(std::string_view s, std::string_view struct_name);
+
+
+        // Split a struct body on top-level ';'
+        static std::vector<std::string_view> split_field_decls(std::string_view body);
+
+        // From `float3 base_color = float3(0.8, 0.8, 0.8)` pull out (name, rhs)
+        static std::optional<std::pair<std::string, std::string>> parse_field(std::string_view decl);
+
+        // Parse an initializer into a flat list of components.
+        // Accepts:
+        //   scalar literal          0.5      -1  42  true  false  0.5f
+        //   broadcast               float3(0.5)
+        //   explicit vector         float3(0.8, 0.8, 0.8)
+        //   brace init              { 0.8, 0.8, 0.8 }
+        static std::optional<std::vector<f64>> parse_value_components(std::string_view expr);
+
+        // Write a component list into the packed buffer at dst according to the contract type
+        static void write_components(std::byte* dst, GLT::asset::material::param_type type, const std::vector<f64>& comps);
+    }
+
     // @brief Convert a Slang scalar type to a contract param_type. Returns nullopt for anything the v0 contract forbids
     static std::optional<GLT::asset::material::param_type> slang_scalar_to_param_type(slang::TypeReflection::ScalarType scalar);
 
@@ -46,20 +76,301 @@ namespace GLT::renderer::vk_rasterizer {
         u32 entry_flags);
 
 
-    // @brief Reads each field's default value from the material source and writes it into
-    //        the packed params blob at the offset given by the reflection schema.
+    // @brief Reads each field's default value out of the *source text* and writes it into the packed params blob at the
+    // offset given by the reflection schema
     //
-    // NOTE(Slang SDK): the pinned Slang reflection API does not expose field default
-    // initializers through a stable C++ accessor. Until that changes (or we add a
-    // generated "defaults struct" compile pass), we emit zero-initialized bytes and log
-    // a warning. Materials that rely on non-zero defaults must have them written through
-    // the editor on first save.
-    static std::expected<std::vector<std::byte>, GLT::render::shader_compile_error> pack_defaults_from_linked(slang::IComponentType* linked,
-        std::span<const std::byte> reflection_blob);
+    // NOTE(Slang SDK): the pinned Slang reflection API does not expose struct field default initializers through a stable
+    // C++ accessor. Rather than reach into unstable internals, we parse the `material_params` struct declaration from the
+    // source directly. This is sufficient for the v0 contract, which restricts params to scalars, float2/3/4, and bool/int/uint
+    //
+    // Fields whose initializer can't be parsed (a named constant, an expression, an unsupported type) are left zero-initialized
+    static std::expected<std::vector<std::byte>, GLT::render::shader_compile_error> pack_defaults_from_linked(
+        slang::IComponentType* linked, std::span<const std::byte> reflection_blob, std::string_view material_source);
+
+    // @brief Translate a raw slang error code into the public shader_compile_error_code, preserving the
+    // "already_compiled" signal so the editor can report it as a status rather than a failure
+    static GLT::render::shader_compile_error_code map_raw_slang_code(util::raw_slang_error_code code);
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
+    namespace {
+
+        static std::size_t skip_ws(std::string_view s, std::size_t i) {
+
+            while (i < s.size()) {
+
+                if (std::isspace(static_cast<unsigned char>(s[i]))) { ++i; continue; }
+
+                if (i + 1 < s.size() && s[i] == '/' && s[i + 1] == '/') {
+                    i += 2;
+                    while (i < s.size() && s[i] != '\n') ++i;
+                    continue;
+                }
+
+                if (i + 1 < s.size() && s[i] == '/' && s[i + 1] == '*') {
+                    i += 2;
+                    while (i + 1 < s.size() && !(s[i] == '*' && s[i + 1] == '/')) ++i;
+                    if (i + 1 < s.size()) i += 2;
+                    continue;
+                }
+
+                break;
+            }
+            return i;
+        }
+
+
+        static std::optional<std::pair<std::size_t, std::size_t>> find_struct_body(std::string_view s, std::string_view struct_name) {
+
+            std::size_t pos = 0;
+            while (pos < s.size()) {
+
+                pos = s.find("struct", pos);
+                if (pos == std::string_view::npos)
+                    return std::nullopt;
+
+                std::size_t p = skip_ws(s, pos + 6);
+
+                // Must match the requested name exactly (no prefix matches)
+                if (p + struct_name.size() > s.size()
+                    || s.substr(p, struct_name.size()) != struct_name) {
+                    pos += 6;
+                    continue;
+                }
+
+                std::size_t after = p + struct_name.size();
+                if (after < s.size()
+                    && (std::isalnum(static_cast<unsigned char>(s[after])) || s[after] == '_')) {
+                    pos += 6;
+                    continue;
+                }
+
+                // Skip ws then require '{'
+                p = skip_ws(s, after);
+                if (p >= s.size() || s[p] != '{') { pos += 6; continue; }
+
+                // Match braces, respecting comments
+                const std::size_t body_start = p + 1;
+                std::size_t depth = 1;
+                std::size_t i = body_start;
+
+                while (i < s.size() && depth > 0) {
+
+                    const char c = s[i];
+
+                    if (c == '{') { ++depth; ++i; continue; }
+                    if (c == '}') { --depth; ++i; continue; }
+
+                    if (c == '/' && i + 1 < s.size()) {
+                        if (s[i + 1] == '/') {
+                            i += 2;
+                            while (i < s.size() && s[i] != '\n') ++i;
+                            continue;
+                        }
+                        if (s[i + 1] == '*') {
+                            i += 2;
+                            while (i + 1 < s.size() && !(s[i] == '*' && s[i + 1] == '/')) ++i;
+                            if (i + 1 < s.size()) i += 2;
+                            continue;
+                        }
+                    }
+
+                    ++i;
+                }
+
+                if (depth == 0)
+                    return std::make_pair(body_start, i - 1);
+                return std::nullopt;
+            }
+            return std::nullopt;
+        }
+
+
+        static std::vector<std::string_view> split_field_decls(std::string_view body) {
+
+            std::vector<std::string_view> out;
+            std::size_t start = 0;
+            int depth = 0;
+
+            for (std::size_t i = 0; i < body.size(); ++i) {
+
+                const char c = body[i];
+                if (c == '(' || c == '{' || c == '[') ++depth;
+                else if (c == ')' || c == '}' || c == ']') --depth;
+                else if (c == ';' && depth == 0) {
+                    out.push_back(body.substr(start, i - start));
+                    start = i + 1;
+                }
+            }
+
+            if (start < body.size())
+                out.push_back(body.substr(start));
+
+            return out;
+        }
+
+
+        static std::optional<std::pair<std::string, std::string>> parse_field(std::string_view decl) {
+
+            const auto eq = decl.find('=');
+            if (eq == std::string_view::npos)
+                return std::nullopt;
+
+            const std::string_view lhs = decl.substr(0, eq);
+            const std::string_view rhs = decl.substr(eq + 1);
+
+            // Walk lhs backwards to grab the last identifier (the field name)
+            std::size_t i = lhs.size();
+            while (i > 0 && std::isspace(static_cast<unsigned char>(lhs[i - 1]))) --i;
+            const std::size_t end = i;
+            while (i > 0 && (std::isalnum(static_cast<unsigned char>(lhs[i - 1])) || lhs[i - 1] == '_')) --i;
+
+            if (i == end)
+                return std::nullopt;
+
+            std::string name(lhs.substr(i, end - i));
+
+            // Trim rhs
+            std::size_t rs = 0, re = rhs.size();
+            while (rs < re && std::isspace(static_cast<unsigned char>(rhs[rs]))) ++rs;
+            while (re > rs && std::isspace(static_cast<unsigned char>(rhs[re - 1]))) --re;
+
+            return std::make_pair(std::move(name), std::string(rhs.substr(rs, re - rs)));
+        }
+
+
+        static std::optional<std::vector<f64>> parse_value_components(std::string_view expr) {
+
+            // Trim
+            std::size_t s = 0, e = expr.size();
+            while (s < e && std::isspace(static_cast<unsigned char>(expr[s]))) ++s;
+            while (e > s && std::isspace(static_cast<unsigned char>(expr[e - 1]))) --e;
+            expr = expr.substr(s, e - s);
+
+            if (expr.empty())
+                return std::nullopt;
+
+            std::string_view args = expr;
+
+            if (const auto paren = expr.find('('); paren != std::string_view::npos) {
+                const auto close = expr.rfind(')');
+                if (close == std::string_view::npos || close < paren)
+                    return std::nullopt;
+                args = expr.substr(paren + 1, close - paren - 1);
+            } else if (expr.front() == '{' && expr.back() == '}') {
+                args = expr.substr(1, expr.size() - 2);
+            }
+
+            std::vector<f64> out;
+            std::size_t start = 0;
+
+            for (std::size_t i = 0; i <= args.size(); ++i) {
+
+                if (i != args.size() && args[i] != ',')
+                    continue;
+
+                std::string_view tok = args.substr(start, i - start);
+                start = i + 1;
+
+                // Trim
+                std::size_t ts = 0, te = tok.size();
+                while (ts < te && std::isspace(static_cast<unsigned char>(tok[ts]))) ++ts;
+                while (te > ts && std::isspace(static_cast<unsigned char>(tok[te - 1]))) --te;
+                tok = tok.substr(ts, te - ts);
+
+                if (tok.empty())
+                    return std::nullopt;
+
+                std::string tmp(tok);
+
+                // Strip Slang/HLSL float suffix
+                if (tmp.size() > 1 && (tmp.back() == 'f' || tmp.back() == 'F'))
+                    tmp.pop_back();
+
+                try {
+                    if (tmp == "true")       out.push_back(1.0);
+                    else if (tmp == "false") out.push_back(0.0);
+                    else                     out.push_back(std::stod(tmp));
+                } catch (...) {
+                    return std::nullopt;
+                }
+            }
+
+            return out;
+        }
+
+
+        static void write_components(std::byte* dst, GLT::asset::material::param_type type, const std::vector<f64>& comps) {
+
+            using PT = GLT::asset::material::param_type;
+
+            switch (type) {
+
+                case PT::f32: {
+                    if (comps.size() != 1) return;
+                    const f32 v = static_cast<f32>(comps[0]);
+                    std::memcpy(dst, &v, sizeof(v));
+                    break;
+                }
+
+                case PT::f32x2: {
+                    f32 tmp[2];
+                    if      (comps.size() == 1) { tmp[0] = tmp[1] = static_cast<f32>(comps[0]); }
+                    else if (comps.size() == 2) { for (int k = 0; k < 2; ++k) tmp[k] = static_cast<f32>(comps[k]); }
+                    else return;
+                    std::memcpy(dst, tmp, sizeof(tmp));
+                    break;
+                }
+
+                case PT::f32x3: {
+                    f32 tmp[3];
+                    if      (comps.size() == 1) { for (int k = 0; k < 3; ++k) tmp[k] = static_cast<f32>(comps[0]); }
+                    else if (comps.size() == 3) { for (int k = 0; k < 3; ++k) tmp[k] = static_cast<f32>(comps[k]); }
+                    else return;
+                    std::memcpy(dst, tmp, sizeof(tmp));
+                    break;
+                }
+
+                case PT::f32x4: {
+                    f32 tmp[4];
+                    if      (comps.size() == 1) { for (int k = 0; k < 4; ++k) tmp[k] = static_cast<f32>(comps[0]); }
+                    else if (comps.size() == 4) { for (int k = 0; k < 4; ++k) tmp[k] = static_cast<f32>(comps[k]); }
+                    else return;
+                    std::memcpy(dst, tmp, sizeof(tmp));
+                    break;
+                }
+
+                case PT::i32: {
+                    if (comps.size() != 1) return;
+                    const i32 v = static_cast<i32>(comps[0]);
+                    std::memcpy(dst, &v, sizeof(v));
+                    break;
+                }
+
+                case PT::u32: {
+                    if (comps.size() != 1) return;
+                    const u32 v = static_cast<u32>(comps[0]);
+                    std::memcpy(dst, &v, sizeof(v));
+                    break;
+                }
+
+                case PT::boolean: {
+                    if (comps.size() != 1) return;
+                    const u32 v = comps[0] != 0.0 ? 1u : 0u;
+                    std::memcpy(dst, &v, sizeof(v));
+                    break;
+                }
+
+                default:
+                    // Matrix types: not supported for text-extracted defaults in v0
+                    break;
+            }
+        }
+
+    }
+
 
     static std::optional<GLT::asset::material::param_type> slang_scalar_to_param_type(slang::TypeReflection::ScalarType scalar) {
 
@@ -121,25 +432,27 @@ namespace GLT::renderer::vk_rasterizer {
         u32 entry_flags) {
 
         namespace AM = GLT::asset::material;
+        namespace GR = GLT::render;
+        #define BUILD_ERROR(type, msg)          std::unexpected{ GR::shader_compile_error{ GR::shader_compile_error_code::type, msg} };
 
         if (!linked)
-            return std::unexpected{ GLT::render::shader_compile_error::reflection_schema_error };
+            return BUILD_ERROR(reflection_schema_error, "")
 
         auto* layout = linked->getLayout();
         if (!layout)
-            return std::unexpected{ GLT::render::shader_compile_error::reflection_schema_error };
+            return BUILD_ERROR(reflection_schema_error, "")
 
         auto* type = layout->findTypeByName("material_params");
         if (!type)
-            return std::unexpected{ GLT::render::shader_compile_error::reflection_schema_error };
+            return BUILD_ERROR(reflection_schema_error, "")
 
         auto* type_layout = layout->getTypeLayout(type);
         if (!type_layout)
-            return std::unexpected{ GLT::render::shader_compile_error::reflection_schema_error };
+            return BUILD_ERROR(reflection_schema_error, "")
 
         const unsigned field_count = type_layout->getFieldCount();
         if (field_count == 0)
-            return std::unexpected{ GLT::render::shader_compile_error::reflection_schema_error };
+            return BUILD_ERROR(reflection_schema_error, "")
 
         std::vector<AM::reflection_param> params;
         params.reserve(field_count);
@@ -149,19 +462,19 @@ namespace GLT::renderer::vk_rasterizer {
 
         u32 cursor = 0;
 
-        for (unsigned i = 0; i < field_count; ++i) {
+        for (unsigned index = 0; index < field_count; index++) {
 
-            auto* field = type_layout->getFieldByIndex(i);
+            auto* field = type_layout->getFieldByIndex(index);
             if (!field)
-                return std::unexpected{ GLT::render::shader_compile_error::reflection_schema_error };
+                return BUILD_ERROR(reflection_schema_error, "")
 
             const char* name = field->getName();
             if (!name || !*name)
-                return std::unexpected{ GLT::render::shader_compile_error::reflection_schema_error };
+                return BUILD_ERROR(reflection_schema_error, "")
 
             auto pt = slang_type_to_param_type(field->getType());
             if (!pt)
-                return std::unexpected{ GLT::render::shader_compile_error::unsupported_param_type };
+                return BUILD_ERROR(unsupported_param_type, "")
 
             const u32 size = AM::param_type_size(*pt);
             const u32 alignment = AM::param_type_alignment(*pt);
@@ -182,6 +495,8 @@ namespace GLT::renderer::vk_rasterizer {
 
             params.push_back(p);
         }
+
+        #undef BUILD_ERROR
 
         const u32 header_size = static_cast<u32>(sizeof(AM::reflection_header));
         const u32 params_bytes = static_cast<u32>(params.size() * sizeof(AM::reflection_param));
@@ -209,28 +524,90 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    static std::expected<std::vector<std::byte>, GLT::render::shader_compile_error> pack_defaults_from_linked(slang::IComponentType* /*linked*/,
-        std::span<const std::byte> reflection_blob) {
+    static std::expected<std::vector<std::byte>, GLT::render::shader_compile_error> pack_defaults_from_linked(
+        slang::IComponentType* /*linked*/, std::span<const std::byte> reflection_blob, std::string_view material_source) {
+
 
         namespace AM = GLT::asset::material;
+        namespace GR = GLT::render;
+
+        #define BUILD_ERROR(type, msg)  std::unexpected{ GR::shader_compile_error{ GR::shader_compile_error_code::type, msg} };
 
         if (reflection_blob.size() < sizeof(AM::reflection_header))
-            return std::unexpected{ GLT::render::shader_compile_error::reflection_schema_error };
+            return BUILD_ERROR(reflection_schema_error, "reflection blob too small")
 
         const auto* hdr = reinterpret_cast<const AM::reflection_header*>(reflection_blob.data());
         if (hdr->magic != AM::REFLECT_SCHEMA_MAGIC)
-            return std::unexpected{ GLT::render::shader_compile_error::reflection_schema_error };
+            return BUILD_ERROR(reflection_schema_error, "reflection magic mismatch")
 
         std::vector<std::byte> packed(hdr->packed_param_size, std::byte{ 0 });
 
-        static bool warned = false;
-        if (!warned) {
-            LOG(warn, "material_compiler: default values are zero-initialized Slang SDK has no stable default-value reflection);"
-                " set non-zero defaults through the editor until Phase 2 extends this.");
-            warned = true;
+        // Extract field defaults from the source text ------------------------------------
+        const auto body_range = find_struct_body(material_source, "material_params");
+        if (!body_range) {
+            // No struct in the source - leave zeroes, not an error. The rest of the compile
+            // pipeline will fail earlier if the struct is truly required
+            #undef BUILD_ERROR
+            return packed;
         }
 
+        const std::string_view body{
+            material_source.data() + body_range->first,
+            body_range->second - body_range->first
+        };
+
+        std::unordered_map<std::string, std::string> field_exprs;
+        for (const auto decl : split_field_decls(body))
+            if (auto f = parse_field(decl))
+                field_exprs.emplace(std::move(f->first), std::move(f->second));
+
+        // Walk the reflection table and write matching defaults --------------------------
+        const auto* params = reinterpret_cast<const AM::reflection_param*>(
+            reflection_blob.data() + hdr->param_table_offset);
+        const auto* strtab = reinterpret_cast<const char*>(
+            reflection_blob.data() + hdr->string_table_offset);
+
+        u32 applied = 0, missing = 0;
+
+        for (u32 i = 0; i < hdr->param_count; ++i) {
+
+            const auto& p = params[i];
+            const char* name = strtab + p.name_offset;
+
+            const auto it = field_exprs.find(name);
+            if (it == field_exprs.end()) { ++missing; continue; }
+
+            const auto comps = parse_value_components(it->second);
+            if (!comps) { ++missing; continue; }
+
+            write_components(packed.data() + p.byte_offset, p.type, *comps);
+            ++applied;
+        }
+
+        #undef BUILD_ERROR
+
+        LOG(info, "material_compiler: packed {} default(s) from source ({} param(s) left zero-initialized)",
+            applied, missing);
+
         return packed;
+    }
+
+
+    static GLT::render::shader_compile_error_code map_raw_slang_code(util::raw_slang_error_code code) {
+
+        using R = util::raw_slang_error_code;
+        using S = GLT::render::shader_compile_error_code;
+
+        switch (code) {
+            case R::already_compiled:       return S::already_compiled;
+            case R::session_creation_failed:return S::slang_unavailable;
+            case R::link_failed:            return S::slang_link_failed;
+            case R::entry_point_missing:    return S::slang_parse_failed;
+            case R::spirv_emission_failed:  return S::backend_error;
+            case R::source_load_failed:
+            case R::none:
+            default:                        return S::slang_parse_failed;
+        }
     }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -255,6 +632,9 @@ namespace GLT::renderer::vk_rasterizer {
 
 
         namespace AM = GLT::asset::material;
+        namespace GR = GLT::render;
+        #define BUILD_ERROR(type, msg)      std::unexpected{ GR::shader_compile_error{ GR::shader_compile_error_code::type, msg}};
+        #define BUILD_ERROR_D(type, msg)    std::unexpected{ GR::shader_compile_error{ type, msg}};
 
         // Discover optional entry points by identifier scan
 
@@ -264,9 +644,10 @@ namespace GLT::renderer::vk_rasterizer {
         const bool has_vertex_transform = slang_source.find("vertex_transform") != std::string_view::npos;
         const bool has_alpha_test = slang_source.find("alpha_test") != std::string_view::npos;
 
-        const bool masked = (blend == AM::blend_mode::masked);
-        VALIDATE(masked == has_alpha_test, return std::unexpected{ GLT::render::shader_compile_error::contract_version_mismatch },
-            "", "material compile: blend/masked rule violated (masked={} alpha_test={})", masked, has_alpha_test);
+        const bool masked = blend == AM::blend_mode::masked;
+        if(masked != has_alpha_test)
+            return BUILD_ERROR(contract_version_mismatch, 
+                std::format("blend/masked rule violated (masked={} alpha_test={})", masked, has_alpha_test))
 
         u32 entry_flags = AM::surface_evaluate;
         if (has_vertex_transform)
@@ -288,36 +669,47 @@ namespace GLT::renderer::vk_rasterizer {
         };
 
         compiled_shader_bytecode_meaning buffer{};
-        GLT::render::compiled_shader out{};
+        GR::compiled_shader out{};
 
-        {   // Vertex --------------------------------------------------------------------
+        {   // Vertex
 
             const auto src = assemble(shading_strings::vertex_suffix);
             auto bytecode = m_slang.compile(src, "vertex_main", "material.vert.slang");
-            VALIDATE(bytecode, return std::unexpected{ GLT::render::shader_compile_error::slang_parse_failed },
-                "", "material compile [vertex]: slang error {}", GLT::util::enum_to_string(bytecode.error()));
+            if (!bytecode)
+                return BUILD_ERROR_D(map_raw_slang_code(bytecode.error().code),
+                    std::format("Failed to compile stage [vertex]: slang error code {} message {}",
+                        GLT::util::enum_to_string(bytecode.error().code), bytecode.error().message))
 
             buffer.vertex_bytecode = std::move(bytecode->spv);
         }
 
-        {   // Fragment (also produces reflection + defaults) ---------------------------
+        {   // Fragment (also produces reflection + defaults)
 
             const auto src = assemble(shading_strings::fragment_suffix);
             auto bytecode = m_slang.compile(src, "fragment_main", "material.frag.slang");
-            VALIDATE(bytecode, return std::unexpected{ GLT::render::shader_compile_error::slang_parse_failed }, 
-                "", "material compile [fragment]: slang error {}", GLT::util::enum_to_string(bytecode.error()));
+            if (!bytecode)
+                return BUILD_ERROR_D(map_raw_slang_code(bytecode.error().code),
+                    std::format("Failed to compile stage [fragment]: slang error code {} message {}",
+                        GLT::util::enum_to_string(bytecode.error().code), bytecode.error().message))
+
             buffer.fragment_bytecode = std::move(bytecode->spv);
-                
+
             auto* linked = static_cast<slang::IComponentType*>(bytecode->linked.raw_component());
 
             auto schema = build_reflection_schema(linked, entry_flags);
-            VALIDATE(schema, return std::unexpected{ schema.error() }, "", "material compile: reflection schema failed");
+            if (!schema)
+                return std::unexpected{ GR::shader_compile_error{
+                    schema.error().code,
+                    "reflection schema failed"
+                }};
             out.reflection = std::move(*schema);
 
-            auto defaults = pack_defaults_from_linked(linked, out.reflection);
+            auto defaults = pack_defaults_from_linked(linked, out.reflection, slang_source);
             if (!defaults) {
-                LOG(error, "material compile: default packing failed");
-                return std::unexpected{ defaults.error() };
+                return std::unexpected{  GR::shader_compile_error{
+                    defaults.error().code,
+                    "material compile: default packing failed"
+                }};
             }
             out.default_params = std::move(*defaults);
         }
@@ -326,15 +718,20 @@ namespace GLT::renderer::vk_rasterizer {
 
             const auto src = assemble(shading_strings::depth_suffix);
             auto bytecode = m_slang.compile(src, "depth_main", "material.depth.slang");
-            VALIDATE(bytecode, return std::unexpected{ GLT::render::shader_compile_error::slang_parse_failed }, 
-                "", "material compile [depth]: slang error {}", GLT::util::enum_to_string(bytecode.error()));
+            if (!bytecode)
+                return BUILD_ERROR_D(map_raw_slang_code(bytecode.error().code),
+                    std::format("Failed to compile stage [depth]: slang error code {} message {}",
+                        GLT::util::enum_to_string(bytecode.error().code), bytecode.error().message))
+
             buffer.depth_bytecode = std::move(bytecode->spv);
         }
 
+        #undef BUILD_ERROR
+
         // combine the 3 binary blobs
-        GLT::util::set_bytes(out.bytecode, buffer.vertex_bytecode.size());
-        GLT::util::set_bytes(out.bytecode, buffer.fragment_bytecode.size());
-        GLT::util::set_bytes(out.bytecode, buffer.depth_bytecode.size());
+        GLT::util::set_bytes<u64>(out.bytecode, buffer.vertex_bytecode.size());
+        GLT::util::set_bytes<u64>(out.bytecode, buffer.fragment_bytecode.size());
+        GLT::util::set_bytes<u64>(out.bytecode, buffer.depth_bytecode.size());
         out.bytecode.insert(out.bytecode.end(), buffer.vertex_bytecode.begin(), buffer.vertex_bytecode.end());
         out.bytecode.insert(out.bytecode.end(), buffer.fragment_bytecode.begin(), buffer.fragment_bytecode.end());
         out.bytecode.insert(out.bytecode.end(), buffer.depth_bytecode.begin(), buffer.depth_bytecode.end());

@@ -116,7 +116,7 @@ namespace GLT::imgui_config {
 
 		std::error_code error{};
 		const bool font_exists = GLT::vfs::exists(font_path / "OpenSans-Regular.ttf", error) && !error;
-		ASSERT(font_exists, "", "FONT does not exist [{}]", (font_path / "OpenSans-Regular.ttf").generic_string())
+		ASSERT(font_exists, "", "FONT does not exist [{}]", ((font_path / "OpenSans-Regular.ttf").generic_string()))
 
 		#define ADD_FONT(font_type, font_path, font_size) \
 			s_fonts[font_type] = io.Fonts->AddFontFromFileTTF((font_path).string().c_str(), font_size);

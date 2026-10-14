@@ -35,18 +35,17 @@ namespace GLT::platform {
 
         std::error_code error{};
         VALIDATE(GLT::vfs::is_directory(path, error) && !error, return, "", "Provided path is not a directory [{}]: [{}]", 
-            path.generic_string(), error.message())
+            (path.generic_string(), error.message()))
 
         VALIDATE(GLT::vfs::exists(path, error) && !error, return, "", "Project path does not exist [{}]: [{}]", 
-            path.generic_string(), error.message())
+            (path.generic_string(), error.message()))
 
         const auto config_path = path / GLT::config::CONFIG_DIR / 
             (GLT::config::file_type_to_string(GLT::config::type::app_settings) + GLT::config::FILE_EXTENSION_CONFIG);
 
         GLT::vfs::create_file(config_path, error);
         const auto buffer = error.message();
-        VALIDATE(!error, return, "", "Failed to open/create config file: [{}]: [{}]", 
-            config_path.generic_string(), error.message())
+        VALIDATE(!error, return, "", "Failed to open/create config file: [{}]: [{}]", (config_path.generic_string(), error.message()))
 
         GLT::serializer::yaml(config_path, "window", option)
             .entry(KEY_VALUE(attributes.title))

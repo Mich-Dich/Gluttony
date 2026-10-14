@@ -262,7 +262,6 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph->add_pass("reset_draw_count",
             [&](graph::pass_builder& builder) {
                 builder.write(m_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
-                builder.set_side_effects(true);     // basically "GPU state initialization", needs to run regardless of downstream
             },
             [this](graph::pass_context& ctx) {
                 ctx.cmd.fillBuffer(ctx.get_buffer(m_draw_count_handles[m_current_frame]), 0, sizeof(u32), 0);
@@ -274,7 +273,6 @@ namespace GLT::renderer::vk_rasterizer {
             [&](graph::pass_builder& builder) {
                 builder.write(m_draw_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
                 builder.write(m_draw_count_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                builder.set_side_effects(true);
             },
             [this](graph::pass_context& ctx) {
 
@@ -294,7 +292,6 @@ namespace GLT::renderer::vk_rasterizer {
             m_graph->add_pass("reset_shadow_draw_count",
                 [&](graph::pass_builder& builder) {
                     builder.write(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
-                    builder.set_side_effects(true);
                 },
                 [this](graph::pass_context& ctx) {
                     ctx.cmd.fillBuffer(ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]), 0, sizeof(u32), 0);
@@ -304,7 +301,6 @@ namespace GLT::renderer::vk_rasterizer {
                 [&](graph::pass_builder& builder) {
                     builder.write(m_shadow_draw_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
                     builder.write(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                    builder.set_side_effects(true);
                 },
                 [this](graph::pass_context& ctx) {
 
@@ -350,18 +346,15 @@ namespace GLT::renderer::vk_rasterizer {
             m_graph->add_pass("reset_local_shadow_counts",
                 [&](graph::pass_builder& builder) {
                     builder.write(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::transfer_dst);
-                    builder.set_side_effects(true);
                 },
                 [this](graph::pass_context& ctx) {
-                    ctx.cmd.fillBuffer(ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]), 0,
-                        MAX_SHADOW_VIEWS * sizeof(u32), 0);
+                    ctx.cmd.fillBuffer(ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]), 0, MAX_SHADOW_VIEWS * sizeof(u32), 0);
                 });
 
             m_graph->add_pass("local_shadow_cull",
                 [&](graph::pass_builder& builder) {
                     builder.write(m_local_shadow_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
                     builder.write(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                    builder.set_side_effects(true);
                 },
                 [this](graph::pass_context& ctx) {
 
@@ -448,7 +441,6 @@ namespace GLT::renderer::vk_rasterizer {
             [&](graph::pass_builder& builder) {
                 builder.write(m_light_grid_handles[m_current_frame], graph::buffer_usage::transfer_dst);
                 builder.write(m_light_counter_handles[m_current_frame], graph::buffer_usage::transfer_dst);
-                builder.set_side_effects(true);
             },
             [this](graph::pass_context& ctx) {
 
@@ -557,7 +549,8 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph->add_pass("imgui",
             [&](graph::pass_builder& builder) {
                 builder.color_attachment(m_backbuffer_handle, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore);
-                builder.read(m_scene_color, graph::texture_usage::sampled);
+                if (m_world_render_enabled)
+                    builder.read(m_scene_color, graph::texture_usage::sampled);
                 builder.set_side_effects(true);
             },
             [this](graph::pass_context& ctx) {
@@ -606,7 +599,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph->end_frame();
 
         // static u32 dup_counter = 0;
-        // if (dup_counter >= 250) {
+        // if (dup_counter >= 150) {
         //     LOG(info, "{}", m_graph->dump())
         //     dup_counter = 0;
         // }
@@ -785,3 +778,21 @@ namespace GLT::renderer::vk_rasterizer {
     void renderer::destroy_render_target() { m_output_image.reset(); }
 
 }
+
+
+
+/*
+render graph -- 13 passes (2 live, 11 culled)
++-----+--------+------+------------------------+-----------------------------------+--------------------------------------+
+| idx | status | side | name                   | reads                             | writes                               |
++=====+========+======+========================+===================================+======================================+
+| [0] | live   | yes  | reset_draw_count       | -                                 | buf[3](draw_count)                   |
+| [1] | live   | no   | cull                   | -                                 | buf[3](draw_count), buf[2](draw_cmd) |
+| [2] | culled | yes  | reset_shadow_draw_count| -                                 | buf[7](shadow_draw_count)            |
+| [3] | culled | no   | shadow_cull            | -                                 | buf[7](shadow_draw_count), buf[6]... |
+| [4] | culled | no   | shadow_pass            | buf[6]...                         | tex[2](shadow_map)                   |
+| ... |        |      |                        |                                   |                                      |
+| [12]| live   | yes  | imgui                  | -                                 | tex[0](backbuffer)                   |
++-----+--------+------+------------------------+-----------------------------------+--------------------------------------+
+
+*/

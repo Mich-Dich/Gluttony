@@ -301,7 +301,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         init_info.MinAllocationSize = 256; // 256 bytes minimum allocation
 
         init_info.CheckVkResultFn = [](VkResult err) {
-            ASSERT(err == VK_SUCCESS, "", "ImGui Vulkan error: {}", vk::to_string(static_cast<vk::Result>(err)))
+            ASSERT(err == VK_SUCCESS, "", "ImGui Vulkan error: {}", (vk::to_string(static_cast<vk::Result>(err))))
         };
 
         // Initialize ImGui Vulkan backend (single argument in new API)

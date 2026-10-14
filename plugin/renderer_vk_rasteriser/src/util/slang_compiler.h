@@ -15,7 +15,7 @@ namespace GLT::renderer::vk_rasterizer::util {
 
     // TYPES ===========================================================================================================
 
-    enum class raw_slang_error : u32 {
+    enum class raw_slang_error_code : u32 {
 
         none = 0,
         session_creation_failed,
@@ -23,6 +23,14 @@ namespace GLT::renderer::vk_rasterizer::util {
         entry_point_missing,
         link_failed,
         spirv_emission_failed,
+        already_compiled,
+    };
+
+
+    struct slang_error {
+
+        raw_slang_error_code                    code = raw_slang_error_code::none;
+        std::string                             message{};
     };
 
 
@@ -78,7 +86,7 @@ namespace GLT::renderer::vk_rasterizer::util {
     class slang_compiler {
     public:
 
-        static std::expected<slang_compiler, raw_slang_error> create(const std::filesystem::path& contract_dir);
+        static std::expected<slang_compiler, slang_error> create(const std::filesystem::path& contract_dir);
 
         slang_compiler();
         ~slang_compiler();
@@ -91,8 +99,8 @@ namespace GLT::renderer::vk_rasterizer::util {
         //
         // The source is the full concatenated translation unit (prefix + material + suffix). `source_virtual_name` doubles as
         // the module cache key: pass a distinct value per entry point so Slang compiles the three variants independently
-        [[nodiscard]] std::expected<raw_slang_result, raw_slang_error> compile(std::string_view source,
-            std::string_view entry_point_name, const std::filesystem::path& source_virtual_name);
+        [[nodiscard]] std::expected<raw_slang_result, slang_error> compile(std::string_view source, std::string_view entry_point_name,
+            const std::filesystem::path& source_virtual_name);
 
     private:
 

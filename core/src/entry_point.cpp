@@ -53,7 +53,7 @@ int MAIN_FUNC {
     // parse arguments
     std::error_code error{};
     const auto parsed = GLT::argument_parser::parse_arguments(specs, argc, argv, error);
-    ASSERT(!error, "", "Argument error [{}]", error.message())
+    ASSERT(!error, "", "Argument error [{}]", (error.message()))
     const auto project_path = GLT::argument_parser::get<std::filesystem::path>(parsed, "project_path");
 
     // setup some core systems
@@ -63,7 +63,8 @@ int MAIN_FUNC {
     GLT::thread_pool::init();
     GLT::plugin_manager::enter_phase(GLT::plugin_manager::phase::post_config_init);
     GLT::logger::register_label_for_thread("main");
-    GLT::logger::init("[$B$T:$J$E] [$B$R $L$X $Q - $I:$P:$G$E] $C$Z", true, GLT::util::get_executable_path() / GLT::config::LOG_DIR, "gluttony.log", true);
+    GLT::logger::init("[$B$T:$J$E] [$B$R $L$X $Q - $I:$P:$G$E] $C$Z", true, GLT::util::get_executable_path() / GLT::config::LOG_DIR,
+        "gluttony.log", false);
     GLT::logger::set_buffer_threshold(GLT::logger::severity::warn);
     GLT::crash_handler::attach();
     GLT::crash_handler::subscribe(GLT::logger::shutdown);

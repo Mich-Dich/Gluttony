@@ -682,7 +682,7 @@ namespace GLT::asset::registry_default {
 
             LOG(info, "register_handler: [{}] -> handler {:#x}", GLT::asset::type_to_string(t), reinterpret_cast<uintptr_t>(handler));
             auto [it, inserted] = m_handlers.try_emplace(t, handler);
-            VALIDATE(inserted || it->second == handler, it->second = handler, "", "type {} already has a handler - overriding", t.value);
+            VALIDATE(inserted || it->second == handler, it->second = handler, "", "type {} already has a handler - overriding", (t.value));
         }
     }
 
@@ -838,9 +838,8 @@ namespace GLT::asset::registry_default {
         }
 
         auto handle_res = load(out_rel);            // load() re-normalizes; harmless
-        VALIDATE(handle_res,
-            return std::unexpected{ GLT::asset::import_error::handler_rejected }, "",
-            "import: finalize ok but load failed for [{}]", out_rel.generic_string());
+        VALIDATE(handle_res, return std::unexpected{ GLT::asset::import_error::handler_rejected }, 
+            "", "import: finalize ok but load failed for [{}]", (out_rel.generic_string()));
 
         return *handle_res;
     }
@@ -1129,7 +1128,7 @@ namespace GLT::asset::registry_default {
             }
         }
 
-        VALIDATE(!handles.empty(), return, "queueing {} asset(s) for background save", "nothing to save", handles.size())
+        VALIDATE(!handles.empty(), return, "queueing {} asset(s) for background save", "nothing to save", (handles.size()))
 
         // save_as() already keeps the heavy work (serialize + compose + write) outside the lock, so per-asset tasks actually parallelize
         // The write-back section serializes briefly, which is fine
@@ -1345,17 +1344,17 @@ namespace GLT::asset::registry_default {
         std::vector<std::byte> file_content;
         
         handle opend_file = GLT::vfs::open_file(path, GLT::vfs::file_open_mode::read, error);
-        VALIDATE(!error && opend_file != 0, return std::unexpected{ GLT::asset::load_error::not_found }, "", 
-            "Failed to open file [{}]", path.generic_string())
+        VALIDATE(!error && opend_file != 0, return std::unexpected{ GLT::asset::load_error::not_found }, 
+            "", "Failed to open file [{}]", (path.generic_string()))
 
         const u64 file_size = GLT::vfs::file_size(path, error);
-        VALIDATE(!error, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "", 
-            "Failed to get file size [{}]", path.generic_string())
+        VALIDATE(!error, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "Failed to get file size [{}]", (path.generic_string()))
         
         file_content.resize(file_size);
         const u64 read_size = GLT::vfs::read_file(opend_file, file_content.data(), file_size, 0);
-        VALIDATE(read_size > 0, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "", 
-            "Failed to read file content")
+        VALIDATE(read_size > 0, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "Failed to read file content")
 
         return file_content;
     }

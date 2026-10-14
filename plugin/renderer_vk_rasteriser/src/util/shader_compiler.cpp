@@ -29,7 +29,7 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         //open the file. With cursor at the end
         std::ifstream file(file_path, std::ios::ate | std::ios::binary);
-        VALIDATE(file.is_open(), return false, "", "Failed to open file: {}", file_path.c_str())
+        VALIDATE(file.is_open(), return false, "", "Failed to open file: {}", (file_path.c_str()))
 
         // if the file size is not a multiple of the size of the type, we need to add one to the size of the vector,
         // so in the case of a vector of u32, if the file size is 5 bytes we need a vector of size 2 of u32, which is 8 bytes
@@ -46,7 +46,7 @@ namespace GLT::renderer::vk_rasterizer::util {
     bool file_read(const std::filesystem::path& file_path, std::string& source_code) {
 
         std::ifstream file(file_path);
-        VALIDATE(file.is_open(), return false, "", "Failed to open GLSL file: {}", file_path.string().c_str())
+        VALIDATE(file.is_open(), return false, "", "Failed to open GLSL file: {}", (file_path.string().c_str()))
 
         std::stringstream buffer;
         buffer << file.rdbuf();
@@ -84,7 +84,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         std::string source_code;
         std::error_code error{};
         handle opend_file = GLT::vfs::open_file(source_path, GLT::vfs::file_open_mode::read, error);
-        VALIDATE(!error && opend_file != 0, return {}, "", "Failed to open file [{}]", source_path.generic_string())
+        VALIDATE(!error && opend_file != 0, return {}, "", "Failed to open file [{}]", (source_path.generic_string()))
 
         error.clear();
         const u64 file_size = GLT::vfs::file_size(source_path, error);

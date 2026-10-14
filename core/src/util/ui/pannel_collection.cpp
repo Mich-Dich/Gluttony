@@ -628,7 +628,7 @@ namespace GLT::UI {
 
 			current_position = ansi_start;
 			const size_t ansi_end = text.find('m', ansi_start);
-			VALIDATE(ansi_end != std::string::npos, break, "", "Detected ANSI escape code is not closed [{}] at pos [{}]", text, ansi_start);
+			VALIDATE(ansi_end != std::string::npos, break, "", "Detected ANSI escape code is not closed [{}] at pos [{}]", (text, ansi_start));
 
 			if (ansi_start + 1 >= text.length() || text[ansi_start + 1] != '[')                                                                 // Check if ANSI code starts with '['
 				current_position = ansi_start + 1;

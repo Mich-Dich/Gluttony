@@ -31,13 +31,13 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
     // CLASS PUBLIC ====================================================================================================
 
-    pass_builder& pass_builder::read (texture_handle handle, texture_usage usage) { m_tex_reads.push_back({handle, usage});  return *this; }
+    pass_builder& pass_builder::read(texture_handle handle, texture_usage usage) { m_tex_reads.push_back({handle, usage});  return *this; }
 
 
     pass_builder& pass_builder::write(texture_handle handle, texture_usage usage) { m_tex_writes.push_back({handle, usage}); return *this; }
 
 
-    pass_builder& pass_builder::read (buffer_handle handle, buffer_usage usage) { m_buf_reads.push_back({handle, usage});  return *this; }
+    pass_builder& pass_builder::read(buffer_handle handle, buffer_usage usage) { m_buf_reads.push_back({handle, usage});  return *this; }
 
 
     pass_builder& pass_builder::write(buffer_handle handle, buffer_usage usage) { m_buf_writes.push_back({handle, usage}); return *this; }

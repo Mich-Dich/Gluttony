@@ -425,14 +425,14 @@ namespace GLT::world::world_ecs_entt {
 
             // Path-based recovery: file exists on disk, or mint a fresh one. resolve_region_handle already retains on success
             const GLT::asset::handle h = resolve_region_handle(cell, region.id);
-            VALIDATE(h != INVALID_HANDLE, continue, "", "region for cell ({},{},{}) unresolvable - skipping", cell.x, cell.y, cell.z);
+            VALIDATE(h != INVALID_HANDLE, continue, "", "region for cell ({},{},{}) unresolvable - skipping", (cell.x, cell.y, cell.z));
 
             region.asset = h;
 
             const GLT::UUID actual_id = registry->info(h).id;
-            VALIDATE(actual_id == region.id, region.id = actual_id, "", 
-                "region file at cell ({},{},{}) has UUID {:#x} but world declared {:#x} - reconciling",
-                cell.x, cell.y, cell.z, static_cast<unsigned long long>(actual_id), static_cast<unsigned long long>(region.id));
+            VALIDATE(actual_id == region.id, region.id = actual_id, 
+                "", "region file at cell ({},{},{}) has UUID {:#x} but world declared {:#x} - reconciling",
+                (cell.x, cell.y, cell.z, static_cast<unsigned long long>(actual_id), static_cast<unsigned long long>(region.id)))
         }
 
         // Region-state map keys may have shifted if any UUID was reconciled

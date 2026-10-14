@@ -66,8 +66,8 @@ namespace GLT::asset::handler::mesh {
         const auto verts = reader.get_as<GLT::asset::mesh::vertex>(GLT::asset::mesh::CHUNK_VERTICES);
         const auto idxs = reader.get_as<u32>(GLT::asset::mesh::CHUNK_INDICES);
         const auto subs = reader.get_as<GLT::asset::mesh::submesh>(GLT::asset::mesh::CHUNK_SUBMESHES);
-        VALIDATE(!verts.empty() && !idxs.empty(), return std::unexpected{ load_error::corrupt_header }, "", 
-            "[{}] missing required chunks (verts={}, idx={})", info.name, verts.size(), idxs.size())
+        VALIDATE(!verts.empty() && !idxs.empty(), return std::unexpected{ load_error::corrupt_header }, 
+            "", "[{}] missing required chunks (verts={}, idx={})", (info.name, verts.size(), idxs.size()))
 
         // ---- build the runtime asset --------------------------------------------------------------------------------
         auto asset = std::make_unique<GLT::asset::mesh::mesh_asset>();

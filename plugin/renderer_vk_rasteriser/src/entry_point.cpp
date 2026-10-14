@@ -112,6 +112,9 @@ namespace GLT::renderer::vk_rasterizer {
         FORCE_INLINE void set_sun_settings(const GLT::render::sun_settings& s) override { (void)s; }
         FORCE_INLINE_R const GLT::render::sun_settings& get_sun_settings() const override { return m_sun_settings; }
 
+        void set_world_render_enabled(const bool enabled) override { m_world_render_enabled = enabled; }
+        [[nodiscard]] bool is_world_render_enabled() const override { return m_world_render_enabled; }
+
         // preview -----------------------------------------------------------------------------------------------------
 
         // DISABLED DURING MATERIAL REFACTOR
@@ -285,6 +288,7 @@ namespace GLT::renderer::vk_rasterizer {
         glm::vec4                                                           m_clear_color{ 0.09f, 0.09f, 0.09f, 1.f };
         GLT::render::renderer_feature                                       m_features{};
         u32                                                                 m_active_mode{ 0 };
+        bool                                                                m_world_render_enabled = true;
 
         // Vulkan core -------------------------------------------------------------------------------------------------
 

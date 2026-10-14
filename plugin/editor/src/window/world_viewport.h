@@ -110,6 +110,7 @@ namespace GLT::editor {
             icon_manager::icon icon = icon_manager::icon::transfrom_rotation);
 
 
+        bool                                            m_viewport_image_drawn = false;
         std::vector<content_browser_window>             m_content_browsers{};
         GLT::ref<GLT::render::i_renderer_plugin>        m_renderer{};
         ImVec2                                          m_viewport_size{100, 60};

@@ -415,10 +415,142 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
     std::string render_graph::dump() const {
 
-        std::string string = "render graph passes:\n";
-        for (auto& pass : m_passes)
-            string += "  [" + std::to_string(pass.index) + "] " + pass.name + (pass.culled ? "  (culled)" : "") + "\n";
-        return string;
+        struct row {
+            u32         index = 0;
+            bool        culled = false;
+            bool        side_effects = false;
+            std::string name;
+            std::string reads;
+            std::string writes;
+        };
+
+        auto tex_label = [&](texture_handle h) -> std::string {
+            if (h.id >= m_textures.size())
+                return "tex[?]";
+            const auto& t = m_textures[h.id];
+            std::string s = "tex[" + std::to_string(h.id) + "]";
+            if (!t.desc.name.empty())
+                s += "(" + t.desc.name + ")";
+            return s;
+        };
+
+        auto buf_label = [&](buffer_handle h) -> std::string {
+            if (h.id >= m_buffers.size())
+                return "buf[?]";
+            const auto& b = m_buffers[h.id];
+            std::string s = "buf[" + std::to_string(h.id) + "]";
+            if (!b.desc.name.empty())
+                s += "(" + b.desc.name + ")";
+            return s;
+        };
+
+        auto join = [](std::string& out, const std::string& item) {
+            if (!out.empty())
+                out += ", ";
+            out += item;
+        };
+
+        std::vector<row> rows;
+        rows.reserve(m_passes.size());
+
+        size_t w_idx = 3;   // "idx"
+        size_t w_status = 6;   // "status"
+        size_t w_side = 4;   // "side"
+        size_t w_name = 4;   // "name"
+        size_t w_reads = 5;   // "reads"
+        size_t w_writes = 6;   // "writes"
+
+        for (const auto& p : m_passes) {
+
+            row r;
+            r.index = p.index;
+            r.culled = p.culled;
+            r.side_effects = p.builder.m_side_effects;
+            r.name = p.name;
+
+            for (const auto& [h, _] : p.builder.m_tex_reads)  join(r.reads,  tex_label(h));
+            for (const auto& [h, _] : p.builder.m_buf_reads)  join(r.reads,  buf_label(h));
+            for (const auto& [h, _] : p.builder.m_tex_writes) join(r.writes, tex_label(h));
+            for (const auto& [h, _] : p.builder.m_buf_writes) join(r.writes, buf_label(h));
+
+            if (r.reads.empty())  r.reads = "-";
+            if (r.writes.empty()) r.writes = "-";
+
+            // "[999]" is the widest index cell we'll ever print.
+            w_idx = std::max(w_idx,    std::string("[999]").size());
+            w_status = std::max(w_status, std::string("culled").size());
+            w_side = std::max(w_side,   std::string("side").size());
+            w_name = std::max(w_name,   r.name.size());
+            w_reads = std::max(w_reads,  r.reads.size());
+            w_writes = std::max(w_writes, r.writes.size());
+
+            rows.push_back(std::move(r));
+        }
+
+        // Cap the resource columns so a pathological frame doesn't produce a wall of text.
+        constexpr size_t MAX_RES_COL = 60;
+        w_reads = std::min(w_reads,  MAX_RES_COL);
+        w_writes = std::min(w_writes, MAX_RES_COL);
+
+        auto pad = [](std::string s, size_t w) -> std::string {
+
+            if (s.size() > w) {
+                if (w >= 3) {
+                    s.resize(w - 3);
+                    s += "..."; 
+                } else 
+                    s.resize(w);
+            } else
+                while (s.size() < w) 
+                    s += ' ';
+
+            return s;
+        };
+
+        // "+--+--+--+" for a given fill character
+        auto rule = [&](char fill) {
+            std::string s;
+            s += '+';
+            s.append(w_idx + 2, fill); s += '+';
+            s.append(w_status + 2, fill); s += '+';
+            s.append(w_side + 2, fill); s += '+';
+            s.append(w_name + 2, fill); s += '+';
+            s.append(w_reads + 2, fill); s += '+';
+            s.append(w_writes + 2, fill); s += '+';
+            return s;
+        };
+
+        auto text_row = [&](const std::string& idx, const std::string& st, const std::string& side, const std::string& name, 
+            const std::string& reads, const std::string& writes) {
+
+            std::string s;
+            s += "| " + pad(idx, w_idx) + " ";
+            s += "| " + pad(st, w_status) + " ";
+            s += "| " + pad(side, w_side) + " ";
+            s += "| " + pad(name, w_name) + " ";
+            s += "| " + pad(reads, w_reads) + " ";
+            s += "| " + pad(writes, w_writes) + " |";
+            return s;
+        };
+
+        size_t live_count = 0;
+        for (const auto& r : rows)
+            if (!r.culled) 
+                live_count++;
+
+        std::string out;
+        out += "render graph -- " + std::to_string(rows.size()) + " passes (" + std::to_string(live_count) + " live, "
+            + std::to_string(rows.size() - live_count) + " culled)\n";
+        out += text_row("idx", "status", "side", "name", "reads", "writes") + "\n";
+        out += rule('-') + "\n";
+
+        for (const auto& r : rows) {
+            out += text_row("[" + std::to_string(r.index) + "]", r.culled ? "culled" : "live", r.side_effects ? "yes" : "no",
+                r.name, r.reads, r.writes);
+            out += "\n";
+        }
+
+        return out;
     }
 
 

@@ -47,7 +47,7 @@ namespace GLT::config {
         const auto config_path = project_path / CONFIG_DIR;
         std::error_code error{};
         vfs::create_directories(config_path, error);
-        VALIDATE(!error, return false, "", "Failed to create config dir [{}]: [{}]", config_path.generic_string(), error.message());
+        VALIDATE(!error, return false, "", "Failed to create config dir [{}]: [{}]", (config_path.generic_string(), error.message()))
 
         bool success = true;
         for (int index = 0; index <= static_cast<int>(type::launcher); index++) {
@@ -56,7 +56,7 @@ namespace GLT::config {
             std::error_code error{};
             vfs::create_file(file_path, error);
             VALIDATE(!error, success = false; continue, "", "Failed to open/create config file: [{}]: [{}]", 
-                file_path.generic_string(), error.message())
+                (file_path.generic_string(), error.message()))
         }
 
         return success;

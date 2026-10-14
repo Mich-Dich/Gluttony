@@ -289,7 +289,7 @@ namespace GLT::plugin_manager {
 
         const auto plugin_dir = GLT::util::get_executable_path() / config::PLUGIN_DIR;
         std::error_code error{};
-        VALIDATE(GLT::vfs::exists(plugin_dir, error) && !error, return, "", "Plugin dir is invalid [{}]", plugin_dir)
+        VALIDATE(GLT::vfs::exists(plugin_dir, error) && !error, return, "", "Plugin dir is invalid [{}]", (plugin_dir))
 
         s_config_path = project_dir_path / (GLT::config::PROJECT_NAME + GLT::config::PROJECT_EXTENTION);
         if (GLT::vfs::exists(s_config_path, error) && !error)
@@ -303,7 +303,7 @@ namespace GLT::plugin_manager {
         std::unordered_set<interface>                   preferred_plugin_found{};         // interfaces for which the configured preferred plugin was discovered
 
         GLT::vfs::recursive_directory_iterator iterator(plugin_dir, GLT::vfs::directory_options::skip_permission_denied, error);
-        VALIDATE(!error, return, "", "Fail to create recursive_directory_iterator for [{}]", plugin_dir.generic_string())
+        VALIDATE(!error, return, "", "Fail to create recursive_directory_iterator for [{}]", (plugin_dir.generic_string()))
         for (const auto& entry : iterator) {
 
             const bool regular_file = entry.is_regular_file(error);
@@ -316,13 +316,13 @@ namespace GLT::plugin_manager {
 
             // Temporarily load the library to read its descriptor.
             void* handle = load_library(path.c_str(), lib_load_mode::lazy);
-            VALIDATE(handle, continue, "", "load_library failed: [{}]", get_dynamic_library_error());
+            VALIDATE(handle, continue, "", "load_library failed: [{}]", (get_dynamic_library_error()))
 
             auto desc_fn = reinterpret_cast<descriptor_func>(get_symbol(handle, "gluttony_plugin_descriptor"));
-            VALIDATE(desc_fn, free_library(handle); continue, "", "get_symbol failed: [{}]", get_dynamic_library_error());
+            VALIDATE(desc_fn, free_library(handle); continue, "", "get_symbol failed: [{}]", (get_dynamic_library_error()))
 
             const plugin_descriptor* desc = desc_fn();
-            VALIDATE(desc, continue; free_library(handle), "", "Failed to load descriptor function");
+            VALIDATE(desc, continue; free_library(handle), "", "Failed to load descriptor function")
 
             const interface iface = desc->target;
             const std::string plugin_name = desc->name ? std::string(desc->name) : path.stem().string();

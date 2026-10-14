@@ -67,22 +67,21 @@ namespace GLT::asset::handler::audio {
         // ---- required chunks ---------------------------------------------------
 
         const auto fmt_span = reader.get_as<GLT::asset::audio::format>(GLT::asset::audio::CHUNK_FORMAT);
-        VALIDATE(fmt_span.size() == 1, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] missing or malformed format chunk (got {})", info.name, fmt_span.size())
+        VALIDATE(fmt_span.size() == 1, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] missing or malformed format chunk (got {})", (info.name, fmt_span.size()))
 
         const auto pcm = reader.get_as<f32>(GLT::asset::audio::CHUNK_PCM_DATA);
-        VALIDATE(!pcm.empty(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] missing pcm chunk", info.name)
+        VALIDATE(!pcm.empty(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] missing pcm chunk", (info.name))
 
         // Sanity: format says how many frames should be here.
         const GLT::asset::audio::format fmt = fmt_span[0];
-        VALIDATE(fmt.channels > 0, return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] format chunk claims 0 channels", info.name)
+        VALIDATE(fmt.channels > 0, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+                "", "[{}] format chunk claims 0 channels", (info.name))
 
         const u64 expected_samples = fmt.frame_count * fmt.channels;
-        VALIDATE(expected_samples == pcm.size(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, "",
-            "[{}] pcm size mismatch: format says {} samples, chunk has {}",
-            info.name, expected_samples, pcm.size())
+        VALIDATE(expected_samples == pcm.size(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
+            "", "[{}] pcm size mismatch: format says {} samples, chunk has {}", (info.name, expected_samples, pcm.size()))
 
         // ---- build the runtime asset ------------------------------------------
 

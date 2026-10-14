@@ -136,7 +136,7 @@ namespace GLT {
         VALIDATE(registry, return, "", "Failed to get asset-registry")
 
         auto result = registry->load(world_path);
-        VALIDATE(result, return, "", "Registry failed to load world [{}]", world_path.generic_string())
+        VALIDATE(result, return, "", "Registry failed to load world [{}]", (world_path.generic_string()))
 
         const auto world_result = world->load_world(*result);
         VALIDATE(world_result, return, "", "Failed to load world")

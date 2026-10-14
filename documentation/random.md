@@ -325,3 +325,175 @@ With those, I can turn this roadmap into a file-by-file migration plan with exac
 
 
 
+types.slang:
+```slang
+
+struct Globals {
+
+    // Timing
+    float           time;
+    float           delta_time;
+    uint            frame_index;
+    float           _pad0;
+
+    // Viewport
+    float2          viewport_size;
+    float2          render_size;
+
+    // Camera
+    float3          camera_position;
+    float           near_plane;
+    float3          camera_forward;
+    float           far_plane;
+    float3          camera_right;
+    float           _pad1;
+    float3          camera_up;
+    float           _pad2;
+
+    // Matrices
+    float4x4        view;
+    float4x4        projection;
+    float4x4        view_projection;
+    float4x4        inv_view;
+    float4x4        inv_projection;
+    float4x4        inv_view_projection;
+};
+
+
+struct vertex_input {
+
+    float3          position_ws;
+    float3          normal_ws;
+    float4          tangent_ws;
+    float2          uv0;
+    float2          uv1;
+    float3          color;
+};
+
+
+struct vertex_output {
+
+    float3          position_ws;
+    float3          normal_ws;
+    float4          tangent_ws;
+    float2          uv0;
+    float2          uv1;
+    float3          color;
+};
+
+
+struct surface_input {
+
+    float3          position_ws;
+    float3          normal_ws;
+    float4          tangent_ws;
+    float2          uv0;
+    float2          uv1;
+    float3          color;
+    float3          view_dir_ws;
+    float2          screen_uv;
+    float           view_depth;
+    float3          ddx_ws;
+    float3          ddy_ws;
+};
+
+
+struct surface_output {
+
+    float3          base_color;
+    float           opacity;
+    float3          normal_ws;
+    float           metallic;
+    float           roughness;
+    float3          emissive;
+    float           ao;
+};
+
+
+struct material_textures {
+
+    Texture2D       base_color;
+    Texture2D       metallic_roughness;
+    Texture2D       normal;
+    Texture2D       emissive;
+    Texture2D       occlusion;
+    Texture2D       height;
+    SamplerState    sampler;
+};
+
+```
+
+
+
+
+globals.slang:
+```slang
+import types;
+
+
+ConstantBuffer<Globals> globals;
+
+```
+
+
+
+
+helpers.slang:
+```slang
+import types;
+
+
+vertex_output passthrough(vertex_input v) {
+
+    vertex_output o;
+    o.position_ws = v.position_ws;
+    o.normal_ws   = v.normal_ws;
+    o.tangent_ws  = v.tangent_ws;
+    o.uv0         = v.uv0;
+    o.uv1         = v.uv1;
+    o.color       = v.color;
+    return o;
+}
+
+
+surface_output make_default_surface(surface_input s) {
+
+    surface_output o;
+    o.base_color = float3(1.0, 1.0, 1.0);
+    o.opacity    = 1.0;
+    o.normal_ws  = s.normal_ws;
+    o.metallic   = 0.0;
+    o.roughness  = 0.5;
+    o.emissive   = float3(0.0, 0.0, 0.0);
+    o.ao         = 1.0;
+    return o;
+}
+
+
+float4 sample_material(Texture2D t, SamplerState s, float2 uv) {
+
+    return t.Sample(s, uv);
+}
+
+
+float4 sample_material_lod(Texture2D t, SamplerState s, float2 uv, float lod) {
+
+    return t.SampleLevel(s, uv, lod);
+}
+
+```
+
+
+
+
+material_contract_v0.slang:
+```slang
+module material_contract_v0;
+
+import types;
+import globals;
+import helpers;
+
+static public const int MATERIAL_CONTRACT_VERSION = 0;
+
+```

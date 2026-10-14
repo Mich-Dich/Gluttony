@@ -71,8 +71,12 @@ namespace GLT::editor {
 
     void world_viewport_window::window(const f32 delta_time) {
 
-        if (!m_show_window)
+        if (!m_show_window) {
+
+            if (m_renderer)
+                m_renderer->set_world_render_enabled(false);
             return;
+        }
 
         apply_pending_dock();
 
@@ -91,6 +95,9 @@ namespace GLT::editor {
         render_viewport();
         render_details();
         render_outliner();
+
+        if (m_renderer)
+            m_renderer->set_world_render_enabled(m_viewport_image_drawn);
 
         for (auto& browsers : m_content_browsers)
             if (!browsers.should_close())
@@ -173,12 +180,14 @@ namespace GLT::editor {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ImageRounding, 0.0f);
 
+        m_viewport_image_drawn = false;
         if (ImGui::Begin("Viewport")) {
 
             m_viewport_size = ImGui::GetContentRegionAvail();
             ImGui::Image(m_renderer->get_rendered_image(), m_viewport_size);
+            m_viewport_image_drawn = ImGui::IsItemVisible();
 
-            const bool   image_hovered = ImGui::IsItemHovered();
+            const bool image_hovered = ImGui::IsItemHovered();
             const ImVec2 image_min = ImGui::GetItemRectMin();
             const ImVec2 image_size = ImGui::GetItemRectSize();
 
