@@ -60,6 +60,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_active_camera.fov = 45.f;
 
         init_vulkan();
+        create_shader_compiler();
         m_graph = GLT::create_unique_ref<graph::render_graph>(m_dev);
         create_render_target();
         create_material_resources();
@@ -70,7 +71,6 @@ namespace GLT::renderer::vk_rasterizer {
         create_cluster_resources();
         create_light_culling_pipeline();
         create_debug_view_resources();
-        create_shader_compiler();
         imgui_init();
 
         m_framebuffer_resize_sub = GLT::event_bus::subscribe<GLT::window_framebuffer_resize_event>(
@@ -94,7 +94,6 @@ namespace GLT::renderer::vk_rasterizer {
             if (m_in_flight_fences[i])
                 VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[i], VK_TRUE, UINT64_MAX))
 
-        destroy_shader_compiler();
         destroy_debug_view_resources();
         destroy_light_culling_pipeline();
         destroy_cluster_resources();
@@ -105,6 +104,7 @@ namespace GLT::renderer::vk_rasterizer {
         destroy_material_resources();
         destroy_render_target();
         imgui_shutdown();
+        destroy_shader_compiler();
 
         if (m_swapchain.swapchain_handle) {
             for (auto& v : m_swapchain.swapchain_image_views)
@@ -329,14 +329,40 @@ namespace GLT::renderer::vk_rasterizer {
                     ctx.begin_rendering();
                     ctx.cmd.setViewport(0, vk::Viewport(0.f, 0.f, static_cast<f32>(res), static_cast<f32>(res), 0.f, 1.f));
                     ctx.cmd.setScissor(0, vk::Rect2D({0, 0}, {res, res}));
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_depth_pipeline);          // reused depth-only pipeline
+
+                    ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
+                    ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
+
                     m_dev->bind_descriptor_buffer({ m_shadow_desc_buffers[m_current_frame] }, ctx.cmd);
                     m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-                    draw_scene_indirect(ctx.cmd,
-                        ctx.get_buffer(m_shadow_draw_commands_handles[m_current_frame]),
-                        ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]));
-                    ctx.end_rendering();
 
+                    m_dev->bind_descriptor_buffer({ m_material_desc_buffers[m_current_frame] }, ctx.cmd);
+
+                    const vk::Buffer cmd_buffer = ctx.get_buffer(m_shadow_draw_commands_handles[m_current_frame]);
+                    const vk::Buffer count_buffer = ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]);
+
+                    for (u32 mat_slot : m_scene_materials) {
+
+                        const material_slot& entry = m_material_slots[mat_slot];
+                        if (!entry.alive || !entry.pipeline)
+                            continue;
+
+                        ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.pipeline);
+
+                        const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
+                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, descriptor_offset, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                        ctx.cmd.drawIndexedIndirectCount(
+                            cmd_buffer,
+                            static_cast<vk::DeviceSize>(mat_slot) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand),
+                            count_buffer,
+                            static_cast<vk::DeviceSize>(mat_slot) * sizeof(u32),
+                            MAX_COMMANDS_PER_MATERIAL,
+                            sizeof(vk::DrawIndexedIndirectCommand));
+                        m_frame_draw_calls++;
+                    }
+
+                    ctx.end_rendering();
                     m_frame_render_passes++;
                 });
         }
@@ -380,13 +406,15 @@ namespace GLT::renderer::vk_rasterizer {
 
                     const vk::Buffer commands = ctx.get_buffer(m_local_shadow_commands_handles[m_current_frame]);
                     const vk::Buffer counts = ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]);
-                    const auto& desc_buffer = m_local_shadow_desc_buffers[m_current_frame];
+                    const auto& view_desc_buffer = m_local_shadow_desc_buffers[m_current_frame];
+                    const auto& mat_desc_buffer = m_material_desc_buffers[m_current_frame];
 
                     ctx.begin_rendering();
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_depth_pipeline);       // reused depth-only pipeline
-                    m_dev->bind_descriptor_buffer({ desc_buffer }, ctx.cmd);
+
                     ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
                     ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
+
+                    m_dev->bind_descriptor_buffer({ view_desc_buffer, mat_desc_buffer }, ctx.cmd);
 
                     for (const auto& tile : m_local_shadow_tiles) {
 
@@ -394,15 +422,35 @@ namespace GLT::renderer::vk_rasterizer {
                             static_cast<f32>(tile.size), static_cast<f32>(tile.size), 0.f, 1.f));
                         ctx.cmd.setScissor(0, vk::Rect2D({ static_cast<i32>(tile.x), static_cast<i32>(tile.y) }, { tile.size, tile.size }));
 
-                        // Set [tile.view] = UBO slice with this view's matrix
-                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, desc_buffer.get_offset_to_set(tile.view),
-                            ctx.cmd, vk::PipelineBindPoint::eGraphics);
+                        // set 0 = per-view shadow camera UBO
+                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, /*bufferIndex=*/0,
+                            view_desc_buffer.get_offset_to_set(tile.view), ctx.cmd, vk::PipelineBindPoint::eGraphics);
 
-                        ctx.cmd.drawIndexedIndirectCount(
-                            commands, static_cast<vk::DeviceSize>(tile.view) * SHADOW_COMMANDS_PER_VIEW * sizeof(vk::DrawIndexedIndirectCommand),
-                            counts, static_cast<vk::DeviceSize>(tile.view) * sizeof(u32),
-                            SHADOW_COMMANDS_PER_VIEW, sizeof(vk::DrawIndexedIndirectCommand));
-                        m_frame_draw_calls++;
+                        for (u32 mat_slot : m_scene_materials) {
+
+                            const material_slot& entry = m_material_slots[mat_slot];
+                            if (!entry.alive || !entry.pipeline)
+                                continue;
+
+                            ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.pipeline);
+
+                            // set 1 = material descriptor, per-material offset
+                            m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, /*bufferIndex=*/1,
+                                mat_desc_buffer.get_offset_to_set(mat_slot), ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                            // per (view, material) command bucket
+                            const vk::DeviceSize cmd_off = static_cast<vk::DeviceSize>(
+                                (tile.view * MAX_MATERIALS + mat_slot)) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand);
+                            const vk::DeviceSize cnt_off = static_cast<vk::DeviceSize>(
+                                (tile.view * MAX_MATERIALS + mat_slot)) * sizeof(u32);
+
+                            ctx.cmd.drawIndexedIndirectCount(
+                                commands, cmd_off,
+                                counts, cnt_off,
+                                MAX_COMMANDS_PER_MATERIAL,
+                                sizeof(vk::DrawIndexedIndirectCommand));
+                            m_frame_draw_calls++;
+                        }
                     }
 
                     ctx.end_rendering();
@@ -423,14 +471,43 @@ namespace GLT::renderer::vk_rasterizer {
                     return;
 
                 ctx.begin_rendering();
-                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_depth_pipeline);
-                m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame] }, ctx.cmd);
-                m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-                draw_scene_indirect(ctx.cmd,
-                    ctx.get_buffer(m_draw_commands_handles[m_current_frame]),
-                    ctx.get_buffer(m_draw_count_handles[m_current_frame]));
-                ctx.end_rendering();
 
+                ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
+                ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
+
+                m_dev->bind_descriptor_buffer({
+                    m_frame_desc_buffers[m_current_frame],
+                    m_material_desc_buffers[m_current_frame]
+                }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, /*bufferIndex=*/0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                const vk::Buffer cmd_buffer = ctx.get_buffer(m_draw_commands_handles[m_current_frame]);
+                const vk::Buffer count_buffer = ctx.get_buffer(m_draw_count_handles[m_current_frame]);
+
+                for (u32 mat_slot : m_scene_materials) {
+
+                    const material_slot& entry = m_material_slots[mat_slot];
+                    if (!entry.alive || !entry.pipeline)
+                        continue;
+
+                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.pipeline);
+
+                    const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
+                    // binding index 0 in the array = the material descriptor buffer we just bound
+                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, descriptor_offset, ctx.cmd,
+                        vk::PipelineBindPoint::eGraphics);
+
+                    ctx.cmd.drawIndexedIndirectCount(
+                        cmd_buffer,
+                        static_cast<vk::DeviceSize>(mat_slot) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand),
+                        count_buffer,
+                        static_cast<vk::DeviceSize>(mat_slot) * sizeof(u32),
+                        MAX_COMMANDS_PER_MATERIAL,
+                        sizeof(vk::DrawIndexedIndirectCommand));
+                    m_frame_draw_calls++;
+                }
+
+                ctx.end_rendering();
                 m_frame_render_passes++;
             });
 
@@ -533,14 +610,43 @@ namespace GLT::renderer::vk_rasterizer {
                         return;
 
                     ctx.begin_rendering();
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_mesh_pipeline);
-                    m_dev->bind_descriptor_buffer({ m_frame_desc_buffers[m_current_frame], m_material_desc_buffers[m_current_frame] }, ctx.cmd);
-                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);   // set 1 -> buffer index 1
-                    draw_scene_indirect(ctx.cmd, ctx.get_buffer(m_draw_commands_handles[m_current_frame]), 
-                        ctx.get_buffer(m_draw_count_handles[m_current_frame]));
-                    ctx.end_rendering();
 
+                    ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
+                    ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
+
+                    m_dev->bind_descriptor_buffer({
+                        m_frame_desc_buffers[m_current_frame],
+                        m_material_desc_buffers[m_current_frame]
+                    }, ctx.cmd);
+                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, /*bufferIndex=*/0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                    const vk::Buffer cmd_buffer = ctx.get_buffer(m_draw_commands_handles[m_current_frame]);
+                    const vk::Buffer count_buffer = ctx.get_buffer(m_draw_count_handles[m_current_frame]);
+
+                    for (u32 mat_slot : m_scene_materials) {
+
+                        const material_slot& entry = m_material_slots[mat_slot];
+                        if (!entry.alive || !entry.pipeline)
+                            continue;
+
+                        ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.pipeline);
+
+                        const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
+                        // binding index 0 in the array = the material descriptor buffer we just bound
+                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, descriptor_offset, ctx.cmd,
+                            vk::PipelineBindPoint::eGraphics);
+
+                        ctx.cmd.drawIndexedIndirectCount(
+                            cmd_buffer,
+                            static_cast<vk::DeviceSize>(mat_slot) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand),
+                            count_buffer,
+                            static_cast<vk::DeviceSize>(mat_slot) * sizeof(u32),
+                            MAX_COMMANDS_PER_MATERIAL,
+                            sizeof(vk::DrawIndexedIndirectCommand));
+                        m_frame_draw_calls++;
+                    }
+
+                    ctx.end_rendering();
                     m_frame_render_passes++;
                 });
         }
@@ -778,21 +884,3 @@ namespace GLT::renderer::vk_rasterizer {
     void renderer::destroy_render_target() { m_output_image.reset(); }
 
 }
-
-
-
-/*
-render graph -- 13 passes (2 live, 11 culled)
-+-----+--------+------+------------------------+-----------------------------------+--------------------------------------+
-| idx | status | side | name                   | reads                             | writes                               |
-+=====+========+======+========================+===================================+======================================+
-| [0] | live   | yes  | reset_draw_count       | -                                 | buf[3](draw_count)                   |
-| [1] | live   | no   | cull                   | -                                 | buf[3](draw_count), buf[2](draw_cmd) |
-| [2] | culled | yes  | reset_shadow_draw_count| -                                 | buf[7](shadow_draw_count)            |
-| [3] | culled | no   | shadow_cull            | -                                 | buf[7](shadow_draw_count), buf[6]... |
-| [4] | culled | no   | shadow_pass            | buf[6]...                         | tex[2](shadow_map)                   |
-| ... |        |      |                        |                                   |                                      |
-| [12]| live   | yes  | imgui                  | -                                 | tex[0](backbuffer)                   |
-+-----+--------+------+------------------------+-----------------------------------+--------------------------------------+
-
-*/

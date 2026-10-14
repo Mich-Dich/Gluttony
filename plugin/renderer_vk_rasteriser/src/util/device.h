@@ -68,8 +68,12 @@ namespace GLT::renderer::vk_rasterizer::util {
         void destroy_image(allocated_image& img);
 
         // --- pipeline ------------------------------------------------------------------------------
-        [[nodiscard]] shader create_shader_from_spv(const std::vector<u32>& spv);
-        [[nodiscard]] vk::ShaderModule create_shader_module(const std::vector<u32>& spvCode);
+        [[nodiscard]] shader create_shader_from_spv(std::span<const std::byte> spv);
+        [[nodiscard]] shader create_shader_from_spv(std::span<const u32> spv);
+
+        [[nodiscard]] vk::ShaderModule create_shader_module(std::span<const std::byte> spvCode);
+        [[nodiscard]] vk::ShaderModule create_shader_module(std::span<const u32> spvCode);
+
         void destroy_shader(shader& shader);
 
         [[nodiscard]] vk::PipelineLayout create_pipeline_layout(vk::DescriptorSetLayout descLayout);

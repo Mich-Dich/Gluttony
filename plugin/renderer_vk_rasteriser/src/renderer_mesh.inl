@@ -1,6 +1,9 @@
 
 #pragma once
 
+#include <asset/material.h>
+
+
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -237,10 +240,10 @@ namespace GLT::renderer::vk_rasterizer {
         descriptor_layout_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 2  Lights SSBO
         descriptor_layout_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 3  Light grid SSBO
         descriptor_layout_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 4  Light index list
-        descriptor_layout_items.emplace_back(5, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, nullptr);              // 5  Shadow map
+        descriptor_layout_items.emplace_back(5, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);                      // 5  Shadow map
         descriptor_layout_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 6  Shadow views
-        descriptor_layout_items.emplace_back(7, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, nullptr);              // 7  Shadow atlas
-        descriptor_layout_items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, nullptr);                           // 8  Material sampler
+        descriptor_layout_items.emplace_back(7, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);                      // 7  Shadow atlas
+        descriptor_layout_items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, nullptr);                           // 8  shadow comparison sampler
 
         m_mesh_set_layout = m_dev->create_descriptor_set_layout(descriptor_layout_items);
         m_live_descriptor_set_count++;
@@ -276,170 +279,6 @@ namespace GLT::renderer::vk_rasterizer {
                 vk::BufferUsageFlagBits::eStorageBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
             m_live_buffer_count++;
-        }
-
-
-        // Pipelines ----------------------------------------------------------------------------------------------------
-        // (identical to before, minus the push constant range — the pipeline layout above already handles that)
-        {
-            const auto shader_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "vk_rasterizer";
-
-            auto vertex_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "mesh.vert.glsl");
-            auto fragment_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "mesh.frag.glsl");
-            auto depth_fragment_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "depth_only.frag.glsl");
-            ASSERT(!vertex_spv.empty() && !fragment_spv.empty() && !depth_fragment_spv.empty(), "", "Failed to compile mesh shaders");
-
-            vk::ShaderModule vertex_shader = m_dev->create_shader_module(vertex_spv);
-            vk::ShaderModule fragment_shader = m_dev->create_shader_module(fragment_spv);
-            vk::ShaderModule depth_fragment_shader = m_dev->create_shader_module(depth_fragment_spv);
-
-            vk::VertexInputBindingDescription vertex_binding{};
-            vertex_binding.binding = 0;
-            vertex_binding.stride = sizeof(GLT::asset::mesh::vertex);
-            vertex_binding.inputRate = vk::VertexInputRate::eVertex;
-
-            std::array<vk::VertexInputAttributeDescription, 4> vertex_attributes{};
-            vertex_attributes[0] = {0, 0, vk::Format::eR32G32B32Sfloat, offsetof(GLT::asset::mesh::vertex, position)};
-            vertex_attributes[1] = {1, 0, vk::Format::eR32G32B32Sfloat, offsetof(GLT::asset::mesh::vertex, normal)};
-            vertex_attributes[2] = {2, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(GLT::asset::mesh::vertex, tangent)};
-            vertex_attributes[3] = {3, 0, vk::Format::eR32G32Sfloat, offsetof(GLT::asset::mesh::vertex, uv0)};
-
-            vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
-            vertex_input_state.vertexBindingDescriptionCount = 1;
-            vertex_input_state.pVertexBindingDescriptions = &vertex_binding;
-            vertex_input_state.vertexAttributeDescriptionCount = static_cast<u32>(vertex_attributes.size());
-            vertex_input_state.pVertexAttributeDescriptions = vertex_attributes.data();
-
-            vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{};
-            input_assembly_state.topology = vk::PrimitiveTopology::eTriangleList;
-
-            vk::PipelineViewportStateCreateInfo viewport_state{};
-            viewport_state.viewportCount = 1;
-            viewport_state.scissorCount = 1;
-
-            vk::PipelineRasterizationStateCreateInfo rasterization_state{};
-            rasterization_state.polygonMode = vk::PolygonMode::eFill;
-            rasterization_state.cullMode = vk::CullModeFlagBits::eBack;
-            rasterization_state.frontFace = vk::FrontFace::eCounterClockwise;
-            rasterization_state.lineWidth = 1.0f;
-
-            vk::PipelineMultisampleStateCreateInfo multisample_state{};
-            multisample_state.rasterizationSamples = vk::SampleCountFlagBits::e1;
-
-            vk::DynamicState dynamic_states[] = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-            vk::PipelineDynamicStateCreateInfo dynamic_state{};
-            dynamic_state.dynamicStateCount = 2;
-            dynamic_state.pDynamicStates = dynamic_states;
-
-            const vk::Format color_format = vk::Format::eR8G8B8A8Unorm;
-            const vk::Format depth_format = vk::Format::eD32Sfloat;
-
-            // Depth-only pipeline --------------------------------------------------------------------------------------
-            {
-                vk::PipelineShaderStageCreateInfo shader_stages[2]{};
-                shader_stages[0].stage = vk::ShaderStageFlagBits::eVertex;
-                shader_stages[0].module = vertex_shader;
-                shader_stages[0].pName = "main";
-                shader_stages[1].stage = vk::ShaderStageFlagBits::eFragment;
-                shader_stages[1].module = depth_fragment_shader;
-                shader_stages[1].pName = "main";
-
-                vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{};
-                depth_stencil_state.depthTestEnable = VK_TRUE;
-                depth_stencil_state.depthWriteEnable = VK_TRUE;
-                depth_stencil_state.depthCompareOp = vk::CompareOp::eLess;
-                depth_stencil_state.depthBoundsTestEnable = VK_FALSE;
-                depth_stencil_state.stencilTestEnable = VK_FALSE;
-
-                vk::PipelineColorBlendStateCreateInfo color_blend_state{};
-                color_blend_state.attachmentCount = 0;
-                color_blend_state.pAttachments = nullptr;
-
-                vk::PipelineRenderingCreateInfo rendering_info{};
-                rendering_info.colorAttachmentCount = 0;
-                rendering_info.pColorAttachmentFormats = nullptr;
-                rendering_info.depthAttachmentFormat = depth_format;
-
-                vk::GraphicsPipelineCreateInfo pipeline_info{};
-                pipeline_info.pNext = &rendering_info;
-                pipeline_info.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;
-                pipeline_info.stageCount = 2;
-                pipeline_info.pStages = shader_stages;
-                pipeline_info.pVertexInputState = &vertex_input_state;
-                pipeline_info.pInputAssemblyState = &input_assembly_state;
-                pipeline_info.pViewportState = &viewport_state;
-                pipeline_info.pRasterizationState = &rasterization_state;
-                pipeline_info.pMultisampleState = &multisample_state;
-                pipeline_info.pDepthStencilState = &depth_stencil_state;
-                pipeline_info.pColorBlendState = &color_blend_state;
-                pipeline_info.pDynamicState = &dynamic_state;
-                pipeline_info.layout = m_mesh_pipeline_layout;
-                pipeline_info.renderPass = nullptr;
-                pipeline_info.subpass = 0;
-
-                auto result = m_device.createGraphicsPipeline(nullptr, pipeline_info);
-                VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create depth-only pipeline")
-                m_depth_pipeline = result.value;
-                m_live_pipeline_count++;
-            }
-
-            // Forward shading pipeline ---------------------------------------------------------------------------------
-            {
-                vk::PipelineShaderStageCreateInfo shader_stages[2]{};
-                shader_stages[0].stage = vk::ShaderStageFlagBits::eVertex;
-                shader_stages[0].module = vertex_shader;
-                shader_stages[0].pName = "main";
-                shader_stages[1].stage = vk::ShaderStageFlagBits::eFragment;
-                shader_stages[1].module = fragment_shader;
-                shader_stages[1].pName = "main";
-
-                vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{};
-                depth_stencil_state.depthTestEnable = VK_TRUE;
-                depth_stencil_state.depthWriteEnable = VK_FALSE;
-                depth_stencil_state.depthCompareOp = vk::CompareOp::eEqual;
-                depth_stencil_state.depthBoundsTestEnable = VK_FALSE;
-                depth_stencil_state.stencilTestEnable = VK_FALSE;
-
-                vk::PipelineColorBlendAttachmentState color_blend_attachment{};
-                color_blend_attachment.colorWriteMask =
-                    vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                    vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-
-                vk::PipelineColorBlendStateCreateInfo color_blend_state{};
-                color_blend_state.attachmentCount = 1;
-                color_blend_state.pAttachments = &color_blend_attachment;
-
-                vk::PipelineRenderingCreateInfo rendering_info{};
-                rendering_info.colorAttachmentCount = 1;
-                rendering_info.pColorAttachmentFormats = &color_format;
-                rendering_info.depthAttachmentFormat = depth_format;
-
-                vk::GraphicsPipelineCreateInfo pipeline_info{};
-                pipeline_info.pNext = &rendering_info;
-                pipeline_info.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;
-                pipeline_info.stageCount = 2;
-                pipeline_info.pStages = shader_stages;
-                pipeline_info.pVertexInputState = &vertex_input_state;
-                pipeline_info.pInputAssemblyState = &input_assembly_state;
-                pipeline_info.pViewportState = &viewport_state;
-                pipeline_info.pRasterizationState = &rasterization_state;
-                pipeline_info.pMultisampleState = &multisample_state;
-                pipeline_info.pDepthStencilState = &depth_stencil_state;
-                pipeline_info.pColorBlendState = &color_blend_state;
-                pipeline_info.pDynamicState = &dynamic_state;
-                pipeline_info.layout = m_mesh_pipeline_layout;
-                pipeline_info.renderPass = nullptr;
-                pipeline_info.subpass = 0;
-
-                auto result = m_device.createGraphicsPipeline(nullptr, pipeline_info);
-                VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create mesh pipeline")
-                m_mesh_pipeline = result.value;
-                m_live_pipeline_count++;
-            }
-
-            m_device.destroyShaderModule(vertex_shader);
-            m_device.destroyShaderModule(fragment_shader);
-            m_device.destroyShaderModule(depth_fragment_shader);
         }
 
         // Persistent mesh-side SSBOs, read only by the cull compute shader --------------------------------------------
@@ -497,20 +336,12 @@ namespace GLT::renderer::vk_rasterizer {
         if (m_index_buffer.buffer)
             m_dev->destroy_buffer(m_index_buffer);
 
-        if (m_depth_pipeline)
-            m_device.destroyPipeline(m_depth_pipeline);
-
-        if (m_mesh_pipeline)
-            m_device.destroyPipeline(m_mesh_pipeline);
-
         if (m_mesh_pipeline_layout)
             m_device.destroyPipelineLayout(m_mesh_pipeline_layout);
 
         if (m_mesh_set_layout)
             m_device.destroyDescriptorSetLayout(m_mesh_set_layout);
 
-        m_depth_pipeline = nullptr;
-        m_mesh_pipeline = nullptr;
         m_mesh_pipeline_layout = nullptr;
         m_mesh_set_layout = nullptr;
     }
@@ -574,8 +405,8 @@ namespace GLT::renderer::vk_rasterizer {
         atlas_image.sampler = m_shadow_sampler;
         atlas_image.layout = vk::ImageLayout::eDepthStencilReadOnlyOptimal;
 
-        util::accessible_image material_sampler_image{};
-        material_sampler_image.sampler = m_material_sampler;
+        util::accessible_image shadow_sampler_image{};
+        shadow_sampler_image.sampler = m_shadow_sampler;
 
         std::vector<util::descriptor_item> descriptor_items;
         descriptor_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_camera_ubos[frame_index]);
@@ -583,10 +414,10 @@ namespace GLT::renderer::vk_rasterizer {
         descriptor_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_light_buffers[frame_index]);
         descriptor_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, grid_allocation);
         descriptor_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, list_allocation);
-        descriptor_items.emplace_back(5, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, &shadow_image);
+        descriptor_items.emplace_back(5, VKDT::eSampledImage, VKSF::eFragment, 1, &shadow_image);
         descriptor_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_shadow_view_buffers[frame_index]);
-        descriptor_items.emplace_back(7, VKDT::eCombinedImageSampler, VKSF::eFragment, 1, &atlas_image);
-        descriptor_items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, &material_sampler_image);
+        descriptor_items.emplace_back(7, VKDT::eSampledImage, VKSF::eFragment, 1, &atlas_image);
+        descriptor_items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, &shadow_sampler_image);
 
         constexpr auto buffer_type = util::descriptor_buffer_type::combined;
 

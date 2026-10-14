@@ -17,8 +17,6 @@ namespace GLT::renderer::vk_rasterizer {
 
     static constexpr u32                                        MAX_INSTANCES = 4096;
 
-    static constexpr u32                                        MAX_DRAW_COMMANDS = 65536;
-
     static constexpr u32                                        MAX_MESHES = 4096;
 
     static constexpr u32                                        MAX_SUBMESHES_PER_MESH = 32;
@@ -63,15 +61,6 @@ namespace GLT::renderer::vk_rasterizer {
 
     static constexpr u32                                        MAX_MATERIALS = 4096;
 
-    static constexpr u32                                        MAX_TEXTURES = 4096;                       // bindless array size. Keep in sync with mesh.frag.glsl
-
-    static constexpr u32                                        INSTANCE_INDEX_BITS = 16;                  // gl_InstanceIndex = instance | (material << 16)
-
-    static constexpr u32                                        INSTANCE_INDEX_MASK = (1u << INSTANCE_INDEX_BITS) - 1u;
-
-    static_assert(MAX_INSTANCES <= (1u << INSTANCE_INDEX_BITS));
-    static_assert(MAX_MATERIALS <= (1u << (32 - INSTANCE_INDEX_BITS)));
-
     static constexpr u32                                        TEXTURE_SLOT_WHITE = 0;                    // fallback: base colour, metal/rough, emissive, occlusion
 
     static constexpr u32                                        TEXTURE_SLOT_FLAT_NORMAL = 1;              // fallback: tangent-space normal (0.5, 0.5, 1)
@@ -84,20 +73,20 @@ namespace GLT::renderer::vk_rasterizer {
 
     static constexpr u32                                        MATERIAL_TEXTURE_SLOTS = static_cast<u32>(GLT::asset::material::texture_slot::count);
 
-    // params.flags layout. (Suggest moving these into asset/material.h so the editor can use them)
-    static constexpr u32                                        MATERIAL_FLAG_DOUBLE_SIDED = 1u << 0;
-
-    static constexpr u32                                        MATERIAL_FLAG_ALPHA_TEST = 1u << 1;
-
-    static constexpr u32                                        MATERIAL_TEMPLATE_SHIFT = 8;               // bits 8..15 = material template (shader) id
-
-    static constexpr u32                                        MATERIAL_TEMPLATE_MASK = 0xFFu << MATERIAL_TEMPLATE_SHIFT;
-
-    static constexpr u32                                        MATERIAL_OVERRIDE_NONE = 0xFFFFFFFFu;
+    // Commands bucketed per material. Sized so a scene with heavy per-material batching still fits; overflow drops commands, never crashes
+    static constexpr u32                                        MAX_COMMANDS_PER_MATERIAL = 256;
 
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
+
+    // Discriminates the two fragment pipelines a material can carry
+    enum class material_pipeline_kind : u8 {
+
+        main = 0,
+        depth
+    };
+
 
     struct camera_ubo_data {
         glm::mat4                                               view_proj{1.0f};
@@ -182,7 +171,7 @@ namespace GLT::renderer::vk_rasterizer {
     struct gpu_submesh_data {
         u32                                                     first_index = 0;
         u32                                                     index_count = 0;
-        u32                                                     material_index = 0;     // slot in the material SSBO
+        u32                                                     material_index = 0;     // TODO: remove, DEAD
         u32                                                     _pad0 = 0;              // reserved: draw bucket / material template (Step 8b)
     };
     static_assert(sizeof(gpu_submesh_data) == 16, "gpu_submesh_data layout mismatch");
@@ -220,18 +209,6 @@ namespace GLT::renderer::vk_rasterizer {
 
     // materials & textures --------------------------------------------------------------------------------------------
 
-    // One entry of the material SSBO (std430, 80 bytes). Texture fields are bindless slots; missing textures point at fallbacks
-    struct gpu_material {
-
-        glm::vec4                                               base_color{1.0f};
-        glm::vec4                                               emissive_roughness{0.0f, 0.0f, 0.0f, 0.5f};     // rgb = emissive factor, a = roughness
-        glm::vec4                                               metallic_reflectance{0.0f, 0.5f, 1.0f, 1.0f};   // x = metallic, y = reflectance, z = normal scale, w = occlusion strength
-        glm::uvec4                                              textures_a{0u};                                 // base_color, metallic_roughness, normal, emissive
-        glm::uvec4                                              textures_b{0u};                                 // occlusion, height, flags, template id
-    };
-    static_assert(sizeof(gpu_material) == 80, "gpu_material layout mismatch");
-
-
     struct texture_upload_mip {
 
         u64                                                     offset = 0;     // into the staging pixels
@@ -254,9 +231,21 @@ namespace GLT::renderer::vk_rasterizer {
 
         GLT::asset::handle                                      asset{};
         u32                                                     ref_count = 0;
-        std::array<GLT::asset::handle, MATERIAL_TEXTURE_SLOTS>  texture_assets{};   // INVALID_HANDLE = none
-        std::array<u32, MATERIAL_TEXTURE_SLOTS>                 texture_slots{};              // bindless slot actually used (fallback if none)
+        std::array<GLT::asset::handle, MATERIAL_TEXTURE_SLOTS>  texture_assets{};
+        std::array<u32, MATERIAL_TEXTURE_SLOTS>                 texture_slots{};
         bool                                                    alive = false;
+
+        // reflection-driven params
+        util::allocated_buffer                                  params_ubo{};
+        u32                                                     params_size{ 0 };
+
+        // per-material pipelines + shader modules
+        vk::ShaderModule                                        vertex_module = nullptr;
+        vk::ShaderModule                                        fragment_module = nullptr;      // main pass
+        vk::ShaderModule                                        depth_module = nullptr;         // depth prepass + shadow
+        vk::Pipeline                                            pipeline = nullptr;
+        vk::Pipeline                                            depth_pipeline = nullptr;
+        GLT::asset::material::blend_mode                        blend{ GLT::asset::material::blend_mode::opaque };
     };
 
     // STATIC VARIABLES ================================================================================================

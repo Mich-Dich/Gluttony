@@ -29,8 +29,6 @@ namespace GLT::asset::material {
     // Bump when the binary layout below changes. Independent of MATERIAL_CONTRACT_VERSION.
     inline constexpr u16                        REFLECTION_SCHEMA_VERSION = 1;
 
-    inline constexpr u32                        REFLECTION_MAGIC = 0x4645524Du; // 'MREF' little-endian
-
     // Chunk ids for the v0 contract. 0x0300 and 0x0301 exist already.
     inline constexpr chunk_id                   CHUNK_MATERIAL_SLANG_SRC = 0x0302;
 
@@ -66,6 +64,23 @@ namespace GLT::asset::material {
 
     }
 
+    constexpr const char*                       DEFAULT_SLANG_SOURCE = R"slang(
+import material_contract_v0;
+
+
+struct material_params {
+    float3  		base_color = float3(0.8, 0.8, 0.8);
+    float   		roughness = 0.5;
+};
+
+surface_output surface_evaluate(surface_input s, material_params p, material_textures tex) {
+    surface_output o = make_default_surface(s);
+    o.base_color = p.base_color;
+    o.roughness = p.roughness;
+    return o;
+}
+)slang";
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -90,6 +105,7 @@ namespace GLT::asset::material {
     // @brief How the surface is blended into the framebuffer
     //  Mirrors Unreal's blend modes; keep `opaque = 0` so old files stay valid
     enum class blend_mode : u8 {
+
         opaque = 0,
         masked,                 // requires material_flag::use_opacity_mask
         translucent,
@@ -104,6 +120,7 @@ namespace GLT::asset::material {
 
     // @brief Which lighting model the renderer should evaluate
     enum class shading_model : u8 {
+
         unlit = 0,
         default_lit,            // the "normal" PBR path
         subsurface,
@@ -178,7 +195,7 @@ namespace GLT::asset::material {
 
     struct reflection_header {
 
-        u32                                     magic;                          // REFLECTION_MAGIC
+        u32                                     magic;                          // REFLECT_SCHEMA_MAGIC
         u16                                     schema_version;                 // REFLECTION_SCHEMA_VERSION
         u16                                     contract_version;               // MATERIAL_CONTRACT_VERSION (0 for v0)
         u32                                     entry_flags;                    // entry_point_flags
@@ -191,14 +208,6 @@ namespace GLT::asset::material {
     };
     static_assert(sizeof(reflection_header) == 40);
     static_assert(std::is_trivially_copyable_v<reflection_header>);
-
-
-    struct entry_point_descriptor {
-
-        u32                                     kind;                           // which entry_bits value
-        u32                                     stage;                          // 0 = vertex, 1 = fragment (renderer-agnostic enum, expanded later)
-    };
-    static_assert(sizeof(entry_point_descriptor) == 8);
 
 
     // @brief One override row of a material instance asset.

@@ -673,7 +673,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         {   // Vertex
 
-            const auto src = assemble(shading_strings::vertex_suffix);
+            const auto vsuf = has_vertex_transform ? shading_strings::vertex_suffix_with_transform : shading_strings::vertex_suffix;
+            const auto src = assemble(vsuf);
             auto bytecode = m_slang.compile(src, "vertex_main", "material.vert.slang");
             if (!bytecode)
                 return BUILD_ERROR_D(map_raw_slang_code(bytecode.error().code),
@@ -760,6 +761,7 @@ namespace GLT::renderer::vk_rasterizer {
         // shader prefix/suffix
         h = GLT::util::mix_u64(h, GLT::util::fnv1a_64(shading_strings::prefix));
         h = GLT::util::mix_u64(h, GLT::util::fnv1a_64(shading_strings::vertex_suffix));
+        h = GLT::util::mix_u64(h, GLT::util::fnv1a_64(shading_strings::vertex_suffix_with_transform));
         h = GLT::util::mix_u64(h, GLT::util::fnv1a_64(shading_strings::fragment_suffix));
         h = GLT::util::mix_u64(h, GLT::util::fnv1a_64(shading_strings::depth_suffix));
 

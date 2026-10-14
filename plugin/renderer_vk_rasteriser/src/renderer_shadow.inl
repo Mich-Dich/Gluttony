@@ -107,14 +107,14 @@ namespace GLT::renderer::vk_rasterizer {
 
             graph::buffer_desc commands_desc{};
             commands_desc.name = "shadow_draw_commands_" + std::to_string(frame_index);
-            commands_desc.size = MAX_DRAW_COMMANDS * sizeof(vk::DrawIndexedIndirectCommand);
+            commands_desc.size = static_cast<vk::DeviceSize>(MAX_MATERIALS) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand);
             commands_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
             commands_desc.persistent = true;
             m_shadow_draw_commands_handles[frame_index] = m_graph->create_buffer(commands_desc);
 
             graph::buffer_desc count_desc{};
             count_desc.name = "shadow_draw_count_" + std::to_string(frame_index);
-            count_desc.size = sizeof(u32);
+            count_desc.size = static_cast<vk::DeviceSize>(MAX_MATERIALS) * sizeof(u32);
             count_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer
                              | vk::BufferUsageFlagBits::eTransferDst;
             count_desc.persistent = true;
@@ -284,14 +284,15 @@ namespace GLT::renderer::vk_rasterizer {
 
             graph::buffer_desc commands_desc{};
             commands_desc.name = "local_shadow_commands_" + std::to_string(frame_index);
-            commands_desc.size = MAX_SHADOW_VIEWS * SHADOW_COMMANDS_PER_VIEW * sizeof(vk::DrawIndexedIndirectCommand);
+            commands_desc.size = static_cast<vk::DeviceSize>(MAX_SHADOW_VIEWS) * MAX_MATERIALS * MAX_COMMANDS_PER_MATERIAL
+                * sizeof(vk::DrawIndexedIndirectCommand);
             commands_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
             commands_desc.persistent = true;
             m_local_shadow_commands_handles[frame_index] = m_graph->create_buffer(commands_desc);
 
             graph::buffer_desc counts_desc{};
             counts_desc.name = "local_shadow_counts_" + std::to_string(frame_index);
-            counts_desc.size = MAX_SHADOW_VIEWS * sizeof(u32);
+            counts_desc.size = static_cast<vk::DeviceSize>(MAX_SHADOW_VIEWS) * MAX_MATERIALS * sizeof(u32);
             counts_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
             counts_desc.persistent = true;
             m_local_shadow_counts_handles[frame_index] = m_graph->create_buffer(counts_desc);

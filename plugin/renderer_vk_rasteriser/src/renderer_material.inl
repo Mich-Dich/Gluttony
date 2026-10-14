@@ -1,5 +1,8 @@
 #pragma once
 
+#include <asset/material.h>
+
+
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -82,13 +85,13 @@ namespace GLT::renderer::vk_rasterizer {
             const f32 one = 1.0f;
             std::memcpy(alpha, &one, sizeof(one));
         } else {
-            for (u32 i = 0; i < component_bytes; ++i)
-                alpha[i] = std::byte{ 0xFF };
+            for (u32 index = 0; index < component_bytes; ++index)
+                alpha[index] = std::byte{ 0xFF };
         }
 
-        for (u64 i = 0; i < pixel_count; ++i) {
-            std::memcpy(dst + i * 4 * component_bytes, src + i * 3 * component_bytes, 3 * component_bytes);
-            std::memcpy(dst + i * 4 * component_bytes + 3 * component_bytes, alpha, component_bytes);
+        for (u64 index = 0; index < pixel_count; ++index) {
+            std::memcpy(dst + index * 4 * component_bytes, src + index * 3 * component_bytes, 3 * component_bytes);
+            std::memcpy(dst + index * 4 * component_bytes + 3 * component_bytes, alpha, component_bytes);
         }
     }
 
@@ -355,8 +358,6 @@ namespace GLT::renderer::vk_rasterizer {
         m_texture_table[slot].sampler = nullptr;
         m_texture_table[slot].layout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
-        m_texture_high_water = std::max(m_texture_high_water, slot + 1);
-        m_texture_version++;
         return slot;
     }
 
@@ -377,7 +378,6 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_texture_table[slot] = m_texture_table[TEXTURE_SLOT_WHITE];   // freed slots hold the white fallback
         m_free_texture_slots.push_back(slot);
-        m_texture_version++;
     }
 
     // materials -------------------------------------------------------------------------------------------------------
@@ -411,13 +411,43 @@ namespace GLT::renderer::vk_rasterizer {
         entry.ref_count = 1;
         entry.alive = true;
         entry.texture_assets.fill(INVALID_HANDLE);
-        for (u32 i = 0; i < MATERIAL_TEXTURE_SLOTS; ++i)
-            entry.texture_slots[i] = fallback_texture_slot_for(i);
+        for (u32 index = 0; index < MATERIAL_TEXTURE_SLOTS; ++index)
+            entry.texture_slots[index] = fallback_texture_slot_for(index);
 
         m_material_slot_by_asset[handle] = slot;
-        m_material_cpu[slot] = m_material_cpu[DEFAULT_MATERIAL_SLOT];
         pack_material(slot);
-        m_material_version++;
+
+        const auto* asset = registry->data_as<GLT::asset::material::material_asset>(handle);
+        VALIDATE(asset, return DEFAULT_MATERIAL_SLOT, "", "material asset missing");
+
+        // load and split the bytecode blob from the material asset
+        std::vector<std::byte> vs_bytes, fs_bytes, ds_bytes;
+        if (!asset->bytecode.empty()) {
+
+            const auto* p = reinterpret_cast<const u64*>(asset->bytecode.data());
+            u64 vs_sz = p[0];
+            u64 fs_sz = p[1];
+            u64 ds_sz = p[2];
+            const std::byte* base = asset->bytecode.data() + 3 * sizeof(u64);
+            vs_bytes.assign(base, base + vs_sz);
+            fs_bytes.assign(base + vs_sz, base + vs_sz + fs_sz);
+            ds_bytes.assign(base + vs_sz + fs_sz, base + vs_sz + fs_sz + ds_sz);
+        }
+
+        entry.blend = asset->blend;
+
+        if (!vs_bytes.empty()) {
+
+            entry.vertex_module = m_dev->create_shader_module(std::span<const std::byte>(vs_bytes));
+            entry.fragment_module = m_dev->create_shader_module(std::span<const std::byte>(fs_bytes));
+            if (!ds_bytes.empty())
+                entry.depth_module = m_dev->create_shader_module(std::span<const std::byte>(ds_bytes));
+
+            entry.pipeline = create_material_pipeline(entry, material_pipeline_kind::main);
+            entry.depth_pipeline = create_material_pipeline(entry, material_pipeline_kind::depth);
+            m_live_pipeline_count += 2;
+        }
+
         return slot;
     }
 
@@ -431,21 +461,39 @@ namespace GLT::renderer::vk_rasterizer {
         if (--entry.ref_count > 0)
             return;
 
-        for (u32 i = 0; i < MATERIAL_TEXTURE_SLOTS; ++i)
-            if (entry.texture_assets[i] != INVALID_HANDLE)
-                release_texture(entry.texture_slots[i]);
+        if (entry.pipeline)
+            m_device.destroyPipeline(entry.pipeline);
+        if (entry.depth_pipeline)
+            m_device.destroyPipeline(entry.depth_pipeline);
+        if (entry.vertex_module)
+            m_device.destroyShaderModule(entry.vertex_module);
+        if (entry.fragment_module)
+            m_device.destroyShaderModule(entry.fragment_module);
+        if (entry.depth_module)
+            m_device.destroyShaderModule(entry.depth_module);
+
+        // reflection-driven params storage
+        if (entry.params_ubo.buffer) {
+            m_dev->destroy_buffer(entry.params_ubo);
+            entry.params_ubo = {};
+            entry.params_size = 0;
+        }
+
+        for (u32 index = 0; index < MATERIAL_TEXTURE_SLOTS; ++index)
+            if (entry.texture_assets[index] != INVALID_HANDLE)
+                release_texture(entry.texture_slots[index]);
 
         m_material_slot_by_asset.erase(entry.asset);
         entry = {};
-        m_material_cpu[slot] = m_material_cpu[DEFAULT_MATERIAL_SLOT];   // stale references render with the default material
         m_free_material_slots.push_back(slot);
-        m_material_version++;
     }
 
 
     void renderer::pack_material(u32 slot_index) {
 
         material_slot& slot = m_material_slots[slot_index];
+        if (slot.asset == INVALID_HANDLE || !slot.alive)
+            return;
 
         auto registry = GLT::asset::registry::get_ref();
         if (!registry)
@@ -453,35 +501,63 @@ namespace GLT::renderer::vk_rasterizer {
 
         const auto* asset = registry->data_as<GLT::asset::material::material_asset>(slot.asset);
         if (!asset)
-            return;                         // the asset went away: keep the last packed values
+            return;
 
-        for (u32 i = 0; i < MATERIAL_TEXTURE_SLOTS; ++i) {
+        // refresh texture slots (unchanged from Phase 4)
+        for (u32 index = 0; index < MATERIAL_TEXTURE_SLOTS; index++) {
 
-            const GLT::asset::handle wanted = asset->textures[i];
-            if (wanted == slot.texture_assets[i])
+            const auto wanted = asset->textures[index];
+            if (wanted == slot.texture_assets[index])
                 continue;
 
-            if (slot.texture_assets[i] != INVALID_HANDLE)
-                release_texture(slot.texture_slots[i]);
+            if (slot.texture_assets[index] != INVALID_HANDLE)
+                release_texture(slot.texture_slots[index]);
 
-            slot.texture_assets[i] = wanted;
-            slot.texture_slots[i] = (wanted == INVALID_HANDLE) ? fallback_texture_slot_for(i) : acquire_texture(wanted);
+            slot.texture_assets[index] = wanted;
+            slot.texture_slots[index] = (wanted == INVALID_HANDLE) ? fallback_texture_slot_for(index) : acquire_texture(wanted);
         }
 
-        using TS = GLT::asset::material::texture_slot;
-        const auto tex = [&](TS s) { return slot.texture_slots[static_cast<u32>(s)]; };
+        // refresh params UBO
+        const u32 needed = static_cast<u32>(asset->packed_params.size());
+        if (!slot.params_ubo.buffer || slot.params_size < needed) {
 
-        gpu_material packed{};
-        packed.base_color ={};
-        packed.emissive_roughness = glm::vec4(0.f);
-        packed.metallic_reflectance = glm::vec4(0.f);
-        packed.textures_a = glm::uvec4(tex(TS::base_color), tex(TS::metallic_roughness), tex(TS::normal), tex(TS::emissive));
-        packed.textures_b = glm::uvec4(tex(TS::occlusion), tex(TS::height), 0,
-            (0 & MATERIAL_TEMPLATE_MASK) >> MATERIAL_TEMPLATE_SHIFT);
+            if (slot.params_ubo.buffer)
+                m_dev->destroy_buffer(slot.params_ubo);
 
-        if (std::memcmp(&m_material_cpu[slot_index], &packed, sizeof(gpu_material)) != 0) {
-            m_material_cpu[slot_index] = packed;
-            m_material_version++;
+            const u32 alloc_size = std::max<u32>(needed, 256);
+            slot.params_ubo = m_dev->create_buffer(alloc_size, vk::BufferUsageFlagBits::eUniformBuffer,
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+            slot.params_size = alloc_size;
+            m_live_buffer_count++;
+        }
+        if (needed > 0) {
+
+            void* p = m_dev->map_buffer(slot.params_ubo);
+            std::memcpy(p, asset->packed_params.data(), needed);
+            m_dev->unmap_buffer(slot.params_ubo);
+        }
+
+        // rebuild the descriptor slice for this material
+        for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; frame_index++) {
+
+            items.emplace_back(0, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eFragment, 1, &slot.params_ubo);
+            std::array<util::accessible_image, 6> images{};
+            for (u32 t = 0; t < 6; ++t) {
+                images[t] = m_texture_table[slot.texture_slots[t]];
+                images[t].sampler = nullptr;
+            }
+
+            std::vector<util::descriptor_item> items;
+            items.emplace_back(0, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eFragment, 1, &slot.params_ubo);
+            for (u32 t = 0; t < 6; ++t)
+                items.emplace_back(1 + t, vk::DescriptorType::eSampledImage, vk::ShaderStageFlagBits::eFragment, 1, &images[t]);
+
+            util::accessible_image sampler_image{};
+            sampler_image.sampler = m_material_sampler;
+            items.emplace_back(7, vk::DescriptorType::eSampler, vk::ShaderStageFlagBits::eFragment, 1, &sampler_image);
+
+            m_dev->compute_descriptor_binding_offsets(m_material_set_layout, items);
+            m_dev->update_descriptor_buffer(m_material_desc_buffers[frame_index], items, util::descriptor_buffer_type::combined, slot_index);
         }
     }
 
@@ -506,33 +582,6 @@ namespace GLT::renderer::vk_rasterizer {
 
         if ((++m_material_poll_counter % MATERIAL_POLL_INTERVAL) == 0)
             poll_material_changes();
-
-        const u32 frame_index = m_current_frame;
-
-        // The fence wait at the top of begin_frame() guarantees this frame slot's buffers are no longer in use
-        if (m_material_uploaded_version[frame_index] != m_material_version) {
-
-            std::memcpy(m_dev->map_buffer(m_material_buffers[frame_index]), m_material_cpu.data(),
-                m_material_slots.size() * sizeof(gpu_material));
-            m_dev->unmap_buffer(m_material_buffers[frame_index]);
-            m_material_uploaded_version[frame_index] = m_material_version;
-        }
-
-        if (m_texture_uploaded_version[frame_index] != m_texture_version) {
-
-            std::vector<util::descriptor_item> items;
-            items.emplace_back(0, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eFragment, 1, &m_material_buffers[frame_index]);
-            items.emplace_back(1, vk::DescriptorType::eSampledImage, vk::ShaderStageFlagBits::eFragment, MAX_TEXTURES, m_texture_table.data());
-            m_dev->compute_descriptor_binding_offsets(m_material_set_layout, items);
-
-            void* mapped = m_dev->map_buffer(m_material_desc_buffers[frame_index].buffer);
-            for (u32 i = 0; i < m_texture_high_water; ++i)
-                m_dev->update_descriptor_buffer(m_material_desc_buffers[frame_index], items[1], i,
-                    util::descriptor_buffer_type::resource, 0, mapped);
-            m_dev->unmap_buffer(m_material_desc_buffers[frame_index].buffer);
-
-            m_texture_uploaded_version[frame_index] = m_texture_version;
-        }
     }
 
     // resources -------------------------------------------------------------------------------------------------------
@@ -557,29 +606,28 @@ namespace GLT::renderer::vk_rasterizer {
         sampler_info.maxLod = 1000.0f;
         m_material_sampler = m_device.createSampler(sampler_info);
 
-        // Set 1 layout: material SSBO + bindless sampled images
+        // Set 1 layout: reflection UBO + 6 textures + sampler
         std::vector<util::descriptor_item> layout_items;
-        layout_items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
-        layout_items.emplace_back(1, VKDT::eSampledImage, VKSF::eFragment, MAX_TEXTURES, nullptr);
+        layout_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eFragment, 1, nullptr);
+        layout_items.emplace_back(1, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);   // base_color
+        layout_items.emplace_back(2, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);   // metallic_roughness
+        layout_items.emplace_back(3, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);   // normal
+        layout_items.emplace_back(4, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);   // emissive
+        layout_items.emplace_back(5, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);   // occlusion
+        layout_items.emplace_back(6, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);   // height
+        layout_items.emplace_back(7, VKDT::eSampler, VKSF::eFragment, 1, nullptr);
         m_material_set_layout = m_dev->create_descriptor_set_layout(layout_items);
         m_live_descriptor_set_count++;
 
         // CPU tables ---------------------------------------------------------------------------------------------------
-        gpu_material default_material{};
-        default_material.base_color = glm::vec4(0.75f, 0.72f, 0.68f, 1.0f);
-        default_material.emissive_roughness = glm::vec4(0.0f, 0.0f, 0.0f, 0.6f);
-        default_material.metallic_reflectance = glm::vec4(0.0f, 0.5f, 1.0f, 1.0f);
-        default_material.textures_a = glm::uvec4(TEXTURE_SLOT_WHITE, TEXTURE_SLOT_WHITE, TEXTURE_SLOT_FLAT_NORMAL, TEXTURE_SLOT_WHITE);
-        default_material.textures_b = glm::uvec4(TEXTURE_SLOT_WHITE, TEXTURE_SLOT_WHITE, 0u, 0u);
-        m_material_cpu.assign(MAX_MATERIALS, default_material);
 
         material_slot default_slot{};
         default_slot.ref_count = 1;
         default_slot.alive = true;
         default_slot.asset = INVALID_HANDLE;
         default_slot.texture_assets.fill(INVALID_HANDLE);
-        for (u32 i = 0; i < MATERIAL_TEXTURE_SLOTS; ++i)
-            default_slot.texture_slots[i] = fallback_texture_slot_for(i);
+        for (u32 index = 0; index < MATERIAL_TEXTURE_SLOTS; ++index)
+            default_slot.texture_slots[index] = fallback_texture_slot_for(index);
         m_material_slots.assign(1, default_slot);
 
         // Fallback textures --------------------------------------------------------------------------------------------
@@ -600,33 +648,24 @@ namespace GLT::renderer::vk_rasterizer {
         create_fallback(TEXTURE_SLOT_WHITE, { std::byte{255}, std::byte{255}, std::byte{255}, std::byte{255} });
         create_fallback(TEXTURE_SLOT_FLAT_NORMAL, { std::byte{128}, std::byte{128}, std::byte{255}, std::byte{255} });
 
-        for (u32 i = FIRST_FREE_TEXTURE_SLOT; i < MAX_TEXTURES; ++i)    // every unused slot holds the white texture
-            m_texture_table[i] = m_texture_table[TEXTURE_SLOT_WHITE];
-        m_texture_high_water = FIRST_FREE_TEXTURE_SLOT;
+        for (u32 index = FIRST_FREE_TEXTURE_SLOT; index < MAX_TEXTURES; ++index)    // every unused slot holds the white texture
+            m_texture_table[index] = m_texture_table[TEXTURE_SLOT_WHITE];
 
         // Per-frame buffers + descriptor sets ---------------------------------------------------------------------------
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
-
-            m_material_buffers[frame_index] = m_dev->create_buffer(MAX_MATERIALS * sizeof(gpu_material),
-                vk::BufferUsageFlagBits::eStorageBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-            m_live_buffer_count++;
-
-            std::memcpy(m_dev->map_buffer(m_material_buffers[frame_index]), m_material_cpu.data(), MAX_MATERIALS * sizeof(gpu_material));
-            m_dev->unmap_buffer(m_material_buffers[frame_index]);
-
             std::vector<util::descriptor_item> items;
-            items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_material_buffers[frame_index]);
-            items.emplace_back(1, VKDT::eSampledImage, VKSF::eFragment, MAX_TEXTURES, m_texture_table.data());
+            items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eFragment, 1, nullptr);  // p_resources set per-slice
+            items.emplace_back(1, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);
+            items.emplace_back(2, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);
+            items.emplace_back(3, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);
+            items.emplace_back(4, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);
+            items.emplace_back(5, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);
+            items.emplace_back(6, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);
+            items.emplace_back(7, VKDT::eSampler, VKSF::eFragment, 1, nullptr);
 
-            m_material_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_material_set_layout, items,
-                util::descriptor_buffer_type::resource, 1);
+            m_material_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_material_set_layout, items, 
+                util::descriptor_buffer_type::combined, MAX_MATERIALS);
             m_live_buffer_count++;
-
-            m_dev->compute_descriptor_binding_offsets(m_material_set_layout, items);
-            m_dev->update_descriptor_buffer(m_material_desc_buffers[frame_index], items, util::descriptor_buffer_type::resource);   // all 4096 slots
-
-            m_material_uploaded_version[frame_index] = m_material_version;
-            m_texture_uploaded_version[frame_index] = m_texture_version;
         }
     }
 
@@ -636,16 +675,18 @@ namespace GLT::renderer::vk_rasterizer {
         m_device.waitIdle();
 
         for (auto& desc : m_material_desc_buffers) {
-            if (desc.buffer.buffer) m_dev->destroy_buffer(desc.buffer);
+            if (desc.buffer.buffer)
+                m_dev->destroy_buffer(desc.buffer);
             desc = {};
         }
-        for (auto& buffer : m_material_buffers) {
-            if (buffer.buffer) m_dev->destroy_buffer(buffer);
-            buffer = {};
-        }
+
         for (auto& texture : m_gpu_textures)
             if (texture.alive)
                 destroy_gpu_texture(texture);
+
+        for (auto& slot : m_material_slots)
+            if (slot.params_ubo.buffer)
+                m_dev->destroy_buffer(slot.params_ubo);
 
         m_gpu_textures.clear();
         m_free_texture_slots.clear();
@@ -654,7 +695,6 @@ namespace GLT::renderer::vk_rasterizer {
         m_material_slots.clear();
         m_free_material_slots.clear();
         m_material_slot_by_asset.clear();
-        m_material_cpu.clear();
 
         if (m_material_sampler) {
             m_device.destroySampler(m_material_sampler);
@@ -664,6 +704,85 @@ namespace GLT::renderer::vk_rasterizer {
             m_device.destroyDescriptorSetLayout(m_material_set_layout);
             m_material_set_layout = nullptr;
         }
+    }
+
+
+    vk::Pipeline renderer::create_material_pipeline(const material_slot& slot, material_pipeline_kind kind) {
+
+        vk::PipelineShaderStageCreateInfo stages[2]{};
+        stages[0].stage = vk::ShaderStageFlagBits::eVertex;
+        stages[0].module = slot.vertex_module;
+        stages[0].pName = "vertex_main";
+        stages[1].stage = vk::ShaderStageFlagBits::eFragment;
+        stages[1].module = (kind == material_pipeline_kind::main) ? slot.fragment_module : slot.depth_module;
+        stages[1].pName = (kind == material_pipeline_kind::main) ? "fragment_main" : "depth_main";
+
+        vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
+        vertex_input_state.vertexBindingDescriptionCount = 1;
+        vertex_input_state.pVertexBindingDescriptions = &vertex_binding;
+        vertex_input_state.vertexAttributeDescriptionCount = static_cast<u32>(vertex_attributes.size());
+        vertex_input_state.pVertexAttributeDescriptions = vertex_attributes.data();
+
+        vk::PipelineInputAssemblyStateCreateInfo input_assembly_state{};
+        input_assembly_state.topology = vk::PrimitiveTopology::eTriangleList;
+
+        vk::PipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.viewportCount = 1;
+        viewport_state.scissorCount = 1;
+
+        vk::PipelineRasterizationStateCreateInfo rasterization_state{};
+        rasterization_state.polygonMode = vk::PolygonMode::eFill;
+        rasterization_state.cullMode = vk::CullModeFlagBits::eBack;
+        rasterization_state.frontFace = vk::FrontFace::eCounterClockwise;
+        rasterization_state.lineWidth = 1.0f;
+
+        vk::PipelineMultisampleStateCreateInfo multisample_state{};
+        multisample_state.rasterizationSamples = vk::SampleCountFlagBits::e1;
+
+        vk::DynamicState dynamic_states[] = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        vk::PipelineDynamicStateCreateInfo dynamic_state{};
+        dynamic_state.dynamicStateCount = 2;
+        dynamic_state.pDynamicStates = dynamic_states;
+
+        vk::PipelineDepthStencilStateCreateInfo ds{};
+        ds.depthTestEnable = VK_TRUE;
+        ds.depthWriteEnable = (kind == material_pipeline_kind::depth);
+        ds.depthCompareOp = (kind == material_pipeline_kind::main) ? vk::CompareOp::eEqual : vk::CompareOp::eLess;
+        ds.depthBoundsTestEnable = VK_FALSE;
+        ds.stencilTestEnable = VK_FALSE;
+
+        vk::PipelineRenderingCreateInfo ri{};
+        const vk::Format color_format = vk::Format::eR8G8B8A8Unorm;
+        const vk::Format depth_format = vk::Format::eD32Sfloat;
+        if (kind == material_pipeline_kind::main) {
+            ri.colorAttachmentCount = 1;
+            ri.pColorAttachmentFormats = &color_format;
+        } else {
+            ri.colorAttachmentCount = 0;
+            ri.pColorAttachmentFormats = nullptr;
+        }
+        ri.depthAttachmentFormat = depth_format;
+
+        vk::GraphicsPipelineCreateInfo info{};
+        info.pNext = &ri;
+        info.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;
+        info.stageCount = 2;
+        info.pStages = stages;
+        info.pVertexInputState = &vertex_input;
+        info.pInputAssemblyState = &input_assembly;
+        info.pViewportState = &viewport;
+        info.pRasterizationState = &raster;
+        info.pMultisampleState = &ms;
+        info.pDepthStencilState = &ds;
+        info.pColorBlendState = &blend;               // with color attachment for main, without for depth
+        info.pDynamicState = &dyn;
+        info.layout = m_mesh_pipeline_layout;
+        info.renderPass = nullptr;
+        info.subpass = 0;
+
+        auto [result, pipeline] = m_device.createGraphicsPipeline(nullptr, info);
+        VALIDATE(result == vk::Result::eSuccess, return nullptr, "", "material pipeline creation failed")
+        return pipeline;
     }
 
 }

@@ -9,26 +9,6 @@ namespace GLT::asset::material {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr const char*                           DEFAULT_SLANG_SOURCE = R"slang(
-import material_contract_v0;
-
-
-struct material_params {
-    float3  		base_color = float3(0.8, 0.8, 0.8);
-    float   		roughness = 0.5;
-    float   		metallic = 0.0;
-};
-
-surface_output surface_evaluate(surface_input s, material_params p, material_textures tex) {
-    surface_output o = make_default_surface(s);
-    o.base_color = p.base_color;
-    o.roughness = p.roughness;
-    o.metallic = p.metallic;
-    return o;
-}
-
-)slang";
-
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================

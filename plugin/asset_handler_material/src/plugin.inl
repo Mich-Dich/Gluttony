@@ -65,71 +65,109 @@ namespace GLT::asset::handler::material {
 
         using namespace GLT::asset::material;
 
-        // required: slang source --------------------------------------------------------------------------------------
+        // Every fallback below sets this. The renderer checks `compiler_hash_matches` and recompiles when false
+        bool needs_recompile = false;
 
-        const auto slang_bytes = reader.get(CHUNK_MATERIAL_SLANG_SRC);
-        VALIDATE(!slang_bytes.empty(), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
-            "", "[{}] missing or empty CHUNK_MATERIAL_SLANG_SRC", (info.name))
+        // ---- slang source (missing => shipped default) --------------------------------------------------------------
 
-        // required: reflection schema ---------------------------------------------------------------------------------
+        std::string slang_source;
+        {
+            const auto slang_bytes = reader.get(CHUNK_MATERIAL_SLANG_SRC);
+
+            std::size_t len = slang_bytes.size();
+            while (len > 0 && slang_bytes[len - 1] == std::byte{ 0 })
+                len--;
+
+            if (len == 0) {
+                LOG(warn, "[{}] CHUNK_MATERIAL_SLANG_SRC missing or empty - falling back to DEFAULT_SLANG_SOURCE", info.name);
+                slang_source = DEFAULT_SLANG_SOURCE;
+                needs_recompile = true;
+            } else {
+                slang_source.assign(reinterpret_cast<const char*>(slang_bytes.data()), len);
+            }
+        }
+
+        // ---- reflection (missing / too small / bad magic => drop, force recompile) ---------------------------------
+        // `refl_hdr` is only valid while `reflect_bytes` (a span into the reader) is alive, i.e. within this call
 
         const auto reflect_bytes = reader.get(CHUNK_MATERIAL_REFLECT);
-        VALIDATE(reflect_bytes.size() >= sizeof(reflection_header), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
-            "", "[{}] CHUNK_MATERIAL_REFLECT is missing or too small ({} byte(s))", (info.name, reflect_bytes.size()))
+        const reflection_header* refl_hdr = nullptr;
 
-        const auto* refl_hdr = reinterpret_cast<const reflection_header*>(reflect_bytes.data());
-        VALIDATE(refl_hdr->magic == REFLECT_SCHEMA_MAGIC, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
-            "", "[{}] CHUNK_MATERIAL_REFLECT has bad magic (0x{:08X})", (info.name, refl_hdr->magic))
+        if (reflect_bytes.size() < sizeof(reflection_header)) {
+            LOG(warn, "[{}] CHUNK_MATERIAL_REFLECT missing or too small ({} byte(s)) - recompile required", info.name, reflect_bytes.size())
+            needs_recompile = true;
+        } else {
+            refl_hdr = reinterpret_cast<const reflection_header*>(reflect_bytes.data());
+            if (refl_hdr->magic != REFLECT_SCHEMA_MAGIC) {
+                LOG(warn, "[{}] CHUNK_MATERIAL_REFLECT has bad magic (0x{:08X}) - recompile required", info.name, refl_hdr->magic)
+                refl_hdr = nullptr;
+                needs_recompile = true;
+            }
+        }
 
-        // required: packed params -------------------------------------------------------------------------------------
+        // ---- packed params (size must agree with reflection; else drop, force recompile) ---------------------------
 
         const auto params_bytes = reader.get(CHUNK_MATERIAL_PARAMS);
-        VALIDATE(params_bytes.size() == refl_hdr->packed_param_size, return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
-            "", "[{}] CHUNK_MATERIAL_PARAMS size {} does not match reflection's packed_param_size {}", 
-            (info.name, params_bytes.size(), refl_hdr->packed_param_size))
+        bool params_ok = false;
 
-        // build runtime asset -----------------------------------------------------------------------------------------
+        if (!refl_hdr) {
+            // Reflection is already gone - params are unusable without it
+            if (!params_bytes.empty())
+                LOG(warn, "[{}] CHUNK_MATERIAL_PARAMS present but reflection is unusable - dropping params", info.name)
+            needs_recompile = true;
+        } else if (params_bytes.size() != refl_hdr->packed_param_size) {
+            LOG(warn, "[{}] CHUNK_MATERIAL_PARAMS size {} != reflection packed_param_size {} - recompile required", 
+                info.name, params_bytes.size(), refl_hdr->packed_param_size)
+            needs_recompile = true;
+        } else
+            params_ok = true;
+
+        // ---- build the runtime asset -------------------------------------------------------------------------------
 
         auto asset = std::make_unique<GLT::asset::material::material_asset>();
         asset->asset_type = info.asset_type;
         asset->name = info.name;
+        asset->slang_source = std::move(slang_source);
 
-        // slang source: NUL-stripped
-        {
-            std::size_t len = slang_bytes.size();
-            while (len > 0 && slang_bytes[len - 1] == std::byte{ 0 })
-                --len;
-            asset->slang_source.assign(reinterpret_cast<const char*>(slang_bytes.data()), len);
+        if (refl_hdr)
+            asset->reflection.assign(reflect_bytes.begin(), reflect_bytes.end());
+
+        if (params_ok)
+            asset->packed_params.assign(params_bytes.begin(), params_bytes.end());
+
+        // ---- bytecode (missing => force recompile) -----------------------------------------------------------------
+
+        if (const auto bytecode_bytes = reader.get(CHUNK_MATERIAL_BYTECODE); !bytecode_bytes.empty()) {
+            asset->bytecode.assign(bytecode_bytes.begin(), bytecode_bytes.end());
+        } else {
+            needs_recompile = true;
         }
 
-        // derived artifacts - copy verbatim
-        if (const auto bytecode_bytes = reader.get(CHUNK_MATERIAL_BYTECODE); !bytecode_bytes.empty())
-            asset->bytecode.assign(bytecode_bytes.begin(), bytecode_bytes.end());
+        // ---- compiler hash (missing => 0, force recompile) ---------------------------------------------------------
 
-        asset->reflection.assign(reflect_bytes.begin(), reflect_bytes.end());
-        asset->packed_params.assign(params_bytes.begin(), params_bytes.end());
-
-        // compiler hash -----------------------------------------------------------------------------------------------
-
-        if (const auto h = reader.get_as<u64>(CHUNK_MATERIAL_COMPILER_HASH); h.size() == 1)
+        if (const auto h = reader.get_as<u64>(CHUNK_MATERIAL_COMPILER_HASH); h.size() == 1) {
             asset->compiler_hash = h[0];
+        } else {
+            LOG(warn, "[{}] CHUNK_MATERIAL_COMPILER_HASH missing - treating as stale", info.name)
+            needs_recompile = true;
+        }
 
-        // blend mode - absent => opaque, per contract -----------------------------------------------------------------
+        // ---- blend mode (absent / out-of-range => opaque) ----------------------------------------------------------
 
         asset->blend = blend_mode::opaque;
         if (const auto b = reader.get_as<u32>(CHUNK_MATERIAL_BLEND_MODE); b.size() == 1) {
             const auto bm = static_cast<blend_mode>(b[0]);
-            VALIDATE(static_cast<u8>(bm) < static_cast<u8>(blend_mode::count), return std::unexpected{ GLT::asset::load_error::corrupt_header }, 
-                "", "[{}] CHUNK_MATERIAL_BLEND_MODE has out-of-range value {}", (info.name, b[0]))
-            asset->blend = bm;
+            if (static_cast<u8>(bm) < static_cast<u8>(blend_mode::count))
+                asset->blend = bm;
+            else
+                LOG(warn, "[{}] CHUNK_MATERIAL_BLEND_MODE out of range ({}) - defaulting to opaque", info.name, b[0])
         }
 
-        // texture refs + dependency resolution ------------------------------------------------------------------------
+        // ---- texture refs + dependency resolution -------------------------------------------------------------------
 
         asset->textures.fill(INVALID_HANDLE);
         const auto refs = reader.get_as<texture_ref>(CHUNK_TEXTURE_REFS);
 
-        // info.dependencies is positional against info.dependency_ids; build the reverse map by UUID
         std::unordered_map<UUID, GLT::asset::handle> by_id;
         by_id.reserve(info.dependencies.size());
 
@@ -143,8 +181,10 @@ namespace GLT::asset::handler::material {
         for (const auto& ref : refs) {
 
             const auto slot = static_cast<size_t>(ref.slot);
-            VALIDATE(slot < static_cast<size_t>(texture_slot::count), continue, 
-                "", "[{}] texture_ref names slot {} which is out of range - skipping", (info.name, slot));
+            if (slot >= static_cast<size_t>(texture_slot::count)) {
+                LOG(warn, "[{}] texture_ref names slot {} which is out of range - skipping", info.name, slot)
+                continue;
+            }
 
             if (auto it = by_id.find(ref.id); it != by_id.end())
                 asset->textures[slot] = it->second;
@@ -153,12 +193,15 @@ namespace GLT::asset::handler::material {
                     info.name, GLT::util::enum_to_string(ref.slot), GLT::util::to_string(ref.id))
         }
 
-        // The renderer sets compiler_hash_matches when it has the active compiler in hand. Here we can only say
-        // "there is bytecode to try". If the file carried no bytecode at all, force a recompile
-        asset->compiler_hash_matches = !asset->bytecode.empty();
+        // ---- final state -------------------------------------------------------------------------------------------
 
-        LOG(info, "loaded material [{}] - {} byte(s) bytecode, {} param byte(s), {} texture ref(s)",
-            info.name, asset->bytecode.size(), asset->packed_params.size(), refs.size());
+        asset->compiler_hash_matches = !needs_recompile;
+
+        if (needs_recompile)
+            LOG(warn, "[{}] material loaded with issues - recompile flagged", info.name)
+        else
+            LOG(info, "loaded material [{}] - {} byte(s) bytecode, {} param byte(s), {} texture ref(s)",
+                info.name, asset->bytecode.size(), asset->packed_params.size(), refs.size())
 
         return GLT::unique_ref<GLT::asset::i_runtime_asset>(std::move(asset));
     }

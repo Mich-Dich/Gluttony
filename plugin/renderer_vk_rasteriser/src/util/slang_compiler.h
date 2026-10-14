@@ -104,8 +104,13 @@ namespace GLT::renderer::vk_rasterizer::util {
 
     private:
 
+        void manage_session();
+
+
         struct impl;
-        impl*       m_impl = nullptr;
+        impl*                               m_impl = nullptr;
+        u32                                 m_compile_count = 0;
+        std::filesystem::path               m_contract_dir{};
     };
 
 }

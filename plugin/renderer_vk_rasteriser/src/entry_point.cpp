@@ -20,7 +20,6 @@
 #include "util/data_structures.h"
 #include "util/shader_compiler.h"
 #include "util/builders.h"
-#include "util/shader_compiler.h"
 #include "util/slang_compiler.h"
 #include "render_graph/render_graph.h"
 #include "settings.inl"
@@ -222,11 +221,6 @@ namespace GLT::renderer::vk_rasterizer {
 
         void build_instance_buffer();
 
-        // Issue the whole scene as a single indexed indirect count draw. The graphics pipeline layout is unchanged — the vertex shader
-        // still reads the instance SSBO via gl_InstanceIndex, and the cull pass filled the commands' firstInstance field to point into 
-        // that buffer
-        void draw_scene_indirect(vk::CommandBuffer cmd, vk::Buffer draw_commands, vk::Buffer draw_count);
-
         // Helpers -----------------------------------------------------------------------------------------------------
 
         void transition_image_layout(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout oldL,
@@ -252,11 +246,12 @@ namespace GLT::renderer::vk_rasterizer {
 
         void create_material_resources();
         void destroy_material_resources();
+        vk::Pipeline create_material_pipeline(const material_slot& slot, material_pipeline_kind kind);
         void update_materials();                                // per frame: poll for edits, upload SSBO + descriptor table when stale
 
         u32  acquire_material(GLT::asset::handle material);     // ref++ and returns the SSBO slot (default slot for INVALID_HANDLE)
         void release_material(u32 slot);
-        void pack_material(u32 slot);                           // asset -> m_material_cpu[slot]; bumps the version if it changed
+        void pack_material(u32 slot);
         void poll_material_changes();
         void refresh_material(GLT::asset::handle material);     // call from the editor after editing a material asset
 
@@ -421,8 +416,6 @@ namespace GLT::renderer::vk_rasterizer {
 
         vk::DescriptorSetLayout                                             m_mesh_set_layout = nullptr;
         vk::PipelineLayout                                                  m_mesh_pipeline_layout = nullptr;
-        vk::Pipeline                                                        m_mesh_pipeline = nullptr;
-        vk::Pipeline                                                        m_depth_pipeline = nullptr;
 
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_camera_ubos{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_instance_buffers{};
@@ -479,25 +472,18 @@ namespace GLT::renderer::vk_rasterizer {
         // materials & textures ----------------------------------------------------------------------------------------
 
         vk::DescriptorSetLayout                                             m_material_set_layout = nullptr;    // set 1
-        vk::Sampler                                                         m_material_sampler = nullptr;       // set 0, binding 8
-        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_material_buffers{};
+        vk::Sampler                                                         m_material_sampler = nullptr;       // set 1, binding 7
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_material_desc_buffers{};
-        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_material_uploaded_version{};
-        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_texture_uploaded_version{};
 
         std::vector<material_slot>                                          m_material_slots{};
         std::vector<u32>                                                    m_free_material_slots{};
         std::unordered_map<GLT::asset::handle, u32>                         m_material_slot_by_asset{};
-        std::vector<gpu_material>                                           m_material_cpu{};                   // MAX_MATERIALS entries
-        u32                                                                 m_material_version = 1;
         u32                                                                 m_material_poll_counter = 0;
 
         std::vector<gpu_texture>                                            m_gpu_textures{};                   // indexed by bindless slot
         std::vector<u32>                                                    m_free_texture_slots{};
         std::unordered_map<GLT::asset::handle, u32>                         m_texture_slot_by_asset{};
-        std::vector<util::accessible_image>                                 m_texture_table{};                  // mirrors the bindless array (MAX_TEXTURES)
-        u32                                                                 m_texture_version = 1;
-        u32                                                                 m_texture_high_water = 0;
+        std::vector<util::accessible_image>                                 m_texture_table{};                  // accessible_image (view + layout) per texture slot
 
         std::vector<u32>                                                    m_instance_material_slots{};   // size = instances * MAX_SUBMESHES_PER_MESH
         std::vector<GLT::asset::handle>                                     m_instance_material_handles{}; // parallel, for change detection
@@ -506,6 +492,7 @@ namespace GLT::renderer::vk_rasterizer {
         // Material shader compiler (i_shader_compiler)
         util::slang_compiler                                                m_slang{};
         u64                                                                 m_shader_compiler_hash = 0;
+        std::vector<u32>                                                    m_scene_materials{};        // unique material slots used this frame
 
     };
 

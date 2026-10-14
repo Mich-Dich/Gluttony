@@ -68,7 +68,6 @@ namespace GLT::renderer::vk_rasterizer {
         for (u32 i = 0; i < submesh_count; ++i) {
             submesh_mapped[first_submesh + i].first_index = mesh_asset.submeshes[i].first_index;
             submesh_mapped[first_submesh + i].index_count = mesh_asset.submeshes[i].index_count;
-            submesh_mapped[first_submesh + i].material_index = material_slots[i];
         }
         m_dev->unmap_buffer(m_submesh_data_buffer);
 
@@ -156,23 +155,21 @@ namespace GLT::renderer::vk_rasterizer {
         // (which read them as indirect). One buffer per in-flight frame so frames N-1 and N-2 don't clobber the one the GPU is still reading
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
 
-            graph::buffer_desc draw_commands_desc{};
-            draw_commands_desc.name = "draw_commands_" + std::to_string(frame_index);
-            draw_commands_desc.size = MAX_DRAW_COMMANDS * sizeof(vk::DrawIndexedIndirectCommand);
-            draw_commands_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
-            draw_commands_desc.persistent = true;
+            graph::buffer_desc cmd_desc{};
+            cmd_desc.name = "draw_commands_" + std::to_string(frame_index);
+            cmd_desc.size = static_cast<vk::DeviceSize>(MAX_MATERIALS) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand);
+            cmd_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
+            cmd_desc.persistent = true;
+            m_draw_commands_handles[frame_index] = m_graph->create_buffer(cmd_desc);
 
-            m_draw_commands_handles[frame_index] = m_graph->create_buffer(draw_commands_desc);
-
-            graph::buffer_desc draw_count_desc{};
-            draw_count_desc.name = "draw_count_" + std::to_string(frame_index);
-            draw_count_desc.size = sizeof(u32);
-            draw_count_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer
-                                  | vk::BufferUsageFlagBits::eIndirectBuffer
-                                  | vk::BufferUsageFlagBits::eTransferDst;
-            draw_count_desc.persistent = true;
-
-            m_draw_count_handles[frame_index] = m_graph->create_buffer(draw_count_desc);
+            graph::buffer_desc count_desc{};
+            count_desc.name = "draw_count_" + std::to_string(frame_index);
+            count_desc.size = static_cast<vk::DeviceSize>(MAX_MATERIALS) * sizeof(u32);
+            count_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer
+                            | vk::BufferUsageFlagBits::eIndirectBuffer
+                            | vk::BufferUsageFlagBits::eTransferDst;
+            count_desc.persistent = true;
+            m_draw_count_handles[frame_index] = m_graph->create_buffer(count_desc);
 
             // Build the cull descriptor set for this frame. The descriptor items point into the graph's buffers via the graph's own lookup helper
             util::allocated_buffer* draw_commands_allocation = m_graph->buffer_allocation(m_draw_commands_handles[frame_index]);
@@ -229,6 +226,7 @@ namespace GLT::renderer::vk_rasterizer {
     void renderer::build_instance_buffer() {
 
         m_packed_instances.clear();
+        m_scene_materials.clear();
 
         // empty scene: release everything we were holding
         if (m_scene_instances.empty()) {
@@ -304,6 +302,10 @@ namespace GLT::renderer::vk_rasterizer {
                         release_material(m_instance_material_slots[flat_index]);
                     desired_slots.push_back(acquire_material(desired));
                 }
+
+                // dedup material slot set
+                if (std::find(m_scene_materials.begin(), m_scene_materials.end(), desired_slots.back()) == m_scene_materials.end())
+                    m_scene_materials.push_back(desired_slots.back());
             }
         }
 
@@ -339,24 +341,6 @@ namespace GLT::renderer::vk_rasterizer {
             std::memcpy(mapped, m_instance_material_slots.data(), bytes);
             m_dev->unmap_buffer(buffer);
         }
-    }
-
-
-    void renderer::draw_scene_indirect(vk::CommandBuffer cmd, vk::Buffer draw_commands, vk::Buffer draw_count) {
-
-        if (m_instance_count == 0)
-            return;
-
-        cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
-        cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
-
-        cmd.drawIndexedIndirectCount(
-            draw_commands, 0,
-            draw_count, 0,
-            MAX_DRAW_COMMANDS,
-            sizeof(vk::DrawIndexedIndirectCommand));
-
-        m_frame_draw_calls++;
     }
 
 }
