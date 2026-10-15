@@ -65,6 +65,7 @@ namespace GLT::renderer::vk_rasterizer {
         create_render_target();
         create_material_resources();
         create_mesh_resources();
+        install_fallback_material();
         create_shadow_resources();
         create_local_shadow_resources();        // after create_shadow_resources(), needs m_mesh_set_layout + instance buffers
         create_light_resources();
@@ -249,13 +250,9 @@ namespace GLT::renderer::vk_rasterizer {
         m_shadow_atlas = m_graph->create_texture(atlas_desc);
 
 
-        // Refresh light culling inputs for this frame. All the resources the culling shader reads are either per-frame (frame slot)
-        // or persistent-by-name; the descriptor refresh picks up any handles that were rebuilt by update_cluster_dimensions()
+        // Refresh transient data for this frame
         update_light_meta_ubo();
         update_light_cull_descriptors();
-
-        // Refresh the mesh pass descriptor buffer to include the current frame's light grid + index list. Must run after
-        // update_cluster_dimensions() so the graph-owned cluster buffers have been created
         update_mesh_descriptors();
 
         // -------- Reset the draw count to 0 (transfer write) --------
@@ -264,7 +261,7 @@ namespace GLT::renderer::vk_rasterizer {
                 builder.write(m_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
             },
             [this](graph::pass_context& ctx) {
-                ctx.cmd.fillBuffer(ctx.get_buffer(m_draw_count_handles[m_current_frame]), 0, sizeof(u32), 0);
+                ctx.cmd.fillBuffer(ctx.get_buffer(m_draw_count_handles[m_current_frame]), 0, MAX_MATERIALS * sizeof(u32), 0);
             });
 
         // Cull (compute) ----------------------------------------------------------------------------------------------
@@ -333,10 +330,11 @@ namespace GLT::renderer::vk_rasterizer {
                     ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
                     ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
 
-                    m_dev->bind_descriptor_buffer({ m_shadow_desc_buffers[m_current_frame] }, ctx.cmd);
+                    m_dev->bind_descriptor_buffer({
+                        m_shadow_desc_buffers[m_current_frame],
+                        m_material_desc_buffers[m_current_frame] 
+                    }, ctx.cmd);
                     m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-
-                    m_dev->bind_descriptor_buffer({ m_material_desc_buffers[m_current_frame] }, ctx.cmd);
 
                     const vk::Buffer cmd_buffer = ctx.get_buffer(m_shadow_draw_commands_handles[m_current_frame]);
                     const vk::Buffer count_buffer = ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]);
@@ -347,7 +345,7 @@ namespace GLT::renderer::vk_rasterizer {
                         if (!entry.alive || !entry.pipeline)
                             continue;
 
-                        ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.pipeline);
+                        ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
 
                         const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
                         m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, descriptor_offset, ctx.cmd, vk::PipelineBindPoint::eGraphics);
@@ -374,7 +372,7 @@ namespace GLT::renderer::vk_rasterizer {
                     builder.write(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::transfer_dst);
                 },
                 [this](graph::pass_context& ctx) {
-                    ctx.cmd.fillBuffer(ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]), 0, MAX_SHADOW_VIEWS * sizeof(u32), 0);
+                    ctx.cmd.fillBuffer(ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]), 0, MAX_SHADOW_VIEWS * MAX_MATERIALS, 0);
                 });
 
             m_graph->add_pass("local_shadow_cull",
@@ -432,7 +430,7 @@ namespace GLT::renderer::vk_rasterizer {
                             if (!entry.alive || !entry.pipeline)
                                 continue;
 
-                            ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.pipeline);
+                            ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
 
                             // set 1 = material descriptor, per-material offset
                             m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, /*bufferIndex=*/1,
@@ -490,7 +488,7 @@ namespace GLT::renderer::vk_rasterizer {
                     if (!entry.alive || !entry.pipeline)
                         continue;
 
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.pipeline);
+                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
 
                     const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
                     // binding index 0 in the array = the material descriptor buffer we just bound
@@ -704,8 +702,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_graph->end_frame();
 
-        // static u32 dup_counter = 0;
-        // if (dup_counter >= 150) {
+        // static u32 dup_counter = 250;
+        // if (dup_counter >= 300) {
         //     LOG(info, "{}", m_graph->dump())
         //     dup_counter = 0;
         // }

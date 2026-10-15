@@ -586,8 +586,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         #undef BUILD_ERROR
 
-        LOG(info, "material_compiler: packed {} default(s) from source ({} param(s) left zero-initialized)",
-            applied, missing);
+        LOG(info, "packed {} default(s) from source ({} param(s) left zero-initialized)", applied, missing);
 
         return packed;
     }
@@ -715,9 +714,10 @@ namespace GLT::renderer::vk_rasterizer {
             out.default_params = std::move(*defaults);
         }
 
-        if (masked) {   // Depth-only (masked only)
-
-            const auto src = assemble(shading_strings::depth_suffix);
+        {   // Depth (masked: alpha test, opaque: no-op)
+            // Every material gets one so the pipeline cache can treat depth_pipeline as unconditional
+            const auto suffix = masked ? shading_strings::depth_suffix : shading_strings::depth_noop_suffix;
+            const auto src = assemble(suffix);
             auto bytecode = m_slang.compile(src, "depth_main", "material.depth.slang");
             if (!bytecode)
                 return BUILD_ERROR_D(map_raw_slang_code(bytecode.error().code),

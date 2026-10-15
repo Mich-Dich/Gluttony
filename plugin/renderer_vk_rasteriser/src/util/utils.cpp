@@ -287,7 +287,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         init_info.Allocator = nullptr;
 
         // Required: Set the API version
-        init_info.ApiVersion = VK_API_VERSION_1_3; // Use 1.2 or 1.3 based on what you initialized
+        init_info.ApiVersion = VK_API_VERSION_1_3;
 
         // Set up pipeline rendering info for render pass
         init_info.PipelineInfoMain.RenderPass = imgui_render_pass;

@@ -20,8 +20,8 @@ import material_contract_v0;
 
 // ---- set 0: frame-scoped -------------------------------------------------------------
 struct RendererInstance {
-    float4x4 model;
-    float4x4 normal_matrix;
+    [[vk::transpose]] float4x4 model;
+    [[vk::transpose]] float4x4 normal_matrix;
     uint     mesh_index;
     uint     material_index;
     uint     _pad0;
@@ -86,8 +86,8 @@ struct renderer_vertex_outputs {
 };
 
 // ---- helpers -------------------------------------------------------------------------
-const float  RENDERER_PI = 3.14159265359;
-const float3 RENDERER_AMBIENT = float3(0.03, 0.03, 0.03);
+static const float  RENDERER_PI = 3.14159265359;
+static const float3 RENDERER_AMBIENT = float3(0.03, 0.03, 0.03);
 
 float renderer_linearize_depth(float d) {
 
@@ -407,6 +407,26 @@ void depth_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) {
     s.ddy_ws = float3(0.0, 0.0, 0.0);
 
     if (!alpha_test(s, renderer_material_params, tex))
+        discard;
+}
+)SLANG";
+
+
+    inline constexpr std::string_view depth_noop_suffix = R"SLANG(
+
+// ---- depth-only fragment stage (opaque materials) -----------------------------------
+[shader("fragment")]
+void depth_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) {
+
+    // Opaque materials write depth only. Slang eliminates a fragment entry point whose body
+    // has no observable effect, and the resulting SPIR-V is malformed (the parser hits
+    // SPV_END_OF_STREAM at pipeline creation). The unreachable `discard` below is a marker:
+    // it tells the compiler this is a real fragment shader that may kill fragments, so the
+    // entry point survives DCE with a well-formed body.
+    //
+    // The compiler cannot prove the branch dead: `sv_pos.xy` are fragment coordinates in
+    // pixels, and the compiler has no knowledge of the render target's extent.
+    if (sv_pos.x > 1e30 || sv_pos.y > 1e30)
         discard;
 }
 )SLANG";

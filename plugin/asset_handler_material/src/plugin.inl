@@ -2,6 +2,8 @@
 
 #include <asset/i_asset_registry.h>
 #include <asset/material.h>
+#include <render/i_renderer.h>
+#include <render/i_shader_compiler.h>
 
 
 
@@ -194,6 +196,10 @@ namespace GLT::asset::handler::material {
         }
 
         // ---- final state -------------------------------------------------------------------------------------------
+
+        const auto shader_compiler = GLT::render::renderer::get_ref()->as<GLT::render::i_shader_compiler>();
+        if (asset->compiler_hash != shader_compiler->implementation_hash())
+            needs_recompile = true;
 
         asset->compiler_hash_matches = !needs_recompile;
 

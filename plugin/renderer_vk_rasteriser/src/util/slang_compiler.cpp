@@ -162,8 +162,7 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         slang::TargetDesc target = {};
         target.format = SLANG_SPIRV;
-        target.profile = global->findProfile("spirv_1_5");
-        target.flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
+        target.profile = global->findProfile("spirv_1_6");
 
         const std::string contract_dir_str = contract_dir.string();
         const char* search_paths[] = { contract_dir_str.c_str() };
@@ -173,6 +172,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         session_desc.targetCount = 1;
         session_desc.searchPaths = search_paths;
         session_desc.searchPathCount = 1;
+        session_desc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
 
         const SlangResult res = global->createSession(session_desc, &g_current_session);
         if (SLANG_FAILED(res) || !g_current_session)
@@ -290,8 +290,7 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         slang::TargetDesc target = {};
         target.format = SLANG_SPIRV;
-        target.profile = m_impl->global_session->findProfile("spirv_1_5");
-        target.flags = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
+        target.profile = m_impl->global_session->findProfile("spirv_1_6");
 
         const std::string contract_dir_str = m_contract_dir.string();
         const char* search_paths[] = { contract_dir_str.c_str() };
@@ -301,6 +300,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         session_desc.targetCount = 1;
         session_desc.searchPaths = search_paths;
         session_desc.searchPathCount = 1;
+        session_desc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
 
         slang::ISession* new_session = nullptr;
         const SlangResult res = m_impl->global_session->createSession(session_desc, &new_session);

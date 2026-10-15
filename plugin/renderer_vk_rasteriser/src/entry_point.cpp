@@ -246,8 +246,10 @@ namespace GLT::renderer::vk_rasterizer {
 
         void create_material_resources();
         void destroy_material_resources();
+        void install_fallback_material();
         vk::Pipeline create_material_pipeline(const material_slot& slot, material_pipeline_kind kind);
         void update_materials();                                // per frame: poll for edits, upload SSBO + descriptor table when stale
+        void write_material_descriptors(u32 slot_index);
 
         u32  acquire_material(GLT::asset::handle material);     // ref++ and returns the SSBO slot (default slot for INVALID_HANDLE)
         void release_material(u32 slot);
@@ -493,6 +495,8 @@ namespace GLT::renderer::vk_rasterizer {
         util::slang_compiler                                                m_slang{};
         u64                                                                 m_shader_compiler_hash = 0;
         std::vector<u32>                                                    m_scene_materials{};        // unique material slots used this frame
+
+        bool dev_try_pipeline(const char* label, std::string_view vs_src, std::string_view fs_src);
 
     };
 

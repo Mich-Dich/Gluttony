@@ -10,6 +10,38 @@ namespace GLT::renderer::vk_rasterizer {
 
     // CONSTANTS =======================================================================================================
 
+    // Must match [renderer_vert_attributes] in renderer_shading_strings.h and GLT::asset::mesh::vertex
+    static constexpr vk::VertexInputBindingDescription vertex_binding = {
+        /* binding   */ 0,
+        /* stride    */ sizeof(GLT::asset::mesh::vertex),
+        /* inputRate */ vk::VertexInputRate::eVertex,
+    };
+
+    static constexpr std::array<vk::VertexInputAttributeDescription, 4> vertex_attributes = {{
+    // location, binding
+        { 0, 0, vk::Format::eR32G32B32Sfloat, offsetof(GLT::asset::mesh::vertex, position)},
+        { 1, 0, vk::Format::eR32G32B32Sfloat, offsetof(GLT::asset::mesh::vertex, normal)},
+        { 2, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(GLT::asset::mesh::vertex, tangent)},
+        { 3, 0, vk::Format::eR32G32Sfloat, offsetof(GLT::asset::mesh::vertex, uv0)},
+    }};
+
+    constexpr const char*                       DEFAULT_MATERIAL_SLANG_SOURCE = R"slang(
+import material_contract_v0;
+
+
+struct material_params {
+    float3  		base_color = float3(0.8, 0.8, 0.8);
+    float   		roughness = 0.5;
+};
+
+surface_output surface_evaluate(surface_input s, material_params p, material_textures tex) {
+    surface_output o = make_default_surface(s);
+    o.base_color = p.base_color;
+    o.roughness = p.roughness;
+    return o;
+}
+)slang";
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -340,8 +372,8 @@ namespace GLT::renderer::vk_rasterizer {
             m_free_texture_slots.pop_back();
         } else {
             slot = static_cast<u32>(m_gpu_textures.size());
-            if (slot >= MAX_TEXTURES) {
-                LOG(warn, "Bindless texture table full ({} textures)", MAX_TEXTURES);
+            if (slot >= MAX_MATERIALS * MATERIAL_TEXTURE_SLOTS) {
+                LOG(warn, "Bindless texture table full ({} textures)", MAX_MATERIALS * MATERIAL_TEXTURE_SLOTS);
                 destroy_gpu_texture(texture);
                 return TEXTURE_SLOT_WHITE;
             }
@@ -417,21 +449,45 @@ namespace GLT::renderer::vk_rasterizer {
         m_material_slot_by_asset[handle] = slot;
         pack_material(slot);
 
+        // release the slot we just claimed and hand back the fallback instead
+        // Used on every failure path below so we never hand out a slot with no pipeline
+        const auto roll_back = [&]() -> u32 {
+
+            m_material_slots[slot] = {};
+            m_material_slot_by_asset.erase(handle);
+            m_free_material_slots.push_back(slot);
+            return DEFAULT_MATERIAL_SLOT;
+        };
+
+        auto registry = GLT::asset::registry::get_ref();
+        if (!registry) {
+            LOG(warn, "Material registry unavailable, using fallback");
+            return roll_back();
+        }
+
         const auto* asset = registry->data_as<GLT::asset::material::material_asset>(handle);
-        VALIDATE(asset, return DEFAULT_MATERIAL_SLOT, "", "material asset missing");
+        if (!asset) {
+            LOG(warn, "Material [{}] not loaded, using fallback", (u64)handle);
+            return roll_back();
+        }
+
+        if (asset->bytecode.empty()) {
+            LOG(warn, "Material [{}] has no compiled bytecode, using fallback", registry->info(handle).name);
+            return roll_back();
+        }
 
         // load and split the bytecode blob from the material asset
         std::vector<std::byte> vs_bytes, fs_bytes, ds_bytes;
-        if (!asset->bytecode.empty()) {
-
-            const auto* p = reinterpret_cast<const u64*>(asset->bytecode.data());
-            u64 vs_sz = p[0];
-            u64 fs_sz = p[1];
-            u64 ds_sz = p[2];
+        {
+            const auto* blob = reinterpret_cast<const u64*>(asset->bytecode.data());
+            u64 vertex_source_size = blob[0];
+            u64 fragment_source_size = blob[1];
+            u64 depth_source_size = blob[2];
             const std::byte* base = asset->bytecode.data() + 3 * sizeof(u64);
-            vs_bytes.assign(base, base + vs_sz);
-            fs_bytes.assign(base + vs_sz, base + vs_sz + fs_sz);
-            ds_bytes.assign(base + vs_sz + fs_sz, base + vs_sz + fs_sz + ds_sz);
+            vs_bytes.assign(base, base + vertex_source_size);
+            fs_bytes.assign(base + vertex_source_size, base + vertex_source_size + fragment_source_size);
+            ds_bytes.assign(base + vertex_source_size + fragment_source_size,
+                base + vertex_source_size + fragment_source_size + depth_source_size);
         }
 
         entry.blend = asset->blend;
@@ -440,8 +496,7 @@ namespace GLT::renderer::vk_rasterizer {
 
             entry.vertex_module = m_dev->create_shader_module(std::span<const std::byte>(vs_bytes));
             entry.fragment_module = m_dev->create_shader_module(std::span<const std::byte>(fs_bytes));
-            if (!ds_bytes.empty())
-                entry.depth_module = m_dev->create_shader_module(std::span<const std::byte>(ds_bytes));
+            entry.depth_module = m_dev->create_shader_module(std::span<const std::byte>(ds_bytes));
 
             entry.pipeline = create_material_pipeline(entry, material_pipeline_kind::main);
             entry.depth_pipeline = create_material_pipeline(entry, material_pipeline_kind::depth);
@@ -537,28 +592,7 @@ namespace GLT::renderer::vk_rasterizer {
             m_dev->unmap_buffer(slot.params_ubo);
         }
 
-        // rebuild the descriptor slice for this material
-        for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; frame_index++) {
-
-            items.emplace_back(0, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eFragment, 1, &slot.params_ubo);
-            std::array<util::accessible_image, 6> images{};
-            for (u32 t = 0; t < 6; ++t) {
-                images[t] = m_texture_table[slot.texture_slots[t]];
-                images[t].sampler = nullptr;
-            }
-
-            std::vector<util::descriptor_item> items;
-            items.emplace_back(0, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eFragment, 1, &slot.params_ubo);
-            for (u32 t = 0; t < 6; ++t)
-                items.emplace_back(1 + t, vk::DescriptorType::eSampledImage, vk::ShaderStageFlagBits::eFragment, 1, &images[t]);
-
-            util::accessible_image sampler_image{};
-            sampler_image.sampler = m_material_sampler;
-            items.emplace_back(7, vk::DescriptorType::eSampler, vk::ShaderStageFlagBits::eFragment, 1, &sampler_image);
-
-            m_dev->compute_descriptor_binding_offsets(m_material_set_layout, items);
-            m_dev->update_descriptor_buffer(m_material_desc_buffers[frame_index], items, util::descriptor_buffer_type::combined, slot_index);
-        }
+        write_material_descriptors(slot_index);
     }
 
 
@@ -582,6 +616,34 @@ namespace GLT::renderer::vk_rasterizer {
 
         if ((++m_material_poll_counter % MATERIAL_POLL_INTERVAL) == 0)
             poll_material_changes();
+    }
+
+
+    void renderer::write_material_descriptors(u32 slot_index) {
+
+        material_slot& slot = m_material_slots[slot_index];
+
+        for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; frame_index++) {
+
+            std::array<util::accessible_image, 6> images{};
+            for (u32 t = 0; t < 6; ++t) {
+                images[t] = m_texture_table[slot.texture_slots[t]];
+                images[t].sampler = nullptr;
+            }
+
+            std::vector<util::descriptor_item> items;
+            items.emplace_back(0, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eFragment, 1, &slot.params_ubo);
+            for (u32 t = 0; t < 6; ++t)
+                items.emplace_back(1 + t, vk::DescriptorType::eSampledImage, vk::ShaderStageFlagBits::eFragment, 1, &images[t]);
+
+            util::accessible_image sampler_image{};
+            sampler_image.sampler = m_material_sampler;
+            items.emplace_back(7, vk::DescriptorType::eSampler, vk::ShaderStageFlagBits::eFragment, 1, &sampler_image);
+
+            m_dev->compute_descriptor_binding_offsets(m_material_set_layout, items);
+            m_dev->update_descriptor_buffer(m_material_desc_buffers[frame_index], items,
+                util::descriptor_buffer_type::combined, slot_index);
+        }
     }
 
     // resources -------------------------------------------------------------------------------------------------------
@@ -632,7 +694,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Fallback textures --------------------------------------------------------------------------------------------
         m_gpu_textures.assign(FIRST_FREE_TEXTURE_SLOT, gpu_texture{});
-        m_texture_table.assign(MAX_TEXTURES, util::accessible_image{});
+        m_texture_table.assign(MAX_MATERIALS * MATERIAL_TEXTURE_SLOTS, util::accessible_image{});
 
         const auto create_fallback = [&](u32 slot, std::array<std::byte, 4> rgba) {
             const texture_upload_mip mip{ 0, 1, 1 };
@@ -648,7 +710,7 @@ namespace GLT::renderer::vk_rasterizer {
         create_fallback(TEXTURE_SLOT_WHITE, { std::byte{255}, std::byte{255}, std::byte{255}, std::byte{255} });
         create_fallback(TEXTURE_SLOT_FLAT_NORMAL, { std::byte{128}, std::byte{128}, std::byte{255}, std::byte{255} });
 
-        for (u32 index = FIRST_FREE_TEXTURE_SLOT; index < MAX_TEXTURES; ++index)    // every unused slot holds the white texture
+        for (u32 index = FIRST_FREE_TEXTURE_SLOT; index < MAX_MATERIALS * MATERIAL_TEXTURE_SLOTS; index++)    // every unused slot holds the white texture
             m_texture_table[index] = m_texture_table[TEXTURE_SLOT_WHITE];
 
         // Per-frame buffers + descriptor sets ---------------------------------------------------------------------------
@@ -684,9 +746,21 @@ namespace GLT::renderer::vk_rasterizer {
             if (texture.alive)
                 destroy_gpu_texture(texture);
 
-        for (auto& slot : m_material_slots)
+        for (auto& slot : m_material_slots) {
+
+            if (slot.pipeline)
+                m_device.destroyPipeline(slot.pipeline);
+            if (slot.depth_pipeline)
+                m_device.destroyPipeline(slot.depth_pipeline);
+            if (slot.vertex_module)
+                m_device.destroyShaderModule(slot.vertex_module);
+            if (slot.fragment_module)
+                m_device.destroyShaderModule(slot.fragment_module);
+            if (slot.depth_module)
+                m_device.destroyShaderModule(slot.depth_module);
             if (slot.params_ubo.buffer)
                 m_dev->destroy_buffer(slot.params_ubo);
+        }
 
         m_gpu_textures.clear();
         m_free_texture_slots.clear();
@@ -712,10 +786,10 @@ namespace GLT::renderer::vk_rasterizer {
         vk::PipelineShaderStageCreateInfo stages[2]{};
         stages[0].stage = vk::ShaderStageFlagBits::eVertex;
         stages[0].module = slot.vertex_module;
-        stages[0].pName = "vertex_main";
+        stages[0].pName = "main";
         stages[1].stage = vk::ShaderStageFlagBits::eFragment;
         stages[1].module = (kind == material_pipeline_kind::main) ? slot.fragment_module : slot.depth_module;
-        stages[1].pName = (kind == material_pipeline_kind::main) ? "fragment_main" : "depth_main";
+        stages[1].pName  = "main";
 
         vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
         vertex_input_state.vertexBindingDescriptionCount = 1;
@@ -739,17 +813,32 @@ namespace GLT::renderer::vk_rasterizer {
         vk::PipelineMultisampleStateCreateInfo multisample_state{};
         multisample_state.rasterizationSamples = vk::SampleCountFlagBits::e1;
 
+        vk::PipelineDepthStencilStateCreateInfo depth_stencil_state{};
+        depth_stencil_state.depthTestEnable = VK_TRUE;
+        depth_stencil_state.depthWriteEnable = (kind == material_pipeline_kind::depth);
+        depth_stencil_state.depthCompareOp = (kind == material_pipeline_kind::main) ? vk::CompareOp::eEqual : vk::CompareOp::eLess;
+        depth_stencil_state.depthBoundsTestEnable = VK_FALSE;
+        depth_stencil_state.stencilTestEnable = VK_FALSE;
+
+        vk::PipelineColorBlendAttachmentState cb_attachment{};
+        cb_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | 
+            vk::ColorComponentFlagBits::eG |
+            vk::ColorComponentFlagBits::eB |
+            vk::ColorComponentFlagBits::eA;
+
+        vk::PipelineColorBlendStateCreateInfo color_blend_state{};
+        if (kind == material_pipeline_kind::main) {
+            color_blend_state.attachmentCount = 1;
+            color_blend_state.pAttachments = &cb_attachment;
+        } else {
+            color_blend_state.attachmentCount = 0;
+            color_blend_state.pAttachments = nullptr;
+        }
+
         vk::DynamicState dynamic_states[] = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
         vk::PipelineDynamicStateCreateInfo dynamic_state{};
         dynamic_state.dynamicStateCount = 2;
         dynamic_state.pDynamicStates = dynamic_states;
-
-        vk::PipelineDepthStencilStateCreateInfo ds{};
-        ds.depthTestEnable = VK_TRUE;
-        ds.depthWriteEnable = (kind == material_pipeline_kind::depth);
-        ds.depthCompareOp = (kind == material_pipeline_kind::main) ? vk::CompareOp::eEqual : vk::CompareOp::eLess;
-        ds.depthBoundsTestEnable = VK_FALSE;
-        ds.stencilTestEnable = VK_FALSE;
 
         vk::PipelineRenderingCreateInfo ri{};
         const vk::Format color_format = vk::Format::eR8G8B8A8Unorm;
@@ -765,17 +854,17 @@ namespace GLT::renderer::vk_rasterizer {
 
         vk::GraphicsPipelineCreateInfo info{};
         info.pNext = &ri;
-        info.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;
+        // info.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;
         info.stageCount = 2;
         info.pStages = stages;
-        info.pVertexInputState = &vertex_input;
-        info.pInputAssemblyState = &input_assembly;
-        info.pViewportState = &viewport;
-        info.pRasterizationState = &raster;
-        info.pMultisampleState = &ms;
-        info.pDepthStencilState = &ds;
-        info.pColorBlendState = &blend;               // with color attachment for main, without for depth
-        info.pDynamicState = &dyn;
+        info.pVertexInputState = &vertex_input_state;
+        info.pInputAssemblyState = &input_assembly_state;
+        info.pViewportState = &viewport_state;
+        info.pRasterizationState = &rasterization_state;
+        info.pMultisampleState = &multisample_state;
+        info.pDepthStencilState = &depth_stencil_state;
+        info.pColorBlendState = &color_blend_state;
+        info.pDynamicState = &dynamic_state;
         info.layout = m_mesh_pipeline_layout;
         info.renderPass = nullptr;
         info.subpass = 0;
@@ -783,6 +872,65 @@ namespace GLT::renderer::vk_rasterizer {
         auto [result, pipeline] = m_device.createGraphicsPipeline(nullptr, info);
         VALIDATE(result == vk::Result::eSuccess, return nullptr, "", "material pipeline creation failed")
         return pipeline;
+    }
+
+
+    void renderer::install_fallback_material() {
+
+        // Compile the default material of the renderer and save to DEFAULT_MATERIAL_SLOT. [acquire_material()] hands this slot
+        // out for any submesh whose material is INVALID_HANDLE, or whose material asset failed to load
+        auto compiled = compile(GLT::asset::material::DEFAULT_SLANG_SOURCE, GLT::asset::material::blend_mode::opaque);
+        ASSERT(compiled, "", "Failed to compile default material: {}", (compiled.error().message))     // MUST EXIST or meshes will not be drawn
+
+        material_slot& fallback = m_material_slots[DEFAULT_MATERIAL_SLOT];
+
+        // Split the packed bytecode blob
+        std::vector<std::byte> vs_bytes, fs_bytes, ds_bytes;
+        {
+            ASSERT(compiled->bytecode.size() >= 3 * sizeof(u64), "", "Fallback bytecode blob too small");
+            const u64 vertex_source_size = GLT::util::get_bytes<u64>(compiled->bytecode, 0);
+            const u64 fragment_source_size = GLT::util::get_bytes<u64>(compiled->bytecode, sizeof(u64));
+            const u64 depth_source_size = GLT::util::get_bytes<u64>(compiled->bytecode, 2 * sizeof(u64));
+            ASSERT(3 * sizeof(u64) + vertex_source_size + fragment_source_size + depth_source_size <= compiled->bytecode.size(),
+                "", "Fallback bytecode sizes inconsistent")
+
+            const std::byte* base = compiled->bytecode.data() + 3 * sizeof(u64);
+            vs_bytes.assign(base, base + vertex_source_size);
+            fs_bytes.assign(base + vertex_source_size, base + vertex_source_size + fragment_source_size);
+            if (depth_source_size > 0)
+                ds_bytes.assign(base + vertex_source_size + fragment_source_size,
+                    base + vertex_source_size + fragment_source_size + depth_source_size);
+        }
+
+        fallback.vertex_module = m_dev->create_shader_module(std::span<const std::byte>(vs_bytes));
+        fallback.fragment_module = m_dev->create_shader_module(std::span<const std::byte>(fs_bytes));
+        if (!ds_bytes.empty())
+            fallback.depth_module = m_dev->create_shader_module(std::span<const std::byte>(ds_bytes));
+
+        // Default parameter UBO
+        const u32 params_bytes = static_cast<u32>(compiled->default_params.size());
+        const u32 alloc_size = std::max<u32>(params_bytes, 256);
+
+        fallback.params_ubo = m_dev->create_buffer(alloc_size, vk::BufferUsageFlagBits::eUniformBuffer,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        fallback.params_size = alloc_size;
+        m_live_buffer_count++;
+
+        if (params_bytes > 0) {
+            std::memcpy(m_dev->map_buffer(fallback.params_ubo), compiled->default_params.data(), params_bytes);
+            m_dev->unmap_buffer(fallback.params_ubo);
+        }
+
+        fallback.blend = GLT::asset::material::blend_mode::opaque;
+        fallback.pipeline = create_material_pipeline(fallback, material_pipeline_kind::main);
+        fallback.depth_pipeline = create_material_pipeline(fallback, material_pipeline_kind::depth);
+
+        if (fallback.pipeline)
+            m_live_pipeline_count++;
+        if (fallback.depth_pipeline)
+            m_live_pipeline_count++;
+
+        write_material_descriptors(DEFAULT_MATERIAL_SLOT);
     }
 
 }
