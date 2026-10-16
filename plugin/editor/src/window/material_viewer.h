@@ -122,6 +122,13 @@ namespace GLT::editor {
 
         void mark_dirty();
 
+        // Push the current edit params into the live asset and invalidate its bytecode hash so the renderer rebuilds anything keyed
+        // on it (descriptor sets, pipeline cache entries). Parameter edits don't require a shader recompile — the bytecode layout is
+        // unchanged, only the values it reads at runtime
+        //
+        // No-op when the material has never been saved (m_asset_handle == INVALID_HANDLE): the change will flush through the normal save() path
+        void push_live_params();
+
         void build_new_material();
 
         bool load_from_handle(GLT::asset::handle h);

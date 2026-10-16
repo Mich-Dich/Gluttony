@@ -34,6 +34,8 @@ namespace GLT::asset::material {
 
     inline constexpr chunk_id                   CHUNK_MATERIAL_BYTECODE = 0x0303;
 
+    inline constexpr chunk_id                   CHUNK_MATERIAL_BYTECODE_HASH = 0x0307;
+
     inline constexpr chunk_id                   CHUNK_MATERIAL_COMPILER_HASH = 0x0305;
 
     inline constexpr chunk_id                   CHUNK_MATERIAL_BLEND_MODE = 0x0306;
@@ -286,6 +288,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         // contract chunks, verbatim
         std::string                                                                 slang_source;       // NUL stripped on load
         std::vector<std::byte>                                                      bytecode{};
+        u64                                                                         bytecode_hash = 0;
         std::vector<std::byte>                                                      reflection{};       // reflect_header + params + string table
         std::vector<std::byte>                                                      packed_params{};    // laid out per `reflection`
         u64                                                                         compiler_hash{ 0 };

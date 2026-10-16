@@ -1,5 +1,4 @@
 
 import types;
 
-
-ConstantBuffer<Globals> globals;
+[[vk::binding(9, 0)]] ConstantBuffer<Globals> globals;

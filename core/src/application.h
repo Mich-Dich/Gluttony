@@ -53,9 +53,11 @@ namespace GLT {
         GETTER(ref<GLT::audio::i_audio_plugin>,         audio,          mp_audio)
 
         DEFAULT_GETTER_REF(layer_stack,                 layer_stack)
-        DEFAULT_GETTER_CC(f32,                          delta_time)
         DEFAULT_GETTER_CC(util::interval_controller,    fps_controller)
+        DEFAULT_GETTER_CC(f32,                          delta_time)
         DEFAULT_SETTER(f32,                             delta_time)
+        DEFAULT_GETTER_CC(f32,                          total_time)
+        DEFAULT_SETTER(f32,                             total_time)
         DEFAULT_GETTER_C(project,                       project)
         DEFAULT_GETTER_REF(project,                     project)
         GETTER(std::filesystem::path,                   project_path,   m_project.project_path)
@@ -82,6 +84,7 @@ namespace GLT {
         u32                                             m_focus_fps = 60;
         u32                                             m_none_focus_fps = 30;
         f32                                             m_delta_time = 0.f;
+        f32                                             m_total_time = 0.f;
         project                                         m_project{};
         debug::application_stats                        m_application_stats{};
 

@@ -236,9 +236,9 @@ namespace GLT::imgui_config {
 				colors[ImGuiCol_ResizeGripActive]		= action_color00_active;
 				colors[ImGuiCol_Tab]					= LERP_MAIN_COLOR_DARK(0.4f);
 				colors[ImGuiCol_TabHovered]				= LERP_MAIN_COLOR_DARK(0.5f);
-				colors[ImGuiCol_TabActive]				= LERP_MAIN_COLOR_DARK(0.6f);
-				colors[ImGuiCol_TabUnfocused]			= LERP_MAIN_COLOR_DARK(0.5f);
-				colors[ImGuiCol_TabUnfocusedActive]		= LERP_MAIN_COLOR_DARK(0.6f);
+				colors[ImGuiCol_TabSelected]			= LERP_MAIN_COLOR_DARK(0.6f);
+				colors[ImGuiCol_TabDimmed]				= LERP_MAIN_COLOR_DARK(0.5f);
+				colors[ImGuiCol_TabDimmedSelected]		= LERP_MAIN_COLOR_DARK(0.6f);
 				colors[ImGuiCol_TabSelectedOverline]	= ImVec4(0.f, 0.f, 0.f, 0.f);
 				colors[ImGuiCol_DockingPreview]			= action_color00_active;
 				colors[ImGuiCol_DockingEmptyBg]			= LERP_GRAY(0.2f);
@@ -308,9 +308,9 @@ namespace GLT::imgui_config {
 				colors[ImGuiCol_ResizeGripActive]		= action_color00_active;
 				colors[ImGuiCol_Tab]					= action_color00_default;
 				colors[ImGuiCol_TabHovered]				= action_color00_hover;
-				colors[ImGuiCol_TabActive]				= action_color00_active;
-				colors[ImGuiCol_TabUnfocused]			= LERP_MAIN_COLOR_LIGHT(0.5f);
-				colors[ImGuiCol_TabUnfocusedActive]		= LERP_MAIN_COLOR_LIGHT(0.6f);
+				colors[ImGuiCol_TabSelected]			= action_color00_active;
+				colors[ImGuiCol_TabDimmed]				= LERP_MAIN_COLOR_LIGHT(0.5f);
+				colors[ImGuiCol_TabDimmedSelected]		= LERP_MAIN_COLOR_LIGHT(0.6f);
 				colors[ImGuiCol_TabSelectedOverline]	= ImVec4(0.f, 0.f, 0.f, 0.f);
 				colors[ImGuiCol_DockingPreview]			= action_color00_active;
 				colors[ImGuiCol_DockingEmptyBg]			= LERP_GRAY(.2f);

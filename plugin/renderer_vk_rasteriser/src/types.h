@@ -246,7 +246,41 @@ namespace GLT::renderer::vk_rasterizer {
         vk::Pipeline                                            pipeline = nullptr;
         vk::Pipeline                                            depth_pipeline = nullptr;
         GLT::asset::material::blend_mode                        blend{ GLT::asset::material::blend_mode::opaque };
+        u64                                                     bytecode_hash = 0;
     };
+
+
+    // Mirrors [struct Globals] in types.slang
+    struct gpu_globals {
+        // Timing
+        f32             time = 0.0f;
+        f32             delta_time = 0.0f;
+        u32             frame_index = 0u;
+        f32             _pad0 = 0.0f;
+
+        // Viewport
+        glm::vec2       viewport_size{0.0f};
+        glm::vec2       render_size{0.0f};
+
+        // Camera
+        glm::vec3       camera_position{0.0f};
+        f32             near_plane = 0.0f;
+        glm::vec3       camera_forward{0.0f, 0.0f, -1.0f};
+        f32             far_plane = 0.0f;
+        glm::vec3       camera_right{1.0f, 0.0f, 0.0f};
+        f32             _pad1 = 0.0f;
+        glm::vec3       camera_up{0.0f, 1.0f, 0.0f};
+        f32             _pad2 = 0.0f;
+
+        // Matrices
+        glm::mat4       view{1.0f};
+        glm::mat4       projection{1.0f};
+        glm::mat4       view_projection{1.0f};
+        glm::mat4       inv_view{1.0f};
+        glm::mat4       inv_projection{1.0f};
+        glm::mat4       inv_view_projection{1.0f};
+    };
+    static_assert(sizeof(gpu_globals) == 480, "gpu_globals layout mismatch");
 
     // STATIC VARIABLES ================================================================================================
 

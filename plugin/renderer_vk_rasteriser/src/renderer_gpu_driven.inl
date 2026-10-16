@@ -315,7 +315,6 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_instance_material_handles = std::move(desired_handles);
         m_instance_material_slots = std::move(desired_slots);
-
         m_instance_count = static_cast<u32>(m_packed_instances.size());
 
         if (m_packed_instances.empty())

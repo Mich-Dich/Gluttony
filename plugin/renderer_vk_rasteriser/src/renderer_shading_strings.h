@@ -20,74 +20,74 @@ import material_contract_v0;
 
 // ---- set 0: frame-scoped -------------------------------------------------------------
 struct RendererInstance {
-    [[vk::transpose]] float4x4 model;
-    [[vk::transpose]] float4x4 normal_matrix;
-    uint     mesh_index;
-    uint     material_index;
-    uint     _pad0;
-    uint     _pad1;
+    float4x4                                                    model;
+    float4x4                                                    normal_matrix;
+    uint                                                        mesh_index;
+    uint                                                        material_index;
+    uint                                                        _pad0;
+    uint                                                        _pad1;
 };
 
 struct RendererLight {
-    float4 position_radius;
-    float4 color_intensity;
-    float4 direction_inner_cos;
-    float4 params;
+    float4                                                      position_radius;
+    float4                                                      color_intensity;
+    float4                                                      direction_inner_cos;
+    float4                                                      params;
 };
 
 struct RendererShadowView {
-    float4x4 view_proj;
-    float4   atlas_rect;
-    float4   params;
-    float4   sphere;
-    float4   planes[6];
-    float4   _pad[3];
+    float4x4                                                    view_proj;
+    float4                                                      atlas_rect;
+    float4                                                      params;
+    float4                                                      sphere;
+    float4                                                      planes[6];
+    float4                                                      _pad[3];
 };
 
 struct RendererCamera {
-    float4x4 view_proj;
-    float4x4 view;
-    float4   camera_pos;
-    float4   frustum_planes[6];
-    uint4    flags;
-    float4x4 projection;
-    float4x4 inv_projection;
-    uint4    cluster_dims;
-    float4   cluster_depth;      // x=near y=far z=render_w w=render_h
-    float4x4 light_view_proj;
-    float4   shadow_params;      // x=world_per_texel y=normal_bias z=depth_bias w=1/res
+    float4x4                                                    view_proj;
+    float4x4                                                    view;
+    float4                                                      camera_pos;
+    float4                                                      frustum_planes[6];
+    uint4                                                       flags;
+    float4x4                                                    projection;
+    float4x4                                                    inv_projection;
+    uint4                                                       cluster_dims;
+    float4                                                      cluster_depth;      // x=near y=far z=render_w w=render_h
+    float4x4                                                    light_view_proj;
+    float4                                                      shadow_params;      // x=world_per_texel y=normal_bias z=depth_bias w=1/res
 };
 
-[[vk::binding(0, 0)]] ConstantBuffer<RendererCamera>          renderer_camera;
-[[vk::binding(1, 0)]] StructuredBuffer<RendererInstance>      renderer_instances;
-[[vk::binding(2, 0)]] StructuredBuffer<RendererLight>         renderer_lights;
-[[vk::binding(3, 0)]] StructuredBuffer<uint2>                 renderer_light_grid;
-[[vk::binding(4, 0)]] StructuredBuffer<uint>                  renderer_light_list;
-[[vk::binding(5, 0)]] Texture2D                               renderer_shadow_map;
-[[vk::binding(6, 0)]] StructuredBuffer<RendererShadowView>    renderer_shadow_views;
-[[vk::binding(7, 0)]] Texture2D                               renderer_shadow_atlas;
-[[vk::binding(8, 0)]] SamplerComparisonState                  renderer_shadow_sampler;
+[[vk::binding(0, 0)]] ConstantBuffer<RendererCamera>            renderer_camera;
+[[vk::binding(1, 0)]] StructuredBuffer<RendererInstance>        renderer_instances;
+[[vk::binding(2, 0)]] StructuredBuffer<RendererLight>           renderer_lights;
+[[vk::binding(3, 0)]] StructuredBuffer<uint2>                   renderer_light_grid;
+[[vk::binding(4, 0)]] StructuredBuffer<uint>                    renderer_light_list;
+[[vk::binding(5, 0)]] Texture2D                                 renderer_shadow_map;
+[[vk::binding(6, 0)]] StructuredBuffer<RendererShadowView>      renderer_shadow_views;
+[[vk::binding(7, 0)]] Texture2D                                 renderer_shadow_atlas;
+[[vk::binding(8, 0)]] SamplerComparisonState                    renderer_shadow_sampler;
 
 // ---- set 1: per-material textures ----------------------------------------------------
-[[vk::binding(1, 1)]] Texture2D    renderer_tex_base_color;
-[[vk::binding(2, 1)]] Texture2D    renderer_tex_metallic_roughness;
-[[vk::binding(3, 1)]] Texture2D    renderer_tex_normal;
-[[vk::binding(4, 1)]] Texture2D    renderer_tex_emissive;
-[[vk::binding(5, 1)]] Texture2D    renderer_tex_occlusion;
-[[vk::binding(6, 1)]] Texture2D    renderer_tex_height;
-[[vk::binding(7, 1)]] SamplerState renderer_material_sampler;
+[[vk::binding(1, 1)]] Texture2D                                 renderer_tex_base_color;
+[[vk::binding(2, 1)]] Texture2D                                 renderer_tex_metallic_roughness;
+[[vk::binding(3, 1)]] Texture2D                                 renderer_tex_normal;
+[[vk::binding(4, 1)]] Texture2D                                 renderer_tex_emissive;
+[[vk::binding(5, 1)]] Texture2D                                 renderer_tex_occlusion;
+[[vk::binding(6, 1)]] Texture2D                                 renderer_tex_height;
+[[vk::binding(7, 1)]] SamplerState                              renderer_material_sampler;
 
 // ---- interpolants --------------------------------------------------------------------
 struct renderer_vertex_outputs {
-    [[vk::location(0)]] float3 position_ws;
-    [[vk::location(1)]] float3 normal_ws;
-    [[vk::location(2)]] float4 tangent_ws;
-    [[vk::location(3)]] float2 uv0;
+    [[vk::location(0)]] float3                                  position_ws;
+    [[vk::location(1)]] float3                                  normal_ws;
+    [[vk::location(2)]] float4                                  tangent_ws;
+    [[vk::location(3)]] float2                                  uv0;
 };
 
 // ---- helpers -------------------------------------------------------------------------
-static const float  RENDERER_PI = 3.14159265359;
-static const float3 RENDERER_AMBIENT = float3(0.03, 0.03, 0.03);
+static const float                                              RENDERER_PI = 3.14159265359;
+static const float3                                             RENDERER_AMBIENT = float3(0.03, 0.03, 0.03);
 
 float renderer_linearize_depth(float d) {
 
@@ -171,28 +171,30 @@ float3 renderer_output_transform(float3 c) {
 }
 )SLANG";
 
+
     inline constexpr std::string_view vertex_suffix = R"SLANG(
 
 // ---- vertex stage --------------------------------------------------------------------
 struct renderer_vert_attributes {
-    [[vk::location(0)]] float3 position;
-    [[vk::location(1)]] float3 normal;
-    [[vk::location(2)]] float4 tangent;
-    [[vk::location(3)]] float2 uv0;
+    [[vk::location(0)]] float3          position;
+    [[vk::location(1)]] float3          normal;
+    [[vk::location(2)]] float4          tangent;
+    [[vk::location(3)]] float2          uv0;
 };
 
 struct renderer_vert_result {
-    float4                  clip_pos : SV_Position;
-    renderer_vertex_outputs varyings;
+    float4                              clip_pos : SV_Position;
+    renderer_vertex_outputs             varyings;
 };
 
 [shader("vertex")]
-renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID) {
+renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID,
+    uint base_instance : SV_StartInstanceLocation) {
 
-    RendererInstance inst = renderer_instances[instance_id];
+    RendererInstance inst = renderer_instances[base_instance + instance_id];
 
     vertex_input vi;
-    vi.position_ws = mul(inst.model,         float4(v.position,     1.0)).xyz;
+    vi.position_ws = mul(inst.model, float4(v.position, 1.0)).xyz;
     vi.normal_ws = normalize(mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz);
     vi.tangent_ws = float4(normalize(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz), v.tangent.w);
     vi.uv0 = v.uv0;
@@ -216,31 +218,39 @@ renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : 
 
 // ---- vertex stage --------------------------------------------------------------------
 struct renderer_vert_attributes {
-    [[vk::location(0)]] float3 position;
-    [[vk::location(1)]] float3 normal;
-    [[vk::location(2)]] float4 tangent;
-    [[vk::location(3)]] float2 uv0;
+    [[vk::location(0)]] float3          position;
+    [[vk::location(1)]] float3          normal;
+    [[vk::location(2)]] float4          tangent;
+    [[vk::location(3)]] float2          uv0;
 };
 
 struct renderer_vert_result {
-    float4                  clip_pos : SV_Position;
-    renderer_vertex_outputs varyings;
+    float4                              clip_pos : SV_Position;
+    renderer_vertex_outputs             varyings;
 };
 
-[shader("vertex")]
-renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID) {
+// Same binding as the fragment stage: set 1, binding 0. Vertex visibility is enabled
+// on the descriptor set layout (see step 3)
+[[vk::binding(0, 1)]] ConstantBuffer<material_params> renderer_material_params;
 
-    RendererInstance inst = renderer_instances[instance_id];
+[shader("vertex")]
+renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID,
+    uint base_instance : SV_StartInstanceLocation) {
+
+    RendererInstance inst = renderer_instances[base_instance + instance_id];
 
     vertex_input vi;
-    vi.position_ws = mul(inst.model,         float4(v.position,     1.0)).xyz;
+    vi.position_ws = mul(inst.model, float4(v.position, 1.0)).xyz;
     vi.normal_ws = normalize(mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz);
     vi.tangent_ws = float4(normalize(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz), v.tangent.w);
     vi.uv0 = v.uv0;
     vi.uv1 = float2(0.0, 0.0);
     vi.color = float3(1.0, 1.0, 1.0);
 
-    vertex_output vo = vertex_transform(vi);
+    // inout: a material may write back to `p`. We take a local copy so the UBO itself
+    // is never mutated. Per the contract, edits are scoped to this one vertex.
+    material_params p = renderer_material_params;
+    vertex_output vo = vertex_transform(vi, p);
 
     renderer_vert_result o;
     o.clip_pos = mul(renderer_camera.view_proj, float4(vo.position_ws, 1.0));
@@ -370,6 +380,7 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) : S
     return float4(final_c, o.opacity);
 }
 )SLANG";
+
 
     inline constexpr std::string_view depth_suffix = R"SLANG(
 

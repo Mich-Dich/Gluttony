@@ -43,6 +43,7 @@ namespace GLT::game_loop {
     struct context {
 
         f32&                                delta_time;
+        f32&                                total_time;
         layer_stack&                        layers;
         ref<platform::i_window_plugin>      window{};
         ref<render::i_renderer_plugin>      renderer{};

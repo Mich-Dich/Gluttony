@@ -105,6 +105,7 @@ namespace GLT {
 
         game_loop::context ctx{
             m_delta_time,
+            m_total_time,
             m_layer_stack,
             mp_window,
             mp_renderer,

@@ -476,10 +476,11 @@ namespace GLT::renderer::vk_rasterizer {
             if (!pt)
                 return BUILD_ERROR(unsupported_param_type, "")
 
+            // Use Slang's actual byte offset for this field rather than computing it
+            // ourselves. Anything else silently desyncs from the SPIR-V layout.
+            const u32 byte_off = static_cast<u32>(field->getOffset());
             const u32 size = AM::param_type_size(*pt);
-            const u32 alignment = AM::param_type_alignment(*pt);
-            const u32 byte_off = (cursor + alignment - 1) & ~(alignment - 1);
-            cursor = byte_off + size;
+            cursor = byte_off + size;   // only used for packed_param_size
 
             AM::reflection_param p{};
             p.name_hash = GLT::util::fnv1a_64(name);

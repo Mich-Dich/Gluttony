@@ -24,6 +24,9 @@ namespace GLT::util {
 
     // FUNCTION DECLARATION ============================================================================================
 
+    FORCE_INLINE_R u64 hash64(std::span<const std::byte> data, u64 seed = 0) noexcept;
+
+
     FORCE_INLINE_R std::string format_bytes(u64 bytes);
 
 

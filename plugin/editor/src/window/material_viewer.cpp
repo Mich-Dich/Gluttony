@@ -359,6 +359,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         asset->slang_source = m_edit_slang;
         asset->blend = m_edit_blend;
         asset->bytecode = std::move(result->bytecode);
+        asset->bytecode_hash = GLT::UUID{};                 // force a random hash in editor
         asset->reflection = std::move(result->reflection);
         asset->packed_params = std::move(result->packed_params);
         asset->compiler_hash = result->compiler_hash;
@@ -526,7 +527,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
     }
 
 
-        void material_viewer_window::draw_compile_terminal() {
+    void material_viewer_window::draw_compile_terminal() {
 
         // Fixed header: label on the left, Clear on the right
         if (ImGui::BeginTable("##compile_terminal_header", 2, ImGuiTableFlags_SizingStretchProp)) {
@@ -671,8 +672,10 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
             ImGui::TableSetColumnIndex(1);
             ImGui::PushID(static_cast<int>(i));
-            if (draw_param_widget("##v", p))
+            if (draw_param_widget("##v", p)) {
                 mark_dirty();
+                push_live_params();
+            }
             ImGui::PopID();
         }
 
@@ -802,7 +805,6 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         GLT::UI::end_table();
     }
 
-
     // -----------------------------------------------------------------------------------------------------------------
     // Derived section (read-only)
     // -----------------------------------------------------------------------------------------------------------------
@@ -861,7 +863,6 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         ImGui::TextDisabled("Blend: %s", blend_mode_label(m_edit_blend));
     }
 
-
     // -----------------------------------------------------------------------------------------------------------------
     // Preview
     // -----------------------------------------------------------------------------------------------------------------
@@ -906,6 +907,28 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
                || (m_edit_params   != m_baseline_params)
                || (m_edit_blend    != m_baseline_blend)
                || (m_edit_textures != m_baseline_textures);
+    }
+
+
+    void material_viewer_window::push_live_params() {
+
+        if (m_asset_handle == INVALID_HANDLE)
+            return;     // new, unsaved material - there is no live asset yet
+
+        auto registry = GLT::asset::registry::get_ref();
+        if (!registry)
+            return;
+
+        auto* asset = registry->data_as<GLT::asset::material::material_asset>(m_asset_handle);
+        if (!asset)
+            return;
+
+        asset->packed_params = m_edit_params;
+
+        // Force the renderer to re-key its caches. The bytecode itself is still valid — same struct
+        // layout, same shader — but the pipeline cache uses this hash as the identity of the material's
+        // GPU state, so it needs a fresh value to allocate a new parameter buffer
+        asset->bytecode_hash = GLT::UUID{};
     }
 
 

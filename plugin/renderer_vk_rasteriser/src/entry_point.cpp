@@ -254,14 +254,16 @@ namespace GLT::renderer::vk_rasterizer {
         u32  acquire_material(GLT::asset::handle material);     // ref++ and returns the SSBO slot (default slot for INVALID_HANDLE)
         void release_material(u32 slot);
         void pack_material(u32 slot);
+        void destroy_material_shaders(material_slot& slot);
+        bool load_material_shaders(material_slot& slot, const GLT::asset::material::material_asset& asset);
         void poll_material_changes();
-        void refresh_material(GLT::asset::handle material);     // call from the editor after editing a material asset
 
         u32  acquire_texture(GLT::asset::handle texture);       // ref++ and returns the bindless slot (fallback on failure)
         void release_texture(u32 slot);
         bool create_gpu_texture(vk::Format format, u32 width, u32 height, const std::byte* pixels, u64 pixel_bytes, 
             std::span<const texture_upload_mip> mips, bool generate_mips, gpu_texture& out);
         void destroy_gpu_texture(gpu_texture& texture);
+        void update_globals();
 
         // i_shader_compiler -------------------------------------------------------------------------------------------
 
@@ -495,8 +497,8 @@ namespace GLT::renderer::vk_rasterizer {
         util::slang_compiler                                                m_slang{};
         u64                                                                 m_shader_compiler_hash = 0;
         std::vector<u32>                                                    m_scene_materials{};        // unique material slots used this frame
-
-        bool dev_try_pipeline(const char* label, std::string_view vs_src, std::string_view fs_src);
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_globals_ubos{};
+        u32                                                                 m_frame_counter = 0;
 
     };
 

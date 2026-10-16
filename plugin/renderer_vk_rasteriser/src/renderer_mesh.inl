@@ -235,15 +235,16 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Descriptor set layout:
         std::vector<util::descriptor_item> descriptor_layout_items;
-        descriptor_layout_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);     // 0  Camera UBO
-        descriptor_layout_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, nullptr);                       // 1  Instance SSBO
-        descriptor_layout_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 2  Lights SSBO
-        descriptor_layout_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 3  Light grid SSBO
-        descriptor_layout_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 4  Light index list
-        descriptor_layout_items.emplace_back(5, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);                      // 5  Shadow map
-        descriptor_layout_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 6  Shadow views
-        descriptor_layout_items.emplace_back(7, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);                      // 7  Shadow atlas
+        descriptor_layout_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);     // 0  camera UBO
+        descriptor_layout_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, nullptr);                       // 1  instance SSBO
+        descriptor_layout_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 2  lights SSBO
+        descriptor_layout_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 3  light grid SSBO
+        descriptor_layout_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 4  light index list
+        descriptor_layout_items.emplace_back(5, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);                      // 5  shadow map
+        descriptor_layout_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);                     // 6  shadow views
+        descriptor_layout_items.emplace_back(7, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);                      // 7  shadow atlas
         descriptor_layout_items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, nullptr);                           // 8  shadow comparison sampler
+        descriptor_layout_items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);     // 9  globals UBO
 
         m_mesh_set_layout = m_dev->create_descriptor_set_layout(descriptor_layout_items);
         m_live_descriptor_set_count++;
@@ -267,6 +268,10 @@ namespace GLT::renderer::vk_rasterizer {
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
 
             m_camera_ubos[frame_index] = m_dev->create_buffer(sizeof(camera_ubo_data), vk::BufferUsageFlagBits::eUniformBuffer,
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+            m_live_buffer_count++;
+
+            m_globals_ubos[frame_index] = m_dev->create_buffer(sizeof(gpu_globals), vk::BufferUsageFlagBits::eUniformBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
             m_live_buffer_count++;
 
@@ -330,6 +335,10 @@ namespace GLT::renderer::vk_rasterizer {
             if (camera_buffer.buffer)
                 m_dev->destroy_buffer(camera_buffer);
 
+        for (auto& globals_buffer : m_globals_ubos)
+            if (globals_buffer.buffer)
+                m_dev->destroy_buffer(globals_buffer);
+                
         if (m_vertex_buffer.buffer)
             m_dev->destroy_buffer(m_vertex_buffer);
 
@@ -414,6 +423,7 @@ namespace GLT::renderer::vk_rasterizer {
         descriptor_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_light_buffers[frame_index]);
         descriptor_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, grid_allocation);
         descriptor_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, list_allocation);
+        descriptor_items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_globals_ubos[frame_index]);
         descriptor_items.emplace_back(5, VKDT::eSampledImage, VKSF::eFragment, 1, &shadow_image);
         descriptor_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_shadow_view_buffers[frame_index]);
         descriptor_items.emplace_back(7, VKDT::eSampledImage, VKSF::eFragment, 1, &atlas_image);
@@ -427,8 +437,10 @@ namespace GLT::renderer::vk_rasterizer {
         m_dev->compute_descriptor_binding_offsets(m_mesh_set_layout, descriptor_items);
         m_dev->update_descriptor_buffer(m_frame_desc_buffers[frame_index], descriptor_items, buffer_type);
 
-        // Directional shadow-pass set: binding 5+ are not written (shadow_map is the attachment; the depth shaders never read them)
-        descriptor_items.erase(descriptor_items.begin() + 5, descriptor_items.end());
+        // Directional shadow-pass set: strip the shadow-render-only bindings
+        // Keep camera (0), instances (1), lights/grid/list (2-4) and globals (9)
+        // vertex_transform() reads globals, and the depth shaders are compiled from the same prefix + vertex suffix, so they need it bound
+        descriptor_items.erase(descriptor_items.begin() + 6, descriptor_items.end());
         descriptor_items[0].p_resources = &m_shadow_camera_ubos[frame_index];
 
         if (m_shadow_desc_buffers[frame_index].buffer.buffer == nullptr)

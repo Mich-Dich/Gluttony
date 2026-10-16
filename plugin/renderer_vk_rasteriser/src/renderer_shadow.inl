@@ -327,6 +327,7 @@ namespace GLT::renderer::vk_rasterizer {
             std::vector<util::descriptor_item> draw_items;
             draw_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &slices[0]);
             draw_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, &m_instance_buffers[frame_index]);
+            draw_items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_globals_ubos[frame_index]);
 
             constexpr auto buffer_type = util::descriptor_buffer_type::combined;
             m_local_shadow_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_mesh_set_layout, draw_items, buffer_type,

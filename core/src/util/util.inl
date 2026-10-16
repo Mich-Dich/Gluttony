@@ -10,17 +10,106 @@ namespace GLT::util {
 
     // CONSTANTS =======================================================================================================
 
+    inline constexpr u64                    P0 = 0xa0761d6478bd642fULL;
+
+    inline constexpr u64                    P1 = 0xe7037ed1a0b428dbULL;
+
+    inline constexpr u64                    P2 = 0x8ebc6af09c88c6e3ULL;
+
+    inline constexpr u64                    P3 = 0x589965cc75374cc3ULL;
+
+    inline constexpr u64                    P4 = 0x1d8e4e27c47d124fULL;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
 
     // STATIC VARIABLES ================================================================================================
 
+    // INTERNAL TEMPLATE DECLARATION ===================================================================================
+
     // INTERNAL FUNCTION DECLARATION ===================================================================================
+
+    FORCE_INLINE_R u64 mum(u64 a, u64 b) noexcept;
+
+
+    FORCE_INLINE_R u64 r8(const std::byte* p) noexcept;
+
+
+    FORCE_INLINE_R u64 r4(const std::byte* p) noexcept;
+
+
+    FORCE_INLINE_R u64 r3(const std::byte* p, std::size_t k) noexcept;
+
+    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
+    FORCE_INLINE_R u64 mum(u64 a, u64 b) noexcept {
+
+        __extension__ unsigned __int128 r = (unsigned __int128)a * b;
+        return static_cast<u64>(r) ^ static_cast<u64>(r >> 64);
+    }
+
+
+    FORCE_INLINE_R u64 r8(const std::byte* p) noexcept {
+
+        u64 v;
+        std::memcpy(&v, p, 8);   // compiles to a single mov on x86/ARM
+        return v;
+    }
+
+
+    FORCE_INLINE_R u64 r4(const std::byte* p) noexcept {
+
+        u32 v;
+        std::memcpy(&v, p, 4);
+        return v;
+    }
+
+
+    FORCE_INLINE_R u64 r3(const std::byte* p, std::size_t k) noexcept {
+
+        return (u64(std::to_integer<u8>(p[0])) << 16) | (u64(std::to_integer<u8>(p[k>>1])) <<  8) | u64(std::to_integer<u8>(p[k-1]));
+    }
+
     // FUNCTION IMPLEMENTATION =========================================================================================
+
+    FORCE_INLINE_R u64 hash64(std::span<const std::byte> data, u64 seed) noexcept {
+
+        const std::byte* p = data.data();
+        std::size_t len = data.size();
+        seed ^= P0;
+
+        // 32-byte stripes
+        while (len >= 32) {
+            seed = mum(r8(p) ^ P1, r8(p +  8) ^ seed) ^ mum(r8(p + 16) ^ P2, r8(p + 24) ^ P3);
+            p += 32;
+            len -= 32;
+        }
+
+        // 8-byte stripes
+        while (len >= 8) {
+            seed = mum(r8(p) ^ P1, seed);
+            p += 8;
+            len -= 8;
+        }
+
+        // 1..7 byte tail
+        if (len) {
+            u64 a, b;
+            if (len >= 4) {
+                a = r4(p);
+                b = r4(p + len - 4);
+            } else {
+                a = r3(p, len);
+                b = 0;
+            }
+            seed = mum(P1 ^ len, mum(a ^ P1, b ^ seed));
+        }
+        return mum(seed ^ len, P4);
+    }
+
 
     std::string format_bytes(u64 bytes) {
 
@@ -57,7 +146,6 @@ namespace GLT::util {
         }
         return h;
     }
-
     
     // TEMPLATE IMPLEMENTATION =========================================================================================
 

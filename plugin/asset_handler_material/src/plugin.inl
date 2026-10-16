@@ -145,6 +145,12 @@ namespace GLT::asset::handler::material {
             needs_recompile = true;
         }
 
+        if (const auto h = reader.get_as<u64>(CHUNK_MATERIAL_BYTECODE_HASH); h.size() == 1) {
+            asset->bytecode_hash = h[0];
+        } else {
+            needs_recompile = true;
+        }
+
         // ---- compiler hash (missing => 0, force recompile) ---------------------------------------------------------
 
         if (const auto h = reader.get_as<u64>(CHUNK_MATERIAL_COMPILER_HASH); h.size() == 1) {
@@ -235,6 +241,8 @@ namespace GLT::asset::handler::material {
         // material_compiler is expected to fill them in before the asset is committed.
         if (!mat.bytecode.empty())
             out.write_chunk(CHUNK_MATERIAL_BYTECODE, std::span<const std::byte>{ mat.bytecode });
+        
+        out.write_chunk(CHUNK_MATERIAL_BYTECODE_HASH, std::as_bytes(std::span{ &mat.bytecode_hash, 1 }));
 
         if (!mat.reflection.empty())
             out.write_chunk(CHUNK_MATERIAL_REFLECT, std::span<const std::byte>{ mat.reflection });

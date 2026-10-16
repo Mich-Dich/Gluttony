@@ -181,6 +181,7 @@ namespace GLT::renderer::vk_rasterizer {
         update_lights();
         update_shadow();
         update_camera_ubo();
+        update_globals();
         update_materials();
 
         using VKIU = vk::ImageUsageFlagBits;
@@ -291,7 +292,7 @@ namespace GLT::renderer::vk_rasterizer {
                     builder.write(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
                 },
                 [this](graph::pass_context& ctx) {
-                    ctx.cmd.fillBuffer(ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]), 0, sizeof(u32), 0);
+                    ctx.cmd.fillBuffer(ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]), 0, MAX_MATERIALS * sizeof(u32), 0);
                 });
 
             m_graph->add_pass("shadow_cull",
@@ -372,7 +373,8 @@ namespace GLT::renderer::vk_rasterizer {
                     builder.write(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::transfer_dst);
                 },
                 [this](graph::pass_context& ctx) {
-                    ctx.cmd.fillBuffer(ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]), 0, MAX_SHADOW_VIEWS * MAX_MATERIALS, 0);
+                    ctx.cmd.fillBuffer(ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]), 0,
+                        MAX_SHADOW_VIEWS * MAX_MATERIALS * sizeof(u32), 0);
                 });
 
             m_graph->add_pass("local_shadow_cull",
@@ -702,12 +704,12 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_graph->end_frame();
 
-        // static u32 dup_counter = 250;
-        // if (dup_counter >= 300) {
-        //     LOG(info, "{}", m_graph->dump())
-        //     dup_counter = 0;
-        // }
-        // dup_counter++;
+        static u32 dup_counter = 250;
+        if (dup_counter >= 300) {
+            LOG(info, "{}", m_graph->dump())
+            dup_counter = 0;
+        }
+        dup_counter++;
 
         if (m_timestamp_pool)
             cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, m_timestamp_pool, m_current_frame * 2 + 1);

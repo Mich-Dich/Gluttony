@@ -104,6 +104,7 @@ namespace GLT::game_loop {
 
                 // stats -----------------------------------------------------------------------------------------------
                 ctx.delta_time = ctx.fps_controller.limit();
+                ctx.total_time += ctx.delta_time;
                 ctx.stats.frame_time_ms = ctx.delta_time;
                 ctx.stats.fps = (ctx.delta_time > 0.0f) ? (1000.0f / ctx.delta_time) : 0.0f;
                 ctx.stats.render = ctx.renderer->get_render_stats();

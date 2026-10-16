@@ -1,6 +1,7 @@
 #pragma once
 
 #include <asset/material.h>
+#include <application.h>
 
 
 
@@ -430,10 +431,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
             m_free_material_slots.pop_back();
         } else {
             slot = static_cast<u32>(m_material_slots.size());
-            if (slot >= MAX_MATERIALS) {
-                LOG(warn, "Material table full ({} materials), using the default material", MAX_MATERIALS);
-                return DEFAULT_MATERIAL_SLOT;
-            }
+            VALIDATE(slot < MAX_MATERIALS, return DEFAULT_MATERIAL_SLOT, 
+                "", (), "Material table full ({} materials), using the default material", (MAX_MATERIALS))
             m_material_slots.emplace_back();
         }
 
@@ -447,12 +446,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
             entry.texture_slots[index] = fallback_texture_slot_for(index);
 
         m_material_slot_by_asset[handle] = slot;
-        pack_material(slot);
 
-        // release the slot we just claimed and hand back the fallback instead
-        // Used on every failure path below so we never hand out a slot with no pipeline
         const auto roll_back = [&]() -> u32 {
-
             m_material_slots[slot] = {};
             m_material_slot_by_asset.erase(handle);
             m_free_material_slots.push_back(slot);
@@ -460,47 +455,34 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         };
 
         auto registry = GLT::asset::registry::get_ref();
-        if (!registry) {
-            LOG(warn, "Material registry unavailable, using fallback");
-            return roll_back();
-        }
+        VALIDATE(registry, return roll_back(), "", "Material registry unavailable, using fallback")
 
         const auto* asset = registry->data_as<GLT::asset::material::material_asset>(handle);
-        if (!asset) {
-            LOG(warn, "Material [{}] not loaded, using fallback", (u64)handle);
-            return roll_back();
-        }
+        VALIDATE(asset, return roll_back(), "", (), "Material [{}] not loaded, using fallback", ((u64)handle))
 
-        if (asset->bytecode.empty()) {
-            LOG(warn, "Material [{}] has no compiled bytecode, using fallback", registry->info(handle).name);
-            return roll_back();
-        }
-
-        // load and split the bytecode blob from the material asset
-        std::vector<std::byte> vs_bytes, fs_bytes, ds_bytes;
-        {
-            const auto* blob = reinterpret_cast<const u64*>(asset->bytecode.data());
-            u64 vertex_source_size = blob[0];
-            u64 fragment_source_size = blob[1];
-            u64 depth_source_size = blob[2];
-            const std::byte* base = asset->bytecode.data() + 3 * sizeof(u64);
-            vs_bytes.assign(base, base + vertex_source_size);
-            fs_bytes.assign(base + vertex_source_size, base + vertex_source_size + fragment_source_size);
-            ds_bytes.assign(base + vertex_source_size + fragment_source_size,
-                base + vertex_source_size + fragment_source_size + depth_source_size);
-        }
+        VALIDATE(!asset->bytecode.empty(), return roll_back(), 
+            "", (), "Material [{}] has no compiled bytecode, using fallback", (registry->info(handle).name))
 
         entry.blend = asset->blend;
+        pack_material(slot);            // builds shaders + pipelines + textures + params + descriptors
 
-        if (!vs_bytes.empty()) {
+        // pack_material is best-effort. If the bytecode failed to split or the pipeline wouldn't create, we don't have a usable material slot
+        if (!entry.pipeline) {
 
-            entry.vertex_module = m_dev->create_shader_module(std::span<const std::byte>(vs_bytes));
-            entry.fragment_module = m_dev->create_shader_module(std::span<const std::byte>(fs_bytes));
-            entry.depth_module = m_dev->create_shader_module(std::span<const std::byte>(ds_bytes));
+            LOG(warn, "Material [{}] failed to build a pipeline, using fallback", registry->info(handle).name);
+            m_material_slot_by_asset.erase(handle);
+            destroy_material_shaders(entry);
 
-            entry.pipeline = create_material_pipeline(entry, material_pipeline_kind::main);
-            entry.depth_pipeline = create_material_pipeline(entry, material_pipeline_kind::depth);
-            m_live_pipeline_count += 2;
+            for (u32 index = 0; index < MATERIAL_TEXTURE_SLOTS; ++index)
+                if (entry.texture_assets[index] != INVALID_HANDLE)
+                    release_texture(entry.texture_slots[index]);
+
+            if (entry.params_ubo.buffer)
+                m_dev->destroy_buffer(entry.params_ubo);
+
+            m_material_slots[slot] = {};
+            m_free_material_slots.push_back(slot);
+            return DEFAULT_MATERIAL_SLOT;
         }
 
         return slot;
@@ -516,18 +498,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         if (--entry.ref_count > 0)
             return;
 
-        if (entry.pipeline)
-            m_device.destroyPipeline(entry.pipeline);
-        if (entry.depth_pipeline)
-            m_device.destroyPipeline(entry.depth_pipeline);
-        if (entry.vertex_module)
-            m_device.destroyShaderModule(entry.vertex_module);
-        if (entry.fragment_module)
-            m_device.destroyShaderModule(entry.fragment_module);
-        if (entry.depth_module)
-            m_device.destroyShaderModule(entry.depth_module);
+        destroy_material_shaders(entry);
 
-        // reflection-driven params storage
         if (entry.params_ubo.buffer) {
             m_dev->destroy_buffer(entry.params_ubo);
             entry.params_ubo = {};
@@ -557,6 +529,15 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         const auto* asset = registry->data_as<GLT::asset::material::material_asset>(slot.asset);
         if (!asset)
             return;
+
+        // check for updated hash
+        if (asset->bytecode_hash != slot.bytecode_hash) {
+
+            destroy_material_shaders(slot);
+            if (asset->bytecode_hash != 0)
+                load_material_shaders(slot, *asset);
+            slot.bytecode_hash = asset->bytecode_hash;
+        }
 
         // refresh texture slots (unchanged from Phase 4)
         for (u32 index = 0; index < MATERIAL_TEXTURE_SLOTS; index++) {
@@ -596,10 +577,70 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
     }
 
 
-    void renderer::refresh_material(GLT::asset::handle handle) {
+    void renderer::destroy_material_shaders(material_slot& slot) {
 
-        if (const auto it = m_material_slot_by_asset.find(handle); it != m_material_slot_by_asset.end())
-            pack_material(it->second);
+        if (slot.pipeline) {
+            m_device.destroyPipeline(slot.pipeline);
+            slot.pipeline = nullptr; 
+        }
+        if (slot.depth_pipeline) {
+            m_device.destroyPipeline(slot.depth_pipeline);
+            slot.depth_pipeline = nullptr; 
+        }
+        if (slot.vertex_module) {
+            m_device.destroyShaderModule(slot.vertex_module);
+            slot.vertex_module = nullptr; 
+        }
+        if (slot.fragment_module) {
+            m_device.destroyShaderModule(slot.fragment_module);
+            slot.fragment_module = nullptr; 
+        }
+        if (slot.depth_module) {
+            m_device.destroyShaderModule(slot.depth_module);
+            slot.depth_module = nullptr; 
+        }
+    }
+
+
+    bool renderer::load_material_shaders(material_slot& slot, const GLT::asset::material::material_asset& asset) {
+
+        if (asset.bytecode.size() < 3 * sizeof(u64))
+            return false;
+
+        // Split the packed bytecode blob
+        std::vector<std::byte> vs_bytes, fs_bytes, ds_bytes;
+        {
+            const auto* blob = reinterpret_cast<const u64*>(asset.bytecode.data());
+            const u64 vertex_source_size = blob[0];
+            const u64 fragment_source_size = blob[1];
+            const u64 depth_source_size = blob[2];
+            const std::byte* base = asset.bytecode.data() + 3 * sizeof(u64);
+
+            if (3 * sizeof(u64) + vertex_source_size + fragment_source_size + depth_source_size > asset.bytecode.size())
+                return false;
+
+            vs_bytes.assign(base, base + vertex_source_size);
+            fs_bytes.assign(base + vertex_source_size, base + vertex_source_size + fragment_source_size);
+            if (depth_source_size > 0)
+                ds_bytes.assign(base + vertex_source_size + fragment_source_size,
+                    base + vertex_source_size + fragment_source_size + depth_source_size);
+        }
+
+        if (vs_bytes.empty() || fs_bytes.empty())
+            return false;
+
+        slot.vertex_module = m_dev->create_shader_module(std::span<const std::byte>(vs_bytes));
+        slot.fragment_module = m_dev->create_shader_module(std::span<const std::byte>(fs_bytes));
+        if (!ds_bytes.empty())
+            slot.depth_module = m_dev->create_shader_module(std::span<const std::byte>(ds_bytes));
+
+        slot.pipeline = create_material_pipeline(slot, material_pipeline_kind::main);
+        slot.depth_pipeline = create_material_pipeline(slot, material_pipeline_kind::depth);
+
+        if (slot.pipeline)       m_live_pipeline_count++;
+        if (slot.depth_pipeline) m_live_pipeline_count++;
+
+        return slot.pipeline != nullptr;
     }
 
 
@@ -621,8 +662,10 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
     void renderer::write_material_descriptors(u32 slot_index) {
 
-        material_slot& slot = m_material_slots[slot_index];
+        using VKDT = vk::DescriptorType;
+        using VKSF = vk::ShaderStageFlagBits;
 
+        material_slot& slot = m_material_slots[slot_index];
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; frame_index++) {
 
             std::array<util::accessible_image, 6> images{};
@@ -632,13 +675,14 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
             }
 
             std::vector<util::descriptor_item> items;
-            items.emplace_back(0, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eFragment, 1, &slot.params_ubo);
+            items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &slot.params_ubo);
+            items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eFragment, 1, &slot.params_ubo);
             for (u32 t = 0; t < 6; ++t)
-                items.emplace_back(1 + t, vk::DescriptorType::eSampledImage, vk::ShaderStageFlagBits::eFragment, 1, &images[t]);
+                items.emplace_back(1 + t, vk::DescriptorType::eSampledImage, VKSF::eFragment, 1, &images[t]);
 
             util::accessible_image sampler_image{};
             sampler_image.sampler = m_material_sampler;
-            items.emplace_back(7, vk::DescriptorType::eSampler, vk::ShaderStageFlagBits::eFragment, 1, &sampler_image);
+            items.emplace_back(7, vk::DescriptorType::eSampler, VKSF::eFragment, 1, &sampler_image);
 
             m_dev->compute_descriptor_binding_offsets(m_material_set_layout, items);
             m_dev->update_descriptor_buffer(m_material_desc_buffers[frame_index], items,
@@ -670,7 +714,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
         // Set 1 layout: reflection UBO + 6 textures + sampler
         std::vector<util::descriptor_item> layout_items;
-        layout_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eFragment, 1, nullptr);
+        layout_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);
         layout_items.emplace_back(1, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);   // base_color
         layout_items.emplace_back(2, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);   // metallic_roughness
         layout_items.emplace_back(3, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);   // normal
@@ -789,7 +833,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         stages[0].pName = "main";
         stages[1].stage = vk::ShaderStageFlagBits::eFragment;
         stages[1].module = (kind == material_pipeline_kind::main) ? slot.fragment_module : slot.depth_module;
-        stages[1].pName  = "main";
+        stages[1].pName = "main";
 
         vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
         vertex_input_state.vertexBindingDescriptionCount = 1;
@@ -902,6 +946,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
                     base + vertex_source_size + fragment_source_size + depth_source_size);
         }
 
+        VALIDATE(vs_bytes.size() > 0, return, "", "Vertex shader is empty")
+        VALIDATE(fs_bytes.size() > 0, return, "", "Fragment shader is empty")
         fallback.vertex_module = m_dev->create_shader_module(std::span<const std::byte>(vs_bytes));
         fallback.fragment_module = m_dev->create_shader_module(std::span<const std::byte>(fs_bytes));
         if (!ds_bytes.empty())
@@ -931,6 +977,40 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
             m_live_pipeline_count++;
 
         write_material_descriptors(DEFAULT_MATERIAL_SLOT);
+    }
+
+
+    void renderer::update_globals() {
+
+        const glm::mat4 view = m_active_camera.view;
+        const glm::mat4 projection = camera_projection();
+        const glm::mat4 view_projection = projection * view;
+
+        gpu_globals globals{};
+        globals.time = GLT::application::get().get_total_time();
+        globals.delta_time = GLT::application::get().get_delta_time();
+        globals.frame_index = m_frame_counter++;
+        globals.viewport_size = glm::vec2(m_target_framebuffer_size);
+        globals.render_size = glm::vec2(m_render_size);
+
+        globals.camera_position = m_active_camera.position;
+        globals.near_plane = m_active_camera.near_plane;
+        globals.far_plane = m_active_camera.far_plane;
+
+        // Rows of the view matrix give the camera basis in world space; the third row is -forward
+        globals.camera_right = glm::vec3(view[0][0], view[1][0], view[2][0]);
+        globals.camera_up = glm::vec3(view[0][1], view[1][1], view[2][1]);
+        globals.camera_forward = -glm::vec3(view[0][2], view[1][2], view[2][2]);
+
+        globals.view = view;
+        globals.projection = projection;
+        globals.view_projection = view_projection;
+        globals.inv_view = glm::inverse(view);
+        globals.inv_projection = glm::inverse(projection);
+        globals.inv_view_projection = glm::inverse(view_projection);
+
+        std::memcpy(m_dev->map_buffer(m_globals_ubos[m_current_frame]), &globals, sizeof(globals));
+        m_dev->unmap_buffer(m_globals_ubos[m_current_frame]);
     }
 
 }
