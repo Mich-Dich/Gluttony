@@ -18,9 +18,9 @@ namespace GLT::physics {
 
     enum class contact_phase : u8 {
 
-        begin = 0,
-        persist,
-        end
+        phase_begin = 0,
+        phase_persist,
+        phase_end,
     };
 
 
@@ -30,14 +30,14 @@ namespace GLT::physics {
         body_handle                         b{ INVALID_BODY };
         world::entity_id                    entity_a{ world::INVALID_ENTITY };
         world::entity_id                    entity_b{ world::INVALID_ENTITY };
-        glm::vec3                           point{ 0.f };           // world space (begin only)
-        glm::vec3                           normal{ 0.f };          // from a -> b (begin only)
-        f32                                 penetration{ 0.f };     // begin only
-        contact_phase                       phase{ contact_phase::begin };
+        glm::vec3                           point{ 0.f };
+        glm::vec3                           normal{ 0.f };
+        f32                                 penetration{ 0.f };
+        contact_phase                       phase{ contact_phase::phase_begin };
         u8                                  _pad[3]{};
     };
     static_assert(std::is_trivially_copyable_v<contact_event>);
-
+    static_assert(sizeof(contact_event) == 64);
 
     // STATIC VARIABLES ================================================================================================
 
@@ -48,5 +48,3 @@ namespace GLT::physics {
     // CLASS DECLARATION ===============================================================================================
 
 }
-
-#pragma once

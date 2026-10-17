@@ -73,7 +73,13 @@ target_include_directories(${PLUGIN_NAME}                               PRIVATE 
 target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${IMGUI_DIR}")
 
 
-# --- Slang SDK, used only by the Vulkan material shader compiler --------------------------------
+
+
+
+
+# ---------------------------------------------------------------------------------------------
+# Slang SDK — version 2025.1
+# ---------------------------------------------------------------------------------------------
 
 set(SLANG_VERSION      "2025.1"       CACHE STRING "Slang prebuilt release tag (without the leading v)")
 set(SLANG_ARCHIVE_NAME "slang-${SLANG_VERSION}-linux-x86_64")
@@ -81,10 +87,11 @@ set(SLANG_PREBUILT_ROOT "${VENDOR_DIR}/slang-prebuilt")
 set(SLANG_PREFIX_DIR   "${SLANG_PREBUILT_ROOT}/slang-${SLANG_VERSION}")
 set(SLANG_TARBALL      "${SLANG_PREBUILT_ROOT}/${SLANG_ARCHIVE_NAME}.tar.gz")
 
-# The tarball has no wrapper directory (bin/, include/, lib/, cmake/ sit at the top level),
-# so we extract INTO a version-named folder that we control. This makes the on-disk layout
-# deterministic regardless of what the archive contains.
-if(NOT EXISTS "${SLANG_PREFIX_DIR}/lib/libslang.so")
+# The archive carries a top-level `slang-<version>-linux-x86_64/` directory, so we extract
+# into a staging area and then locate the real `lib/` directory inside it. This is also
+# tolerant of the 2025.11+ rename from libslang.so to libslang-compiler.so.
+if(NOT EXISTS "${SLANG_PREFIX_DIR}/lib/libslang.so" AND
+   NOT EXISTS "${SLANG_PREFIX_DIR}/lib/libslang-compiler.so")
 
     message(STATUS "Slang ${SLANG_VERSION} not present at ${SLANG_PREFIX_DIR}, fetching ...")
     file(MAKE_DIRECTORY "${SLANG_PREFIX_DIR}")
@@ -107,26 +114,48 @@ if(NOT EXISTS "${SLANG_PREFIX_DIR}/lib/libslang.so")
         endif()
     endif()
 
-    file(ARCHIVE_EXTRACT INPUT "${SLANG_TARBALL}" DESTINATION "${SLANG_PREFIX_DIR}")
+    # 1. Extract (VERBOSE shows what CMake is actually unpacking).
+    file(ARCHIVE_EXTRACT
+        INPUT       "${SLANG_TARBALL}"
+        DESTINATION "${SLANG_PREFIX_DIR}"
+        VERBOSE
+    )
 
-    if(NOT EXISTS "${SLANG_PREFIX_DIR}/lib/libslang.so")
+    # 2. The archive has a wrapper directory; find the real `lib/` inside it.
+    file(GLOB_RECURSE _slang_lib_candidates
+        "${SLANG_PREFIX_DIR}/lib/libslang.so"
+        "${SLANG_PREFIX_DIR}/lib/libslang-compiler.so"
+    )
+    list(LENGTH _slang_lib_candidates _slang_lib_count)
+    if(_slang_lib_count EQUAL 0)
         file(GLOB _slang_extracted "${SLANG_PREFIX_DIR}/*")
         message(FATAL_ERROR
-            "Extracted Slang archive, but ${SLANG_PREFIX_DIR}/lib/libslang.so is missing.\n"
-            "Contents of ${SLANG_PREFIX_DIR}:\n  ${_slang_extracted}")
+            "Extracted Slang archive, but no libslang.so / libslang-compiler.so was found\n"
+            "under ${SLANG_PREFIX_DIR}.\n"
+            "Contents of ${SLANG_PREFIX_DIR}:\n  ${_slang_extracted}\n"
+            "Inspect the tarball with `tar -tzf ${SLANG_TARBALL}` to confirm its layout.")
     endif()
+    list(GET _slang_lib_candidates 0 _slang_lib_path)
+    get_filename_component(_slang_lib_dir  "${_slang_lib_path}" DIRECTORY)   # .../lib
+    get_filename_component(SLANG_PREFIX_DIR "${_slang_lib_dir}"  DIRECTORY)  # .../
+    message(STATUS "Slang library dir: ${_slang_lib_dir}")
 endif()
 
 message(STATUS "Using Slang prebuilt at: ${SLANG_PREFIX_DIR}")
 
-# --- Imported target ---------------------------------------------------------------------------
-# Deliberately NOT using find_package(slang CONFIG). Slang's generated slangTargets.cmake does an
-# EXISTS check on its runtime libs at include time and aborts on layouts it doesn't recognize.
-# We only need the shared lib + headers, so a hand-rolled target is simpler and more robust.
+# ---------------------------------------------------------------------------------------------
+# Imported target
+# ---------------------------------------------------------------------------------------------
 if(NOT TARGET slang)
     add_library(slang SHARED IMPORTED)
+    # Pick whichever name the release actually shipped.
+    if(EXISTS "${SLANG_PREFIX_DIR}/lib/libslang.so")
+        set(_slang_soname "libslang.so")
+    else()
+        set(_slang_soname "libslang-compiler.so")
+    endif()
     set_target_properties(slang PROPERTIES
-        IMPORTED_LOCATION              "${SLANG_PREFIX_DIR}/lib/libslang.so"
+        IMPORTED_LOCATION              "${SLANG_PREFIX_DIR}/lib/${_slang_soname}"
         INTERFACE_INCLUDE_DIRECTORIES  "${SLANG_PREFIX_DIR}/include"
     )
 endif()
@@ -134,8 +163,6 @@ endif()
 target_link_libraries(${PLUGIN_NAME}          PRIVATE slang)
 target_link_libraries(${PLUGIN_NAME}_static   PRIVATE slang)
 
-# libslang.so has DT_NEEDED entries for libslang-llvm.so / libslang-glslang.so living in the
-# same directory. Bake an rpath so the dynamic loader finds them without LD_LIBRARY_PATH.
 foreach(_slang_target IN ITEMS ${PLUGIN_NAME} ${PLUGIN_NAME}_static)
     set_target_properties(${_slang_target} PROPERTIES
         BUILD_RPATH   "${SLANG_PREFIX_DIR}/lib"
@@ -143,6 +170,9 @@ foreach(_slang_target IN ITEMS ${PLUGIN_NAME} ${PLUGIN_NAME}_static)
         BUILD_WITH_INSTALL_RPATH TRUE
     )
 endforeach()
+
+
+
 
 
 

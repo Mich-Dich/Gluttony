@@ -22,6 +22,7 @@ namespace GLT::physics {
         u32                                 _pad{ 0 };
     };
     static_assert(std::is_trivially_copyable_v<physics_material>);
+    static_assert(sizeof(physics_material) == 16);
 
     // STATIC VARIABLES ================================================================================================
 

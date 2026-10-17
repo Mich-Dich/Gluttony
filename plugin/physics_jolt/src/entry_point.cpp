@@ -1,7 +1,11 @@
 
 #include "util/pch.h"
+#include "util/jolt_pch.h"
 
 #include <physics/i_physics_plugin.h>
+
+#include "plugin.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -59,10 +63,6 @@ namespace GLT::physics::jolt {
 
     // CLASS PRIVATE ===================================================================================================
 
-    // class plugin : public GLT::physics::i_physics_plugin {
-
-    // };
-
 }
 
-// EXPORT_PLUGIN_CLASS(GLT::physics::jolt::plugin, GLT::physics::jolt::descriptor)
+EXPORT_PLUGIN_CLASS(GLT::physics::jolt::plugin, GLT::physics::jolt::descriptor)

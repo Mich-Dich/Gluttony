@@ -15,7 +15,7 @@
                 "RENDER_API_VULKAN"
             ],
             
-            "compilerPath": "/usr/bin/gcc-16",
+            "compilerPath": "/opt/gcc-16.2/bin/gcc-16.2",
             "cStandard": "c11",
             "cppStandard": "c++26",
             "intelliSenseMode": "linux-gcc-x64"
