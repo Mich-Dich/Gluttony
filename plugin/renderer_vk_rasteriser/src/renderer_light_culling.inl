@@ -207,4 +207,28 @@ namespace GLT::renderer::vk_rasterizer {
         m_dev->update_descriptor_buffer(m_light_cull_desc_buffers[frame_index], descriptor_items, util::descriptor_buffer_type::combined);
     }
 
+
+    void renderer::add_light_culling_pass() {
+
+        // Reads the light SSBO (Step 1) and writes the grid/index-list/counter. Runs after clear_light_grid so every cluster starts
+        // with an empty {0,0} slot, and after depth_prepass so a future iteration can tighten the depth range per cluster from real depth
+        m_graph->add_pass("light_culling",
+            [this](graph::pass_builder& builder) {
+                builder.read(m_depth_target, graph::texture_usage::depth_sampled);
+                builder.write(m_light_grid_handles[m_current_frame],       graph::buffer_usage::storage_readwrite);
+                builder.write(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                builder.write(m_light_counter_handles[m_current_frame],    graph::buffer_usage::storage_readwrite);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_light_count == 0 || m_cluster_params.cluster_count == 0)
+                    return;
+
+                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_light_cull_pipeline);
+                m_dev->bind_descriptor_buffer({ m_light_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_light_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+                ctx.cmd.dispatch(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z);
+            });
+    }
+
 }

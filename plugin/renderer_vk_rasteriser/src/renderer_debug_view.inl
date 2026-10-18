@@ -194,4 +194,38 @@ namespace GLT::renderer::vk_rasterizer {
             util::descriptor_buffer_type::combined);
     }
 
+
+    // Debug: visualise the light grid. Runs instead of the forward pass so we skip the shading cost. Needs the depth prepass
+    // (already done) as the cluster-slice source
+    void renderer::add_light_cull_debug_pass() {
+
+        m_graph->add_pass("light_cull_debug",
+            [&](graph::pass_builder& builder) {
+                builder.color_attachment(m_scene_color, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
+                    vk::ClearColorValue(std::array<f32,4>{0.f, 0.f, 0.f, 1.f}));
+                builder.read(m_depth_target, graph::texture_usage::depth_sampled);
+                builder.read(m_light_grid_handles[m_current_frame], graph::buffer_usage::storage_read);
+                builder.set_side_effects(true);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_instance_count == 0)
+                    return;
+
+                ctx.begin_rendering();
+                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_light_cull_debug_pipeline);
+                m_dev->bind_descriptor_buffer({ m_light_cull_debug_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_light_cull_debug_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                ctx.cmd.setViewport(0, vk::Viewport(0.f, 0.f, static_cast<f32>(m_render_size.x), static_cast<f32>(m_render_size.y), 0.f, 1.f));
+                ctx.cmd.setScissor(0, vk::Rect2D({0, 0}, {static_cast<u32>(m_render_size.x), static_cast<u32>(m_render_size.y)}));
+
+                ctx.cmd.draw(3, 1, 0, 0);   // fullscreen triangle
+                ctx.end_rendering();
+
+                m_frame_draw_calls++;
+                m_frame_render_passes++;
+            });
+    }
+
 }

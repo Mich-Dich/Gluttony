@@ -72,6 +72,8 @@ namespace GLT::renderer::vk_rasterizer {
         create_cluster_resources();
         create_light_culling_pipeline();
         create_debug_view_resources();
+        create_debug_draw_resources();
+        create_preview_resources();
         imgui_init();
 
         m_framebuffer_resize_sub = GLT::event_bus::subscribe<GLT::window_framebuffer_resize_event>(
@@ -95,6 +97,8 @@ namespace GLT::renderer::vk_rasterizer {
             if (m_in_flight_fences[i])
                 VK_CHECK_S(m_device.waitForFences(m_in_flight_fences[i], VK_TRUE, UINT64_MAX))
 
+        destroy_preview_resources();
+        destroy_debug_draw_resources();
         destroy_debug_view_resources();
         destroy_light_culling_pipeline();
         destroy_cluster_resources();
@@ -138,7 +142,7 @@ namespace GLT::renderer::vk_rasterizer {
         if (m_timestamp_pool) {
 
             std::array<u64, 2> timestamps{ 0, 0 };
-            const vk::Result result = m_device.getQueryPoolResults(m_timestamp_pool, m_current_frame * 2, 2, 
+            const vk::Result result = m_device.getQueryPoolResults(m_timestamp_pool, m_current_frame * 2, 2,
                 sizeof(u64) * timestamps.size(), timestamps.data(), sizeof(u64), vk::QueryResultFlagBits::e64);
 
             if (result == vk::Result::eSuccess && timestamps[1] > timestamps[0]) {
@@ -175,6 +179,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_graph->begin_frame();
 
+        // Per-frame CPU-side updates ----------------------------------------------------------------------------------
+
         update_cluster_dimensions();
         process_pending_meshes();
         build_instance_buffer();
@@ -183,511 +189,40 @@ namespace GLT::renderer::vk_rasterizer {
         update_camera_ubo();
         update_globals();
         update_materials();
+        process_debug_primitives();
 
-        using VKIU = vk::ImageUsageFlagBits;
+        // Frame textures + descriptor refresh -------------------------------------------------------------------------
 
-        // Backbuffer --------------------------------------------------------------------------------------------------
-        const vk::ImageLayout backbuffer_initial_layout = m_swapchain_images_layout[m_current_swapchain_image];
-        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::eUndefined;
-
-        graph::texture_desc backbuffer_desc{};
-        backbuffer_desc.name = "backbuffer";
-        backbuffer_desc.format = m_swapchain.swapchain_format;
-        backbuffer_desc.width = m_swapchain.swapchain_extent.width;
-        backbuffer_desc.height = m_swapchain.swapchain_extent.height;
-        backbuffer_desc.usage = VKIU::eColorAttachment | VKIU::eTransferDst;
-        backbuffer_desc.persistent = true;
-
-        m_backbuffer_handle = m_graph->create_texture(backbuffer_desc);
-        m_graph->import_texture(m_backbuffer_handle,
-            m_swapchain.swapchain_images[m_current_swapchain_image],
-            m_swapchain.swapchain_image_views[m_current_swapchain_image],
-            { backbuffer_initial_layout, {}, vk::PipelineStageFlagBits2::eNone });
-
-        // Scene colour (external image, sampled by ImGui) -------------------------------------------------------------
-        graph::texture_desc scene_color_desc{};
-        scene_color_desc.name = "scene_color";
-        scene_color_desc.format = vk::Format::eR8G8B8A8Unorm;
-        scene_color_desc.width = m_render_size.x;
-        scene_color_desc.height = m_render_size.y;
-        scene_color_desc.usage = VKIU::eSampled | VKIU::eColorAttachment | VKIU::eTransferSrc | VKIU::eTransferDst;
-        scene_color_desc.persistent = true;
-
-        m_scene_color = m_graph->create_texture(scene_color_desc);
-        m_graph->import_texture(m_scene_color,
-            m_output_image->get_allocated_image_ref().image,
-            m_output_image->get_accessible_image_ref().view,
-            { m_output_image->get_accessible_image_ref().layout, {}, vk::PipelineStageFlagBits2::eNone });
-
-        // -------- Scene depth --------
-        graph::texture_desc depth_desc{};
-        depth_desc.name = "scene_depth";
-        depth_desc.format = vk::Format::eD32Sfloat;
-        depth_desc.width = m_render_size.x;
-        depth_desc.height = m_render_size.y;
-        depth_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
-        depth_desc.persistent = true;
-
-        m_depth_target = m_graph->create_texture(depth_desc);
-
-        graph::texture_desc shadow_desc{};
-        shadow_desc.name = "shadow_map";
-        shadow_desc.format = vk::Format::eD32Sfloat;
-        shadow_desc.width = m_shadow_settings.resolution;
-        shadow_desc.height = m_shadow_settings.resolution;
-        shadow_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
-        shadow_desc.persistent = true;
-
-        m_shadow_map = m_graph->create_texture(shadow_desc);
-
-        graph::texture_desc atlas_desc{};
-        atlas_desc.name = "shadow_atlas";
-        atlas_desc.format = vk::Format::eD32Sfloat;                 // must match m_depth_pipeline's depth format
-        atlas_desc.width = m_shadow_settings.atlas_size;
-        atlas_desc.height = m_shadow_settings.atlas_size;
-        atlas_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
-        atlas_desc.persistent = true;
-
-        m_shadow_atlas = m_graph->create_texture(atlas_desc);
-
-
-        // Refresh transient data for this frame
+        import_frame_textures();
         update_light_meta_ubo();
         update_light_cull_descriptors();
         update_mesh_descriptors();
 
-        // -------- Reset the draw count to 0 (transfer write) --------
-        m_graph->add_pass("reset_draw_count",
-            [&](graph::pass_builder& builder) {
-                builder.write(m_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
-            },
-            [this](graph::pass_context& ctx) {
-                ctx.cmd.fillBuffer(ctx.get_buffer(m_draw_count_handles[m_current_frame]), 0, MAX_MATERIALS * sizeof(u32), 0);
-            });
-
-        // Cull (compute) ----------------------------------------------------------------------------------------------
-        // Side effects so the culler keeps it even if nothing downstream reads its outputs.
-        m_graph->add_pass("cull",
-            [&](graph::pass_builder& builder) {
-                builder.write(m_draw_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                builder.write(m_draw_count_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-            },
-            [this](graph::pass_context& ctx) {
-
-                if (m_instance_count == 0)
-                    return;
-
-                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
-                m_dev->bind_descriptor_buffer({ m_cull_desc_buffers[m_current_frame] }, ctx.cmd);
-                m_dev->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-
-                const u32 dispatch_count = (m_instance_count + 63) / 64;
-                ctx.cmd.dispatch(dispatch_count, 1, 1);
-            });
+        // Passes ------------------------------------------------------------------------------------------------------
+        add_reset_draw_count_pass();
+        add_cull_pass();
 
         if (m_shadow.active) {
-
-            m_graph->add_pass("reset_shadow_draw_count",
-                [&](graph::pass_builder& builder) {
-                    builder.write(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
-                },
-                [this](graph::pass_context& ctx) {
-                    ctx.cmd.fillBuffer(ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]), 0, MAX_MATERIALS * sizeof(u32), 0);
-                });
-
-            m_graph->add_pass("shadow_cull",
-                [&](graph::pass_builder& builder) {
-                    builder.write(m_shadow_draw_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                    builder.write(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                },
-                [this](graph::pass_context& ctx) {
-
-                    if (m_instance_count == 0)
-                        return;
-
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
-                    m_dev->bind_descriptor_buffer({ m_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
-                    m_dev->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-                    ctx.cmd.dispatch((m_instance_count + 63) / 64, 1, 1);
-                });
-
-            m_graph->add_pass("shadow_pass",
-                [&](graph::pass_builder& builder) {
-                    builder.depth_attachment(m_shadow_map, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
-                    builder.read(m_shadow_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
-                    builder.read(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
-                },
-                [this](graph::pass_context& ctx) {
-
-                    if (m_instance_count == 0)
-                        return;
-
-                    const u32 res = m_shadow_settings.resolution;
-
-                    ctx.begin_rendering();
-                    ctx.cmd.setViewport(0, vk::Viewport(0.f, 0.f, static_cast<f32>(res), static_cast<f32>(res), 0.f, 1.f));
-                    ctx.cmd.setScissor(0, vk::Rect2D({0, 0}, {res, res}));
-
-                    ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
-                    ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
-
-                    m_dev->bind_descriptor_buffer({
-                        m_shadow_desc_buffers[m_current_frame],
-                        m_material_desc_buffers[m_current_frame] 
-                    }, ctx.cmd);
-                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-
-                    const vk::Buffer cmd_buffer = ctx.get_buffer(m_shadow_draw_commands_handles[m_current_frame]);
-                    const vk::Buffer count_buffer = ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]);
-
-                    for (u32 mat_slot : m_scene_materials) {
-
-                        const material_slot& entry = m_material_slots[mat_slot];
-                        if (!entry.alive || !entry.pipeline)
-                            continue;
-
-                        ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
-
-                        const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
-                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, descriptor_offset, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-
-                        ctx.cmd.drawIndexedIndirectCount(
-                            cmd_buffer,
-                            static_cast<vk::DeviceSize>(mat_slot) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand),
-                            count_buffer,
-                            static_cast<vk::DeviceSize>(mat_slot) * sizeof(u32),
-                            MAX_COMMANDS_PER_MATERIAL,
-                            sizeof(vk::DrawIndexedIndirectCommand));
-                        m_frame_draw_calls++;
-                    }
-
-                    ctx.end_rendering();
-                    m_frame_render_passes++;
-                });
+            add_reset_shadow_draw_count_pass();
+            add_shadow_cull_pass();
+            add_shadow_pass();
         }
 
-        if (m_local_shadow_view_count > 0) {
-
-            m_graph->add_pass("reset_local_shadow_counts",
-                [&](graph::pass_builder& builder) {
-                    builder.write(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::transfer_dst);
-                },
-                [this](graph::pass_context& ctx) {
-                    ctx.cmd.fillBuffer(ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]), 0,
-                        MAX_SHADOW_VIEWS * MAX_MATERIALS * sizeof(u32), 0);
-                });
-
-            m_graph->add_pass("local_shadow_cull",
-                [&](graph::pass_builder& builder) {
-                    builder.write(m_local_shadow_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                    builder.write(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                },
-                [this](graph::pass_context& ctx) {
-
-                    if (m_instance_count == 0)
-                        return;
-
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_local_shadow_cull_pipeline);
-                    m_dev->bind_descriptor_buffer({ m_local_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
-                    m_dev->bind_descriptor_set(m_local_shadow_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-                    ctx.cmd.dispatch((m_instance_count + 63) / 64, m_local_shadow_view_count, 1);   // y = view
-                });
-
-            m_graph->add_pass("local_shadow_pass",
-                [&](graph::pass_builder& builder) {
-                    builder.depth_attachment(m_shadow_atlas, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
-                    builder.read(m_local_shadow_commands_handles[m_current_frame], graph::buffer_usage::indirect);
-                    builder.read(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::indirect);
-                },
-                [this](graph::pass_context& ctx) {
-
-                    if (m_instance_count == 0)
-                        return;
-
-                    const vk::Buffer commands = ctx.get_buffer(m_local_shadow_commands_handles[m_current_frame]);
-                    const vk::Buffer counts = ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]);
-                    const auto& view_desc_buffer = m_local_shadow_desc_buffers[m_current_frame];
-                    const auto& mat_desc_buffer = m_material_desc_buffers[m_current_frame];
-
-                    ctx.begin_rendering();
-
-                    ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
-                    ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
-
-                    m_dev->bind_descriptor_buffer({ view_desc_buffer, mat_desc_buffer }, ctx.cmd);
-
-                    for (const auto& tile : m_local_shadow_tiles) {
-
-                        ctx.cmd.setViewport(0, vk::Viewport(static_cast<f32>(tile.x), static_cast<f32>(tile.y),
-                            static_cast<f32>(tile.size), static_cast<f32>(tile.size), 0.f, 1.f));
-                        ctx.cmd.setScissor(0, vk::Rect2D({ static_cast<i32>(tile.x), static_cast<i32>(tile.y) }, { tile.size, tile.size }));
-
-                        // set 0 = per-view shadow camera UBO
-                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, /*bufferIndex=*/0,
-                            view_desc_buffer.get_offset_to_set(tile.view), ctx.cmd, vk::PipelineBindPoint::eGraphics);
-
-                        for (u32 mat_slot : m_scene_materials) {
-
-                            const material_slot& entry = m_material_slots[mat_slot];
-                            if (!entry.alive || !entry.pipeline)
-                                continue;
-
-                            ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
-
-                            // set 1 = material descriptor, per-material offset
-                            m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, /*bufferIndex=*/1,
-                                mat_desc_buffer.get_offset_to_set(mat_slot), ctx.cmd, vk::PipelineBindPoint::eGraphics);
-
-                            // per (view, material) command bucket
-                            const vk::DeviceSize cmd_off = static_cast<vk::DeviceSize>(
-                                (tile.view * MAX_MATERIALS + mat_slot)) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand);
-                            const vk::DeviceSize cnt_off = static_cast<vk::DeviceSize>(
-                                (tile.view * MAX_MATERIALS + mat_slot)) * sizeof(u32);
-
-                            ctx.cmd.drawIndexedIndirectCount(
-                                commands, cmd_off,
-                                counts, cnt_off,
-                                MAX_COMMANDS_PER_MATERIAL,
-                                sizeof(vk::DrawIndexedIndirectCommand));
-                            m_frame_draw_calls++;
-                        }
-                    }
-
-                    ctx.end_rendering();
-                    m_frame_render_passes++;
-                });
-        }
-
-        // Depth prepass -----------------------------------------------------------------------------------------------
-        m_graph->add_pass("depth_prepass",
-            [&](graph::pass_builder& builder) {
-                builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
-                builder.read(m_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
-                builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
-            },
-            [this](graph::pass_context& ctx) {
-
-                if (m_instance_count == 0)
-                    return;
-
-                ctx.begin_rendering();
-
-                ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
-                ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
-
-                m_dev->bind_descriptor_buffer({
-                    m_frame_desc_buffers[m_current_frame],
-                    m_material_desc_buffers[m_current_frame]
-                }, ctx.cmd);
-                m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, /*bufferIndex=*/0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-
-                const vk::Buffer cmd_buffer = ctx.get_buffer(m_draw_commands_handles[m_current_frame]);
-                const vk::Buffer count_buffer = ctx.get_buffer(m_draw_count_handles[m_current_frame]);
-
-                for (u32 mat_slot : m_scene_materials) {
-
-                    const material_slot& entry = m_material_slots[mat_slot];
-                    if (!entry.alive || !entry.pipeline)
-                        continue;
-
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
-
-                    const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
-                    // binding index 0 in the array = the material descriptor buffer we just bound
-                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, descriptor_offset, ctx.cmd,
-                        vk::PipelineBindPoint::eGraphics);
-
-                    ctx.cmd.drawIndexedIndirectCount(
-                        cmd_buffer,
-                        static_cast<vk::DeviceSize>(mat_slot) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand),
-                        count_buffer,
-                        static_cast<vk::DeviceSize>(mat_slot) * sizeof(u32),
-                        MAX_COMMANDS_PER_MATERIAL,
-                        sizeof(vk::DrawIndexedIndirectCommand));
-                    m_frame_draw_calls++;
-                }
-
-                ctx.end_rendering();
-                m_frame_render_passes++;
-            });
-
-        // Clear light grid --------------------------------------------------------------------------------------------
-        // Runs before light culling. We clear the grid (small) and the global counter (4 bytes)
-        // The index list is not cleared - culling only reads offsets it wrote this frame
-        m_graph->add_pass("clear_light_grid",
-            [&](graph::pass_builder& builder) {
-                builder.write(m_light_grid_handles[m_current_frame], graph::buffer_usage::transfer_dst);
-                builder.write(m_light_counter_handles[m_current_frame], graph::buffer_usage::transfer_dst);
-            },
-            [this](graph::pass_context& ctx) {
-
-                if (m_cluster_params.cluster_count == 0)
-                    return;
-
-                const vk::DeviceSize grid_bytes = static_cast<vk::DeviceSize>(m_cluster_params.cluster_count) * sizeof(glm::uvec2);
-
-                ctx.cmd.fillBuffer(ctx.get_buffer(m_light_grid_handles[m_current_frame]), 0, grid_bytes, 0);
-                ctx.cmd.fillBuffer(ctx.get_buffer(m_light_counter_handles[m_current_frame]), 0, sizeof(u32), 0);
-            });
-
-        // Light culling -----------------------------------------------------------------------------------------------
-        // Reads the light SSBO (Step 1) and writes the grid/index-list/counter (Step 2). Runs after clear_light_grid so
-        // every cluster starts with an empty {0,0} slot, and after depth_prepass so a future iteration can tighten the
-        // depth range per cluster from real depth
-        m_graph->add_pass("light_culling",
-            [&](graph::pass_builder& builder) {
-                builder.read(m_depth_target, graph::texture_usage::depth_sampled);
-                builder.write(m_light_grid_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                builder.write(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-                builder.write(m_light_counter_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
-            },
-            [this](graph::pass_context& ctx) {
-
-                if (m_light_count == 0 || m_cluster_params.cluster_count == 0)
-                    return;
-
-                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_light_cull_pipeline);
-                m_dev->bind_descriptor_buffer({ m_light_cull_desc_buffers[m_current_frame] }, ctx.cmd);
-                m_dev->bind_descriptor_set(m_light_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-                ctx.cmd.dispatch(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z);
-            });
-
-        // Refresh debug view descriptors after cluster dimensions / depth are known this frame
+        add_local_shadow_passes();      // no-ops when no local-shadow tiles exist
+        add_depth_prepass_pass();
+        add_clear_light_grid_pass();
+        add_light_culling_pass();
         update_debug_view_descriptors();
 
-        if (m_active_mode == modes::Light_cull.id) {
+        if (m_active_mode == modes::Light_cull.id)
+            add_light_cull_debug_pass();
+        else
+            add_scene_pass();
 
-            // Debug: visualise the light grid. Runs instead of the forward pass so we skip the
-            // shading cost. Needs the depth prepass (already done) as the cluster-slice source.
-            m_graph->add_pass("light_cull_debug",
-                [&](graph::pass_builder& builder) {
-                    builder.color_attachment(m_scene_color, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
-                        vk::ClearColorValue(std::array<f32,4>{0.f, 0.f, 0.f, 1.f}));
-                    builder.read(m_depth_target, graph::texture_usage::depth_sampled);
-                    builder.read(m_light_grid_handles[m_current_frame], graph::buffer_usage::storage_read);
-                    builder.set_side_effects(true);
-                },
-                [this](graph::pass_context& ctx) {
+        add_debug_draw_pass();
+        // add_preview_passes();
+        add_imgui_pass();
 
-                    if (m_instance_count == 0)
-                        return;
-
-                    ctx.begin_rendering();
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_light_cull_debug_pipeline);
-                    m_dev->bind_descriptor_buffer({ m_light_cull_debug_desc_buffers[m_current_frame] }, ctx.cmd);
-                    m_dev->bind_descriptor_set(m_light_cull_debug_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-
-                    ctx.cmd.setViewport(0, vk::Viewport(0.f, 0.f, static_cast<f32>(m_render_size.x), static_cast<f32>(m_render_size.y), 0.f, 1.f));
-                    ctx.cmd.setScissor(0, vk::Rect2D({0, 0}, {static_cast<u32>(m_render_size.x), static_cast<u32>(m_render_size.y)}));
-
-                    ctx.cmd.draw(3, 1, 0, 0);   // fullscreen triangle
-                    ctx.end_rendering();
-
-                    m_frame_draw_calls++;
-                    m_frame_render_passes++;
-                });
-
-        } else {
-
-            // Forward shading (existing pass, unchanged)
-            m_graph->add_pass("scene",
-                [&](graph::pass_builder& builder) {
-                    builder.color_attachment(m_scene_color, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
-                        vk::ClearColorValue(std::array<f32,4>{m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a}));
-                    builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore, 1.0f, 0);
-                    builder.read(m_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
-                    builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
-                    builder.read(m_light_grid_handles[m_current_frame], graph::buffer_usage::storage_read);
-                    builder.read(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_read);
-                    if (m_shadow.active)
-                        builder.read(m_shadow_map, graph::texture_usage::depth_sampled);
-                    if (m_local_shadow_view_count > 0)
-                        builder.read(m_shadow_atlas, graph::texture_usage::depth_sampled);
-                },
-                [this](graph::pass_context& ctx) {
-
-                    if (m_instance_count == 0)
-                        return;
-
-                    ctx.begin_rendering();
-
-                    ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
-                    ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
-
-                    m_dev->bind_descriptor_buffer({
-                        m_frame_desc_buffers[m_current_frame],
-                        m_material_desc_buffers[m_current_frame]
-                    }, ctx.cmd);
-                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, /*bufferIndex=*/0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
-
-                    const vk::Buffer cmd_buffer = ctx.get_buffer(m_draw_commands_handles[m_current_frame]);
-                    const vk::Buffer count_buffer = ctx.get_buffer(m_draw_count_handles[m_current_frame]);
-
-                    for (u32 mat_slot : m_scene_materials) {
-
-                        const material_slot& entry = m_material_slots[mat_slot];
-                        if (!entry.alive || !entry.pipeline)
-                            continue;
-
-                        ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.pipeline);
-
-                        const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
-                        // binding index 0 in the array = the material descriptor buffer we just bound
-                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, descriptor_offset, ctx.cmd,
-                            vk::PipelineBindPoint::eGraphics);
-
-                        ctx.cmd.drawIndexedIndirectCount(
-                            cmd_buffer,
-                            static_cast<vk::DeviceSize>(mat_slot) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand),
-                            count_buffer,
-                            static_cast<vk::DeviceSize>(mat_slot) * sizeof(u32),
-                            MAX_COMMANDS_PER_MATERIAL,
-                            sizeof(vk::DrawIndexedIndirectCommand));
-                        m_frame_draw_calls++;
-                    }
-
-                    ctx.end_rendering();
-                    m_frame_render_passes++;
-                });
-        }
-
-        // Pass: ImGui -------------------------------------------------------------------------------------------------
-        m_graph->add_pass("imgui",
-            [&](graph::pass_builder& builder) {
-                builder.color_attachment(m_backbuffer_handle, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore);
-                if (m_world_render_enabled)
-                    builder.read(m_scene_color, graph::texture_usage::sampled);
-                builder.set_side_effects(true);
-            },
-            [this](graph::pass_context& ctx) {
-
-                const ImDrawData* draw_data = ImGui::GetDrawData();
-                m_frame_draw_calls += count_imgui_draw_calls(draw_data);
-                m_frame_render_passes += 1;
-
-                vk::RenderPassBeginInfo render_pass_info{};
-                render_pass_info.renderPass = m_imgui_render_pass;
-                render_pass_info.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
-                render_pass_info.renderArea.extent = m_swapchain.swapchain_extent;
-
-                std::array<vk::ClearValue, 1> clear_values{};
-                clear_values[0].color = { m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a };
-                render_pass_info.clearValueCount = static_cast<u32>(clear_values.size());
-                render_pass_info.pClearValues = clear_values.data();
-
-                ctx.cmd.beginRenderPass(render_pass_info, vk::SubpassContents::eInline);
-                ImGui_ImplVulkan_RenderDrawData(const_cast<ImDrawData*>(draw_data), ctx.cmd);
-                ctx.cmd.endRenderPass();
-
-                ImGuiIO& io = ImGui::GetIO();
-                if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-                    ImGui::UpdatePlatformWindows();
-                    ImGui::RenderPlatformWindowsDefault();
-                }
-            });
-
-        // LOG(info, "instances={} lights={} clusters={}x{}x{}",
-        //     m_instance_count, m_light_count, m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z);
         m_graph->compile();
     }
 
@@ -701,6 +236,11 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_output_image->get_accessible_image_ref().layout = m_graph->texture_layout(m_scene_color); // Sync image layout to graph last use
         m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;     // imgui sets layout to ePresentSrcKHR
+
+        for (auto& [id, p] : m_previews) {
+            if (p.target && p.color_handle.is_valid())
+                p.target->get_accessible_image_ref().layout = m_graph->texture_layout(p.color_handle);
+        }
 
         m_graph->end_frame();
 

@@ -133,4 +133,43 @@ namespace GLT::renderer::vk_rasterizer {
         ImGui::Render();                    // draw data is now valid; the graph's imgui pass will consume it
     }
 
+
+    void renderer::add_imgui_pass() {
+
+        m_graph->add_pass("imgui",
+            [&](graph::pass_builder& builder) {
+                builder.color_attachment(m_backbuffer_handle, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore);
+                if (m_world_render_enabled)
+                    builder.read(m_scene_color, graph::texture_usage::sampled);
+                builder.set_side_effects(true);
+            },
+            [this](graph::pass_context& ctx) {
+
+                const ImDrawData* draw_data = ImGui::GetDrawData();
+                m_frame_draw_calls += count_imgui_draw_calls(draw_data);
+                m_frame_render_passes += 1;
+
+                vk::RenderPassBeginInfo render_pass_info{};
+                render_pass_info.renderPass = m_imgui_render_pass;
+                render_pass_info.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
+                render_pass_info.renderArea.extent = m_swapchain.swapchain_extent;
+
+                std::array<vk::ClearValue, 1> clear_values{};
+                clear_values[0].color = { m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a };
+                render_pass_info.clearValueCount = static_cast<u32>(clear_values.size());
+                render_pass_info.pClearValues = clear_values.data();
+
+                ctx.cmd.beginRenderPass(render_pass_info, vk::SubpassContents::eInline);
+                ImGui_ImplVulkan_RenderDrawData(const_cast<ImDrawData*>(draw_data), ctx.cmd);
+                ctx.cmd.endRenderPass();
+
+                ImGuiIO& io = ImGui::GetIO();
+                if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+                    ImGui::UpdatePlatformWindows();
+                    ImGui::RenderPlatformWindowsDefault();
+                }
+            }
+        );
+    }
+
 }

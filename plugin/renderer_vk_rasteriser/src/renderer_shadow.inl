@@ -552,4 +552,192 @@ namespace GLT::renderer::vk_rasterizer {
         m_dev->unmap_buffer(m_shadow_view_buffers[m_current_frame]);
     }
 
+
+    void renderer::add_reset_shadow_draw_count_pass() {
+
+        m_graph->add_pass("reset_shadow_draw_count",
+            [&](graph::pass_builder& builder) {
+                builder.write(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+            },
+            [this](graph::pass_context& ctx) {
+                ctx.cmd.fillBuffer(ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]), 0, MAX_MATERIALS * sizeof(u32), 0);
+            });
+    }
+
+
+    void renderer::add_shadow_cull_pass() {
+
+        m_graph->add_pass("shadow_cull",
+            [&](graph::pass_builder& builder) {
+                builder.write(m_shadow_draw_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                builder.write(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_instance_count == 0)
+                    return;
+
+                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
+                m_dev->bind_descriptor_buffer({ m_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+                ctx.cmd.dispatch((m_instance_count + 63) / 64, 1, 1);
+            });
+    }
+
+
+    void renderer::add_shadow_pass() {
+
+        m_graph->add_pass("shadow_pass",
+            [&](graph::pass_builder& builder) {
+                builder.depth_attachment(m_shadow_map, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
+                builder.read(m_shadow_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
+                builder.read(m_shadow_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_instance_count == 0)
+                    return;
+
+                const u32 res = m_shadow_settings.resolution;
+
+                ctx.begin_rendering();
+                ctx.cmd.setViewport(0, vk::Viewport(0.f, 0.f, static_cast<f32>(res), static_cast<f32>(res), 0.f, 1.f));
+                ctx.cmd.setScissor(0, vk::Rect2D({0, 0}, {res, res}));
+
+                ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
+                ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
+
+                m_dev->bind_descriptor_buffer({
+                    m_shadow_desc_buffers[m_current_frame],
+                    m_material_desc_buffers[m_current_frame] 
+                }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                const vk::Buffer cmd_buffer = ctx.get_buffer(m_shadow_draw_commands_handles[m_current_frame]);
+                const vk::Buffer count_buffer = ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]);
+
+                for (u32 mat_slot : m_scene_materials) {
+
+                    const material_slot& entry = m_material_slots[mat_slot];
+                    if (!entry.alive || !entry.pipeline)
+                        continue;
+
+                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
+
+                    const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
+                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, descriptor_offset, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                    ctx.cmd.drawIndexedIndirectCount(
+                        cmd_buffer,
+                        static_cast<vk::DeviceSize>(mat_slot) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand),
+                        count_buffer,
+                        static_cast<vk::DeviceSize>(mat_slot) * sizeof(u32),
+                        MAX_COMMANDS_PER_MATERIAL,
+                        sizeof(vk::DrawIndexedIndirectCommand));
+                    m_frame_draw_calls++;
+                }
+
+                ctx.end_rendering();
+                m_frame_render_passes++;
+            });
+    }
+
+
+    void renderer::add_local_shadow_passes() {
+
+        if (m_local_shadow_view_count == 0)
+            return;
+
+        // ---- Reset counts -------------------------------------------------------------------------------------------
+        m_graph->add_pass("reset_local_shadow_counts",
+            [this](graph::pass_builder& builder) {
+                builder.write(m_local_shadow_counts_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+            },
+            [this](graph::pass_context& ctx) {
+                ctx.cmd.fillBuffer(ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]), 0,
+                    MAX_SHADOW_VIEWS * MAX_MATERIALS * sizeof(u32), 0);
+            });
+
+        // ---- Cull ---------------------------------------------------------------------------------------------------
+        m_graph->add_pass("local_shadow_cull",
+            [this](graph::pass_builder& builder) {
+                builder.write(m_local_shadow_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                builder.write(m_local_shadow_counts_handles[m_current_frame],   graph::buffer_usage::storage_readwrite);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_instance_count == 0)
+                    return;
+
+                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_local_shadow_cull_pipeline);
+                m_dev->bind_descriptor_buffer({ m_local_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_local_shadow_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+                ctx.cmd.dispatch((m_instance_count + 63) / 64, m_local_shadow_view_count, 1);   // y = view
+            });
+
+        // ---- Draw (atlas) -------------------------------------------------------------------------------------------
+        m_graph->add_pass("local_shadow_pass",
+            [this](graph::pass_builder& builder) {
+                builder.depth_attachment(m_shadow_atlas, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
+                builder.read(m_local_shadow_commands_handles[m_current_frame], graph::buffer_usage::indirect);
+                builder.read(m_local_shadow_counts_handles[m_current_frame],   graph::buffer_usage::indirect);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_instance_count == 0)
+                    return;
+
+                const vk::Buffer commands = ctx.get_buffer(m_local_shadow_commands_handles[m_current_frame]);
+                const vk::Buffer counts = ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]);
+                const auto& view_desc_buffer = m_local_shadow_desc_buffers[m_current_frame];
+                const auto& mat_desc_buffer = m_material_desc_buffers[m_current_frame];
+
+                ctx.begin_rendering();
+
+                ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
+                ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
+
+                m_dev->bind_descriptor_buffer({ view_desc_buffer, mat_desc_buffer }, ctx.cmd);
+
+                for (const auto& tile : m_local_shadow_tiles) {
+
+                    ctx.cmd.setViewport(0, vk::Viewport(static_cast<f32>(tile.x), static_cast<f32>(tile.y),
+                        static_cast<f32>(tile.size), static_cast<f32>(tile.size), 0.f, 1.f));
+                    ctx.cmd.setScissor(0, vk::Rect2D({ static_cast<i32>(tile.x), static_cast<i32>(tile.y) }, { tile.size, tile.size }));
+
+                    // set 0 = per-view shadow camera UBO
+                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, /*bufferIndex=*/0,
+                        view_desc_buffer.get_offset_to_set(tile.view), ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                    for (u32 mat_slot : m_scene_materials) {
+
+                        const material_slot& entry = m_material_slots[mat_slot];
+                        if (!entry.alive || !entry.pipeline)
+                            continue;
+
+                        ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
+
+                        // set 1 = material descriptor, per-material offset
+                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, /*bufferIndex=*/1,
+                            mat_desc_buffer.get_offset_to_set(mat_slot), ctx.cmd, vk::PipelineBindPoint::eGraphics);
+
+                        // per (view, material) command bucket
+                        const vk::DeviceSize cmd_off = static_cast<vk::DeviceSize>(
+                            (tile.view * MAX_MATERIALS + mat_slot)) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand);
+                        const vk::DeviceSize cnt_off = static_cast<vk::DeviceSize>((tile.view * MAX_MATERIALS + mat_slot)) * sizeof(u32);
+
+                        ctx.cmd.drawIndexedIndirectCount(
+                            commands, cmd_off,
+                            counts,   cnt_off,
+                            MAX_COMMANDS_PER_MATERIAL,
+                            sizeof(vk::DrawIndexedIndirectCommand));
+                        m_frame_draw_calls++;
+                    }
+                }
+
+                ctx.end_rendering();
+                m_frame_render_passes++;
+            });
+    }
+
 }

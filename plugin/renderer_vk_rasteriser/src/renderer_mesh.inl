@@ -119,6 +119,8 @@ namespace GLT::renderer::vk_rasterizer {
         slot.index_offset = m_index_used;
         slot.index_count = index_count;
         slot.alive = true;
+        slot.local_min = mesh->bounds.min;
+        slot.local_max = mesh->bounds.max;
 
         upload_mesh_slice(slot, *mesh);
         pack_mesh_into_ssbo(slot, *mesh);    // cannot fail now: pre-checks above cover its VALIDATEs
@@ -279,7 +281,7 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    renderer::mesh_slot* renderer::find_slot(GLT::asset::handle handle) noexcept {
+    mesh_slot* renderer::find_slot(GLT::asset::handle handle) noexcept {
 
         for (auto& slot : m_mesh_slots)
             if (slot.alive && slot.asset == handle)
@@ -288,7 +290,7 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    const renderer::mesh_slot* renderer::find_slot(GLT::asset::handle handle) const noexcept { 
+    const mesh_slot* renderer::find_slot(GLT::asset::handle handle) const noexcept { 
 
         return const_cast<renderer*>(this)->find_slot(handle);
     }

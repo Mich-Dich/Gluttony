@@ -28,6 +28,7 @@
 #include "window/asset_import.h"
 #include "window/asset_create.h"
 #include "window/material_viewer.h"
+#include "window/mesh_editor.h"
 #include "window/world_topdown_editor.h"
 #include "util/asset_editor_registry.h"
 #include "util/file_watcher.h"
@@ -528,10 +529,8 @@ namespace GLT::editor {
                     return GLT::create_unique_ref<window>(p);                                       \
                 });
 
-        // ADD_ASSET_EDITOR(GLT::asset::core_types::texture2d,     texture_viewer_window)       // TODO: fix image viewer implementation
-        // ADD_ASSET_EDITOR(GLT::asset::core_types::texture3d,     texture_viewer_window)
-        // ADD_ASSET_EDITOR(GLT::asset::core_types::cube_map,      texture_viewer_window)
         ADD_ASSET_EDITOR(GLT::asset::core_types::material,      material_viewer_window)
+        ADD_ASSET_EDITOR(GLT::asset::core_types::static_mesh,   mesh_editor_window)
         ADD_ASSET_EDITOR(GLT::asset::core_types::audio,         audio_viewer_window)
         ADD_ASSET_EDITOR(GLT::asset::core_types::world,         world_topdown_editor)
 

@@ -59,7 +59,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     // materials & textures --------------------------------------------------------------------------------------------
 
-    static constexpr u32                                        MAX_MATERIALS = 4096;
+    static constexpr u32                                        MAX_MATERIALS = 1024;
 
     static constexpr u32                                        TEXTURE_SLOT_WHITE = 0;                    // fallback: base colour, metal/rough, emissive, occlusion
 
@@ -76,9 +76,29 @@ namespace GLT::renderer::vk_rasterizer {
     // Commands bucketed per material. Sized so a scene with heavy per-material batching still fits; overflow drops commands, never crashes
     static constexpr u32                                        MAX_COMMANDS_PER_MATERIAL = 256;
 
+    // debug draw ------------------------------------------------------------------------------------------------------
+
+    // Hard cap on vertices uploaded per frame. 128K = 4 MB/frame × 3 frames ≈ 12 MB total. Enough for ~5400 AABBs
+    static constexpr u32                                        MAX_DEBUG_VERTICES = 131072;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
+
+    struct mesh_slot {
+        GLT::asset::handle                                      asset{};
+        u32                                                     vertex_offset = 0;      // in vertices
+        u32                                                     vertex_count = 0;
+        u32                                                     index_offset = 0;       // in indices
+        u32                                                     index_count = 0;
+        bool                                                    alive = false;
+        std::vector<u32>                                        material_slots{};    // per submesh, SSBO slot (default)
+
+        // local-space AABB, cached from mesh_asset::bounds at load time. Used by debug draws
+        glm::vec3                                               local_min{0.0f};
+        glm::vec3                                               local_max{0.0f};
+    };
+
 
     // Discriminates the two fragment pipelines a material can carry
     enum class material_pipeline_kind : u8 {
@@ -281,6 +301,17 @@ namespace GLT::renderer::vk_rasterizer {
         glm::mat4       inv_view_projection{1.0f};
     };
     static_assert(sizeof(gpu_globals) == 480, "gpu_globals layout mismatch");
+
+    // debug draw ------------------------------------------------------------------------------------------------------
+
+    // Debug draw: interleaved vertex consumed by the debug shaders. 16-byte aligned so `vec4 color` sits on a
+    // std430-friendly boundary (only matters if this ever becomes an SSBO input; for vertex buffers it's just niceness)
+    struct debug_vertex {
+        glm::vec3                                               position{0.0f};
+        f32                                                     _pad = 0.0f;
+        glm::vec4                                               color{1.0f};
+    };
+    static_assert(sizeof(debug_vertex) == 32, "debug_vertex layout mismatch");
 
     // STATIC VARIABLES ================================================================================================
 

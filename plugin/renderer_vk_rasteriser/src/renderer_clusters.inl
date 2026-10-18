@@ -126,4 +126,26 @@ namespace GLT::renderer::vk_rasterizer {
         create_cluster_resources();
     }
 
+
+    void renderer::add_clear_light_grid_pass() {
+
+        // Clears the grid (small) and the global counter. The index list is not cleared - culling only reads offsets it wrote this frame
+        m_graph->add_pass("clear_light_grid",
+            [this](graph::pass_builder& builder) {
+                builder.write(m_light_grid_handles[m_current_frame],    graph::buffer_usage::transfer_dst);
+                builder.write(m_light_counter_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_cluster_params.cluster_count == 0)
+                    return;
+
+                const vk::DeviceSize grid_bytes =
+                    static_cast<vk::DeviceSize>(m_cluster_params.cluster_count) * sizeof(glm::uvec2);
+
+                ctx.cmd.fillBuffer(ctx.get_buffer(m_light_grid_handles[m_current_frame]),    0, grid_bytes,     0);
+                ctx.cmd.fillBuffer(ctx.get_buffer(m_light_counter_handles[m_current_frame]), 0, sizeof(u32),     0);
+            });
+    }
+
 }

@@ -36,7 +36,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     // mesh ssbo packing -----------------------------------------------------------------------------------------------
 
-    void renderer::pack_mesh_into_ssbo(renderer::mesh_slot& mesh_slot, const GLT::asset::mesh::mesh_asset& mesh_asset) {
+    void renderer::pack_mesh_into_ssbo(mesh_slot& mesh_slot, const GLT::asset::mesh::mesh_asset& mesh_asset) {
 
         // mesh_slot.vertex_offset and .index_offset are absolute offsets into the shared vertex/index buffers; the shader uses them directly
         u32 mesh_index = static_cast<u32>(&mesh_slot - m_mesh_slots.data());
@@ -340,6 +340,42 @@ namespace GLT::renderer::vk_rasterizer {
             std::memcpy(mapped, m_instance_material_slots.data(), bytes);
             m_dev->unmap_buffer(buffer);
         }
+    }
+
+
+    void renderer::add_reset_draw_count_pass() {
+
+        m_graph->add_pass("reset_draw_count",
+            [this](graph::pass_builder& builder) {
+                builder.write(m_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+            },
+            [this](graph::pass_context& ctx) {
+                ctx.cmd.fillBuffer(ctx.get_buffer(m_draw_count_handles[m_current_frame]),
+                    0, MAX_MATERIALS * sizeof(u32), 0);
+            });
+    }
+
+
+    void renderer::add_cull_pass() {
+
+        // Side effects so the culler keeps it even if nothing downstream reads its outputs
+        m_graph->add_pass("cull",
+            [this](graph::pass_builder& builder) {
+                builder.write(m_draw_commands_handles[m_current_frame], graph::buffer_usage::storage_readwrite);
+                builder.write(m_draw_count_handles[m_current_frame],    graph::buffer_usage::storage_readwrite);
+            },
+            [this](graph::pass_context& ctx) {
+
+                if (m_instance_count == 0)
+                    return;
+
+                ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
+                m_dev->bind_descriptor_buffer({ m_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_dev->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+
+                const u32 dispatch_count = (m_instance_count + 63) / 64;
+                ctx.cmd.dispatch(dispatch_count, 1, 1);
+            });
     }
 
 }

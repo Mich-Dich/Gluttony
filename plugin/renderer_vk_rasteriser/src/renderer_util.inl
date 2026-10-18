@@ -55,11 +55,11 @@ namespace GLT::renderer::vk_rasterizer {
             .vertices = 3,
             .render_passes = m_frame_render_passes,
             #if defined(DEBUG)
-            .vram_bytes = GLT::render::image::get_live_vram_bytes(),
+                .vram_bytes = GLT::render::image::get_live_vram_bytes(),
             #endif
             .ram_bytes = 0,
             #if defined(DEBUG)
-            .texture_count = GLT::render::image::get_live_count(),
+                .texture_count = GLT::render::image::get_live_count(),
             #endif
             .buffer_count = m_live_buffer_count,
             .descriptor_set_count = m_live_descriptor_set_count,
@@ -121,5 +121,76 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
+
+    void renderer::import_frame_textures() {
+
+        using VKIU = vk::ImageUsageFlagBits;
+
+        // Backbuffer --------------------------------------------------------------------------------------------------
+        const vk::ImageLayout backbuffer_initial_layout = m_swapchain_images_layout[m_current_swapchain_image];
+        m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::eUndefined;
+
+        graph::texture_desc backbuffer_desc{};
+        backbuffer_desc.name = "backbuffer";
+        backbuffer_desc.format = m_swapchain.swapchain_format;
+        backbuffer_desc.width = m_swapchain.swapchain_extent.width;
+        backbuffer_desc.height = m_swapchain.swapchain_extent.height;
+        backbuffer_desc.usage = VKIU::eColorAttachment | VKIU::eTransferDst;
+        backbuffer_desc.persistent = true;
+
+        m_backbuffer_handle = m_graph->create_texture(backbuffer_desc);
+        m_graph->import_texture(m_backbuffer_handle,
+            m_swapchain.swapchain_images[m_current_swapchain_image],
+            m_swapchain.swapchain_image_views[m_current_swapchain_image],
+            { backbuffer_initial_layout, {}, vk::PipelineStageFlagBits2::eNone });
+
+        // Scene colour (external image, sampled by ImGui) -------------------------------------------------------------
+        graph::texture_desc scene_color_desc{};
+        scene_color_desc.name = "scene_color";
+        scene_color_desc.format = vk::Format::eR8G8B8A8Unorm;
+        scene_color_desc.width = m_render_size.x;
+        scene_color_desc.height = m_render_size.y;
+        scene_color_desc.usage = VKIU::eSampled | VKIU::eColorAttachment | VKIU::eTransferSrc | VKIU::eTransferDst;
+        scene_color_desc.persistent = true;
+
+        m_scene_color = m_graph->create_texture(scene_color_desc);
+        m_graph->import_texture(m_scene_color,
+            m_output_image->get_allocated_image_ref().image,
+            m_output_image->get_accessible_image_ref().view,
+            { m_output_image->get_accessible_image_ref().layout, {}, vk::PipelineStageFlagBits2::eNone });
+
+        // Scene depth -------------------------------------------------------------------------------------------------
+        graph::texture_desc depth_desc{};
+        depth_desc.name = "scene_depth";
+        depth_desc.format = vk::Format::eD32Sfloat;
+        depth_desc.width = m_render_size.x;
+        depth_desc.height = m_render_size.y;
+        depth_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
+        depth_desc.persistent = true;
+
+        m_depth_target = m_graph->create_texture(depth_desc);
+
+        // Directional shadow map --------------------------------------------------------------------------------------
+        graph::texture_desc shadow_desc{};
+        shadow_desc.name = "shadow_map";
+        shadow_desc.format = vk::Format::eD32Sfloat;
+        shadow_desc.width = m_shadow_settings.resolution;
+        shadow_desc.height = m_shadow_settings.resolution;
+        shadow_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
+        shadow_desc.persistent = true;
+
+        m_shadow_map = m_graph->create_texture(shadow_desc);
+
+        // Local shadow atlas ------------------------------------------------------------------------------------------
+        graph::texture_desc atlas_desc{};
+        atlas_desc.name = "shadow_atlas";
+        atlas_desc.format = vk::Format::eD32Sfloat;                 // must match m_depth_pipeline's depth format
+        atlas_desc.width = m_shadow_settings.atlas_size;
+        atlas_desc.height = m_shadow_settings.atlas_size;
+        atlas_desc.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
+        atlas_desc.persistent = true;
+
+        m_shadow_atlas = m_graph->create_texture(atlas_desc);
+    }
 
 }
