@@ -1354,7 +1354,7 @@ namespace GLT::editor {
     }
 
 
-    void content_browser_window::on_file_event(const file_event& event) {
+    void content_browser_window::on_file_event([[maybe_unused]] const file_event& event) {
 
         LOG(info, "{}", event.to_string());
         m_entries_dirty = true;

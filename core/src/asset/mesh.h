@@ -4,6 +4,7 @@
 #include "util/data_structures/AABB.h"
 #include "asset/type.h"
 #include "asset/header.h"
+#include "world/entity.h"
 
 
 
@@ -65,8 +66,9 @@ namespace GLT::asset::mesh {
         glm::mat4                                       transform{ 1.0f };
         u32                                             flags{ 0 };                     // reserved (frustum-cull bits, etc.)
         std::vector<GLT::asset::handle>                 material_overrides{};
+        GLT::world::entity_id                           entity{};                       // Optional back-reference
     };
-    static_assert(sizeof(instance) == 104);
+    static_assert(sizeof(instance) == 112);
 
     // STATIC VARIABLES ================================================================================================
 

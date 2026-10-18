@@ -109,6 +109,8 @@ namespace GLT::editor {
         static bool gizmo_toggle_button(const char* label, bool active, const ImVec2& size = ImVec2(0, 0), const bool use_icon = false,
             icon_manager::icon icon = icon_manager::icon::transfrom_rotation);
 
+        void update_selection_debug_draw();
+
 
         bool                                            m_viewport_image_drawn = false;
         std::vector<content_browser_window>             m_content_browsers{};

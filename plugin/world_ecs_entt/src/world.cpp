@@ -962,6 +962,7 @@ namespace GLT::world::world_ecs_entt {
             inst.mesh = mesh_comp.mesh;
             inst.material_overrides.assign(mesh_comp.material_overrides.begin(), mesh_comp.material_overrides.end());
             inst.transform = world_transform_of(id);
+            inst.entity = id;
             out.push_back(inst);
         }
     }

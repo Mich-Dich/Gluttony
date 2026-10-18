@@ -11,6 +11,7 @@
 #include <asset/i_asset_registry.h>
 #include <render/image.h>
 #include <render/i_renderer.h>
+#include <render/i_debug_draw.h>
 #include <world/i_world.h>
 #include <world/i_world_scene.h>
 #include <world/world_layer.h>
@@ -110,6 +111,7 @@ namespace GLT::editor {
     void world_viewport_window::update(const f32 /*delta_time*/) {
 
         m_renderer->set_render_size({m_viewport_size.x, m_viewport_size.y});
+        update_selection_debug_draw();
 
         // Move any events that arrived during the previous frame into the queue.
         for (auto& ev : m_save_as_event_buffer) {
@@ -1218,6 +1220,23 @@ namespace GLT::editor {
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor(3);
         return clicked;
+    }
+
+
+    void world_viewport_window::update_selection_debug_draw() {
+
+        // Renderer may not implement debug draw at all (e.g. null / headless).
+        auto* debug = m_renderer ? m_renderer->as<GLT::render::i_debug_draw>() : nullptr;
+        if (!debug)
+            return;
+
+        // Nothing selected -> nothing to refresh. Old watch entries expire on their own.
+        if (!m_world || !m_selected_entity.is_valid() || !m_world->alive(m_selected_entity))
+            return;
+
+        constexpr f32 lifetime = 0.1f;
+        const glm::vec4 color{ 1.f, 0.5f, 0.1f, 1.f };                                      // orange-ish selection tint
+        debug->draw_mesh_aabb(m_selected_entity, color, lifetime, /*depth_test=*/true);
     }
 
 }

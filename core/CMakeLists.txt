@@ -15,6 +15,14 @@ file(GLOB_RECURSE                                                       CORE_SOU
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
 add_executable(${CORE_NAME}                                             ${CORE_SOURCES})
+set_target_properties(${CORE_NAME} PROPERTIES
+    BUILD_RPATH                                                         "/opt/gcc-16.2/lib64"
+    INSTALL_RPATH                                                       "/opt/gcc-16.2/lib64"
+    RUNTIME_OUTPUT_DIRECTORY                                            "${COMPILE_OUTPUT_DIR}"
+    CXX_VISIBILITY_PRESET                                               default
+    VISIBILITY_INLINES_HIDDEN                                           OFF
+)
+
 target_compile_definitions(${CORE_NAME}                                 PRIVATE GLT_MODULE_NAME="${CORE_NAME}")
 target_compile_definitions(${CORE_NAME} PRIVATE
     $<$<CONFIG:Debug>:DEBUG>

@@ -649,6 +649,7 @@ namespace GLT::physics::jolt {
         query_layer_filter layer(m_layers, filter.layer_mask);
         query_body_filter body_filter(m_system->GetBodyInterface(), filter.ignore, filter.hit_sensors);
 
+        // Single-hit: boolean-return overload. Filters after the result.
         JPH::RayCastResult result;
         if (!m_system->GetNarrowPhaseQuery().CastRay(ray, result, bp, layer, body_filter))
             return out;
@@ -657,7 +658,8 @@ namespace GLT::physics::jolt {
         out.distance = result.mFraction * max_distance;
         out.position = from_jolt(ray.GetPointOnRay(result.mFraction));
 
-        JPH::BodyLockRead lock(m_system->GetBodyLockInterface(), result.mBodyID);
+        const JPH::BodyLockInterface& lock_iface = m_system->GetBodyLockInterface();
+        JPH::BodyLockRead lock(lock_iface, result.mBodyID);
         if (lock.Succeeded()) {
             const JPH::Body& jolt_body = lock.GetBody();
             out.body = unpack_body_handle(jolt_body.GetUserData());
@@ -685,22 +687,20 @@ namespace GLT::physics::jolt {
         JPH::RayCastSettings settings;
         settings.SetBackFaceMode(JPH::EBackFaceMode::IgnoreBackFaces);
 
+        // Collector at position 3 — BEFORE the filters.
         JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
 
         accept_all_bp_filter bp;
         query_layer_filter layer(m_layers, filter.layer_mask);
         query_body_filter body_filter(m_system->GetBodyInterface(), filter.ignore, filter.hit_sensors);
 
-        m_system->GetNarrowPhaseQuery().CastRay(ray, settings, bp, layer, body_filter, collector);
+        m_system->GetNarrowPhaseQuery().CastRay(ray, settings, collector, bp, layer, body_filter);
 
-        const auto& hits = collector.mHits;
+        const auto&  hits = collector.mHits;
         const size_t n = std::min(hits.size(), out.size());
 
-        JPH::BodyLockInterface& lock_iface = m_system->GetBodyLockInterface();
+        const JPH::BodyLockInterface& lock_iface = m_system->GetBodyLockInterface();
 
-        // Contract §Queries — Multi-hit: ordering is unspecified. We keep
-        // Jolt's discovery order (no sort). Callers needing the nearest hit
-        // call ray_cast() instead.
         for (size_t i = 0; i < n; ++i) {
             const JPH::RayCastResult& result = hits[i];
 
@@ -726,42 +726,40 @@ namespace GLT::physics::jolt {
     }
 
 
-    size_t plugin::overlap_sphere(const glm::vec3& center, f32 radius,
-        std::span<overlap_hit> out, const query_filter& filter) const {
+    size_t plugin::overlap_sphere(const glm::vec3& center, f32 radius, std::span<overlap_hit> out, const query_filter& filter) const {
 
         if (!m_initialized || !m_system || out.empty())
             return 0;
 
         const JPH::SphereShape sphere(radius);
-
         JPH::CollideShapeSettings settings;
-        JPH::AllHitCollisionCollector<JPH::CollideShapeBodyCollector> collector;
-
         accept_all_bp_filter bp;
         query_layer_filter layer(m_layers, filter.layer_mask);
         query_body_filter body_filter(m_system->GetBodyInterface(), filter.ignore, filter.hit_sensors);
 
         const JPH::RMat44 transform = JPH::RMat44::sTranslation(to_jolt_r(center));
 
+        // BodyIDVector overload — collects one unique BodyID per overlapping body.
+        // Exactly the shape of overlap_hit, no dedupe needed.
+        JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
         m_system->GetNarrowPhaseQuery().CollideShape(
             &sphere,
             JPH::Vec3::sReplicate(1.f),
             transform,
             settings,
             to_jolt_r(center),
+            collector,
             bp,
             layer,
-            body_filter,
-            collector);
+            body_filter);
 
         const auto& hits = collector.mHits;
         const size_t n = std::min(hits.size(), out.size());
-
-        JPH::BodyLockInterface& lock_iface = m_system->GetBodyLockInterface();
-
+        const JPH::BodyLockInterface& lock_iface = m_system->GetBodyLockInterface();
         for (size_t i = 0; i < n; ++i) {
             out[i] = overlap_hit{};
-            JPH::BodyLockRead lock(lock_iface, hits[i]);
+            // hits[i] is a CollideShapeResult; the overlapping body is mBodyID2
+            JPH::BodyLockRead lock(lock_iface, hits[i].mBodyID2);
             if (lock.Succeeded()) {
                 const JPH::Body& jolt_body = lock.GetBody();
                 out[i].body = unpack_body_handle(jolt_body.GetUserData());
@@ -771,48 +769,43 @@ namespace GLT::physics::jolt {
                 }
             }
         }
-
         return n;
     }
 
 
-    size_t plugin::overlap_box(const glm::vec3& center, const glm::quat& rotation,
-        const glm::vec3& half_extents, std::span<overlap_hit> out, const query_filter& filter) const {
+    size_t plugin::overlap_box(const glm::vec3& center, const glm::quat& rotation, const glm::vec3& half_extents,
+        std::span<overlap_hit> out, const query_filter& filter) const {
 
         if (!m_initialized || !m_system || out.empty())
             return 0;
 
         const JPH::BoxShape box(to_jolt(half_extents));
-
         JPH::CollideShapeSettings settings;
-        JPH::AllHitCollisionCollector<JPH::CollideShapeBodyCollector> collector;
-
         accept_all_bp_filter bp;
         query_layer_filter layer(m_layers, filter.layer_mask);
         query_body_filter body_filter(m_system->GetBodyInterface(), filter.ignore, filter.hit_sensors);
 
-        const JPH::RMat44 transform = JPH::RMat44::sRotationTranslation(
-            to_jolt(rotation), to_jolt_r(center));
+        const JPH::RMat44 transform = JPH::RMat44::sRotationTranslation(to_jolt(rotation), to_jolt_r(center));
 
+        JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
         m_system->GetNarrowPhaseQuery().CollideShape(
             &box,
             JPH::Vec3::sReplicate(1.f),
             transform,
             settings,
             to_jolt_r(center),
+            collector,
             bp,
             layer,
-            body_filter,
-            collector);
+            body_filter);
 
         const auto& hits = collector.mHits;
         const size_t n = std::min(hits.size(), out.size());
-
-        JPH::BodyLockInterface& lock_iface = m_system->GetBodyLockInterface();
-
+        const JPH::BodyLockInterface& lock_iface = m_system->GetBodyLockInterface();
         for (size_t i = 0; i < n; ++i) {
             out[i] = overlap_hit{};
-            JPH::BodyLockRead lock(lock_iface, hits[i]);
+            // hits[i] is a CollideShapeResult; the overlapping body is mBodyID2
+            JPH::BodyLockRead lock(lock_iface, hits[i].mBodyID2);
             if (lock.Succeeded()) {
                 const JPH::Body& jolt_body = lock.GetBody();
                 out[i].body = unpack_body_handle(jolt_body.GetUserData());
@@ -822,7 +815,6 @@ namespace GLT::physics::jolt {
                 }
             }
         }
-
         return n;
     }
 

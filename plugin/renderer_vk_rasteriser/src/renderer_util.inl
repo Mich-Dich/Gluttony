@@ -54,9 +54,13 @@ namespace GLT::renderer::vk_rasterizer {
             .triangles = 1,
             .vertices = 3,
             .render_passes = m_frame_render_passes,
+            #if defined(DEBUG)
             .vram_bytes = GLT::render::image::get_live_vram_bytes(),
+            #endif
             .ram_bytes = 0,
+            #if defined(DEBUG)
             .texture_count = GLT::render::image::get_live_count(),
+            #endif
             .buffer_count = m_live_buffer_count,
             .descriptor_set_count = m_live_descriptor_set_count,
             .pipeline_count = m_live_pipeline_count,
