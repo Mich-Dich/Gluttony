@@ -45,6 +45,9 @@ namespace GLT::renderer::vk_rasterizer {
         // Schedule loads
         for (auto mesh : m_scene_meshes) {
 
+            if (m_failed_mesh_loads.contains(mesh))
+                continue;
+
             if (find_slot(mesh))
                 continue;
 

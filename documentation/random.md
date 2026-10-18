@@ -38,7 +38,7 @@ ssh -T git@github.com
 
 
 
-
+"generator": "Unix Makefiles",
 
 
 

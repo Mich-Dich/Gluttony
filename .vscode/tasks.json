@@ -4,28 +4,28 @@
         {
             "label": "CMake build (debug)",
             "type": "shell",
-            "command": "clear; cmake --preset debug && cmake --build --preset debug --parallel",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
+            "command": "clear; cmake --preset debug && cmake --build --preset debug",
+            "group": { "kind": "build", "isDefault": true },
             "problemMatcher": "$gcc",
+            "options": { "env": { "CMAKE_BUILD_PARALLEL_LEVEL": "12" } },
             "detail": "Configure (if needed) and build debug using presets"
         },
         {
             "label": "CMake build (release)",
             "type": "shell",
-            "command": "clear; cmake --preset release && cmake --build --preset release --parallel",
+            "command": "clear; cmake --preset release && cmake --build --preset release",
             "group": "build",
             "problemMatcher": "$gcc",
+            "options": { "env": { "CMAKE_BUILD_PARALLEL_LEVEL": "12" } },
             "detail": "Configure (if needed) and build release using presets"
         },
         {
             "label": "CMake build (release_with_debug_info)",
             "type": "shell",
-            "command": "clear; cmake --preset release_with_debug_info && cmake --build --preset release_with_debug_info --parallel",
+            "command": "clear; cmake --preset release_with_debug_info && cmake --build --preset release_with_debug_info",
             "group": "build",
             "problemMatcher": "$gcc",
+            "options": { "env": { "CMAKE_BUILD_PARALLEL_LEVEL": "12" } },
             "detail": "Configure (if needed) and build release with debug Info using presets"
         }
     ]

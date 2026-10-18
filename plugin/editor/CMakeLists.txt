@@ -89,7 +89,7 @@ target_link_libraries(${PLUGIN_NAME}                                    PRIVATE 
 
 
 # ------------- Copy assets directory to output ---------------------------------------------------
-set(COMPILE_OUTPUT_DIR                                                  "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+set(COMPILE_OUTPUT_DIR                                                  "${CMAKE_BINARY_DIR}/bin")
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/asset)
     add_custom_target(${PLUGIN_NAME}_copy_assets                          ALL
         COMMAND                                                         ${CMAKE_COMMAND} -E copy_directory

@@ -378,6 +378,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         std::vector<mesh_slot>                                              m_mesh_slots{};
         std::vector<u32>                                                    m_free_slots{};
+        std::unordered_set<GLT::asset::handle>                              m_failed_mesh_loads{};
 
         // Lights ------------------------------------------------------------------------------------------------------
 

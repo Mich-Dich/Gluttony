@@ -205,9 +205,10 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
         ${CMAKE_CURRENT_SOURCE_DIR}/include/
     )
     set_target_properties(${TARGET_NAME}            PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugin/${BASE_NAME}"
-        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/plugin/${BASE_NAME}"
-        OBJECT_OUTPUT_DIRECTORY  "${CMAKE_BINARY_DIR}/bin-int/$<CONFIG>/plugin/${BASE_NAME}"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/plugin/${BASE_NAME}"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/plugin/${BASE_NAME}"
+        OBJECT_OUTPUT_DIRECTORY  "${CMAKE_BINARY_DIR}/bin-int/plugin/${BASE_NAME}"
+        JOB_POOL_LINK            link_pool
     )
     target_link_options(${TARGET_NAME}              PRIVATE -rdynamic)
     # target_link_options(${TARGET_NAME}              PRIVATE -rdynamic -Wl,--no-undefined)
@@ -224,8 +225,13 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
     endif()
 
     target_compile_options(${TARGET_NAME}                               PRIVATE
-        -std=c++26
-        -freflection
+        # C++-only. audio_soloud in particular pulls in SoLoud's .c sources —
+        # passing -std=c++26 / -ftemplate-depth to those would fail.
+        $<$<COMPILE_LANGUAGE:CXX>:-std=c++26>
+        $<$<COMPILE_LANGUAGE:CXX>:-freflection>
+        $<$<COMPILE_LANGUAGE:CXX>:-ftemplate-depth=512>
+        $<$<COMPILE_LANGUAGE:CXX>:-fdiagnostics-color=always>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g1>
     )
 endfunction()
 

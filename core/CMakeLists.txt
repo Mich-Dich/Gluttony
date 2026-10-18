@@ -21,6 +21,7 @@ set_target_properties(${CORE_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY                                            "${COMPILE_OUTPUT_DIR}"
     CXX_VISIBILITY_PRESET                                               default
     VISIBILITY_INLINES_HIDDEN                                           OFF
+    JOB_POOL_LINK                                                       link_pool
 )
 
 target_compile_definitions(${CORE_NAME}                                 PRIVATE GLT_MODULE_NAME="${CORE_NAME}")
@@ -36,7 +37,7 @@ target_include_directories(${CORE_NAME}                                 PRIVATE
     ${CMAKE_SOURCE_DIR}/vendor/glm
 )
 
-set(COMPILE_OUTPUT_DIR                                                  "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+set(COMPILE_OUTPUT_DIR                                                  "${CMAKE_BINARY_DIR}/bin")
 set_target_properties(${CORE_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY                                            "${COMPILE_OUTPUT_DIR}"
     CXX_VISIBILITY_PRESET                                               default
@@ -62,9 +63,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/util/pch.h")
 endif()
 
 target_compile_options(${CORE_NAME}                                     PRIVATE
-    -std=c++26
-    -freflection
+    # C++-only: templates don't exist in C, and C sources in this target would warn/error.
+    $<$<COMPILE_LANGUAGE:CXX>:-std=c++26>
+    $<$<COMPILE_LANGUAGE:CXX>:-freflection>
+    # Cap template instantiation depth to keep per-TU RAM bounded.
+    $<$<COMPILE_LANGUAGE:CXX>:-ftemplate-depth=512>
+    # Debug only: -g1 keeps file+line info (breakpoints work) but drops locals/macros.
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g1>
+    $<$<COMPILE_LANGUAGE:CXX>:-fdiagnostics-color=always>
 )
+
 
 
 # ------------- Copy assets directory to output ---------------------------------------------------

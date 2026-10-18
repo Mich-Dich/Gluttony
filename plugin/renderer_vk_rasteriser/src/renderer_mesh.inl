@@ -72,19 +72,42 @@ namespace GLT::renderer::vk_rasterizer {
         if (find_slot(handle))
             return true;
 
+        // If a previous attempt failed with a hard error, don't retry every frame
+        if (m_failed_mesh_loads.contains(handle))
+            return false;
+
         auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(handle);
         VALIDATE(mesh, return false, "", "Asset [{}] is not a mesh_asset", (registry->info(handle).name))
 
-        reserve_mesh_space(static_cast<u32>(mesh->vertices.size()), static_cast<u32>(mesh->indices.size()));
+        // Source data invariants: everything downstream assumes these fit in u32
+        VALIDATE(mesh->vertices.size() <= UINT32_MAX && mesh->indices.size() <= UINT32_MAX, 
+            m_failed_mesh_loads.insert(handle); return false,
+            "", "Mesh [{}] has more than UINT32_MAX vertices or indices", (registry->info(handle).name))
+
+        const u32 vertex_count = static_cast<u32>(mesh->vertices.size());
+        const u32 index_count = static_cast<u32>(mesh->indices.size());
+        const u32 submesh_count = static_cast<u32>(std::min<size_t>(mesh->submeshes.size(), MAX_SUBMESHES_PER_MESH));
+
+        // Capacity pre-checks that would otherwise fire *inside* pack_mesh_into_ssbo() as silent returns
+        VALIDATE(!m_free_slots.empty() || m_mesh_slots.size() < MAX_MESHES,
+            m_failed_mesh_loads.insert(handle); return false,
+            "", "Mesh slot capacity exceeded ({} meshes)", (MAX_MESHES))
+
+        VALIDATE(m_submesh_used + submesh_count <= MAX_SUBMESHES,
+            m_failed_mesh_loads.insert(handle); return false,
+            "", "Submesh SSBO capacity exceeded ({} submeshes)", (MAX_SUBMESHES))
+
+        // Grow shared buffers. On failure nothing has been mutated, so other meshes are unaffected
+        if (!reserve_mesh_space(vertex_count, index_count)) {
+            m_failed_mesh_loads.insert(handle);
+            return false;
+        }
 
         u32 slot_idx;
         if (!m_free_slots.empty()) {
-
             slot_idx = m_free_slots.back();
             m_free_slots.pop_back();
-
         } else {
-            
             slot_idx = static_cast<u32>(m_mesh_slots.size());
             m_mesh_slots.emplace_back();
         }
@@ -92,13 +115,13 @@ namespace GLT::renderer::vk_rasterizer {
         mesh_slot& slot = m_mesh_slots[slot_idx];
         slot.asset = handle;
         slot.vertex_offset = m_vertex_used;
-        slot.vertex_count = static_cast<u32>(mesh->vertices.size());
+        slot.vertex_count = vertex_count;
         slot.index_offset = m_index_used;
-        slot.index_count = static_cast<u32>(mesh->indices.size());
+        slot.index_count = index_count;
         slot.alive = true;
 
         upload_mesh_slice(slot, *mesh);
-        pack_mesh_into_ssbo(slot, *mesh);
+        pack_mesh_into_ssbo(slot, *mesh);    // cannot fail now: pre-checks above cover its VALIDATEs
 
         m_vertex_used += slot.vertex_count;
         m_index_used += slot.index_count;
@@ -139,59 +162,103 @@ namespace GLT::renderer::vk_rasterizer {
 
     bool renderer::reserve_mesh_space(u32 vertex_count, u32 index_count) {
 
-        const u32 need_v = m_vertex_used + vertex_count;
-        const u32 need_i = m_index_used  + index_count;
-        bool grew = false;
+        // u64 so the sums can't silently wrap
+        const u64 need_v = static_cast<u64>(m_vertex_used) + vertex_count;
+        const u64 need_i = static_cast<u64>(m_index_used) + index_count;
 
-        if (need_v > m_vertex_capacity) {
-            m_vertex_capacity = std::max(need_v, m_vertex_capacity + std::max(m_vertex_capacity / 2, VERTEX_HEADROOM_MIN));
-            grew = true;
+        const bool grow_v = need_v > m_vertex_capacity;
+        const bool grow_i = need_i > m_index_capacity;
+        if (!grow_v && !grow_i)
+            return true;                                    // already large enough
+
+        // The buffers are bound as both vertex/index and storage buffers, so maxStorageBufferRange is the tightest documented ceiling
+        const u64 max_bytes = m_physical_device.getProperties().limits.maxStorageBufferRange;
+
+        // Compute new capacities WITHOUT committing them
+        u64 new_v_capacity = m_vertex_capacity;
+        u64 new_i_capacity = m_index_capacity;
+
+        if (grow_v) {
+            new_v_capacity = GLT::math::max<u64>(need_v,
+                static_cast<u64>(m_vertex_capacity) + std::max<u64>(m_vertex_capacity / 2, VERTEX_HEADROOM_MIN));
+            const u64 bytes = new_v_capacity * sizeof(GLT::asset::mesh::vertex);
+            if (bytes > max_bytes) {
+                LOG(error, "Cannot grow vertex buffer: {} bytes exceeds device limit {} (mesh needs {} more vertices)", 
+                    bytes, max_bytes, vertex_count);
+                return false;
+            }
         }
-        if (need_i > m_index_capacity) {
-            m_index_capacity = std::max(need_i, m_index_capacity + std::max(m_index_capacity / 2, INDEX_HEADROOM_MIN));
-            grew = true;
+        if (grow_i) {
+            new_i_capacity = GLT::math::max<u64>(need_i,
+                static_cast<u64>(m_index_capacity) + std::max<u64>(m_index_capacity / 2, INDEX_HEADROOM_MIN));
+            const u64 bytes = new_i_capacity * sizeof(u32);
+            if (bytes > max_bytes) {
+                LOG(error, "Cannot grow index buffer: {} bytes exceeds device limit {} (mesh needs {} more indices)",
+                    bytes, max_bytes, index_count);
+                return false;
+            }
         }
-        if (!grew)
-            return false;
 
         const auto usage_v = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eVertexBuffer;
         const auto usage_i = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndexBuffer;
 
-        auto new_vb = m_dev->create_buffer(m_vertex_capacity * sizeof(GLT::asset::mesh::vertex), usage_v, 
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        // Allocate into locals. If the second allocation fails we destroy the first and bail out with 
+        // m_vertex_capacity / m_index_capacity / m_vertex_buffer / m_index_buffer untouched
+        util::allocated_buffer new_vb{};
+        util::allocated_buffer new_ib{};
 
-        auto new_ib = m_dev->create_buffer(m_index_capacity * sizeof(u32), usage_i,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        if (grow_v) {
+            new_vb = m_dev->create_buffer(new_v_capacity * sizeof(GLT::asset::mesh::vertex), usage_v,
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+            if (!new_vb.buffer || !new_vb.allocation) {
+                LOG(error, "Failed to allocate vertex buffer ({} vertices, {} bytes)",
+                    new_v_capacity, new_v_capacity * sizeof(GLT::asset::mesh::vertex));
+                return false;
+            }
+        }
+        if (grow_i) {
+            new_ib = m_dev->create_buffer(new_i_capacity * sizeof(u32), usage_i,
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+            if (!new_ib.buffer || !new_ib.allocation) {
+                LOG(error, "Failed to allocate index buffer ({} indices, {} bytes)",
+                    new_i_capacity, new_i_capacity * sizeof(u32));
+                if (new_vb.buffer)
+                    m_dev->destroy_buffer(new_vb);
+                return false;
+            }
+        }
 
-        std::memset(m_dev->map_buffer(new_vb), 0, m_vertex_capacity * sizeof(GLT::asset::mesh::vertex));
-        std::memset(m_dev->map_buffer(new_ib), 0, m_index_capacity  * sizeof(u32));
-        m_dev->unmap_buffer(new_vb);
-        m_dev->unmap_buffer(new_ib);
-
-        if (m_vertex_used) {
+        // Copy the existing prefix. Only the growing buffer is touched. No memset: the range [m_vertex_used, capacity) is
+        // never read - upload_mesh_slice() writes exactly the new vertices at [m_vertex_used, m_vertex_used + count) and
+        // draw only reads [0, m_vertex_used + count)
+        if (grow_v && m_vertex_used > 0 && m_vertex_buffer.buffer) {
             const void* src = m_dev->map_buffer(m_vertex_buffer);
-            void* dst = m_dev->map_buffer(new_vb);
+            void*       dst = m_dev->map_buffer(new_vb);
             std::memcpy(dst, src, m_vertex_used * sizeof(GLT::asset::mesh::vertex));
-            m_dev->unmap_buffer(m_vertex_buffer);
             m_dev->unmap_buffer(new_vb);
+            m_dev->unmap_buffer(m_vertex_buffer);
         }
-        if (m_index_used) {
+        if (grow_i && m_index_used > 0 && m_index_buffer.buffer) {
             const void* src = m_dev->map_buffer(m_index_buffer);
-            void* dst = m_dev->map_buffer(new_ib);
+            void*       dst = m_dev->map_buffer(new_ib);
             std::memcpy(dst, src, m_index_used * sizeof(u32));
-            m_dev->unmap_buffer(m_index_buffer);
             m_dev->unmap_buffer(new_ib);
+            m_dev->unmap_buffer(m_index_buffer);
         }
 
-        std::swap(m_vertex_buffer, new_vb);
-        std::swap(m_index_buffer, new_ib);
-
+        // Commit. Nothing above this line has touched renderer state
         m_device.waitIdle();
-        if (new_vb.buffer)
-            m_dev->destroy_buffer(new_vb);
 
-        if (new_ib.buffer)
-            m_dev->destroy_buffer(new_ib);
+        if (grow_v) {
+            std::swap(m_vertex_buffer, new_vb);
+            m_vertex_capacity = static_cast<u32>(new_v_capacity);
+            if (new_vb.buffer) m_dev->destroy_buffer(new_vb);
+        }
+        if (grow_i) {
+            std::swap(m_index_buffer, new_ib);
+            m_index_capacity = static_cast<u32>(new_i_capacity);
+            if (new_ib.buffer) m_dev->destroy_buffer(new_ib);
+        }
 
         return true;
     }
