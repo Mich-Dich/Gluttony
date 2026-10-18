@@ -45,9 +45,6 @@ namespace GLT::game_loop {
         f32&                                delta_time;
         f32&                                total_time;
         layer_stack&                        layers;
-        ref<platform::i_window_plugin>      window{};
-        ref<render::i_renderer_plugin>      renderer{};
-        ref<audio::i_audio_plugin>          audio{};
         util::interval_controller&          fps_controller;
         debug::application_stats&           stats;
     };
@@ -56,11 +53,17 @@ namespace GLT::game_loop {
 
     // FUNCTION DECLARATION ============================================================================================
 
+    FORCE_INLINE_R i_game_loop_plugin* get_ptr() noexcept {
+
+        return GLT::plugin_manager::get_plugin_raw<GLT::game_loop::i_game_loop_plugin>(GLT::plugin_manager::interface::game_loop);
+    }
+
+
     // @brief Fetches the process-wide game-loop plugin
     // @return Strong reference to the game-loop plugin, or an empty ref if it isn't loaded
     FORCE_INLINE_R ref<GLT::game_loop::i_game_loop_plugin> get_ref() {
 
-        return GLT::plugin_manager::get_plugin_ref<GLT::game_loop::i_game_loop_plugin>(plugin_manager::interface::game_loop);
+        return GLT::plugin_manager::get_plugin_ref_unsafe<GLT::game_loop::i_game_loop_plugin>(GLT::plugin_manager::interface::game_loop);
     }
 
     // TEMPLATE DECLARATION ============================================================================================

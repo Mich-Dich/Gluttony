@@ -74,8 +74,8 @@ namespace GLT::render {
         if (points.size() < 2)
             return;
 
-        for (size_t i = 0; i + 1 < points.size(); ++i)
-            draw_line({ points[i], points[i + 1], color, lifetime, depth_test });
+        for (size_t index = 0; index + 1 < points.size(); index++)
+            draw_line({ points[index], points[index + 1], color, lifetime, depth_test });
 
         if (closed && points.size() > 2)
             draw_line({ points.back(), points.front(), color, lifetime, depth_test });
@@ -134,10 +134,10 @@ namespace GLT::render {
 
         const f32 two_pi = 6.2831853071795864f;
 
-        for (u32 i = 0; i < segments; ++i) {
+        for (u32 index = 0; index < segments; index++) {
 
-            const f32 a = static_cast<f32>(i) / static_cast<f32>(segments) * two_pi;
-            const f32 b = static_cast<f32>(i + 1) / static_cast<f32>(segments) * two_pi;
+            const f32 a = static_cast<f32>(index) / static_cast<f32>(segments) * two_pi;
+            const f32 b = static_cast<f32>(index + 1) / static_cast<f32>(segments) * two_pi;
 
             const glm::vec3 xy_a = center + glm::vec3(std::cos(a), std::sin(a), 0.f) * radius;
             const glm::vec3 xy_b = center + glm::vec3(std::cos(b), std::sin(b), 0.f) * radius;
@@ -177,10 +177,10 @@ namespace GLT::render {
         const f32 half_pi = 1.5707963267948966f;
 
         // Cylinder: end circles + side lines
-        for (u32 i = 0; i < segments; ++i) {
+        for (u32 index = 0; index < segments; index++) {
 
-            const f32 t1 = static_cast<f32>(i)     / static_cast<f32>(segments) * two_pi;
-            const f32 t2 = static_cast<f32>(i + 1) / static_cast<f32>(segments) * two_pi;
+            const f32 t1 = static_cast<f32>(index)     / static_cast<f32>(segments) * two_pi;
+            const f32 t2 = static_cast<f32>(index + 1) / static_cast<f32>(segments) * two_pi;
 
             const glm::vec3 r1 = perp1 * std::cos(t1) + perp2 * std::sin(t1);
             const glm::vec3 r2 = perp1 * std::cos(t2) + perp2 * std::sin(t2);
@@ -192,10 +192,10 @@ namespace GLT::render {
 
         // Hemispherical caps: two meridian half-arcs per end
         const u32 arc_segments = 4;
-        for (u32 i = 0; i < arc_segments; ++i) {
+        for (u32 index = 0; index < arc_segments; index++) {
 
-            const f32 t1 = static_cast<f32>(i)     / static_cast<f32>(arc_segments) * half_pi;
-            const f32 t2 = static_cast<f32>(i + 1) / static_cast<f32>(arc_segments) * half_pi;
+            const f32 t1 = static_cast<f32>(index)     / static_cast<f32>(arc_segments) * half_pi;
+            const f32 t2 = static_cast<f32>(index + 1) / static_cast<f32>(arc_segments) * half_pi;
 
             draw_line({
                 a + perp1 * (std::cos(t1) * radius) - dir * (std::sin(t1) * radius),
@@ -217,9 +217,43 @@ namespace GLT::render {
     }
 
 
-    void i_debug_draw::draw_mesh_aabb(const GLT::world::entity_id id, const glm::vec4& color, const f32 lifetime, const bool depth_test) {
+    void i_debug_draw::cone(const glm::vec3& origin, const glm::vec3& direction, const f32 angle, const f32 distance,
+        const glm::vec4& color, const f32 lifetime, const bool depth_test, const u32 segments) {
 
-        draw_mesh_aabb(std::span<const GLT::world::entity_id>(&id, 1), color, lifetime, depth_test);
+        const f32 len = glm::length(direction);
+        if (len < 1e-6f || distance <= 0.f || angle <= 0.f || angle >= 1.5707963f || segments < 3)
+            return;
+
+        const glm::vec3 dir = direction / len;
+        const glm::vec3 up = (std::abs(glm::dot(dir, glm::vec3(0.f, 1.f, 0.f))) > 0.99f) 
+            ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
+        const glm::vec3 p1 = glm::normalize(glm::cross(dir, up));
+        const glm::vec3 p2 = glm::cross(dir, p1);
+
+        const f32 base_radius = distance * std::tan(angle);
+        const glm::vec3 base_center = origin + dir * distance;
+        const f32 two_pi = 6.2831853071795864f;
+
+        for (u32 index = 0; index < segments; index++) {
+            const f32 t1 = static_cast<f32>(index)     / static_cast<f32>(segments) * two_pi;
+            const f32 t2 = static_cast<f32>(index + 1) / static_cast<f32>(segments) * two_pi;
+            const glm::vec3 r1 = p1 * std::cos(t1) + p2 * std::sin(t1);
+            const glm::vec3 r2 = p1 * std::cos(t2) + p2 * std::sin(t2);
+            draw_line({ base_center + r1 * base_radius, base_center + r2 * base_radius, color, lifetime, depth_test });
+        }
+
+        const u32 spoke_stride = std::max(1u, segments / 4);
+        for (u32 index = 0; index < segments; index += spoke_stride) {
+            const f32 t = static_cast<f32>(index) / static_cast<f32>(segments) * two_pi;
+            const glm::vec3 r = p1 * std::cos(t) + p2 * std::sin(t);
+            draw_line({ origin, base_center + r * base_radius, color, lifetime, depth_test });
+        }
+    }
+
+
+    void i_debug_draw::highlight_entity(const GLT::world::entity_id id, const glm::vec4& color, const f32 lifetime, const bool depth_test) {
+
+        highlight_entity(std::span<const GLT::world::entity_id>(&id, 1), color, lifetime, depth_test);
     }
 
     // CLASS PROTECTED =================================================================================================

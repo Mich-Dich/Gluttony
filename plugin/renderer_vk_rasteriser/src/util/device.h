@@ -59,7 +59,7 @@ namespace GLT::renderer::vk_rasterizer::util {
             std::vector<descriptor_item>& items, descriptor_buffer_type type, u32 setCount = 1);
 
         void copy_data(allocated_buffer src, allocated_buffer dst, vk::DeviceSize size, vk::CommandBuffer command_buffer);
-        void update_buffer(allocated_buffer alloc, void* data, const vk::DeviceSize size, u32 offset = 0);
+        void update_buffer(allocated_buffer alloc, const void* data, const vk::DeviceSize size, u32 offset = 0);
 
         [[nodiscard]] void* map_buffer(allocated_buffer& buffer);
         void unmap_buffer(allocated_buffer& buffer);

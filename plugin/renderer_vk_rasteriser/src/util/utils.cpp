@@ -9,6 +9,7 @@
 
 #include <application.h>
 #include <platform/i_window.h>
+#include <plugin_system/plugin_manager.h>
 
 #include "utils.h"
 
@@ -33,8 +34,9 @@ namespace GLT::renderer::vk_rasterizer::util {
         ASSERT(glfwVulkanSupported() == GLFW_TRUE, "", "Vulkan is not supported on this system");
 
         VkSurfaceKHR rawSurface;
+        auto window_plugin = GLT::plugin_manager::get_plugin_raw<GLT::platform::i_window_plugin>(GLT::plugin_manager::interface::audio);
         VkResult result = glfwCreateWindowSurface(static_cast<VkInstance>(instance), 
-            (GLFWwindow*)GLT::application::get().get_window()->get_native_window_handle(), nullptr, &rawSurface);
+            (GLFWwindow*)window_plugin->get_native_window_handle(), nullptr, &rawSurface);
 
         ASSERT_VK(result, "", "Failed to create Vulkan Surface");
         return vk::SurfaceKHR(rawSurface);

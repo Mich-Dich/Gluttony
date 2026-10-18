@@ -40,7 +40,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_swapchain_builder = util::swapchain_builder(m_device, m_physical_device, m_surface, m_queues.graphics_index, m_queues.present_index);
         m_swapchain_builder.width = static_cast<u32>(size.x);
         m_swapchain_builder.height = static_cast<u32>(size.y);
-        m_swapchain_builder.back_buffer_count = 2;
+        m_swapchain_builder.back_buffer_count = MAX_CONCURRENT_FRAMES;
         m_swapchain_builder.image_usage = vk::ImageUsageFlagBits::eTransferDst;
         m_swapchain_builder.desired_format = vk::Format::eB8G8R8A8Unorm;
         m_swapchain_builder.present_mode = mp_window->get_vsync() ? vk::PresentModeKHR::eFifo : vk::PresentModeKHR::eMailbox;

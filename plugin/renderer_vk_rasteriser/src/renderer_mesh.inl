@@ -371,7 +371,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_dev->unmap_buffer(m_submesh_data_buffer);
 
         // Pre-reserve buffer headroom ----------------------------------------------------------------------------------
-        reserve_mesh_space(VERTEX_HEADROOM_MIN, INDEX_HEADROOM_MIN);
+        ASSERT(reserve_mesh_space(VERTEX_HEADROOM_MIN, INDEX_HEADROOM_MIN), "", "Failed to allocate initial mesh vertex/index buffers")
         create_cull_pipeline();
     }
 
@@ -454,8 +454,7 @@ namespace GLT::renderer::vk_rasterizer {
                 plane /= normal_length;
         }
 
-        std::memcpy(m_dev->map_buffer(m_camera_ubos[m_current_frame]), &camera_data, sizeof(camera_data));
-        m_dev->unmap_buffer(m_camera_ubos[m_current_frame]);
+        m_dev->update_buffer(m_camera_ubos[m_current_frame], &camera_data, sizeof(camera_data));
     }
 
 

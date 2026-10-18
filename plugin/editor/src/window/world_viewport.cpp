@@ -1236,7 +1236,7 @@ namespace GLT::editor {
 
         constexpr f32 lifetime = 0.1f;
         const glm::vec4 color{ 1.f, 0.5f, 0.1f, 1.f };                                      // orange-ish selection tint
-        debug->draw_mesh_aabb(m_selected_entity, color, lifetime, /*depth_test=*/true);
+        debug->highlight_entity(m_selected_entity, color, lifetime, /*depth_test=*/true);
     }
 
 }

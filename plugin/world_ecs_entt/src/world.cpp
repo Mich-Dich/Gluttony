@@ -983,17 +983,18 @@ namespace GLT::world::world_ecs_entt {
 
             const glm::mat4 world = world_transform_of(id);
 
-            GLT::world::light_snapshot s{};
-            s.position = glm::vec3(world[3]);                                   // translation column
-            s.direction = -glm::normalize(glm::vec3(world[2]));                  // -Z is forward, engine convention
-            s.color = light.color;
-            s.intensity = light.intensity;
-            s.radius = light.radius;
-            s.inner_cone_angle = light.inner_cone_angle;
-            s.outer_cone_angle = light.outer_cone_angle;
-            s.type = light.type;
+            GLT::world::light_snapshot snapshot{};
+            snapshot.position = glm::vec3(world[3]);                                   // translation column
+            snapshot.direction = -glm::normalize(glm::vec3(world[2]));                  // -Z is forward, engine convention
+            snapshot.color = light.color;
+            snapshot.intensity = light.intensity;
+            snapshot.radius = light.radius;
+            snapshot.inner_cone_angle = light.inner_cone_angle;
+            snapshot.outer_cone_angle = light.outer_cone_angle;
+            snapshot.type = light.type;
+            snapshot.entity = id;
 
-            out.push_back(s);
+            out.push_back(snapshot);
         }
     }
 

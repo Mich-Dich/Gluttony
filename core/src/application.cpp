@@ -38,31 +38,30 @@ namespace GLT {
 
     application::application(const std::filesystem::path& project_path) {
 
-        // PROFILE_APPLICATION_FUNCTION();
         ASSERT(!s_instance, "", "Application already exists");
         s_instance = this;
 
         m_project.serialize_projects_data(project_path, GLT::serializer::option::load);
-        set_target_fps(60);                                             // DEBUG-ONLY - TODO: load from config
+        set_target_fps(60);
         imgui_config::init();
 
         plugin_manager::enter_phase(plugin_manager::phase::pre_application);
 
-        m_layer_stack.push_layer<GLT::world::world_layer>();            // first layer is the game world
+        m_layer_stack.push_layer<GLT::world::world_layer>();
 
-        mp_window = GLT::platform::get_window_ref();
-        ASSERT(mp_window, "", "Failed to load window plugin")
+        auto* window = GLT::plugin_manager::get_plugin_raw<GLT::platform::i_window_plugin>(GLT::plugin_manager::interface::window);
+        ASSERT(window, "", "Failed to load window plugin")
         platform::window_attributes attributes;
         platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::load);
-        mp_window->create(attributes);
+        window->create(attributes);
 
-        mp_audio = GLT::audio::manager::get_ref();
-        ASSERT(mp_audio, "", "Failed to load audio plugin")
-        mp_audio->create();
+        auto* audio = GLT::plugin_manager::get_plugin_raw<GLT::audio::i_audio_plugin>(GLT::plugin_manager::interface::audio);
+        ASSERT(audio, "", "Failed to load audio plugin")
+        audio->create();
 
-        mp_renderer = GLT::render::renderer::get_ref();
-        ASSERT(mp_renderer, "", "Failed to load render plugin")
-        mp_renderer->create();
+        auto* renderer = GLT::plugin_manager::get_plugin_raw<GLT::render::i_renderer_plugin>(GLT::plugin_manager::interface::renderer);
+        ASSERT(renderer, "", "Failed to load render plugin")
+        renderer->create();
 
         plugin_manager::enter_phase(plugin_manager::phase::application_ready);
 
@@ -74,15 +73,25 @@ namespace GLT {
 
         plugin_manager::enter_phase(plugin_manager::phase::pre_application_shutdown);
 
-        mp_renderer->destroy();
-        mp_audio->destroy();
+        auto* renderer = GLT::plugin_manager::get_plugin_raw<GLT::render::i_renderer_plugin>(GLT::plugin_manager::interface::renderer);
+        auto* audio = GLT::plugin_manager::get_plugin_raw<GLT::audio::i_audio_plugin>(GLT::plugin_manager::interface::audio);
+        auto* window = GLT::plugin_manager::get_plugin_raw<GLT::platform::i_window_plugin>(GLT::plugin_manager::interface::window);
 
-        platform::window_attributes attributes = mp_window->get_window_attributes();
-        platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::save);
+        if (renderer)
+            renderer->destroy();
+
+        if (audio)
+            audio->destroy();
+
+        if (window) {
+            auto attributes = window->get_window_attributes();
+            platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::save);
+            window->destroy();
+        }
+
         m_project.serialize_projects_data(GLT::serializer::option::save);
-        mp_window->destroy();
-
         imgui_config::shutdown();
+
         plugin_manager::enter_phase(plugin_manager::phase::post_application_shutdown);
 
         s_instance = nullptr;
@@ -93,13 +102,12 @@ namespace GLT {
 
     void application::run() {
 
-        // load_world(m_project.start_world, false);           // load project world if none loaded
-
         plugin_manager::enter_phase(plugin_manager::phase::pre_application_run);
 
-        auto game_loop = GLT::game_loop::get_ref();
+        auto* game_loop = GLT::game_loop::get_ptr();
         ASSERT(game_loop, "", "Failed to load game_loop plugin");
-        auto close_sub = event_bus::subscribe_scoped<window_close_event>(           // unsubscribes automatically, even on exception
+
+        auto close_sub = event_bus::subscribe_scoped<window_close_event>(
             [game_loop](const window_close_event&) { game_loop->request_stop(); }
         );
 
@@ -107,12 +115,10 @@ namespace GLT {
             m_delta_time,
             m_total_time,
             m_layer_stack,
-            mp_window,
-            mp_renderer,
-            mp_audio,
             m_fps_controller,
             m_application_stats,
         };
+
         game_loop->init(ctx);
         game_loop->run(ctx);
         game_loop->shutdown(ctx);

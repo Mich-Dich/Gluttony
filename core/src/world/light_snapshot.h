@@ -43,6 +43,8 @@ namespace GLT::world {
         f32                             outer_cone_angle{ 0.3f };       // radians; spot only
 
         light_type                      type{ light_type::point };
+
+        entity_id                       entity{};
     };
 
     // STATIC VARIABLES ================================================================================================

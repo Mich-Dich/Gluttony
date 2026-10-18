@@ -204,7 +204,12 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         image_info.sharingMode = vk::SharingMode::eExclusive;
         image_info.initialLayout = vk::ImageLayout::eUndefined;
 
+        out = {};
         out.image = m_dev->create_image(image_info, 0);
+        if (!out.image.image || !out.image.allocation) {
+            LOG(error, "image allocation failed ({}x{}, fmt {})", width, height, vk::to_string(format));
+            return false;
+        }
 
         vk::ImageViewCreateInfo view_info{};
         view_info.image = out.image.image;
@@ -212,72 +217,106 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         view_info.format = format;
         view_info.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, mip_count, 0, 1);
         out.view = m_device.createImageView(view_info);
+        if (!out.view) {
+            LOG(error, "image view creation failed ({}x{})", width, height);
+            m_dev->destroy_image(out.image);
+            out = {};
+            return false;
+        }
 
-        util::allocated_buffer staging = m_dev->create_buffer(pixel_bytes, vk::BufferUsageFlagBits::eTransferSrc,
+        util::allocated_buffer staging = m_dev->create_buffer(pixel_bytes,vk::BufferUsageFlagBits::eTransferSrc,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        std::memcpy(m_dev->map_buffer(staging), pixels, pixel_bytes);
-        m_dev->unmap_buffer(staging);
+        if (!staging.buffer || !staging.allocation) {
+            LOG(error, "staging allocation failed ({} bytes)", pixel_bytes);
+            m_device.destroyImageView(out.view);
+            m_dev->destroy_image(out.image);
+            out = {};
+            return false;
+        }
+
+        void* mapped = m_dev->map_buffer(staging);
+        if (!mapped) {
+            LOG(error, "staging map failed");
+            m_dev->destroy_buffer(staging);
+            m_device.destroyImageView(out.view);
+            m_dev->destroy_image(out.image);
+            out = {};
+            return false;
+        }
+        m_dev->update_buffer(staging, pixels, pixel_bytes);
 
         const vk::Image image = out.image.image;
 
-        immediate_submit([&](VkCommandBuffer raw_cmd) {
+        try {
+            immediate_submit([&](VkCommandBuffer raw_cmd) {
 
-            vk::CommandBuffer cmd(raw_cmd);
+                vk::CommandBuffer cmd(raw_cmd);
 
-            image_barrier(cmd, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-                Stage::eNone, {}, Stage::eAllTransfer, Access::eTransferWrite, 0, mip_count);
+                image_barrier(cmd, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+                    Stage::eNone, {}, Stage::eAllTransfer, Access::eTransferWrite, 0, mip_count);
 
-            std::vector<vk::BufferImageCopy> regions;
-            regions.reserve(mips.size());
-            for (u32 level = 0; level < mips.size(); ++level) {
-                vk::BufferImageCopy region{};
-                region.bufferOffset = mips[level].offset;
-                region.imageSubresource = vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, level, 0, 1);
-                region.imageExtent = vk::Extent3D(mips[level].width, mips[level].height, 1);
-                regions.push_back(region);
-            }
-            cmd.copyBufferToImage(staging.buffer, image, vk::ImageLayout::eTransferDstOptimal, regions);
-
-            if (generate_mips) {
-
-                i32 mip_width = static_cast<i32>(width);
-                i32 mip_height = static_cast<i32>(height);
-
-                for (u32 level = 1; level < mip_count; ++level) {
-
-                    image_barrier(cmd, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
-                        Stage::eAllTransfer, Access::eTransferWrite, Stage::eAllTransfer, Access::eTransferRead, level - 1, 1);
-
-                    const i32 next_width = std::max(mip_width / 2, 1);
-                    const i32 next_height = std::max(mip_height / 2, 1);
-
-                    vk::ImageBlit blit{};
-                    blit.srcSubresource = vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, level - 1, 0, 1);
-                    blit.srcOffsets[1] = vk::Offset3D(mip_width, mip_height, 1);
-                    blit.dstSubresource = vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, level, 0, 1);
-                    blit.dstOffsets[1] = vk::Offset3D(next_width, next_height, 1);
-                    cmd.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image, vk::ImageLayout::eTransferDstOptimal,
-                        blit, vk::Filter::eLinear);
-
-                    mip_width = next_width;
-                    mip_height = next_height;
+                std::vector<vk::BufferImageCopy> regions;
+                regions.reserve(mips.size());
+                for (u32 level = 0; level < mips.size(); ++level) {
+                    vk::BufferImageCopy region{};
+                    region.bufferOffset = mips[level].offset;
+                    region.imageSubresource = vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, level, 0, 1);
+                    region.imageExtent = vk::Extent3D(mips[level].width, mips[level].height, 1);
+                    regions.push_back(region);
                 }
+                cmd.copyBufferToImage(staging.buffer, image, vk::ImageLayout::eTransferDstOptimal, regions);
 
-                // Levels [0, n-2] are TRANSFER_SRC, the last one is still TRANSFER_DST
-                if (mip_count > 1)
-                    image_barrier(cmd, image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
-                        Stage::eAllTransfer, Access::eTransferRead, Stage::eFragmentShader, Access::eShaderSampledRead, 0, mip_count - 1);
-                image_barrier(cmd, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
-                    Stage::eAllTransfer, Access::eTransferWrite, Stage::eFragmentShader, Access::eShaderSampledRead, mip_count - 1, 1);
+                if (generate_mips) {
 
-            } else {
+                    i32 mip_width = static_cast<i32>(width);
+                    i32 mip_height = static_cast<i32>(height);
 
-                image_barrier(cmd, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
-                    Stage::eAllTransfer, Access::eTransferWrite, Stage::eFragmentShader, Access::eShaderSampledRead, 0, mip_count);
-            }
-        });
+                    for (u32 level = 1; level < mip_count; ++level) {
 
-        m_dev->destroy_buffer(staging);     // immediate_submit has completed
+                        image_barrier(cmd, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
+                            Stage::eAllTransfer, Access::eTransferWrite, Stage::eAllTransfer, Access::eTransferRead, level - 1, 1);
+
+                        const i32 next_width = std::max(mip_width / 2, 1);
+                        const i32 next_height = std::max(mip_height / 2, 1);
+
+                        vk::ImageBlit blit{};
+                        blit.srcSubresource = vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, level - 1, 0, 1);
+                        blit.srcOffsets[1] = vk::Offset3D(mip_width, mip_height, 1);
+                        blit.dstSubresource = vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, level, 0, 1);
+                        blit.dstOffsets[1] = vk::Offset3D(next_width, next_height, 1);
+                        cmd.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image, vk::ImageLayout::eTransferDstOptimal,
+                            blit, vk::Filter::eLinear);
+
+                        mip_width = next_width;
+                        mip_height = next_height;
+                    }
+
+                    // Levels [0, n-2] are TRANSFER_SRC, the last one is still TRANSFER_DST
+                    if (mip_count > 1)
+                        image_barrier(cmd, image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+                            Stage::eAllTransfer, Access::eTransferRead, Stage::eFragmentShader, Access::eShaderSampledRead, 0, mip_count - 1);
+                    image_barrier(cmd, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        Stage::eAllTransfer, Access::eTransferWrite, Stage::eFragmentShader, Access::eShaderSampledRead, mip_count - 1, 1);
+
+                } else {
+
+                    image_barrier(cmd, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        Stage::eAllTransfer, Access::eTransferWrite, Stage::eFragmentShader, Access::eShaderSampledRead, 0, mip_count);
+                }
+            });
+
+        } catch (const std::exception& e) {
+
+            LOG(fatal, "create_gpu_texture: immediate_submit failed: {}", e.what());
+            m_dev->destroy_buffer(staging);
+            m_device.destroyImageView(out.view);
+            m_dev->destroy_image(out.image);
+            out = {};
+            return false;
+        }
+
+        m_dev->unmap_buffer(staging);
+        m_dev->destroy_buffer(staging);
         return true;
     }
 
@@ -530,13 +569,18 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         if (!asset)
             return;
 
-        // check for updated hash
+        // Only commit slot.bytecode_hash on success. A transient compile failure must not
+        // permanently disable a material.
         if (asset->bytecode_hash != slot.bytecode_hash) {
 
             destroy_material_shaders(slot);
+
+            bool ok = false;
             if (asset->bytecode_hash != 0)
-                load_material_shaders(slot, *asset);
-            slot.bytecode_hash = asset->bytecode_hash;
+                ok = load_material_shaders(slot, *asset);
+
+            if (ok)
+                slot.bytecode_hash = asset->bytecode_hash;
         }
 
         // refresh texture slots (unchanged from Phase 4)
@@ -566,12 +610,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
             slot.params_size = alloc_size;
             m_live_buffer_count++;
         }
-        if (needed > 0) {
-
-            void* p = m_dev->map_buffer(slot.params_ubo);
-            std::memcpy(p, asset->packed_params.data(), needed);
-            m_dev->unmap_buffer(slot.params_ubo);
-        }
+        if (needed > 0)
+            m_dev->update_buffer(slot.params_ubo, asset->packed_params.data(), needed);
 
         write_material_descriptors(slot_index);
     }
@@ -631,16 +671,35 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
         slot.vertex_module = m_dev->create_shader_module(std::span<const std::byte>(vs_bytes));
         slot.fragment_module = m_dev->create_shader_module(std::span<const std::byte>(fs_bytes));
-        if (!ds_bytes.empty())
+        if (!slot.vertex_module || !slot.fragment_module) {
+            LOG(error, "load_material_shaders: shader module creation failed");
+            destroy_material_shaders(slot);
+            return false;
+        }
+
+        if (!ds_bytes.empty()) {
             slot.depth_module = m_dev->create_shader_module(std::span<const std::byte>(ds_bytes));
+            if (!slot.depth_module) {
+                LOG(error, "load_material_shaders: depth shader module creation failed");
+                destroy_material_shaders(slot);
+                return false;
+            }
+        }
 
         slot.pipeline = create_material_pipeline(slot, material_pipeline_kind::main);
         slot.depth_pipeline = create_material_pipeline(slot, material_pipeline_kind::depth);
 
-        if (slot.pipeline)       m_live_pipeline_count++;
-        if (slot.depth_pipeline) m_live_pipeline_count++;
+        // BOTH must succeed. A valid main pipeline with a null depth pipeline will bind VK_NULL_HANDLE in the depth-prepass
+        // and shadow passes
+        if (!slot.pipeline || !slot.depth_pipeline) {
+            LOG(error, "load_material_shaders: pipeline creation failed (main={}, depth={})", 
+                (bool)slot.pipeline, (bool)slot.depth_pipeline);
+            destroy_material_shaders(slot);         // destroys both, including the null one (safe)
+            return false;
+        }
 
-        return slot.pipeline != nullptr;
+        m_live_pipeline_count += 2;
+        return true;
     }
 
 
@@ -924,7 +983,10 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         // Compile the default material of the renderer and save to DEFAULT_MATERIAL_SLOT. [acquire_material()] hands this slot
         // out for any submesh whose material is INVALID_HANDLE, or whose material asset failed to load
         auto compiled = compile(GLT::asset::material::DEFAULT_SLANG_SOURCE, GLT::asset::material::blend_mode::opaque);
-        ASSERT(compiled, "", "Failed to compile default material: {}", (compiled.error().message))     // MUST EXIST or meshes will not be drawn
+        if (!compiled) {
+            LOG(fatal, "Failed to compile default material: {}", compiled.error().message);
+            throw std::runtime_error("default material compilation failed");
+        }
 
         material_slot& fallback = m_material_slots[DEFAULT_MATERIAL_SLOT];
 
@@ -962,10 +1024,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         fallback.params_size = alloc_size;
         m_live_buffer_count++;
 
-        if (params_bytes > 0) {
-            std::memcpy(m_dev->map_buffer(fallback.params_ubo), compiled->default_params.data(), params_bytes);
-            m_dev->unmap_buffer(fallback.params_ubo);
-        }
+        if (params_bytes > 0)
+            m_dev->update_buffer(fallback.params_ubo, compiled->default_params.data(), params_bytes);
 
         fallback.blend = GLT::asset::material::blend_mode::opaque;
         fallback.pipeline = create_material_pipeline(fallback, material_pipeline_kind::main);
@@ -1009,8 +1069,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         globals.inv_projection = glm::inverse(projection);
         globals.inv_view_projection = glm::inverse(view_projection);
 
-        std::memcpy(m_dev->map_buffer(m_globals_ubos[m_current_frame]), &globals, sizeof(globals));
-        m_dev->unmap_buffer(m_globals_ubos[m_current_frame]);
+        m_dev->update_buffer(m_globals_ubos[m_current_frame], &globals, sizeof(globals));
     }
 
 }

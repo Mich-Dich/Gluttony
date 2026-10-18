@@ -71,34 +71,46 @@ namespace GLT::game_loop {
         void on_unload() { }
 
 
-        void init(context& ctx) override { ctx.window->show(true); }
+        void init(context& /*ctx*/) override { 
+            
+            refresh_if_stale();
+            if (m_window)
+                m_window->show(true);
+        }
 
 
-        void shutdown(context& /*ctx*/) override { }
+        void shutdown(context& /*ctx*/) override {
+
+            m_window = nullptr;
+            m_renderer = nullptr;
+            m_audio = nullptr;
+        }
 
 
         void run(context& ctx) override {
 
-            // writes the elapsed ms directly to [ctx.stats.cpu_time_ms]
             util::stopwatch cpu_timer(&ctx.stats.cpu_time_ms, GLT::time_unit::milliseconds);
 
             while (!is_stop_requested()) {
 
-                cpu_timer.restart();                                                            // (re)start for this frame
+                cpu_timer.restart();
+
+                if (m_editor != nullptr)        // user can only change plugins in editor, else plugins are stable over runtime
+                    refresh_if_stale();
 
                 // update ----------------------------------------------------------------------------------------------
-                ctx.window->poll_events();                                                      // update internal state
+                m_window->poll_events();                                                        // update internal state
                 thread_pool::pump_main_thread();                                                // run deferred UI updates
                 for (auto layer = ctx.layers.end(); layer != ctx.layers.begin(); )
                     (*--layer)->update(ctx.delta_time);
-                GLT::event_bus::post<update_event>(ctx.delta_time);                             // all systems can subscribe to this (eg: plugins)            
-                ctx.audio->update_3d_audio();
+                GLT::event_bus::post<update_event>(ctx.delta_time);                             // all systems can subscribe to this (eg: plugins)
+                m_audio->update_3d_audio();
 
                 // draw ------------------------------------------------------------------------------------------------
-                ctx.renderer->begin_frame();                                                    // start frame + start imgui frame
+                m_renderer->begin_frame();                                                      // start frame + start imgui frame
                 for (auto layer = ctx.layers.begin(); layer != ctx.layers.end(); )
                     (*layer++)->render_imgui(ctx.delta_time);
-                ctx.renderer->draw_frame();                                                     // finish imgui stuff and render world
+                m_renderer->draw_frame();                                                       // finish imgui stuff and render world
 
                 cpu_timer.stop();                                                               // Measure CPU work
 
@@ -107,12 +119,33 @@ namespace GLT::game_loop {
                 ctx.total_time += ctx.delta_time;
                 ctx.stats.frame_time_ms = ctx.delta_time;
                 ctx.stats.fps = (ctx.delta_time > 0.0f) ? (1000.0f / ctx.delta_time) : 0.0f;
-                ctx.stats.render = ctx.renderer->get_render_stats();
+                ctx.stats.render = m_renderer->get_render_stats();
                 ctx.stats.ram_bytes = GLT::util::get_process_ram_bytes();
                 debug::update_app_stats(ctx.stats);
             }
         }
 
+    private:
+
+        void refresh_if_stale() {
+
+            const auto gen = GLT::plugin_manager::get_generation();
+            if (gen == m_gen)
+                return;
+
+            m_window = GLT::plugin_manager::get_plugin_raw<platform::i_window_plugin>(plugin_manager::interface::window);
+            m_renderer = GLT::plugin_manager::get_plugin_raw<render::i_renderer_plugin>(plugin_manager::interface::renderer);
+            m_audio = GLT::plugin_manager::get_plugin_raw<audio::i_audio_plugin>(plugin_manager::interface::audio);
+            m_editor = GLT::plugin_manager::get_plugin_raw<plugin_manager::i_plugin>(plugin_manager::interface::editor_core);
+            m_gen = gen;
+        }
+
+
+        u64                                                     m_gen = 0;
+        GLT::platform::i_window_plugin*                         m_window = nullptr;
+        GLT::render::i_renderer_plugin*                         m_renderer = nullptr;
+        GLT::audio::i_audio_plugin*                             m_audio = nullptr;
+        plugin_manager::i_plugin*                               m_editor = nullptr;
     };
 
     // CLASS PUBLIC ====================================================================================================

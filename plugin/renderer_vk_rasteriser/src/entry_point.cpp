@@ -134,7 +134,7 @@ namespace GLT::renderer::vk_rasterizer {
         void draw_aabb(const GLT::render::debug_aabb_primitive& box) override;
         void clear() override;
         void set_draw_mesh_aabb(GLT::asset::handle mesh_handle, const glm::vec4& color, f32 lifetime, bool depth_test) override;
-        void draw_mesh_aabb(std::span<const GLT::world::entity_id> ids, const glm::vec4& color, const f32 lifetime, const bool depth_test);
+        void highlight_entity(std::span<const GLT::world::entity_id> ids, const glm::vec4& color, const f32 lifetime, const bool depth_test);
 
     public: // i_preview -----------------------------------------------------------------------------------------------
 

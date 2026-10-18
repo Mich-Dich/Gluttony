@@ -226,8 +226,7 @@ namespace GLT::renderer::vk_rasterizer {
         shadow_camera.view_proj = m_shadow.view_proj;
         extract_frustum_planes(m_shadow.view_proj, shadow_camera.frustum_planes);
 
-        std::memcpy(m_dev->map_buffer(m_shadow_camera_ubos[m_current_frame]), &shadow_camera, sizeof(shadow_camera));
-        m_dev->unmap_buffer(m_shadow_camera_ubos[m_current_frame]);
+        m_dev->update_buffer(m_shadow_camera_ubos[m_current_frame], &shadow_camera, sizeof(shadow_camera));
     }
 
     // local shadows ---------------------------------------------------------------------------------------------------
@@ -547,9 +546,8 @@ namespace GLT::renderer::vk_rasterizer {
             return;
 
         m_local_shadow_view_count = view_total;
-        std::memcpy(m_dev->map_buffer(m_shadow_view_buffers[m_current_frame]), m_packed_shadow_views.data(),
+        m_dev->update_buffer(m_shadow_view_buffers[m_current_frame], m_packed_shadow_views.data(),
             m_packed_shadow_views.size() * sizeof(gpu_shadow_view));
-        m_dev->unmap_buffer(m_shadow_view_buffers[m_current_frame]);
     }
 
 

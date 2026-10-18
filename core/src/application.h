@@ -48,10 +48,6 @@ namespace GLT {
         application(const std::filesystem::path& project_path);
         ~application();
 
-        GETTER(ref<GLT::platform::i_window_plugin>,     window,         mp_window)
-        GETTER(ref<GLT::render::i_renderer_plugin>,     renderer,       mp_renderer)
-        GETTER(ref<GLT::audio::i_audio_plugin>,         audio,          mp_audio)
-
         DEFAULT_GETTER_REF(layer_stack,                 layer_stack)
         DEFAULT_GETTER_CC(util::interval_controller,    fps_controller)
         DEFAULT_GETTER_CC(f32,                          delta_time)
@@ -76,9 +72,6 @@ namespace GLT {
 
         static application*			                    s_instance;
         version                                         m_version{};
-        ref<GLT::platform::i_window_plugin>             mp_window{};
-        ref<GLT::render::i_renderer_plugin>             mp_renderer{};
-        ref<GLT::audio::i_audio_plugin>                 mp_audio{};
         util::interval_controller                       m_fps_controller{};
         layer_stack                                     m_layer_stack{};
         u32                                             m_focus_fps = 60;

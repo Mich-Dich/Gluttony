@@ -9,6 +9,7 @@
 
 #include "util/util.h"
 #include "util/io/serializer_yaml.h"
+#include "util/io/vfs.h"
 #include "util/io/directory_iterator.h"
 #include "config/config.h"
 #include "plugin_manager.h"
@@ -41,12 +42,14 @@ namespace GLT::plugin_manager {
 
     // Internal handle for a loaded plugin.
     struct plugin_handle {
+
         std::string                                         name{};
         std::filesystem::path                               path{};
         void*                                               module_handle = nullptr;
         std::shared_ptr<i_plugin>                           instance;   // uses custom deleter
         phase                                               load_phase{};
         phase                                               unload_phase{};
+        interface                                           target{};
         std::vector<std::string>                            dependencies_names{};
         std::vector<interface>                              dependencies_interfaces{};
     };
@@ -54,6 +57,7 @@ namespace GLT::plugin_manager {
 
     // TODO: add descriptive comment
     struct discovered_info {
+
         std::filesystem::path                               path{};
         std::string                                         name{};
         phase                                               load_phase{};
@@ -77,6 +81,7 @@ namespace GLT::plugin_manager {
 
 
     enum class plugin_load_error : u8 {
+
         none = 0,
         already_loaded,
         failed_to_load,
@@ -86,21 +91,34 @@ namespace GLT::plugin_manager {
 
     
     enum class lib_load_mode {
+
         now = 0,
         lazy
     };
 
     // STATIC VARIABLES ================================================================================================
 
-    static bool                                             s_shutdown = false;
+    static std::atomic<bool>                                            s_shutdown{false};
 
-    static std::vector<plugin_handle>                       s_loaded_plugins{};
+    static std::atomic<u64>                                             s_generation{0};
 
-    static std::vector<discovered_info>                     s_discovered{};
+    static std::vector<plugin_handle>                                   s_loaded_plugins{};
 
-    static std::unordered_map<interface, std::string>       s_plugin_names_per_target_interface{};
+    static std::unordered_map<std::string, std::weak_ptr<i_plugin>>     s_loaded_by_name{}; // O(1) name → owning-ref lookup. Populated on load, erased on unload.
 
-    static std::filesystem::path                            s_config_path{};
+    static std::vector<discovered_info>                                 s_discovered{};
+
+    // Dense array instead of unordered_map<interface, string>: no hashing, no allocation.
+    static std::array<std::string, INTERFACE_CACHE_SIZE>                s_plugin_names_per_target_interface{};
+
+    static std::filesystem::path                                        s_config_path{};
+
+
+    // Hot-path cache — defined here, declared extern in plugin_manager.h
+    namespace detail {
+
+        std::array<std::atomic<i_plugin*>, INTERFACE_CACHE_SIZE> g_interface_raw_cache{};
+    }
 
     // HELPER FUNCTIONS ===============================================================================================
 
@@ -166,38 +184,32 @@ namespace GLT::plugin_manager {
     // Load a plugin described by `info`, resolve symbols, create instance, call on_load().
     static plugin_load_error load_single(const discovered_info& info) {
 
-        // Check if already loaded (by name).
         auto it = std::find_if(s_loaded_plugins.begin(), s_loaded_plugins.end(),
             [&](const plugin_handle& h) { return h.name == info.name; });
-        if (it != s_loaded_plugins.end()) {
+        if (it != s_loaded_plugins.end())
             return plugin_load_error::already_loaded;
-        }
 
         void* handle = load_library(info.path.c_str(), lib_load_mode::now);
         if (!handle) {
             const auto error_str = get_dynamic_library_error();
-            LOG(error, "Plugin load failed [{}]", error_str);     // Log error and fail.
+            LOG(error, "Plugin load failed [{}]", error_str);
             return plugin_load_error::failed_to_load;
         }
 
-        // Get factory functions.
         auto create = reinterpret_cast<create_plugin_func>(get_symbol(handle, "create_plugin"));
         auto destroy = reinterpret_cast<destroy_plugin_func>(get_symbol(handle, "destroy_plugin"));
         if (!create || !destroy) {
-            LOG(error, "Plugin '%s' missing required symbols.", info.name.c_str());
+            LOG(error, "Plugin {} missing required symbols.", info.name.c_str());
             free_library(handle);
             return plugin_load_error::failed_to_find_factory_functions;
         }
 
-        i_plugin* raw_instance = create();                              // Create the plugin instance.
+        i_plugin* raw_instance = create();
         if (!raw_instance) {
             free_library(handle);
             return plugin_load_error::failed_to_create_instance;
         }
 
-        // Wrap in shared_ptr with a custom deleter that calls destroy_plugin,
-        // then (if the shared_ptr is the last owner) free_library.
-        // We need to capture the handle and keep it alive as long as the instance exists.
         struct deleter {
             void operator()(i_plugin* p) const {
                 destroy_function(p);
@@ -208,18 +220,29 @@ namespace GLT::plugin_manager {
         };
 
         auto instance = std::shared_ptr<i_plugin>(raw_instance, deleter{ destroy, handle });
-        instance->on_load();                                            // Call the startup hook.
-        s_loaded_plugins.push_back(plugin_handle{                       // Store the handle.
+
+        // --- cache population (BEFORE on_load, so plugins can self-look-up) ---
+        if (info.target != interface::custom) {
+            detail::g_interface_raw_cache[static_cast<size_t>(info.target)]
+                .store(instance.get(), std::memory_order_release);
+        }
+        s_loaded_by_name[info.name] = instance;
+
+        instance->on_load();
+
+        s_loaded_plugins.push_back(plugin_handle{
             .name = info.name,
             .path = info.path,
             .module_handle = handle,
             .instance = instance,
             .load_phase = info.load_phase,
             .unload_phase = info.unload_phase,
+            .target = info.target,
             .dependencies_names = info.dependencies_names,
             .dependencies_interfaces = info.dependencies_interfaces,
         });
-        
+
+        s_generation.fetch_add(1, std::memory_order_acq_rel);
         GLT::logger::flush_buffer();
         return plugin_load_error::none;
     }
@@ -228,37 +251,25 @@ namespace GLT::plugin_manager {
     // Checks if all dependencies (by name) are already loaded.
     static bool dependencies_satisfied(const discovered_info& info) {
 
-        // Check name dependencies
+        // Name dependencies
         for (const auto& dep_name : info.dependencies_names) {
-            bool found = false;
-            for (const auto& loaded : s_loaded_plugins) {
-                if (loaded.name == dep_name) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) return false;
+            auto it = s_loaded_by_name.find(dep_name);
+            if (it == s_loaded_by_name.end() || it->second.expired())
+                return false;
         }
 
-        // Check interface dependencies
+        // Interface dependencies
         for (auto iface_dep : info.dependencies_interfaces) {
 
             if (iface_dep == interface::none)
                 continue;
 
-            auto it = s_plugin_names_per_target_interface.find(iface_dep);
-            if (it == s_plugin_names_per_target_interface.end())
-                return false;   // no plugin configured for this interface
-            const std::string& required_plugin_name = it->second;
-
-            bool found = false;
-            for (const auto& loaded : s_loaded_plugins) {
-                if (loaded.name == required_plugin_name) {
-                    found = true;
-                    break;
-                }
+            if (iface_dep == interface::custom) {
+                LOG(warn, "Plugin [{}] has unsatisfiable dependency on interface::custom (shared slot)", info.name);
+                return false;
             }
-            if (!found) return false;
+            if (detail::g_interface_raw_cache[static_cast<size_t>(iface_dep)].load(std::memory_order_acquire) == nullptr)
+                return false;
         }
 
         return true;
@@ -266,18 +277,20 @@ namespace GLT::plugin_manager {
 
 
     void serialize(const std::filesystem::path& config_path, serializer::option option) {
-        
+
         GLT::serializer::yaml plugin_serializer(config_path, "plugin_settings", option);
         for (GLT::plugin_manager::interface target : GLT::util::enum_values<GLT::plugin_manager::interface>) {
-            
+
+            const auto idx = static_cast<size_t>(target);
+
             std::string buffer = "unknown";
             if (option == serializer::option::save)
-                buffer = s_plugin_names_per_target_interface[target];
+                buffer = s_plugin_names_per_target_interface[idx];
 
             plugin_serializer.entry(std::string(GLT::util::enum_to_string(target)), buffer);
 
             if (option == serializer::option::load)
-                s_plugin_names_per_target_interface[target] = buffer;
+                s_plugin_names_per_target_interface[idx] = buffer;
         }
     }
 
@@ -299,11 +312,12 @@ namespace GLT::plugin_manager {
 
         s_discovered.clear();
 
-        std::unordered_map<interface, discovered_info>  first_candidate_per_interface{};  // first non-preferred plugin seen for interface
-        std::unordered_set<interface>                   preferred_plugin_found{};         // interfaces for which the configured preferred plugin was discovered
+        std::unordered_map<interface, discovered_info> first_candidate_per_interface{};
+        std::unordered_set<interface> preferred_plugin_found{};
 
         GLT::vfs::recursive_directory_iterator iterator(plugin_dir, GLT::vfs::directory_options::skip_permission_denied, error);
         VALIDATE(!error, return, "", "Fail to create recursive_directory_iterator for [{}]", (plugin_dir.generic_string()))
+
         for (const auto& entry : iterator) {
 
             const bool regular_file = entry.is_regular_file(error);
@@ -314,22 +328,20 @@ namespace GLT::plugin_manager {
             if (path.extension() != DYNAMIC_LIB_EXTENTION)
                 continue;
 
-            // Temporarily load the library to read its descriptor.
             void* handle = load_library(path.c_str(), lib_load_mode::lazy);
             VALIDATE(handle, continue, "", "load_library failed: [{}]", (get_dynamic_library_error()))
 
             auto desc_fn = reinterpret_cast<descriptor_func>(get_symbol(handle, "gluttony_plugin_descriptor"));
-            VALIDATE(desc_fn, free_library(handle); continue, "", "get_symbol failed: [{}]", (get_dynamic_library_error()))
+            VALIDATE(desc_fn, free_library(handle); continue, "", "get_symbol failed: [{}]",
+                (get_dynamic_library_error()))
 
             const plugin_descriptor* desc = desc_fn();
             VALIDATE(desc, continue; free_library(handle), "", "Failed to load descriptor function")
 
-            const interface iface = desc->target;
+            const interface   iface = desc->target;
             const std::string plugin_name = desc->name ? std::string(desc->name) : path.stem().string();
 
-            // Build the discovered_info up-front; we may keep it (moved into
-            // s_discovered), buffer it as a fallback, or drop it.
-            discovered_info info {
+            discovered_info info{
                 .path = path,
                 .name = plugin_name,
                 .load_phase = desc->load_phase,
@@ -337,130 +349,116 @@ namespace GLT::plugin_manager {
                 .target = iface,
             };
 
-            info.dependencies_names.reserve(desc->dependency_names_count);              // name dependencies
-            for (int index = 0; index < desc->dependency_names_count; index++)
-                if (desc->dependency_names && desc->dependency_names[index])
-                    info.dependencies_names.emplace_back(desc->dependency_names[index]);
+            info.dependencies_names.reserve(desc->dependency_names_count);
+            for (int i = 0; i < desc->dependency_names_count; i++)
+                if (desc->dependency_names && desc->dependency_names[i])
+                    info.dependencies_names.emplace_back(desc->dependency_names[i]);
 
-            info.dependencies_interfaces.reserve(desc->dependency_interface_count);     // interface dependencies
-            for (int index = 0; index < desc->dependency_interface_count; index++)
+            info.dependencies_interfaces.reserve(desc->dependency_interface_count);
+            for (int i = 0; i < desc->dependency_interface_count; i++)
                 if (desc->dependency_interfaces)
-                    info.dependencies_interfaces.push_back(desc->dependency_interfaces[index]);
+                    info.dependencies_interfaces.push_back(desc->dependency_interfaces[i]);
 
-            free_library(handle);                                                       // descriptor copied to [info] close temporary handle
+            free_library(handle);
 
-            if (iface == interface::custom) {                                           // Custom plugins dont care about [interface preference]
-
+            if (iface == interface::custom) {
                 s_discovered.push_back(std::move(info));
                 continue;
             }
 
-            // ---- interface-preference resolution (deferred) -----------------------
-            const auto it = s_plugin_names_per_target_interface.find(iface);
-            const bool has_config = (it != s_plugin_names_per_target_interface.end());
-            const std::string preferred_plugin_name = has_config ? it->second : "";
+            const auto idx = static_cast<size_t>(iface);
+            const std::string& preferred_plugin_name = s_plugin_names_per_target_interface[idx];
             const bool has_preference = !preferred_plugin_name.empty() && preferred_plugin_name != "unknown";
+
             if (!has_preference) {
 
-                // No preference configured -> first plugin for this interface wins.
                 LOG(trace, "No preferred plugin for interface [{}], using first found [{}]", GLT::util::enum_to_string(iface), plugin_name)
-                s_plugin_names_per_target_interface[iface] = plugin_name;
+                s_plugin_names_per_target_interface[idx] = plugin_name;
                 s_discovered.push_back(std::move(info));
-
+            
             } else if (plugin_name == preferred_plugin_name) {
 
-                // The configured plugin found
                 preferred_plugin_found.insert(iface);
                 s_discovered.push_back(std::move(info));
 
             } else {
-
-                // Not the preferred one - buffer it as a candidate fallback, only first is kept; others are dropped silently.
                 first_candidate_per_interface.try_emplace(iface, std::move(info));
             }
         }
 
-        // Fallback pass: interfaces without preferred plugins get buffered
         for (auto& [iface, info] : first_candidate_per_interface) {
 
             if (preferred_plugin_found.contains(iface))
-                continue;                                           // preferred plugin is present, fallback not needed
+                continue;
 
-            const std::string missing = s_plugin_names_per_target_interface.contains(iface) ? s_plugin_names_per_target_interface[iface] : std::string{"<unset>"};
-            LOG(warn, "Preferred plugin [{}] for interface [{}] was not found; falling back to [{}]", missing, GLT::util::enum_to_string(iface), info.name)
+            const auto idx = static_cast<size_t>(iface);
+            const std::string missing = s_plugin_names_per_target_interface[idx].empty() 
+                ? std::string{"<unset>"} : s_plugin_names_per_target_interface[idx];
 
-            // Point the resolved map at the fallback so runtime lookups (dependencies_satisfied, get_plugin_base) find it.
-            s_plugin_names_per_target_interface[iface] = info.name;
+            LOG(warn, "Preferred plugin [{}] for interface [{}] was not found; falling back to [{}]",
+                missing, GLT::util::enum_to_string(iface), info.name)
+
+            s_plugin_names_per_target_interface[idx] = info.name;
             s_discovered.push_back(std::move(info));
         }
 
         serialize(s_config_path, serializer::option::save);
         GLT::logger::flush_buffer();
-        s_shutdown = false;
+        s_shutdown.store(false, std::memory_order_relaxed);
     }
 
 
     void load_plugins(const phase current_phase) {
 
-        if (s_shutdown)
+        if (s_shutdown.load(std::memory_order_relaxed))
             return;
-        
+
         LOG(trace, "loading plugins for load phase [{}]", GLT::util::enum_to_string(current_phase))
 
-        // Filter discovered plugins by phase and not yet loaded.
         std::vector<discovered_info> pending;
         for (const auto& plugin : s_discovered) {
 
             if (plugin.load_phase != current_phase)
                 continue;
-                
-            // Check if already loaded (shouldn't be, but safe).
-            if (std::any_of(s_loaded_plugins.begin(), s_loaded_plugins.end(), 
-                [&](const plugin_handle& h) { return h.name == plugin.name; })) {
-
+            if (s_loaded_by_name.contains(plugin.name))
                 continue;
-            }
             pending.push_back(plugin);
         }
 
-        // Repeatedly load plugins whose dependencies are satisfied.
         bool progress = true;
         while (!pending.empty() && progress) {
-
             progress = false;
             for (auto it = pending.begin(); it != pending.end(); ) {
 
                 if (dependencies_satisfied(*it)) {
-
-                    plugin_load_error load_error = load_single(*it);
+                    const auto load_error = load_single(*it);
                     switch (load_error) {
 
-                        case plugin_load_error::none: {
+                        case plugin_load_error::none:
                             it = pending.erase(it);
-                            progress = true;       // we made progress, keep trying others
+                            progress = true;
                             break;
-                        }
-                        case plugin_load_error::failed_to_load:                             [[fallthrough]];
-                        case plugin_load_error::failed_to_find_factory_functions:           [[fallthrough]];
-                        case plugin_load_error::failed_to_create_instance: {
-                            // Permanent failure – remove from list, log, and continue.
+
+                        case plugin_load_error::failed_to_load:                     [[fallthrough]];
+                        case plugin_load_error::failed_to_find_factory_functions:   [[fallthrough]];
+                        case plugin_load_error::failed_to_create_instance:
                             LOG(error, "Failed to load plugin [{}]: [{}]", it->name, static_cast<int>(load_error));
                             it = pending.erase(it);
                             break;
-                        }
-                        case plugin_load_error::already_loaded: {
+
+                        case plugin_load_error::already_loaded:
                             it = pending.erase(it);
                             break;
-                        }
-                        default:                                                            break;
+
+                        default: break;
                     }
                 } else
-                    ++it;
+                    it++;
             }
         }
 
         if (!pending.empty())
-            for (const auto& p : pending)       // Some plugins could not be loaded due to missing dependencies.
+            for (const auto& p : pending)
                 LOG(error, "Plugin [{}] could not be loaded: unsatisfied dependencies or load error", p.name);
 
         GLT::logger::flush_buffer();
@@ -469,28 +467,31 @@ namespace GLT::plugin_manager {
 
     void unload_plugins(const phase current_phase) {
 
-        // Iterate from the end of the vector to the beginning.
-        // This ensures plugins that were loaded later (i.e., dependents)
-        // are unloaded before the plugins they depend on.
         for (size_t i = s_loaded_plugins.size(); i > 0; --i) {
-            
+
             auto& handle = s_loaded_plugins[i - 1];
-            if (handle.unload_phase != current_phase)                       // Skip plugins that do not belong to the requested unload phase.
+            if (handle.unload_phase != current_phase)
                 continue;
 
-            if (handle.instance) {                                          // Call the plugin's unload hook if it exists.
-                handle.instance->on_unload();
-                handle.instance.reset();                                    // Release
+            // Notify plugin while its caches are still valid (self-lookup is legal in on_unload)
+            if (handle.instance) handle.instance->on_unload();
 
-            } else if (handle.module_handle) {
+            // Invalidate caches BEFORE the refcount drops so other unloads in the same phase see fresh state
+            if (handle.target != interface::custom)
+                detail::g_interface_raw_cache[static_cast<size_t>(handle.target)].store(nullptr, std::memory_order_release);
+            s_loaded_by_name.erase(handle.name);
 
-                free_library(handle.module_handle);                         // Fallback: instance missing but library still loaded
-            }
+            // Release the library
+            if (handle.instance)
+                handle.instance.reset();
+            else if (handle.module_handle)
+                free_library(handle.module_handle);
 
-            s_loaded_plugins.erase(s_loaded_plugins.begin() + (i - 1));     // Remove the plugin handle from the loaded list.
+            s_loaded_plugins.erase(s_loaded_plugins.begin() + (i - 1));
+            s_generation.fetch_add(1, std::memory_order_acq_rel);
         }
 
-        GLT::logger::flush_buffer();                                        // Flush any log messages produced during unloading.
+        GLT::logger::flush_buffer();
     }
 
 
@@ -498,41 +499,53 @@ namespace GLT::plugin_manager {
 
         serialize(s_config_path, serializer::option::save);
 
-        if (s_shutdown) return;
-        s_shutdown = true;
+        if (s_shutdown.exchange(true, std::memory_order_acq_rel))
+            return;
 
-        // Unload in reverse order to respect dependencies.
-        for (auto it = s_loaded_plugins.rbegin(); it != s_loaded_plugins.rend(); it++) {
-            if (it->instance) {
+        for (auto it = s_loaded_plugins.rbegin(); it != s_loaded_plugins.rend(); ++it) {
+
+            if (it->instance)
                 it->instance->on_unload();
-                // The shared_ptr will call its custom deleter, which calls destroy_plugin and free_library.
-                it->instance.reset();                       // triggers deletion and library close
-            } else if (it->module_handle) {
+
+            if (it->target != interface::custom)
+                detail::g_interface_raw_cache[static_cast<size_t>(it->target)].store(nullptr, std::memory_order_release);
+
+            if (it->instance)
+                it->instance.reset();
+            else if (it->module_handle)
                 free_library(it->module_handle);
-            }
         }
+
         s_loaded_plugins.clear();
-        s_discovered.clear();                               // no longer needed
+        s_loaded_by_name.clear();
+        s_discovered.clear();
+        s_generation.fetch_add(1, std::memory_order_acq_rel);
     }
 
 
     [[nodiscard]] ref<i_plugin> get_plugin_base(const std::string& name) {
-
-        for (auto& h : s_loaded_plugins)
-            if (h.name == name && h.instance)
-                return h.instance;
-
-        return {};
+        auto it = s_loaded_by_name.find(name);
+        if (it == s_loaded_by_name.end())
+            return {};
+        return it->second.lock();
     }
 
-    
+
     [[nodiscard]] ref<i_plugin> get_plugin_base(const interface targeted) {
 
-        auto it = s_plugin_names_per_target_interface.find(targeted);
-        if (it != s_plugin_names_per_target_interface.end())
-            return get_plugin_base(it->second);
+        if (targeted == interface::custom)
+            return {};                 // shared slot — use name lookup
+        const auto& name = s_plugin_names_per_target_interface[static_cast<size_t>(targeted)];
+        if (name.empty())
+            return {};
 
-        return {};
+        auto it = s_loaded_by_name.find(name);
+        if (it == s_loaded_by_name.end())
+            return {};
+        return it->second.lock();
     }
+
+
+    [[nodiscard]] u64 get_generation() noexcept { return s_generation.load(std::memory_order_acquire); }
 
 }

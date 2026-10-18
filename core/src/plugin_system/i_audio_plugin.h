@@ -28,11 +28,19 @@ namespace GLT::audio {
 
     namespace manager {
 
-        // @brief Fetches the process-wide audio plugin
-        // @return Strong reference to the audio plugin, or an empty ref if it isn't loaded
+        // @brief Hot-path accessor: cached raw pointer, thread-safe, no refcount traffic. Cache the result and compare
+        // `plugin_manager::get_generation()` for invalidation
+        // @return nullptr if the audio plugin is not loaded
+        [[nodiscard]] FORCE_INLINE i_audio_plugin* get_ptr() noexcept {
+
+            return GLT::plugin_manager::get_plugin_raw<GLT::audio::i_audio_plugin>(GLT::plugin_manager::interface::audio);
+        }
+
+
+        // @brief Owning reference for cases where you need to keep the plugin alive across unload phases
         FORCE_INLINE_R ref<GLT::audio::i_audio_plugin> get_ref() {
 
-            return GLT::plugin_manager::get_plugin_ref<GLT::audio::i_audio_plugin>(plugin_manager::interface::audio);
+            return GLT::plugin_manager::get_plugin_ref_unsafe<GLT::audio::i_audio_plugin>(GLT::plugin_manager::interface::audio);
         }
 
     }

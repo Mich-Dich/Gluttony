@@ -124,6 +124,13 @@ namespace GLT::render {
         void capsule(const glm::vec3& a, const glm::vec3& b, const f32 radius, const glm::vec4& color = { 1.f, 1.f, 1.f, 1.f },
             const f32 lifetime = 0.f, const bool depth_test = true, const u32 segments = 12);
 
+
+        // Draws a wireframe cone. Apex at [origin], axis along [direction] (may be unnormalised)
+        // [angle] is the half-angle in radians; [distance] is apex-to-base distance
+        void cone(const glm::vec3& origin, const glm::vec3& direction, const f32 angle, const f32 distance,
+            const glm::vec4& color = { 1.f, 1.f, 1.f, 1.f }, const f32 lifetime = 0.f, const bool depth_test = true,
+            const u32 segments = 16);
+
         // lifecycle ---------------------------------------------------------------------------------------------------
 
         // Removes every pending primitive and watched mesh
@@ -131,14 +138,32 @@ namespace GLT::render {
 
         // watched meshes ----------------------------------------------------------------------------------------------
 
-        virtual void draw_mesh_aabb(std::span<const GLT::world::entity_id> ids, const glm::vec4& color = { 1.f, 1.f, 1.f, 1.f },
+        // Highlights every live entity in [ids]. The renderer inspects each entity's contribution to the submitted scene and
+        // draws whatever is appropriate:
+        //   - mesh instances -> AABB in the instance's transform
+        //   - point lights   -> position cross + wireframe sphere (radius)
+        //   - spot lights    -> position cross + wireframe cone (outer_cone_angle, radius)
+        //   - directional    -> position cross + arrow along direction
+        // Entities that contribute nothing renderable are silently skipped; future subsystems only need to publish data into
+        // submit_scene()/submit_lights() to participate. Calling this repeatedly with the same id updates the existing
+        // entry (color / lifetime / depth-test) rather than stacking duplicates
+        virtual void highlight_entity(std::span<const GLT::world::entity_id> ids, const glm::vec4& color = { 1.f, 1.f, 1.f, 1.f },
             const f32 lifetime = 0.f, const bool depth_test = true) = 0;
 
 
-        // Single entity. Covers the 90% case: "outline this one selected thing"
-        void draw_mesh_aabb(const GLT::world::entity_id id, const glm::vec4& color = { 1.f, 1.f, 1.f, 1.f }, const f32 lifetime = 0.f,
+        // Highlights the entity [id]. The renderer inspects the entity's contribution to the submitted scene and
+        // draws whatever is appropriate:
+        //   - mesh instances -> AABB in the instance's transform
+        //   - point lights   -> position cross + wireframe sphere (radius)
+        //   - spot lights    -> position cross + wireframe cone (outer_cone_angle, radius)
+        //   - directional    -> position cross + arrow along direction
+        // If the entity contributes nothing renderable, it's silently skipped; future subsystems only need to publish data into
+        // submit_scene()/submit_lights() to participate. Calling this repeatedly with the same id updates the existing
+        // entry (color / lifetime / depth-test) rather than stacking duplicates.
+        void highlight_entity(const GLT::world::entity_id id, const glm::vec4& color = { 1.f, 1.f, 1.f, 1.f }, const f32 lifetime = 0.f,
             const bool depth_test = true);
-        
+
+
         // @brief Draws an AABB around every instance of [mesh_handle] currently in the submitted scene
         //
         // The mesh's local bounds are looked up from the renderer's cache (populated when the mesh was uploaded),

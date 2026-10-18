@@ -511,14 +511,11 @@ namespace GLT::renderer::vk_rasterizer {
             i_usage, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
         m_live_buffer_count += 2;
 
-        if (!verts.empty()) {
-            std::memcpy(m_dev->map_buffer(state.vertex_buffer), verts.data(), verts.size() * sizeof(GLT::asset::mesh::vertex));
-            m_dev->unmap_buffer(state.vertex_buffer);
-        }
-        if (!indices.empty()) {
-            std::memcpy(m_dev->map_buffer(state.index_buffer), indices.data(), indices.size() * sizeof(u32));
-            m_dev->unmap_buffer(state.index_buffer);
-        }
+        if (!verts.empty())
+            m_dev->update_buffer(state.vertex_buffer, verts.data(), verts.size() * sizeof(GLT::asset::mesh::vertex));
+
+        if (!indices.empty())
+            m_dev->update_buffer(state.index_buffer, indices.data(), indices.size() * sizeof(u32));
 
         // Compute bounds for the mesh_data buffer
         glm::vec3 mn{0.f}, mx{0.f};
@@ -539,8 +536,7 @@ namespace GLT::renderer::vk_rasterizer {
         state.mesh_data_buffer = m_dev->create_buffer(sizeof(gpu_mesh_data), vk::BufferUsageFlagBits::eStorageBuffer,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
         m_live_buffer_count++;
-        std::memcpy(m_dev->map_buffer(state.mesh_data_buffer), &md, sizeof(md));
-        m_dev->unmap_buffer(state.mesh_data_buffer);
+        m_dev->update_buffer(state.mesh_data_buffer, &md, sizeof(md));
 
         // Submesh data buffer: N entries
         std::vector<gpu_submesh_data> sd(submeshes.size());
@@ -553,10 +549,8 @@ namespace GLT::renderer::vk_rasterizer {
             std::max<size_t>(sd.size() * sizeof(gpu_submesh_data), 16),
             vk::BufferUsageFlagBits::eStorageBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
         m_live_buffer_count++;
-        if (!sd.empty()) {
-            std::memcpy(m_dev->map_buffer(state.submesh_data_buffer), sd.data(), sd.size() * sizeof(gpu_submesh_data));
-            m_dev->unmap_buffer(state.submesh_data_buffer);
-        }
+        if (!sd.empty())
+            m_dev->update_buffer(state.submesh_data_buffer, sd.data(), sd.size() * sizeof(gpu_submesh_data));
 
         state.submeshes = std::move(submeshes);
         state.vertex_count = static_cast<u32>(verts.size());
@@ -665,10 +659,8 @@ namespace GLT::renderer::vk_rasterizer {
         slot.params_size = alloc_size;
         m_live_buffer_count++;
 
-        if (params_bytes > 0) {
-            std::memcpy(m_dev->map_buffer(slot.params_ubo), params_src.data(), params_bytes);
-            m_dev->unmap_buffer(slot.params_ubo);
-        }
+        if (params_bytes > 0)
+            m_dev->update_buffer(slot.params_ubo, params_src.data(), params_bytes);
 
         write_material_descriptors(slot_idx);
 
@@ -743,8 +735,7 @@ namespace GLT::renderer::vk_rasterizer {
 
             gpu_globals g{};
             write_preview_globals(g, cam, state.target->get_size());
-            std::memcpy(m_dev->map_buffer(state.globals_ubos[m_current_frame]), &g, sizeof(g));
-            m_dev->unmap_buffer(state.globals_ubos[m_current_frame]);
+            m_dev->update_buffer(state.globals_ubos[m_current_frame], &g, sizeof(g));
 
             // Instance buffer: 1 instance
             gpu_instance_data inst{};
@@ -752,8 +743,7 @@ namespace GLT::renderer::vk_rasterizer {
             inst.normal_matrix = glm::mat4(1.f);
             inst.mesh_index = 0;
             inst.material_index = 0;
-            std::memcpy(m_dev->map_buffer(state.instance_buffers[m_current_frame]), &inst, sizeof(inst));
-            m_dev->unmap_buffer(state.instance_buffers[m_current_frame]);
+            m_dev->update_buffer(state.instance_buffers[m_current_frame], &inst, sizeof(inst));
 
             // Build the descriptor set for this frame
             {

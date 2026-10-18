@@ -308,8 +308,7 @@ namespace GLT::renderer::vk_rasterizer {
         u32 count;
         const char** ext = mp_window->get_required_render_extensions(&count);
 
-
-        util::vulkan_builder builder;                     // from util/builders.h
+        util::vulkan_builder builder;
         builder.enable_debug = USE_VULKAN_VALIDATION;
         builder.debug_callback = util::vulkan_debug_callback;
         builder.physical_device_features10.samplerAnisotropy = true;
@@ -329,25 +328,25 @@ namespace GLT::renderer::vk_rasterizer {
         glm::ivec2 fb = mp_window->get_framebuffer_size();
         create_swapchain(fb);
 
+        m_render_semaphores.resize(MAX_CONCURRENT_FRAMES);
+        m_present_semaphores.resize(MAX_CONCURRENT_FRAMES);
+        m_in_flight_fences.resize(MAX_CONCURRENT_FRAMES);
         m_image_count = (u32)m_swapchain.swapchain_images.size();
-        m_render_semaphores.resize(m_image_count);
-        m_present_semaphores.resize(m_image_count);
-        m_in_flight_fences.resize(m_image_count);
         m_swapchain_images_layout.assign(m_image_count, vk::ImageLayout::eUndefined);
 
-        vk::SemaphoreCreateInfo sci{};
-        vk::FenceCreateInfo fci{};
-        fci.flags = vk::FenceCreateFlagBits::eSignaled;
-        for (u32 i = 0; i < m_image_count; i++) {
-            m_render_semaphores[i] = m_device.createSemaphore(sci);
-            m_present_semaphores[i] = m_device.createSemaphore(sci);
-            m_in_flight_fences[i] = m_device.createFence(fci);
+        vk::SemaphoreCreateInfo semaphore_ci{};
+        vk::FenceCreateInfo fence_ci{};
+        fence_ci.flags = vk::FenceCreateFlagBits::eSignaled;
+        for (u32 i = 0; i < MAX_CONCURRENT_FRAMES; ++i) {
+            m_render_semaphores[i] = m_device.createSemaphore(semaphore_ci);
+            m_present_semaphores[i] = m_device.createSemaphore(semaphore_ci);
+            m_in_flight_fences[i] = m_device.createFence(fence_ci);
         }
 
-        vk::CommandPoolCreateInfo pci{};
-        pci.queueFamilyIndex = m_queues.graphics_index;
-        pci.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
-        m_graphics_pool = m_device.createCommandPool(pci);
+        vk::CommandPoolCreateInfo command_pool_ci{};
+        command_pool_ci.queueFamilyIndex = m_queues.graphics_index;
+        command_pool_ci.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
+        m_graphics_pool = m_device.createCommandPool(command_pool_ci);
 
         // main render command buffers
         vk::CommandBufferAllocateInfo ai{};
@@ -358,13 +357,13 @@ namespace GLT::renderer::vk_rasterizer {
         for (u32 i = 0; i < MAX_CONCURRENT_FRAMES; i++) m_render_cmd[i] = bufs[i];
 
         // immediate submit pool
-        m_immediate_submit_command_pool = m_device.createCommandPool(pci);
+        m_immediate_submit_command_pool = m_device.createCommandPool(command_pool_ci);
         vk::CommandBufferAllocateInfo iai{};
         iai.commandPool = m_immediate_submit_command_pool;
         iai.level = vk::CommandBufferLevel::ePrimary;
         iai.commandBufferCount = 1;
         m_immediate_submit_command_buffer = m_device.allocateCommandBuffers(iai)[0];
-        m_immediate_submit_fence = m_device.createFence(fci);
+        m_immediate_submit_fence = m_device.createFence(fence_ci);
 
         m_dev = new util::device(m_instance.instance_handle, m_device, m_physical_device);
 
@@ -382,20 +381,21 @@ namespace GLT::renderer::vk_rasterizer {
         }
 
         m_deletion_queue.push_func([&]() {
-            
+
             if (m_timestamp_pool) {
                 m_device.destroyQueryPool(m_timestamp_pool);
                 m_timestamp_pool = nullptr;
             }
 
-            for (auto s : m_render_semaphores)
-                if (s)
-                    m_device.destroySemaphore(s);
-            for (auto s : m_present_semaphores)
-                if (s)
-                    m_device.destroySemaphore(s);
+            for (auto semaphore : m_render_semaphores)
+                if (semaphore)
+                    m_device.destroySemaphore(semaphore);
 
-            for (u32 i = 0; i < m_image_count; i++)
+            for (auto semaphore : m_present_semaphores)
+                if (semaphore)
+                    m_device.destroySemaphore(semaphore);
+
+            for (u32 i = 0; i < MAX_CONCURRENT_FRAMES; ++i)
                 if (m_in_flight_fences[i]) m_device.destroyFence(m_in_flight_fences[i]);
 
             if (m_immediate_submit_fence)

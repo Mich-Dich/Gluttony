@@ -126,7 +126,7 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    void renderer::draw_mesh_aabb(std::span<const GLT::world::entity_id> ids, const glm::vec4& color, const f32 lifetime, const bool depth_test) {
+    void renderer::highlight_entity(std::span<const GLT::world::entity_id> ids, const glm::vec4& color, const f32 lifetime, const bool depth_test) {
 
         if (ids.empty())
             return;
@@ -199,69 +199,163 @@ namespace GLT::renderer::vk_rasterizer {
                 return w.remaining_lifetime <= 0.0f;
             });
 
-            watched_meshes_snapshot   = m_watched_meshes;
+            watched_meshes_snapshot = m_watched_meshes;
             watched_entities_snapshot = m_watched_entities;
         }
 
         static constexpr u32 e[12][2] = { {0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7} };
 
+        auto emit_line = [&pending](const glm::vec3& a, const glm::vec3& b, const glm::vec4& color, bool depth_test) {
+
+            debug_primitive_record rec;
+            rec.type = debug_primitive_record::kind::line;
+            rec.verts[0] = { a, 0.0f, color };
+            rec.verts[1] = { b, 0.0f, color };
+            rec.vertex_count = 2;
+            rec.remaining_lifetime = 0.0f;
+            rec.depth_test = depth_test;
+            pending.push_back(rec);
+        };
+
+
         auto emit_aabb = [&](const glm::vec3& local_min, const glm::vec3& local_max, const glm::mat4& transform,
-            const glm::vec4& color, const bool depth_test) {
+            const glm::vec4& color, bool depth_test) {
 
-            glm::vec3 corners[8] = {
-                { local_min.x, local_min.y, local_min.z },
-                { local_max.x, local_min.y, local_min.z },
-                { local_max.x, local_max.y, local_min.z },
-                { local_min.x, local_max.y, local_min.z },
-                { local_min.x, local_min.y, local_max.z },
-                { local_max.x, local_min.y, local_max.z },
-                { local_max.x, local_max.y, local_max.z },
-                { local_min.x, local_max.y, local_max.z },
+            glm::vec3 c[8] = {
+                {local_min.x, local_min.y, local_min.z}, {local_max.x, local_min.y, local_min.z},
+                {local_max.x, local_max.y, local_min.z}, {local_min.x, local_max.y, local_min.z},
+                {local_min.x, local_min.y, local_max.z}, {local_max.x, local_min.y, local_max.z},
+                {local_max.x, local_max.y, local_max.z}, {local_min.x, local_max.y, local_max.z},
             };
-            for (auto& v : corners)
+            for (auto& v : c)
                 v = glm::vec3(transform * glm::vec4(v, 1.0f));
+            static constexpr u32 e[12][2] = { {0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7} };
+            for (auto& [a, b] : e)
+                emit_line(c[a], c[b], color, depth_test);
+        };
 
-            for (auto& [a, b] : e) {
-                debug_primitive_record rec;
-                rec.type = debug_primitive_record::kind::line;
-                rec.verts[0] = { corners[a], 0.0f, color };
-                rec.verts[1] = { corners[b], 0.0f, color };
-                rec.vertex_count = 2;
-                rec.remaining_lifetime = 0.0f;      // transient, rebuilt each frame from the watch lists
-                rec.depth_test = depth_test;
-                pending.push_back(rec);
+
+        auto emit_cross = [&](const glm::vec3& p, f32 size, const glm::vec4& color, bool depth_test) {
+
+            emit_line(p - glm::vec3(size, 0.f, 0.f), p + glm::vec3(size, 0.f, 0.f), color, depth_test);
+            emit_line(p - glm::vec3(0.f, size, 0.f), p + glm::vec3(0.f, size, 0.f), color, depth_test);
+            emit_line(p - glm::vec3(0.f, 0.f, size), p + glm::vec3(0.f, 0.f, size), color, depth_test);
+        };
+
+
+        auto emit_sphere = [&](const glm::vec3& center, f32 radius, const glm::vec4& color, bool depth_test) {
+            if (radius <= 0.f)
+                return;
+            constexpr u32 seg = 16;
+            const f32 two_pi = 6.2831853071795864f;
+            for (u32 i = 0; i < seg; ++i) {
+                const f32 a = static_cast<f32>(i)     / seg * two_pi;
+                const f32 b = static_cast<f32>(i + 1) / seg * two_pi;
+                emit_line(center + glm::vec3(std::cos(a), std::sin(a), 0.f) * radius,
+                    center + glm::vec3(std::cos(b), std::sin(b), 0.f) * radius, color, depth_test);
+                emit_line(center + glm::vec3(std::cos(a), 0.f, std::sin(a)) * radius,
+                    center + glm::vec3(std::cos(b), 0.f, std::sin(b)) * radius, color, depth_test);
+                emit_line(center + glm::vec3(0.f, std::cos(a), std::sin(a)) * radius,
+                    center + glm::vec3(0.f, std::cos(b), std::sin(b)) * radius, color, depth_test);
             }
         };
 
-        // Path 1: every instance of a given mesh handle (set_draw_mesh_aabb)
-        for (const auto& watch : watched_meshes_snapshot) {
 
-            const mesh_slot* slot = find_slot(watch.handle);
-            if (!slot || !slot->alive)
-                continue;
+        auto emit_arrow = [&](const glm::vec3& from, const glm::vec3& to, const glm::vec4& color, bool depth_test, f32 head) {
 
-            for (const auto& inst : m_scene_instances) {
-                if (inst.mesh != watch.handle)
-                    continue;
-                emit_aabb(slot->local_min, slot->local_max, inst.transform, watch.color, watch.depth_test);
+            const glm::vec3 axis = to - from;
+            const f32 length = glm::length(axis);
+            if (length < 1e-6f)
+                return;
+            const glm::vec3 dir = axis / length;
+            const glm::vec3 up = (std::abs(glm::dot(dir, glm::vec3(0.f, 1.f, 0.f))) > 0.99f)
+                ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
+            const glm::vec3 side1 = glm::normalize(glm::cross(dir, up));
+            const glm::vec3 side2 = glm::cross(dir, side1);
+            const glm::vec3 back = to - dir * head;
+            const glm::vec3 barb = side1 * (head * 0.4f);
+            emit_line(from, to, color, depth_test);
+            emit_line(to, back + barb, color, depth_test);
+            emit_line(to, back - barb, color, depth_test);
+            emit_line(to, back + side2 * (head * 0.4f), color, depth_test);
+            emit_line(to, back - side2 * (head * 0.4f), color, depth_test);
+        };
+
+        auto emit_cone = [&](const glm::vec3& apex, const glm::vec3& dir_in, f32 angle, f32 distance, const glm::vec4& color,
+            bool depth_test) {
+
+            const f32 len = glm::length(dir_in);
+            if (len < 1e-6f || distance <= 0.f || angle <= 0.f || angle >= 1.5707963f)
+                return;
+            const glm::vec3 dir = dir_in / len;
+            const glm::vec3 up = (std::abs(glm::dot(dir, glm::vec3(0.f, 1.f, 0.f))) > 0.99f)
+                ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
+            const glm::vec3 p1 = glm::normalize(glm::cross(dir, up));
+            const glm::vec3 p2 = glm::cross(dir, p1);
+            const f32 br = distance * std::tan(angle);
+            const glm::vec3 bc = apex + dir * distance;
+            constexpr u32 seg = 16;
+            const f32 two_pi = 6.2831853071795864f;
+
+            for (u32 i = 0; i < seg; ++i) {
+                const f32 t1 = static_cast<f32>(i)     / seg * two_pi;
+                const f32 t2 = static_cast<f32>(i + 1) / seg * two_pi;
+                const glm::vec3 r1 = p1 * std::cos(t1) + p2 * std::sin(t1);
+                const glm::vec3 r2 = p1 * std::cos(t2) + p2 * std::sin(t2);
+                emit_line(bc + r1 * br, bc + r2 * br, color, depth_test);
             }
-        }
+            for (u32 i = 0; i < seg; i += seg / 4) {
+                const f32 t = static_cast<f32>(i) / seg * two_pi;
+                const glm::vec3 r = p1 * std::cos(t) + p2 * std::sin(t);
+                emit_line(apex, bc + r * br, color, depth_test);
+            }
+        };
 
-        // Path 2: instances selected by entity id (draw_mesh_aabb) ------------------------------------------------
-        // No world access is required: m_scene_instances is the copy handed to us via submit_scene(), and every
-        // instance that matters here carries its entity id. Instances of an entity whose mesh was unloaded this
-        // frame (find_slot returns nullptr) are silently skipped.
+
+        auto emit_light = [&](const GLT::world::light_snapshot& L, const glm::vec4& color, bool depth_test) {
+
+            // Shared position marker. Scale with radius when we have one, so a 10 m light doesn't get a
+            // 10 cm cross. Directional lights have no radius — use a fixed reference marker.
+            const f32 cross = (L.type == GLT::world::light_type::directional) ? 0.5f : std::clamp(L.radius * 0.05f, 0.1f, 1.0f);
+            emit_cross(L.position, cross, color, depth_test);
+
+            switch (L.type) {
+                case GLT::world::light_type::point:
+                    emit_sphere(L.position, L.radius, color, depth_test);
+                    break;
+
+                case GLT::world::light_type::spot:
+                    emit_cone(L.position, L.direction, L.outer_cone_angle, L.radius, color, depth_test);
+                    break;
+
+                case GLT::world::light_type::directional: {
+                    // Arrow points *toward* the light source. The world should populate L.position with
+                    // something meaningful for directional lights (conceptual sky point / entity origin).
+                    const glm::vec3 tip = L.position + glm::normalize(L.direction) * 2.0f;
+                    emit_arrow(L.position, tip, color, depth_test, 0.3f);
+                    break;
+                }
+            }
+        };
+
+        // Path 2: instances selected by entity id
         for (const auto& watch : watched_entities_snapshot) {
-            for (const auto& inst : m_scene_instances) {
 
+            // Meshes on this entity
+            for (const auto& inst : m_scene_instances) {
                 if (inst.entity != watch.id)
                     continue;
-
                 const mesh_slot* slot = find_slot(inst.mesh);
                 if (!slot || !slot->alive)
                     continue;
-
                 emit_aabb(slot->local_min, slot->local_max, inst.transform, watch.color, watch.depth_test);
+            }
+
+            // Lights on this entity
+            for (const auto& L : m_submitted_lights) {
+                if (L.entity != watch.id)   
+                    continue;
+                emit_light(L, watch.color, watch.depth_test);
             }
         }
 
@@ -405,13 +499,13 @@ namespace GLT::renderer::vk_rasterizer {
 
         std::array<vk::VertexInputAttributeDescription, 2> attrs{};
         attrs[0].location = 0;
-        attrs[0].binding  = 0;
-        attrs[0].format   = vk::Format::eR32G32B32Sfloat;
-        attrs[0].offset   = offsetof(debug_vertex, position);
+        attrs[0].binding = 0;
+        attrs[0].format = vk::Format::eR32G32B32Sfloat;
+        attrs[0].offset = offsetof(debug_vertex, position);
         attrs[1].location = 1;
-        attrs[1].binding  = 0;
-        attrs[1].format   = vk::Format::eR32G32B32A32Sfloat;
-        attrs[1].offset   = offsetof(debug_vertex, color);
+        attrs[1].binding = 0;
+        attrs[1].format = vk::Format::eR32G32B32A32Sfloat;
+        attrs[1].offset = offsetof(debug_vertex, color);
 
         vk::PipelineVertexInputStateCreateInfo vi{};
         vi.vertexBindingDescriptionCount = 1;
@@ -451,10 +545,10 @@ namespace GLT::renderer::vk_rasterizer {
         cb.blendEnable = VK_TRUE;
         cb.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
         cb.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
-        cb.colorBlendOp        = vk::BlendOp::eAdd;
+        cb.colorBlendOp = vk::BlendOp::eAdd;
         cb.srcAlphaBlendFactor = vk::BlendFactor::eOne;
         cb.dstAlphaBlendFactor = vk::BlendFactor::eZero;
-        cb.alphaBlendOp        = vk::BlendOp::eAdd;
+        cb.alphaBlendOp = vk::BlendOp::eAdd;
         cb.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                             vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
 
@@ -479,19 +573,19 @@ namespace GLT::renderer::vk_rasterizer {
                                  const vk::PipelineDepthStencilStateCreateInfo& ds) -> vk::Pipeline {
 
             vk::GraphicsPipelineCreateInfo pi{};
-            pi.pNext  = &ri;
-            pi.flags  = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;
+            pi.pNext = &ri;
+            pi.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;
             pi.stageCount = 2;
             pi.pStages = stages;
-            pi.pVertexInputState   = &vi;
+            pi.pVertexInputState = &vi;
             pi.pInputAssemblyState = &ia;
-            pi.pViewportState      = &vp;
+            pi.pViewportState = &vp;
             pi.pRasterizationState = &rs;
-            pi.pMultisampleState   = &ms;
-            pi.pDepthStencilState  = &ds;
-            pi.pColorBlendState    = &cbs;
-            pi.pDynamicState       = &dyn_state;
-            pi.layout     = m_debug_pipeline_layout;
+            pi.pMultisampleState = &ms;
+            pi.pDepthStencilState = &ds;
+            pi.pColorBlendState = &cbs;
+            pi.pDynamicState = &dyn_state;
+            pi.layout = m_debug_pipeline_layout;
             pi.renderPass = nullptr;
 
             auto result = m_device.createGraphicsPipeline(nullptr, pi);
@@ -502,10 +596,10 @@ namespace GLT::renderer::vk_rasterizer {
             return result.value;
         };
 
-        m_debug_pipeline_line_depth   = make_pipeline(ia_lines, ds_depth);
+        m_debug_pipeline_line_depth = make_pipeline(ia_lines, ds_depth);
         m_debug_pipeline_line_overlay = make_pipeline(ia_lines, ds_overlay);
-        m_debug_pipeline_tri_depth    = make_pipeline(ia_tris,  ds_depth);
-        m_debug_pipeline_tri_overlay  = make_pipeline(ia_tris,  ds_overlay);
+        m_debug_pipeline_tri_depth = make_pipeline(ia_tris,  ds_depth);
+        m_debug_pipeline_tri_overlay = make_pipeline(ia_tris,  ds_overlay);
         m_live_pipeline_count += 4;
 
         m_device.destroyShaderModule(vs);
@@ -549,10 +643,10 @@ namespace GLT::renderer::vk_rasterizer {
             vb = {};
         }
 
-        if (m_debug_pipeline_line_depth)   { m_device.destroyPipeline(m_debug_pipeline_line_depth);   m_debug_pipeline_line_depth   = nullptr; }
+        if (m_debug_pipeline_line_depth)   { m_device.destroyPipeline(m_debug_pipeline_line_depth);   m_debug_pipeline_line_depth = nullptr; }
         if (m_debug_pipeline_line_overlay) { m_device.destroyPipeline(m_debug_pipeline_line_overlay); m_debug_pipeline_line_overlay = nullptr; }
-        if (m_debug_pipeline_tri_depth)    { m_device.destroyPipeline(m_debug_pipeline_tri_depth);    m_debug_pipeline_tri_depth    = nullptr; }
-        if (m_debug_pipeline_tri_overlay)  { m_device.destroyPipeline(m_debug_pipeline_tri_overlay);  m_debug_pipeline_tri_overlay  = nullptr; }
+        if (m_debug_pipeline_tri_depth)    { m_device.destroyPipeline(m_debug_pipeline_tri_depth);    m_debug_pipeline_tri_depth = nullptr; }
+        if (m_debug_pipeline_tri_overlay)  { m_device.destroyPipeline(m_debug_pipeline_tri_overlay);  m_debug_pipeline_tri_overlay = nullptr; }
 
         if (m_debug_pipeline_layout) {
             m_device.destroyPipelineLayout(m_debug_pipeline_layout);

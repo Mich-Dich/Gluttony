@@ -10,7 +10,9 @@
 namespace GLT {
     class update_event;
 }
-
+namespace GLT::plugin_manager {
+    class i_plugin;
+}
 
 namespace GLT::plugin_manager {
 
@@ -152,6 +154,19 @@ namespace GLT::plugin_manager {
         game_loop,
         custom,                     // needs to be last!
     };
+
+
+    // ---------------------------------------------------------------------------------
+    // FAST-PATH INTERFACE CACHE
+    // ---------------------------------------------------------------------------------
+    // One slot per interface enum value (custom is last). Populated on load, cleared on
+    // unload. Enables allocation-free, RTTI-free access from get_plugin_raw<T>().
+    //
+    // This is an inline variable: single instance across all TUs (C++17). Relies on
+    // C++20 value-initialization of std::atomic<T*> to null-initialize each slot.
+
+    inline constexpr size_t                                         INTERFACE_COUNT = static_cast<size_t>(interface::custom) + 1;
+    inline std::array<std::atomic<i_plugin*>, INTERFACE_COUNT>      s_interface_cache{};
 
 
     // Descriptor that every plugin must export via [gluttony_plugin_descriptor()]. It provides the plugin manager with

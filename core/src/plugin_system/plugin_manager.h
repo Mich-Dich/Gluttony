@@ -10,6 +10,10 @@ namespace GLT::plugin_manager {
 
     // CONSTANTS =======================================================================================================
 
+    // Number of slots in the interface→plugin cache. `interface::custom` is the last slot; it is
+    // intentionally left unpopulated because multiple plugins can share `interface::custom`.
+    inline constexpr size_t                     INTERFACE_CACHE_SIZE = static_cast<size_t>(interface::custom) + 1;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -65,30 +69,67 @@ namespace GLT::plugin_manager {
     [[nodiscard]] ref<i_plugin> get_plugin_base(const interface targeted);
 
 
-    // CAUTION, this will create an owning ref, only use when you know what you are doing Template version of get_plugin_base
-    // that automatically casts the returned pointer to the requested plugin type [T] (which must derive from i_plugin)
-    // Example: auto win = get_plugin_ref<platform::i_window_plugin>(interface::window);
+    // @brief Monotonically-increasing counter bumped on every plugin load/unload
+    //
+    // Use it to invalidate any raw plugin pointer you cached:
+    //```cpp
+    //     if (plugin_manager::get_generation() != m_cached_gen) {
+    //         m_audio = plugin_manager::get_plugin_raw<audio::i_audio_plugin>(interface::audio);
+    //         m_cached_gen = plugin_manager::get_generation();
+    //     }
+    //```
+    [[nodiscard]] u64 get_generation() noexcept;
+
+
+    // CAUTION, this will create an owning ref, only use when you know what you are doing
+    [[nodiscard]] ref<i_plugin> get_plugin_base(const std::string& name);
+
+
+    [[nodiscard]] ref<i_plugin> get_plugin_base(const interface targeted);
+
+
     template<typename T = i_plugin>
     FORCE_INLINE_R ref<T> get_plugin_ref(const std::string& name);
 
 
-    // CAUTION, this will create an owning ref, only use when you know what you are doing Template version of get_plugin_base
-    // that takes a interface instead of a name
     template<typename T = i_plugin>
     FORCE_INLINE_R ref<T> get_plugin_ref(const interface targeted);
 
 
-    // Returns a weak (non‑owning) reference to the plugin with the given [name], automatically downcast to type [T]
-    // Use this when you need to observe a plugin without extending its lifetime. The returned weak_ref may expire if the plugin
-    // is unloaded
+    // @brief Unchecked cast for interfaces where the mapping is trusted (i.e. the descriptor is right).
+    //        Skips RTTI. Use only when you know T matches what the config maps `targeted` to.
+    template<typename T>
+    FORCE_INLINE_R ref<T> get_plugin_ref_unsafe(interface targeted);
+
+
     template<typename T = i_plugin>
     FORCE_INLINE_R weak_ref<T> get_plugin(const std::string& name);
 
 
-    // Returns a weak (non‑owning) reference to the plugin that implements the given [interface], downcast to type [T]
-    // The lifetime is not extended
     template<typename T = i_plugin>
     FORCE_INLINE_R weak_ref<T> get_plugin(const interface targeted);
+
+
+    // @brief Hot-path accessor: raw pointer to the plugin implementing `targeted`, or nullptr.
+    //
+    // Thread-safe (one acquire load), zero refcount traffic, zero RTTI.
+    // Returns nullptr for `interface::custom` — use `get_plugin_base("name")` for custom plugins.
+    //
+    // For maximum performance, cache the returned pointer at phase transitions and check
+    // `get_generation()` for invalidation instead of calling this every frame.
+    template<typename T = i_plugin>
+    FORCE_INLINE_R T* get_plugin_raw(interface targeted) noexcept;
+
+
+    // Inline fast-path (single acquire load, no function-call overhead when this header is included in the TU that also
+    // links plugin_manager.cpp)
+    namespace detail {
+
+        extern std::array<std::atomic<i_plugin*>, INTERFACE_CACHE_SIZE> g_interface_raw_cache;
+
+        FORCE_INLINE_R i_plugin* get_cached_interface_ptr(interface targeted) noexcept;
+
+    }
 
     // TEMPLATE DECLARATION ============================================================================================
 

@@ -31,6 +31,13 @@ namespace GLT::renderer::vk_rasterizer::util {
     allocated_image device::create_image(const vk::ImageCreateInfo& image_info, VmaAllocationCreateFlags flags, VmaPool pool) {
 
         allocated_image out_image = {};
+
+        if (image_info.extent.width == 0 || image_info.extent.height == 0 || image_info.extent.depth == 0) {
+            LOG(error, "rejecting empty image ({}x{}x{}, fmt {})",
+                image_info.extent.width, image_info.extent.height, image_info.extent.depth, vk::to_string(image_info.format));
+            return out_image;
+        }
+
         VmaAllocationCreateInfo alloc_inf = {};
         alloc_inf.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         alloc_inf.flags = flags;
@@ -38,9 +45,18 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         VmaAllocationInfo allocationInfo = {};
 
-        auto result = (vk::Result)vmaCreateImage(m_vma_allocator, (VkImageCreateInfo*)&image_info, &alloc_inf, (VkImage*)&out_image.image, &out_image.allocation, &allocationInfo);
-        if (result != vk::Result::eSuccess)
-            LOG(error, "Failed to create Image: %s", vk::to_string(result));
+        const auto result = static_cast<vk::Result>(vmaCreateImage(m_vma_allocator, (VkImageCreateInfo*)&image_info, &alloc_inf,
+            (VkImage*)&out_image.image, &out_image.allocation, &allocationInfo));
+
+        if (result != vk::Result::eSuccess || out_image.image == nullptr || out_image.allocation == nullptr) {
+
+            LOG(error, "Failed: {}x{}, fmt {}, result {}",
+                image_info.extent.width, image_info.extent.height, vk::to_string(image_info.format), vk::to_string(result));
+            // VMA can leave a partial handle behind on some failures; clean up defensively
+            if (out_image.image || out_image.allocation)
+                vmaDestroyImage(m_vma_allocator, out_image.image, out_image.allocation);
+            return {};
+        }
 
         out_image.size = allocationInfo.size;
         out_image.width = image_info.extent.width;
@@ -49,9 +65,16 @@ namespace GLT::renderer::vk_rasterizer::util {
     }
 
 
-    allocated_buffer device::create_buffer(vk::DeviceSize size, vk::BufferUsageFlags buffer_usage, VmaAllocationCreateFlags flags, u32 alignment, VmaPool pool) {
+    allocated_buffer device::create_buffer(vk::DeviceSize size, vk::BufferUsageFlags buffer_usage, VmaAllocationCreateFlags flags,
+        u32 alignment, VmaPool pool) {
 
         allocated_buffer out_buffer = {};
+
+        if (size == 0) {
+            LOG(error, "rejecting zero-size buffer (usage {})", vk::to_string(buffer_usage));
+            return out_buffer;
+        }
+
         VmaAllocationCreateInfo alloc_inf = {};
         alloc_inf.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         alloc_inf.flags = flags;
@@ -63,15 +86,18 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         vk::Result result;
         if (alignment)
-            result = (vk::Result)vmaCreateBufferWithAlignment(m_vma_allocator, (VkBufferCreateInfo*)& buffer_info, &alloc_inf, // type punning
-                alignment, (VkBuffer*)&out_buffer.buffer, &out_buffer.allocation, nullptr);
+            result = static_cast<vk::Result>(vmaCreateBufferWithAlignment(m_vma_allocator, (VkBufferCreateInfo*)&buffer_info,
+                &alloc_inf, alignment, (VkBuffer*)&out_buffer.buffer, &out_buffer.allocation, nullptr));
         else
-            result = (vk::Result)vmaCreateBuffer(m_vma_allocator, (VkBufferCreateInfo*)& buffer_info, &alloc_inf, (VkBuffer*)&out_buffer.buffer, &out_buffer.allocation, nullptr);
+            result = static_cast<vk::Result>(vmaCreateBuffer(m_vma_allocator, (VkBufferCreateInfo*)&buffer_info, &alloc_inf,
+                (VkBuffer*)&out_buffer.buffer, &out_buffer.allocation, nullptr));
 
-        if (result != vk::Result::eSuccess)
-        {
-            LOG(error, "Failed to create buffer: %s", vk::to_string(result));
-            return out_buffer;
+        if (result != vk::Result::eSuccess || out_buffer.buffer == nullptr || out_buffer.allocation == nullptr) {
+
+            LOG(error, "Failed: {} bytes, usage {}, result {}", size, vk::to_string(buffer_usage), vk::to_string(result));
+            if (out_buffer.buffer || out_buffer.allocation)
+                vmaDestroyBuffer(m_vma_allocator, out_buffer.buffer, out_buffer.allocation);
+            return {};
         }
 
         out_buffer.dev_address = m_device.getBufferAddress(vk::BufferDeviceAddressInfo().setBuffer(out_buffer.buffer));
@@ -84,65 +110,105 @@ namespace GLT::renderer::vk_rasterizer::util {
         descriptor_buffer_type type, u32 set_count) {
 
         descriptor_buffer out_buffer = {};
-        vk::BufferUsageFlags usage_flags = (vk::BufferUsageFlagBits)type;
+
+        if (!layout) {
+            LOG(error, "null layout");
+            return out_buffer;
+        }
+        if (set_count == 0) set_count = 1;
+
+        const vk::BufferUsageFlags usage_flags = (vk::BufferUsageFlagBits)type;
         vk::DeviceSize size = m_device.getDescriptorSetLayoutSizeEXT(layout, m_dyn_loader);
         size = align_up(size, m_descriptor_buffer_properties.descriptorBufferOffsetAlignment);
 
         out_buffer.buffer = create_buffer(size * set_count, usage_flags, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
             m_descriptor_buffer_properties.descriptorBufferOffsetAlignment);
 
+        if (!out_buffer.buffer.buffer || !out_buffer.buffer.allocation) {
+            LOG(error, "buffer creation failed ({} bytes, {} sets)", size, set_count);
+            return {};          // do NOT call compute_descriptor_binding_offsets on a broken buffer
+        }
+
         compute_descriptor_binding_offsets(layout, items);
 
         out_buffer.set_count = set_count;
         out_buffer.single_descriptor_size = size;
         out_buffer.type = type;
-
         return out_buffer;
     }
 
 
-    void device::destroy_buffer(allocated_buffer &buffer) {
+    void device::destroy_buffer(allocated_buffer& buffer) {
+
+        if (!buffer.buffer && !buffer.allocation) {
+            buffer = {};            // idempotent on already-cleared buffers
+            return;
+        }
 
         vmaDestroyBuffer(m_vma_allocator, buffer.buffer, buffer.allocation);
-        buffer.buffer = nullptr;
-        buffer.allocation = nullptr;
-        buffer.dev_address = 0;
+        buffer = {};
     }
 
 
-    void device::destroy_image(allocated_image &image) {
+    void device::destroy_image(allocated_image& image) {
+
+        if (!image.image && !image.allocation) {
+            image = {};
+            return;
+        }
 
         vmaDestroyImage(m_vma_allocator, image.image, image.allocation);
-        image.image = nullptr;
-        image.allocation = nullptr;
+        image = {};
     }
 
 
-    void device::update_buffer(allocated_buffer allocated_buffer, void *data, const vk::DeviceSize size, u32 offset) {
+    void device::update_buffer(allocated_buffer buffer, const void* data, const vk::DeviceSize size, u32 offset) {
 
-        void *mappedData;
-        vmaMapMemory(m_vma_allocator, allocated_buffer.allocation, &mappedData);
-        memcpy((uint8_t *)mappedData + offset, data, size);
-        vmaUnmapMemory(m_vma_allocator, allocated_buffer.allocation);
+        if (!buffer.allocation) {
+            LOG(error, "null allocation (buffer handle {:p})", (void*)buffer.buffer);
+            return;
+        }
+        if (!data || size == 0)
+            return;
+        if (buffer.size > 0 && offset + size > buffer.size) {
+            LOG(error, "{} bytes at offset {} exceeds buffer size {}", size, offset, buffer.size);
+            return;
+        }
+
+        void* mapped = map_buffer(buffer);
+        if (!mapped)
+            return;
+
+        std::memcpy((uint8_t*)mapped + offset, data, size);
+        unmap_buffer(buffer);
     }
 
 
-    void device::copy_data(allocated_buffer src, allocated_buffer dst, vk::DeviceSize size, vk::CommandBuffer cmdBuf) {
+    void* device::map_buffer(allocated_buffer& buffer) {
 
-        auto copyRegion = vk::BufferCopy().setSize(size);
-        cmdBuf.copyBuffer(src.buffer, dst.buffer, copyRegion);
-    }
+        if (!buffer.allocation) {
+            LOG(error, "null allocation (buffer handle {:p}, size {})", (void*)buffer.buffer, (u64)buffer.size);
+            return nullptr;
+        }
 
+        void* mappedData = nullptr;
+        const auto result = static_cast<vk::Result>(
+            vmaMapMemory(m_vma_allocator, buffer.allocation, &mappedData));
 
-    void *device::map_buffer(allocated_buffer &buffer) {
-
-        void *mappedData;
-        vmaMapMemory(m_vma_allocator, buffer.allocation, &mappedData);
+        if (result != vk::Result::eSuccess || mappedData == nullptr) {
+            LOG(error, "vmaMapMemory failed ({})", vk::to_string(result));
+            return nullptr;
+        }
         return mappedData;
     }
 
 
-    void device::unmap_buffer(allocated_buffer &buffer)         { vmaUnmapMemory(m_vma_allocator, buffer.allocation); }
+    void device::unmap_buffer(allocated_buffer& buffer) {
+
+        if (!buffer.allocation)
+            return;                 // was previously a hard VMA assert; make it a no-op
+        vmaUnmapMemory(m_vma_allocator, buffer.allocation);
+    }
 
 
     void device::transition_image_layout(vk::CommandBuffer cmdBuf, vk::Image image, vk::ImageLayout old_layout, vk::ImageLayout new_layout,
