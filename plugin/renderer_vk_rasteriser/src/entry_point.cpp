@@ -602,48 +602,20 @@ namespace GLT::renderer::vk_rasterizer {
             GLT::render::preview_settings                                   settings{};
             GLT::render::preview_camera                                     camera{};
             GLT::render::preview_material_overrides                         overrides{};
-            std::vector<std::byte>                                          owned_packed_params{};   // copy of overrides.packed_params
-            std::vector<u32>                                                highlighted_submeshes{};
-            bool                                                            active = true;
-            bool                                                            auto_rotate = false;
-            f32                                                             auto_rotate_speed = 0.5f;
-            f32                                                             rotation_phase = 0.f;
             GLT::ref<image>                                                 target = nullptr;
-            graph::texture_handle                                           color_handle{};
-            graph::texture_handle                                           depth_handle{};
-            util::allocated_buffer                                          vertex_buffer{};
-            util::allocated_buffer                                          index_buffer{};
-            util::allocated_buffer                                          mesh_data_buffer{};
-            util::allocated_buffer                                          submesh_data_buffer{};
-            std::vector<GLT::asset::mesh::submesh>                          submeshes{};
-            u32                                                             vertex_count = 0;
-            u32                                                             index_count = 0;
-            u32                                                             submesh_count = 0;
 
-            // Per-frame (in flight) resources
-            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       camera_ubos{};
-            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       instance_buffers{};
-            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       globals_ubos{};
-            std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>      frame_desc_buffers{};
-
-            // Virtual material slot (0 = use base material directly)
-            u32                                                             material_slot = 0;
-            GLT::asset::handle                                              bound_material = INVALID_HANDLE;
-
-            // "dirty" flags so we don't rebuild buffers every frame
-            bool                                                            geometry_dirty = true;
-            bool                                                            material_dirty = true;
+            // TODO: add needed fields
         };
 
         void create_preview_resources();
         void destroy_preview_resources();
         void add_preview_passes();
-        void import_preview_textures();
-        void rebuild_preview_geometry(preview_state& state);        // Generate or copy preview geometry into the preview's own buffers
-        void rebuild_preview_material(preview_state& state);
+        void reset_preview_images_layout();
+        // TODO: add needed functions
 
         std::unordered_map<GLT::render::preview_id, preview_state>          m_previews{};
         GLT::render::preview_id                                             m_next_preview_id = 1;
+        // TODO: add needed members
 
     };
 

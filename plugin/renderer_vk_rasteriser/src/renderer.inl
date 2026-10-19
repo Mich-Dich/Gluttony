@@ -220,7 +220,7 @@ namespace GLT::renderer::vk_rasterizer {
             add_scene_pass();
 
         add_debug_draw_pass();
-        // add_preview_passes();
+        add_preview_passes();
         add_imgui_pass();
 
         m_graph->compile();
@@ -236,11 +236,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_output_image->get_accessible_image_ref().layout = m_graph->texture_layout(m_scene_color); // Sync image layout to graph last use
         m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;     // imgui sets layout to ePresentSrcKHR
-
-        for (auto& [id, p] : m_previews) {
-            if (p.target && p.color_handle.is_valid())
-                p.target->get_accessible_image_ref().layout = m_graph->texture_layout(p.color_handle);
-        }
+        reset_preview_images_layout();
 
         m_graph->end_frame();
 

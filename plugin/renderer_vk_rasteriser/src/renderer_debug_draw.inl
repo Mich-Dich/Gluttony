@@ -203,8 +203,6 @@ namespace GLT::renderer::vk_rasterizer {
             watched_entities_snapshot = m_watched_entities;
         }
 
-        static constexpr u32 e[12][2] = { {0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7} };
-
         auto emit_line = [&pending](const glm::vec3& a, const glm::vec3& b, const glm::vec4& color, bool depth_test) {
 
             debug_primitive_record rec;
@@ -246,7 +244,7 @@ namespace GLT::renderer::vk_rasterizer {
         auto emit_sphere = [&](const glm::vec3& center, f32 radius, const glm::vec4& color, bool depth_test) {
             if (radius <= 0.f)
                 return;
-            constexpr u32 seg = 16;
+            constexpr u32 seg = 32;
             const f32 two_pi = 6.2831853071795864f;
             for (u32 i = 0; i < seg; ++i) {
                 const f32 a = static_cast<f32>(i)     / seg * two_pi;
@@ -294,7 +292,7 @@ namespace GLT::renderer::vk_rasterizer {
             const glm::vec3 p2 = glm::cross(dir, p1);
             const f32 br = distance * std::tan(angle);
             const glm::vec3 bc = apex + dir * distance;
-            constexpr u32 seg = 16;
+            constexpr u32 seg = 32;
             const f32 two_pi = 6.2831853071795864f;
 
             for (u32 i = 0; i < seg; ++i) {

@@ -104,7 +104,8 @@ namespace GLT::renderer::vk_rasterizer {
     enum class material_pipeline_kind : u8 {
 
         main = 0,
-        depth
+        depth,
+        preview,
     };
 
 
