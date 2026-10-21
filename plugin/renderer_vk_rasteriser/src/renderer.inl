@@ -236,7 +236,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_output_image->get_accessible_image_ref().layout = m_graph->texture_layout(m_scene_color); // Sync image layout to graph last use
         m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;     // imgui sets layout to ePresentSrcKHR
-        reset_preview_images_layout();
+        sync_preview_images_layout();
 
         m_graph->end_frame();
 

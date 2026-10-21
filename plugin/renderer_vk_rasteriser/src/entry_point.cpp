@@ -604,18 +604,39 @@ namespace GLT::renderer::vk_rasterizer {
             GLT::render::preview_material_overrides                         overrides{};
             GLT::ref<image>                                                 target = nullptr;
 
-            // TODO: add needed fields
+            // runtime state
+            bool                                                            active = true;
+            bool                                                            auto_rotate = false;
+            f32                                                             rotate_speed = 0.5f;
+            f64                                                             accumulated_yaw_rad = 0.0;
+            std::vector<u32>                                                highlight_submeshes{};
+
+            // resolved scene content (mesh must be retained to keep its slot alive)
+            GLT::asset::handle                                              resolved_mesh = INVALID_HANDLE;
+            std::vector<u32>                                                material_slots{};   // per submesh, borrowed from mesh_slot
+
+            // per-frame GPU resources (small: 1 instance + 1 directional light)
+            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       camera_ubos{};
+            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       instance_ssbos{};
+            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       light_ssbos{};
+            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       light_grid_ssbos{};
+            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       light_index_ssbos{};
+            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       globals_ubos{};
+            std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>      desc_buffers{};
+
+            // graph handles, recreated every frame
+            graph::texture_handle                                           color_handle;
+            graph::texture_handle                                           depth_handle;
         };
 
         void create_preview_resources();
         void destroy_preview_resources();
         void add_preview_passes();
-        void reset_preview_images_layout();
-        // TODO: add needed functions
+        void sync_preview_images_layout();
+        void update_preview_resources(GLT::render::preview_id id, preview_state& state, u32 frame);
 
         std::unordered_map<GLT::render::preview_id, preview_state>          m_previews{};
         GLT::render::preview_id                                             m_next_preview_id = 1;
-        // TODO: add needed members
 
     };
 

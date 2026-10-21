@@ -126,17 +126,17 @@ namespace GLT::editor {
 
     void mesh_editor_window::window(const f32 /*delta_time*/) {
 
+        m_preview_image_drawn = false;
         if (!m_show_window)
             return;
 
         apply_pending_dock();
-        ImGui::SetNextWindowSizeConstraints(ImVec2(880.0f, 520.0f),
-            ImVec2(std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max()));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(880.0f, 520.0f), ImVec2(std::numeric_limits<f32>::max(),
+            std::numeric_limits<f32>::max()));
 
         if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
 
             handle_drag_drop();
-
             GLT::UI::custom_frame(DETAILS_PANEL_WIDTH, true,
                 ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
                 [this]() { draw_details_panel(); },
@@ -150,6 +150,16 @@ namespace GLT::editor {
 
         if (m_preview_dirty)
             push_preview_state();
+        
+        auto* renderer = GLT::render::renderer::get_ptr();
+        if (!renderer)
+            return;
+
+        auto* preview = renderer->as<GLT::render::i_preview>();
+        if (!preview)
+            return;
+
+        preview->set_active(m_preview_id, m_preview_image_drawn);
     }
 
 
@@ -279,7 +289,6 @@ namespace GLT::editor {
 
         const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
         const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + avail.y);
-
         void* tex = preview->get_render_target(m_preview_id);
 
         ImGui::InvisibleButton("##mesh_preview_canvas", avail,
@@ -289,6 +298,7 @@ namespace GLT::editor {
 
             ImDrawList* draw = ImGui::GetWindowDrawList();
             draw->AddImage(reinterpret_cast<ImTextureID>(tex), canvas_min, canvas_max, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+            m_preview_image_drawn = ImGui::IsItemVisible();
             draw->AddRect(canvas_min, canvas_max, IM_COL32(60, 60, 70, 255), 0.0f, 0, 1.0f);
 
         } else {
@@ -319,8 +329,7 @@ namespace GLT::editor {
         if (active_left) {
 
             m_preview_camera.yaw_rad += io.MouseDelta.x * 0.008f;
-            m_preview_camera.pitch_rad = std::clamp(
-                m_preview_camera.pitch_rad + io.MouseDelta.y * 0.008f, -1.45f, 1.45f);
+            m_preview_camera.pitch_rad = std::clamp(m_preview_camera.pitch_rad + io.MouseDelta.y * 0.008f, -1.45f, 1.45f);
             m_preview_dirty = true;
         }
 
@@ -333,7 +342,7 @@ namespace GLT::editor {
                 std::cos(m_preview_camera.pitch_rad) * std::cos(m_preview_camera.yaw_rad));
 
             const glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0.0f, 1.0f, 0.0f)));
-            const glm::vec3 up    = glm::normalize(glm::cross(right, fwd));
+            const glm::vec3 up = glm::normalize(glm::cross(right, fwd));
 
             const f32 pan_speed = m_preview_camera.distance * 0.0025f;
             m_preview_camera.target += (-right * io.MouseDelta.x + up * io.MouseDelta.y) * pan_speed;
@@ -349,19 +358,19 @@ namespace GLT::editor {
 
         ImGui::SameLine();
         if (ImGui::Button("Front")) {
-            m_preview_camera.yaw_rad   = 0.0f;
+            m_preview_camera.yaw_rad = 0.0f;
             m_preview_camera.pitch_rad = 0.0f;
             m_preview_dirty = true;
         }
         ImGui::SameLine();
         if (ImGui::Button("Top")) {
-            m_preview_camera.yaw_rad   = 0.0f;
+            m_preview_camera.yaw_rad = 0.0f;
             m_preview_camera.pitch_rad = 1.4f;
             m_preview_dirty = true;
         }
         ImGui::SameLine();
         if (ImGui::Button("Side")) {
-            m_preview_camera.yaw_rad   = glm::half_pi<f32>();
+            m_preview_camera.yaw_rad = glm::half_pi<f32>();
             m_preview_camera.pitch_rad = 0.0f;
             m_preview_dirty = true;
         }
@@ -579,7 +588,7 @@ namespace GLT::editor {
 
         if (m_auto_rotate) {
             ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::SliderFloat("##auto_rotate_speed", &m_auto_rotate_speed, 0.05f, 3.0f, "%.2f rad/s"))
+            if (ImGui::SliderFloat("##auto_rotate_speed", &m_auto_rotate_speed, 0.01f, 100.f, "%.2f %"))
                 m_preview_dirty = true;
         }
     }
@@ -631,7 +640,7 @@ namespace GLT::editor {
 
         GLT::render::preview_desc desc;
         desc.source = GLT::render::preview_source::mesh_asset;
-        desc.mesh   = m_asset_handle;
+        desc.mesh = m_asset_handle;
         desc.material = INVALID_HANDLE;             // use the mesh's own per-submesh materials
 
         m_preview_id = preview->create(desc, glm::uvec2(DEFAULT_PREVIEW_SIZE, DEFAULT_PREVIEW_SIZE));
@@ -676,7 +685,7 @@ namespace GLT::editor {
 
         preview->set_settings(m_preview_id, m_preview_settings);
         preview->set_camera(m_preview_id, m_preview_camera);
-        preview->set_auto_rotate(m_preview_id, m_auto_rotate, m_auto_rotate_speed);
+        preview->set_auto_rotate(m_preview_id, m_auto_rotate, m_auto_rotate_speed / 1000);
     }
 
 
@@ -724,9 +733,9 @@ namespace GLT::editor {
         const glm::vec3 extent = mx - mn;
         const f32 radius = 0.5f * glm::length(extent);
         m_preview_camera.distance = std::clamp(radius * 2.5f, MIN_CAM_DISTANCE, MAX_CAM_DISTANCE);
-        m_preview_camera.yaw_rad    = 0.7f;
-        m_preview_camera.pitch_rad  = 0.35f;
-        m_preview_camera.fov_deg    = 45.0f;
+        m_preview_camera.yaw_rad = 0.7f;
+        m_preview_camera.pitch_rad = 0.35f;
+        m_preview_camera.fov_deg = 45.0f;
 
         m_preview_dirty = true;
     }

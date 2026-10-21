@@ -78,7 +78,13 @@ namespace GLT::render {
 
         FORCE_INLINE_R ref<GLT::render::i_renderer_plugin> get_ref() {
 
-            return plugin_manager::get_plugin_ref<render::i_renderer_plugin>(plugin_manager::interface::renderer);
+            return plugin_manager::get_plugin_ref_unsafe<render::i_renderer_plugin>(plugin_manager::interface::renderer);
+        }
+
+
+        FORCE_INLINE_R GLT::render::i_renderer_plugin* get_ptr() {
+
+            return plugin_manager::get_plugin_raw<render::i_renderer_plugin>(plugin_manager::interface::renderer);
         }
 
     }

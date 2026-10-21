@@ -142,6 +142,7 @@ namespace GLT::editor {
         // Hover / selection highlight state. Only one id is pushed to the preview, hovered winning over selected.
         i32                                                     m_hovered_submesh = -1;
         i32                                                     m_selected_submesh = -1;
+        bool                                                    m_preview_image_drawn = false;
     };
 
 }

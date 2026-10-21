@@ -14,7 +14,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // TYPES ===========================================================================================================
 
     bool texture_handle::operator==(const texture_handle& o) const { return id == o.id; }
-
+    
     bool buffer_handle::operator==(const buffer_handle& o) const { return id == o.id; }
 
     bool resource_state::operator==(const resource_state& o) const { return layout == o.layout && access == o.access && stage == o.stage; }
