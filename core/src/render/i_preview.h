@@ -185,6 +185,19 @@ namespace GLT::render {
         // @brief Resizes the render target; takes effect on the next frame
         virtual void set_size(preview_id id, const glm::uvec2& size) = 0;
 
+        // @brief Returns a debug draw interface scoped to [id], or nullptr if the id is invalid
+        //
+        // Primitives submitted through the returned interface render into the preview's colour target, using the preview's camera and
+        // depth buffer, after the preview's scene pass. Semantics match the main-scene [i_debug_draw]: lifetime == 0 renders once, 
+        // DEBUG_DRAW_FOREVER persists until [clear()] or the preview is destroyed
+        //
+        // The pointer is owned by the renderer and remains valid for the preview's lifetime; it becomes dangling after [destroy()]
+        // on the same id
+        //
+        // [highlight_entity] and [set_draw_mesh_aabb] are no-ops on a preview debug draw — previews don't publish into 
+        // submit_scene()/submit_lights() and don't own the mesh slots those APIs operate on. Use primitive submissions to visualise the
+        // preview's mesh (e.g., per-submesh AABBs from the asset)
+        [[nodiscard]] virtual i_debug_draw* get_debug_draw(preview_id id) = 0;
     };
 
 }

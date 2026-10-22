@@ -5,6 +5,7 @@
 #include "asset/type.h"
 #include "asset/header.h"
 #include "world/entity.h"
+#include "physics/shape.h"
 
 
 
@@ -26,6 +27,8 @@ namespace GLT::asset::mesh {
     inline constexpr GLT::asset::chunk_id               CHUNK_SKELETON = 0x0005;        // skeletal_mesh only
 
     inline constexpr GLT::asset::chunk_id               CHUNK_ANIMATIONS = 0x0006;      // skeletal_mesh only
+
+    inline constexpr GLT::asset::chunk_id               CHUNK_COLLIDERS = 0x0007;       // mesh_collider[]
 
     // MACROS ==========================================================================================================
 
@@ -70,6 +73,44 @@ namespace GLT::asset::mesh {
     };
     static_assert(sizeof(instance) == 112);
 
+
+    // @brief Authoring-time collider shape kind
+    //
+    // v1 supports the simple primitives plus a "whole-mesh" triangle-mesh collider. Convex hull and height field are deliberately deferred
+    enum class collider_shape : u8 {
+
+        sphere = 0,
+        box,
+        capsule,
+        cylinder,
+        triangle_mesh,      // uses this mesh's own vertices + indices
+    };
+
+
+    // @brief One collider authored on a mesh asset
+    //
+    // Stored as an array in CHUNK_COLLIDERS. Colliders live in mesh-local space; [local_transform] places them relative to the
+    // mesh origin. For triangle_mesh colliders the shape parameters are ignored - the collider consumes
+    // mesh_asset::vertices / mesh_asset::indices directly
+    //
+    // Plain data on purpose: trivially copyable so the chunk reader/writer can blit it byte-for-byte
+    struct mesh_collider {
+
+        collider_shape              shape{ collider_shape::box };
+        u8                          _pad0[3]{};
+        u32                         flags{ 0 };            // reserved for user/gameplay tags
+
+        // Shape parameters — only the field matching [shape] is meaningful (triangle_mesh uses none of them)
+        physics::sphere             sphere{};
+        physics::box                box{};
+        physics::capsule            capsule{};
+        physics::cylinder           cylinder{};
+
+        physics::physics_material   material{};
+        glm::mat4                   local_transform{ 1.0f };    // collider space -> mesh space
+    };
+    static_assert(std::is_trivially_copyable_v<mesh_collider>);
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -93,6 +134,7 @@ namespace GLT::asset::mesh {
         std::vector<GLT::asset::mesh::vertex>           vertices;
         std::vector<u32>                                indices;
         std::vector<GLT::asset::mesh::submesh>          submeshes;
+        std::vector<GLT::asset::mesh::mesh_collider>    colliders;    // 0..N authored colliders
         GLT::AABB                                       bounds{};
 
 
@@ -111,13 +153,17 @@ namespace GLT::asset::mesh {
         FORCE_INLINE_R GLT::asset::type type() const noexcept override { return asset_type; }
 
 
+        FORCE_INLINE_R u32 collider_count() const noexcept { return static_cast<u32>(colliders.size()); }
+
+
         // @brief Approximate resident bytes, used by the profiler
         FORCE_INLINE_R u64 memory_usage() const noexcept override {
 
             return sizeof(*this)
                 + vertices.capacity() * sizeof(GLT::asset::mesh::vertex)
                 + indices.capacity() * sizeof(u32)
-                + submeshes.capacity() * sizeof(GLT::asset::mesh::submesh);
+                + submeshes.capacity() * sizeof(GLT::asset::mesh::submesh)
+                + colliders.capacity() * sizeof(GLT::asset::mesh::mesh_collider);
         }
         
     };

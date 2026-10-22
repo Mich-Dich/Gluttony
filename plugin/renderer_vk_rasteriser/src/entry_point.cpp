@@ -150,6 +150,7 @@ namespace GLT::renderer::vk_rasterizer {
         [[nodiscard]] void* get_render_target(GLT::render::preview_id id) const override;
         [[nodiscard]] glm::uvec2 get_size(GLT::render::preview_id id) const override;
         void set_size(GLT::render::preview_id id, const glm::uvec2& size) override;
+        GLT::render::i_debug_draw* get_debug_draw(GLT::render::preview_id id) override;
 
     private:
 
@@ -596,6 +597,29 @@ namespace GLT::renderer::vk_rasterizer {
 
     private: // i_preview ----------------------------------------------------------------------------------------------
 
+        // Per-preview i_debug_draw implementation. Routes primitives into this preview's own list. See [preview_state::debug_primitives]
+        class preview_debug_draw : public GLT::render::i_debug_draw {
+        public:
+
+            preview_debug_draw(renderer& owner, GLT::render::preview_id id) : m_owner(owner), m_id(id) {}
+
+            void draw_line(const GLT::render::debug_line_primitive& line) override;
+            void draw_triangle(const GLT::render::debug_triangle_primitive& tri) override;
+            void draw_aabb(const GLT::render::debug_aabb_primitive& box) override;
+            void clear() override;
+
+            // Previews don't publish into submit_scene() / submit_lights() — nothing to highlight / watch
+            void highlight_entity(std::span<const GLT::world::entity_id>, const glm::vec4&, f32, bool) override {}
+            void set_draw_mesh_aabb(GLT::asset::handle, const glm::vec4&, f32, bool) override {}
+
+        private:
+
+            renderer&                                                       m_owner;
+            GLT::render::preview_id                                         m_id;
+
+        };
+
+
         struct preview_state {
 
             GLT::render::preview_desc                                       desc{};
@@ -613,7 +637,9 @@ namespace GLT::renderer::vk_rasterizer {
 
             // resolved scene content (mesh must be retained to keep its slot alive)
             GLT::asset::handle                                              resolved_mesh = INVALID_HANDLE;
-            std::vector<u32>                                                material_slots{};   // per submesh, borrowed from mesh_slot
+            util::allocated_buffer                                          vertex_buffer{};
+            util::allocated_buffer                                          index_buffer{};
+            std::vector<u32>                                                material_slots{};   // per submesh
 
             // per-frame GPU resources (small: 1 instance + 1 directional light)
             std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       camera_ubos{};
@@ -627,13 +653,24 @@ namespace GLT::renderer::vk_rasterizer {
             // graph handles, recreated every frame
             graph::texture_handle                                           color_handle;
             graph::texture_handle                                           depth_handle;
+
+            // debug draw scoped to this preview
+            GLT::unique_ref<preview_debug_draw>                             debug_draw = nullptr;
+            mutable std::mutex                                              debug_mutex{};
+            std::vector<debug_primitive_record>                             debug_primitives{};
+            std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>       debug_vertex_buffers{};
+            std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>      debug_desc_buffers{};
         };
+
 
         void create_preview_resources();
         void destroy_preview_resources();
         void add_preview_passes();
         void sync_preview_images_layout();
         void update_preview_resources(GLT::render::preview_id id, preview_state& state, u32 frame);
+        bool upload_preview_mesh(preview_state& state, GLT::asset::handle mesh_handle);
+        void add_preview_debug_pass(GLT::render::preview_id id, preview_state& state, u32 frame, graph::texture_handle color,
+            graph::texture_handle depth);
 
         std::unordered_map<GLT::render::preview_id, preview_state>          m_previews{};
         GLT::render::preview_id                                             m_next_preview_id = 1;

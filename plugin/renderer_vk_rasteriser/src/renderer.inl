@@ -221,6 +221,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         add_debug_draw_pass();
         add_preview_passes();
+        update_materials();
         add_imgui_pass();
 
         m_graph->compile();

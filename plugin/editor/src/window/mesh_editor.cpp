@@ -160,6 +160,9 @@ namespace GLT::editor {
             return;
 
         preview->set_active(m_preview_id, m_preview_image_drawn);
+
+        // Re-submit every frame - lifetime == 0 means "this frame only", so the editor owns the cadence
+        submit_debug_draws();
     }
 
 
@@ -484,7 +487,7 @@ namespace GLT::editor {
                 ImGui::TableNextRow();
                 ImGui::PushID(static_cast<int>(i));
 
-                // ---- col 0: selectable label — spans the whole row for a clean hover target -----------------------
+                // ---- col 0: selectable label - spans the whole row for a clean hover target -----------------------
                 ImGui::TableSetColumnIndex(0);
 
                 const bool selected = (m_selected_submesh == static_cast<i32>(i));
@@ -514,7 +517,7 @@ namespace GLT::editor {
                         .allow_clear = true, .placeholder = "(none)" },
                         sm.material, ImGui::GetContentRegionAvail().x)) {
 
-                    // Preview-only — the mesh handler doesn't override serialize(), so this never hits disk.
+                    // Preview-only - the mesh handler doesn't override serialize(), so this never hits disk.
                     if (old_handle != INVALID_HANDLE && old_handle != sm.material)
                         registry->release(old_handle);
                     if (sm.material != INVALID_HANDLE)
@@ -550,7 +553,7 @@ namespace GLT::editor {
         ImGui::TextDisabled("Hover a row to highlight it in the preview. Click to select.");
         if (m_dirty) {
             ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 90, 255));
-            ImGui::TextWrapped("Material changes are preview-only — mesh serialization is not yet supported.");
+            ImGui::TextWrapped("Material changes are preview-only - mesh serialization is not yet supported.");
             ImGui::PopStyleColor();
         }
     }
@@ -839,6 +842,55 @@ namespace GLT::editor {
         }
 
         ImGui::EndDragDropTarget();
+    }
+
+
+    void mesh_editor_window::submit_debug_draws() {
+
+        if (m_preview_id == 0 || !m_has_mesh || !m_preview_image_drawn)
+            return;
+
+        auto renderer = GLT::render::renderer::get_ref();
+        if (!renderer)
+            return;
+
+        auto* preview = renderer->as<GLT::render::i_preview>();
+        if (!preview)
+            return;
+
+        auto* debug = preview->get_debug_draw(m_preview_id);
+        if (!debug)
+            return;
+
+        auto registry = GLT::asset::registry::get_ref();
+        if (!registry)
+            return;
+
+        auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle);
+        if (!mesh)
+            return;
+
+        // ---- whole-mesh AABB - always visible ----
+        glm::vec3 mesh_min, mesh_max;
+        compute_mesh_bounds(*mesh, mesh_min, mesh_max);
+
+        // Empty meshes come back as (f32::max, -f32::max); skip them
+        if (mesh_min.x > mesh_max.x || mesh_min.y > mesh_max.y || mesh_min.z > mesh_max.z)
+            return;
+
+        // Preview renders the mesh at identity, so mesh-local == world - no transform needed
+        debug->aabb(mesh_min, mesh_max,
+            glm::vec4(0.70f, 0.75f, 0.85f, 0.70f), 0.f, false);
+
+        // ---- hovered-submesh AABB - only while the row is hovered ----
+        if (m_hovered_submesh >= 0 && static_cast<std::size_t>(m_hovered_submesh) < m_submesh_bounds_cache.size()) {
+
+            const auto& b = m_submesh_bounds_cache[m_hovered_submesh];
+
+            // Skip degenerate entries (submesh with no valid indices)
+            if (b.min.x <= b.max.x && b.min.y <= b.max.y && b.min.z <= b.max.z)
+                debug->aabb(b.min, b.max, glm::vec4(1.0f, 0.85f, 0.20f, 1.0f), 0.f, false);
+        }
     }
 
 }

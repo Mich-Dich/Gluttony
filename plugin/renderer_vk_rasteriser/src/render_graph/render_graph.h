@@ -48,11 +48,11 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
         texture_handle create_texture(const texture_desc& desc);
 
-        buffer_handle  create_buffer (const buffer_desc&  desc);
+        buffer_handle create_buffer(const buffer_desc&  desc);
 
         void import_texture(texture_handle handle, vk::Image image, vk::ImageView view, resource_state initial_state = {});
 
-        void import_buffer(buffer_handle  handle, const util::allocated_buffer& buf);
+        void import_buffer(buffer_handle handle, const util::allocated_buffer& buf);
 
         // Reserve a slot for an externally-owned buffer and register it. Nothing is allocated by the graph
         buffer_handle  import_buffer (const buffer_desc& desc, const util::allocated_buffer& buf);
@@ -141,7 +141,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
         // Helper: compute the target state for a pass's usage of a resource
         resource_state target_texture_state(const pass& pass, texture_handle handle) const;
 
-        resource_state target_buffer_state (const pass& pass, buffer_handle  handle) const;
+        resource_state target_buffer_state(const pass& pass, buffer_handle  handle) const;
 
         void emit_barriers(vk::CommandBuffer cmd, const pass& pass);
 
@@ -151,7 +151,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
         void destroy_texture(texture_resource& texture_resource);
 
-        void destroy_buffer (buffer_resource& buffer_resource);
+        void destroy_buffer(buffer_resource& buffer_resource);
         
 
         util::device*                                           m_device = nullptr;

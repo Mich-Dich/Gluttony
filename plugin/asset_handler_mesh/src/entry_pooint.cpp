@@ -76,6 +76,10 @@ namespace GLT::asset::handler::mesh {
         [[nodiscard]] std::expected<GLT::unique_ref<GLT::asset::i_runtime_asset>, GLT::asset::load_error>
             deserialize(const GLT::asset::info& info, GLT::asset::chunk_reader& reader) override;
 
+
+        [[nodiscard]] std::expected<void, GLT::asset::load_error>serialize(const GLT::asset::info& info,
+            const GLT::asset::i_runtime_asset& asset, GLT::asset::asset_writer& out) const override;
+
     private:
 
         GLT::ref<GLT::asset::i_asset_registry_plugin>           m_registry{};

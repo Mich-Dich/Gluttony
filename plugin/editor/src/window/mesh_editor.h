@@ -107,6 +107,11 @@ namespace GLT::editor {
 
         void reset_camera_to_fit();
 
+        // Submits the whole-mesh AABB (always) and hovered-submesh AABB (only while a row is hovered) through the preview's scoped
+        // [i_debug_draw]. Called every frame from update() — primitives are lifetime == 0 (single-frame), so the editor is the one
+        // re-submitting them each tick
+        void submit_debug_draws();
+
         // helpers ----------------------------------------------------------------------------------------------------
 
         void compute_mesh_bounds(const GLT::asset::mesh::mesh_asset& mesh, glm::vec3& out_min, glm::vec3& out_max) const;
@@ -117,7 +122,6 @@ namespace GLT::editor {
 
         void handle_drag_drop();
 
-        // ---- state -------------------------------------------------------------------------------------------------
 
         std::filesystem::path                                   m_mesh_path{};
         GLT::asset::handle                                      m_asset_handle = INVALID_HANDLE;

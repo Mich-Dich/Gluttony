@@ -81,6 +81,9 @@ namespace GLT::renderer::vk_rasterizer {
     // Hard cap on vertices uploaded per frame. 128K = 4 MB/frame × 3 frames ≈ 12 MB total. Enough for ~5400 AABBs
     static constexpr u32                                        MAX_DEBUG_VERTICES = 131072;
 
+    // Per-preview debug vertex budget. 16K = 512 KB/frame × 3 frames × N previews, ~480 AABBs. Editor previews are small by design
+    static constexpr u32                                        MAX_PREVIEW_DEBUG_VERTICES = 16384;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
