@@ -20,7 +20,7 @@ namespace GLT::renderer::vk_rasterizer::util {
 
     // STATIC VARIABLES ================================================================================================
 
-    bool shader_compiler::initialized = false;
+    bool                                shader_compiler::initialized = false;
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 

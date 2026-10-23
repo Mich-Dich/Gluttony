@@ -15,6 +15,8 @@
 #include <world/i_world.h>
 #include <world/i_world_scene.h>
 #include <world/world_layer.h>
+#include <render/i_scene_renderer.h>
+#include <application.h>
 
 #include "util/ui/pannel_collection.h"
 #include "resource_manager/icon_manager.h"
@@ -52,7 +54,8 @@ namespace GLT::editor {
     world_viewport_window::world_viewport_window() {
         
         make_window_name("World Viewport");
-        m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::render::i_renderer_plugin>(GLT::plugin_manager::interface::renderer);
+        m_renderer = GLT::render::renderer::get_ref();
+        m_scene = GLT::application::get().get_main_world_scene_renderer();
         m_content_browsers.push_back(GLT::editor::content_browser_window());       // create first content browser
 
         m_save_sub_handle = GLT::event_bus::subscribe<GLT::save_event>(std::bind_front(&world_viewport_window::on_save_event, this), 10);
@@ -74,8 +77,8 @@ namespace GLT::editor {
 
         if (!m_show_window) {
 
-            if (m_renderer)
-                m_renderer->set_world_render_enabled(false);
+            if (m_scene)
+                m_scene->set_active(false);
             return;
         }
 
@@ -97,8 +100,8 @@ namespace GLT::editor {
         render_details();
         render_outliner();
 
-        if (m_renderer)
-            m_renderer->set_world_render_enabled(m_viewport_image_drawn);
+        if (m_scene)
+            m_scene->set_active(m_viewport_image_drawn);
 
         for (auto& browsers : m_content_browsers)
             if (!browsers.should_close())
@@ -110,7 +113,16 @@ namespace GLT::editor {
 
     void world_viewport_window::update(const f32 /*delta_time*/) {
 
-        m_renderer->set_render_size({m_viewport_size.x, m_viewport_size.y});
+        // refresh in case the app recreated it
+        m_scene = GLT::application::get().get_main_world_scene_renderer();
+        if (m_scene) {
+
+            const auto extent = glm::uvec2(static_cast<u32>(std::max(1.f, m_viewport_size.x)),
+                static_cast<u32>(std::max(1.f, m_viewport_size.y)));
+
+            if (m_scene->get_extent() != extent)
+                m_scene->resize(extent);
+        }
         update_selection_debug_draw();
 
         // Move any events that arrived during the previous frame into the queue.
@@ -185,22 +197,25 @@ namespace GLT::editor {
         m_viewport_image_drawn = false;
         if (ImGui::Begin("Viewport")) {
 
-            m_viewport_size = ImGui::GetContentRegionAvail();
-            ImGui::Image(m_renderer->get_rendered_image(), m_viewport_size);
-            m_viewport_image_drawn = ImGui::IsItemVisible();
+            const ImVec2 image_min = ImGui::GetCursorScreenPos();
+            const ImVec2 image_size = ImGui::GetContentRegionAvail();
+            m_viewport_size = image_size;
+
+            if (m_scene && m_scene->get_output_image()) {
+
+                ImGui::Image(m_scene->get_output_image(), m_viewport_size);
+                m_viewport_image_drawn = ImGui::IsItemVisible();
+
+            } else
+                ImGui::TextColored(ImVec4(1.f, 0.5f, 0.4f, 1.f), "Scene renderer not available");
 
             const bool image_hovered = ImGui::IsItemHovered();
-            const ImVec2 image_min = ImGui::GetItemRectMin();
-            const ImVec2 image_size = ImGui::GetItemRectSize();
 
-            // These two overlays rely on GetItemRectMin() still being the image,
-            // so they MUST run before anything else draws.
-            const bool mode_popup_open = render_mode_selector_overlay();
+            const bool mode_popup_open = render_mode_selector_overlay(image_min);
             const bool settings_popup_open = render_settings_overlay();
             const bool overlay_active = mode_popup_open || settings_popup_open;
 
-            // Gizmo is self-contained: it takes the rect explicitly, so it can run
-            // after the overlays without disturbing their layout state.
+            // Gizmo is self-contained: it takes the rect explicitly
             render_gizmo_toolbar(image_min, image_size);
             render_gizmo(image_min, image_size);
 
@@ -222,19 +237,16 @@ namespace GLT::editor {
     }
 
 
-    bool world_viewport_window::render_mode_selector_overlay() {
+    bool world_viewport_window::render_mode_selector_overlay(const ImVec2& image_min) {
 
-        if (!m_renderer)
+        if (!m_renderer || !m_scene)
             return false;
 
-        // position the button in the top-left of the viewport image
-        const ImVec2 image_min = ImGui::GetItemRectMin();
         constexpr f32 INSET = 8.f;
         ImGui::SetCursorScreenPos(ImVec2(image_min.x + INSET, image_min.y + INSET));
-
-        // resolve the current mode's label
-        const auto modes = m_renderer->supported_modes();
-        const u32  current = m_renderer->get_render_mode();
+    
+        const auto modes = m_scene->supported_modes();
+        const u32  current = m_scene->get_render_mode();
 
         const char* current_label = "Render mode";
         for (const auto& m : modes)
@@ -293,7 +305,7 @@ namespace GLT::editor {
 
                 const bool selected = (m.id == current);
                 if (ImGui::Selectable(m.display_name, selected)) {
-                    m_renderer->set_render_mode(m.id);
+                    m_scene->set_render_mode(m.id);
                     ImGui::CloseCurrentPopup();     // standard dropdown UX
                 }
 
@@ -612,7 +624,7 @@ namespace GLT::editor {
 
         m_cursor_captured = captured;
 
-        auto window = GLT::platform::get_window_ref();
+        auto* window = GLT::platform::window::get_ptr();
         if (!window)
             return;
 
@@ -1225,18 +1237,16 @@ namespace GLT::editor {
 
     void world_viewport_window::update_selection_debug_draw() {
 
-        // Renderer may not implement debug draw at all (e.g. null / headless).
-        auto* debug = m_renderer ? m_renderer->as<GLT::render::i_debug_draw>() : nullptr;
+        auto* debug = m_scene ? m_scene->get_debug_draw() : nullptr;
         if (!debug)
             return;
 
-        // Nothing selected -> nothing to refresh. Old watch entries expire on their own.
         if (!m_world || !m_selected_entity.is_valid() || !m_world->alive(m_selected_entity))
             return;
 
         constexpr f32 lifetime = 0.1f;
-        const glm::vec4 color{ 1.f, 0.5f, 0.1f, 1.f };                                      // orange-ish selection tint
-        debug->highlight_entity(m_selected_entity, color, lifetime, /*depth_test=*/true);
+        const glm::vec4 color{ 1.f, 0.5f, 0.1f, 1.f };
+        debug->highlight_entity(m_selected_entity, color, lifetime, true);
     }
 
 }

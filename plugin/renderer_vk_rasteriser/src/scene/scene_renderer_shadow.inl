@@ -1,4 +1,6 @@
+
 #pragma once
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -12,15 +14,6 @@ namespace GLT::renderer::vk_rasterizer {
     // TYPES ===========================================================================================================
 
     // STATIC VARIABLES ================================================================================================
-
-    static const glm::vec3 SHADOW_FACE_DIRECTIONS[6] = {
-        { 1.f,  0.f,  0.f},
-        {-1.f,  0.f,  0.f},
-        { 0.f,  1.f,  0.f},
-        { 0.f, -1.f,  0.f},
-        { 0.f,  0.f,  1.f},
-        { 0.f,  0.f, -1.f}
-    };  // +X -X +Y -Y +Z -Z. The order must match point_face() in mesh.frag
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
@@ -80,7 +73,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
-    void renderer::create_shadow_resources() {
+    void scene_renderer::create_shadow_resources() {
 
         // Comparison sampler: each tap is a hardware 2x2 PCF. Border = 1.0, so anything outside the map reads as lit
         vk::SamplerCreateInfo sampler_info{};
@@ -94,16 +87,14 @@ namespace GLT::renderer::vk_rasterizer {
         sampler_info.compareEnable = VK_TRUE;
         sampler_info.compareOp = vk::CompareOp::eLessOrEqual;
         sampler_info.maxLod = 0.0f;
-        m_shadow_sampler = m_device.createSampler(sampler_info);
 
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
 
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
 
-            m_shadow_camera_ubos[frame_index] = m_dev->create_buffer(sizeof(camera_ubo_data),
+            m_shadow_camera_ubos[frame_index] = m_plugin.get_dev()->create_buffer(sizeof(camera_ubo_data),
                 vk::BufferUsageFlagBits::eUniformBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-            m_live_buffer_count++;
 
             graph::buffer_desc commands_desc{};
             commands_desc.name = "shadow_draw_commands_" + std::to_string(frame_index);
@@ -115,8 +106,9 @@ namespace GLT::renderer::vk_rasterizer {
             graph::buffer_desc count_desc{};
             count_desc.name = "shadow_draw_count_" + std::to_string(frame_index);
             count_desc.size = static_cast<vk::DeviceSize>(MAX_MATERIALS) * sizeof(u32);
-            count_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer
-                             | vk::BufferUsageFlagBits::eTransferDst;
+            count_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer
+                | vk::BufferUsageFlagBits::eIndirectBuffer
+                | vk::BufferUsageFlagBits::eTransferDst;
             count_desc.persistent = true;
             m_shadow_draw_count_handles[frame_index] = m_graph->create_buffer(count_desc);
 
@@ -127,48 +119,40 @@ namespace GLT::renderer::vk_rasterizer {
             // Same layout + pipeline as the camera cull; only the outputs (3, 4) and the "camera" (5) differ
             std::vector<util::descriptor_item> items;
             items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_buffers[frame_index]);
-            items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_mesh_data_buffer);
-            items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_submesh_data_buffer);
+            items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_mesh_data_buffer_alloc_ref());
+            items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_submesh_data_buffer_alloc_ref());
             items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, commands_allocation);
             items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, count_allocation);
             items.emplace_back(5, VKDT::eUniformBuffer, VKSF::eCompute, 1, &m_shadow_camera_ubos[frame_index]);
             items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_override_buffers[frame_index]);
 
-            m_shadow_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_cull_set_layout, items,
+            m_shadow_cull_desc_buffers[frame_index] = m_plugin.get_dev()->create_descriptor_buffer(m_cull_set_layout, items,
                 util::descriptor_buffer_type::resource, 1);
-            m_dev->update_descriptor_buffer(m_shadow_cull_desc_buffers[frame_index], items, util::descriptor_buffer_type::resource);
-            m_live_buffer_count++;
+            m_plugin.get_dev()->update_descriptor_buffer(m_shadow_cull_desc_buffers[frame_index], items, util::descriptor_buffer_type::resource);
         }
     }
 
 
-    void renderer::destroy_shadow_resources() {
+    void scene_renderer::destroy_shadow_resources() {
 
-        m_device.waitIdle();
+        m_plugin.get_vk_device().waitIdle();
 
         for (auto& desc : m_shadow_desc_buffers) {
-            if (desc.buffer.buffer) m_dev->destroy_buffer(desc.buffer);
+            if (desc.buffer.buffer) m_plugin.get_dev()->destroy_buffer(desc.buffer);
             desc = {};
         }
         for (auto& desc : m_shadow_cull_desc_buffers) {
-            if (desc.buffer.buffer) m_dev->destroy_buffer(desc.buffer);
+            if (desc.buffer.buffer) m_plugin.get_dev()->destroy_buffer(desc.buffer);
             desc = {};
         }
         for (auto& ubo : m_shadow_camera_ubos) {
-            if (ubo.buffer) m_dev->destroy_buffer(ubo);
+            if (ubo.buffer) m_plugin.get_dev()->destroy_buffer(ubo);
             ubo = {};
         }
-        if (m_shadow_sampler) {
-            m_device.destroySampler(m_shadow_sampler);
-            m_shadow_sampler = nullptr;
-        }
-        // shadow draw buffers + shadow map are graph-owned (persistent)
     }
 
 
-    // Fits an orthographic light projection around a bounding sphere of the camera frustum slice [near, distance].
-    // Sphere radius is rotation-invariant and the centre is snapped to whole texels, so shadows don't shimmer.
-    void renderer::update_shadow() {
+    void scene_renderer::update_shadow() {
 
         if (!m_shadow.active)
             return;
@@ -176,7 +160,7 @@ namespace GLT::renderer::vk_rasterizer {
         const shadow_settings& settings = m_shadow_settings;
 
         // Camera slice corners in world space (built from fov/aspect, so it doesn't depend on GLM's depth convention)
-        const f32 aspect = static_cast<f32>(m_render_size.x) / static_cast<f32>(m_render_size.y);
+        const f32 aspect = static_cast<f32>(m_extent.x) / static_cast<f32>(m_extent.y);
         const f32 slice_near = m_active_camera.near_plane;
         const f32 slice_far = std::min(m_active_camera.far_plane, settings.distance);
         const f32 tan_half_y = std::tan(glm::radians(m_active_camera.fov) * 0.5f);
@@ -226,12 +210,12 @@ namespace GLT::renderer::vk_rasterizer {
         shadow_camera.view_proj = m_shadow.view_proj;
         extract_frustum_planes(m_shadow.view_proj, shadow_camera.frustum_planes);
 
-        m_dev->update_buffer(m_shadow_camera_ubos[m_current_frame], &shadow_camera, sizeof(shadow_camera));
+        m_plugin.get_dev()->update_buffer(m_shadow_camera_ubos[m_current_frame], &shadow_camera, sizeof(shadow_camera));
     }
 
     // local shadows ---------------------------------------------------------------------------------------------------
 
-    void renderer::create_local_shadow_resources() {
+    void scene_renderer::create_local_shadow_resources() {
 
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
@@ -242,19 +226,18 @@ namespace GLT::renderer::vk_rasterizer {
             layout_items.emplace_back(binding, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
         layout_items.emplace_back(5, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
 
-        m_local_shadow_cull_set_layout = m_dev->create_descriptor_set_layout(layout_items);
-        m_live_descriptor_set_count++;
+        m_local_shadow_cull_set_layout = m_plugin.get_dev()->create_descriptor_set_layout(layout_items);
 
         vk::PipelineLayoutCreateInfo pipeline_layout_info{};
         pipeline_layout_info.setLayoutCount = 1;
         pipeline_layout_info.pSetLayouts = &m_local_shadow_cull_set_layout;
-        m_local_shadow_cull_pipeline_layout = m_device.createPipelineLayout(pipeline_layout_info);
+        m_local_shadow_cull_pipeline_layout = m_plugin.get_vk_device().createPipelineLayout(pipeline_layout_info);
 
         const auto shader_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "vk_rasterizer";
-        auto compute_spv = m_shader_compiler.compile_glsl_to_spirv(shader_dir / "shadow_cull.comp.glsl");
+        auto compute_spv = m_plugin.get_shader_compiler_ref().compile_glsl_to_spirv(shader_dir / "shadow_cull.comp.glsl");
         ASSERT(!compute_spv.empty(), "", "Failed to compile shadow cull compute shader");
 
-        vk::ShaderModule compute_shader = m_dev->create_shader_module(compute_spv);
+        vk::ShaderModule compute_shader = m_plugin.get_dev()->create_shader_module(compute_spv);
         vk::PipelineShaderStageCreateInfo shader_stage{};
         shader_stage.stage = VKSF::eCompute;
         shader_stage.module = compute_shader;
@@ -264,22 +247,20 @@ namespace GLT::renderer::vk_rasterizer {
         pipeline_info.layout = m_local_shadow_cull_pipeline_layout;
         pipeline_info.stage = shader_stage;
 
-        auto result = m_device.createComputePipeline(nullptr, pipeline_info);
+        auto result = m_plugin.get_vk_device().createComputePipeline(nullptr, pipeline_info);
         VALIDATE(result.result == vk::Result::eSuccess, , "", "Failed to create shadow cull pipeline");
         m_local_shadow_cull_pipeline = result.value;
-        m_live_pipeline_count++;
-        m_device.destroyShaderModule(compute_shader);
+        m_plugin.get_vk_device().destroyShaderModule(compute_shader);
 
         // Per-frame resources ------------------------------------------------------------------------------------------
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; frame_index++) {
 
             // Views buffer: read as an SSBO by the cull + fragment shaders, and as 256-byte UBO slices by mesh.vert (one per view)
-            m_shadow_view_buffers[frame_index] = m_dev->create_buffer(MAX_SHADOW_VIEWS * SHADOW_VIEW_STRIDE, 
+            m_shadow_view_buffers[frame_index] = m_plugin.get_dev()->create_buffer(MAX_SHADOW_VIEWS * SHADOW_VIEW_STRIDE, 
                 vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer, 
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-            m_live_buffer_count++;
-            std::memset(m_dev->map_buffer(m_shadow_view_buffers[frame_index]), 0, MAX_SHADOW_VIEWS * SHADOW_VIEW_STRIDE);
-            m_dev->unmap_buffer(m_shadow_view_buffers[frame_index]);
+            std::memset(m_plugin.get_dev()->map_buffer(m_shadow_view_buffers[frame_index]), 0, MAX_SHADOW_VIEWS * SHADOW_VIEW_STRIDE);
+            m_plugin.get_dev()->unmap_buffer(m_shadow_view_buffers[frame_index]);
 
             graph::buffer_desc commands_desc{};
             commands_desc.name = "local_shadow_commands_" + std::to_string(frame_index);
@@ -303,16 +284,15 @@ namespace GLT::renderer::vk_rasterizer {
             // Cull descriptors
             std::vector<util::descriptor_item> cull_items;
             cull_items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_buffers[frame_index]);
-            cull_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_mesh_data_buffer);
-            cull_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_submesh_data_buffer);
+            cull_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_mesh_data_buffer_alloc_ref());
+            cull_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_submesh_data_buffer_alloc_ref());
             cull_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, commands_allocation);
             cull_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, counts_allocation);
             cull_items.emplace_back(5, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shadow_view_buffers[frame_index]);
 
-            m_local_shadow_cull_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_local_shadow_cull_set_layout,
+            m_local_shadow_cull_desc_buffers[frame_index] = m_plugin.get_dev()->create_descriptor_buffer(m_local_shadow_cull_set_layout,
                 cull_items, util::descriptor_buffer_type::resource, 1);
-            m_dev->update_descriptor_buffer(m_local_shadow_cull_desc_buffers[frame_index], cull_items, util::descriptor_buffer_type::resource);
-            m_live_buffer_count++;
+            m_plugin.get_dev()->update_descriptor_buffer(m_local_shadow_cull_desc_buffers[frame_index], cull_items, util::descriptor_buffer_type::resource);
 
             // Draw descriptors: MAX_SHADOW_VIEWS sets using the mesh layout. Set v has binding 0 = view v's UBO slice, so the
             // unchanged mesh.vert + m_depth_pipeline render any view just by switching the descriptor offset. Written once at init
@@ -329,47 +309,46 @@ namespace GLT::renderer::vk_rasterizer {
             draw_items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_globals_ubos[frame_index]);
 
             constexpr auto buffer_type = util::descriptor_buffer_type::combined;
-            m_local_shadow_desc_buffers[frame_index] = m_dev->create_descriptor_buffer(m_mesh_set_layout, draw_items, buffer_type,
-                MAX_SHADOW_VIEWS);
-            m_live_buffer_count++;
+            m_local_shadow_desc_buffers[frame_index] = m_plugin.get_dev()->create_descriptor_buffer(m_shared->get_mesh_set_layout(),
+                draw_items, buffer_type, MAX_SHADOW_VIEWS);
 
-            m_dev->compute_descriptor_binding_offsets(m_mesh_set_layout, draw_items);
+            m_plugin.get_dev()->compute_descriptor_binding_offsets(m_shared->get_mesh_set_layout(), draw_items);
             for (u32 view = 0; view < MAX_SHADOW_VIEWS; view++) {
                 draw_items[0].p_resources = &slices[view];
-                m_dev->update_descriptor_buffer(m_local_shadow_desc_buffers[frame_index], draw_items, buffer_type, view);
+                m_plugin.get_dev()->update_descriptor_buffer(m_local_shadow_desc_buffers[frame_index], draw_items, buffer_type, view);
             }
         }
     }
 
 
-    void renderer::destroy_local_shadow_resources() {
+    void scene_renderer::destroy_local_shadow_resources() {
 
-        m_device.waitIdle();
+        m_plugin.get_vk_device().waitIdle();
 
         for (auto& desc : m_local_shadow_desc_buffers) {
             if (desc.buffer.buffer)
-                m_dev->destroy_buffer(desc.buffer);
+                m_plugin.get_dev()->destroy_buffer(desc.buffer);
             desc = {};
         }
         for (auto& desc : m_local_shadow_cull_desc_buffers) {
             if (desc.buffer.buffer)
-                m_dev->destroy_buffer(desc.buffer);
+                m_plugin.get_dev()->destroy_buffer(desc.buffer);
             desc = {};
         }
         for (auto& buffer : m_shadow_view_buffers) {
             if (buffer.buffer)
-                m_dev->destroy_buffer(buffer);
+                m_plugin.get_dev()->destroy_buffer(buffer);
             buffer = {};
         }
 
         if (m_local_shadow_cull_pipeline)
-            m_device.destroyPipeline(m_local_shadow_cull_pipeline);
+            m_plugin.get_vk_device().destroyPipeline(m_local_shadow_cull_pipeline);
 
         if (m_local_shadow_cull_pipeline_layout)
-            m_device.destroyPipelineLayout(m_local_shadow_cull_pipeline_layout);
+            m_plugin.get_vk_device().destroyPipelineLayout(m_local_shadow_cull_pipeline_layout);
 
         if (m_local_shadow_cull_set_layout)
-            m_device.destroyDescriptorSetLayout(m_local_shadow_cull_set_layout);
+            m_plugin.get_vk_device().destroyDescriptorSetLayout(m_local_shadow_cull_set_layout);
 
         m_local_shadow_cull_pipeline = nullptr;
         m_local_shadow_cull_pipeline_layout = nullptr;
@@ -377,7 +356,7 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    void renderer::update_local_shadows() {
+    void scene_renderer::update_local_shadows() {
 
         m_local_shadow_view_count = 0;
         m_local_shadow_tiles.clear();
@@ -546,12 +525,12 @@ namespace GLT::renderer::vk_rasterizer {
             return;
 
         m_local_shadow_view_count = view_total;
-        m_dev->update_buffer(m_shadow_view_buffers[m_current_frame], m_packed_shadow_views.data(),
+        m_plugin.get_dev()->update_buffer(m_shadow_view_buffers[m_current_frame], m_packed_shadow_views.data(),
             m_packed_shadow_views.size() * sizeof(gpu_shadow_view));
     }
 
 
-    void renderer::add_reset_shadow_draw_count_pass() {
+    void scene_renderer::add_reset_shadow_draw_count_pass() {
 
         m_graph->add_pass("reset_shadow_draw_count",
             [&](graph::pass_builder& builder) {
@@ -563,7 +542,7 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    void renderer::add_shadow_cull_pass() {
+    void scene_renderer::add_shadow_cull_pass() {
 
         m_graph->add_pass("shadow_cull",
             [&](graph::pass_builder& builder) {
@@ -576,14 +555,14 @@ namespace GLT::renderer::vk_rasterizer {
                     return;
 
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
-                m_dev->bind_descriptor_buffer({ m_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
-                m_dev->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+                m_plugin.get_dev()->bind_descriptor_buffer({ m_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_plugin.get_dev()->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
                 ctx.cmd.dispatch((m_instance_count + 63) / 64, 1, 1);
             });
     }
 
 
-    void renderer::add_shadow_pass() {
+    void scene_renderer::add_shadow_pass() {
 
         m_graph->add_pass("shadow_pass",
             [&](graph::pass_builder& builder) {
@@ -602,28 +581,28 @@ namespace GLT::renderer::vk_rasterizer {
                 ctx.cmd.setViewport(0, vk::Viewport(0.f, 0.f, static_cast<f32>(res), static_cast<f32>(res), 0.f, 1.f));
                 ctx.cmd.setScissor(0, vk::Rect2D({0, 0}, {res, res}));
 
-                ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
-                ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
+                ctx.cmd.bindVertexBuffers(0, { m_shared->get_vertex_buffer() }, { 0 });
+                ctx.cmd.bindIndexBuffer(m_shared->get_index_buffer(), 0, vk::IndexType::eUint32);
 
-                m_dev->bind_descriptor_buffer({
+                m_plugin.get_dev()->bind_descriptor_buffer({
                     m_shadow_desc_buffers[m_current_frame],
                     m_material_desc_buffers[m_current_frame] 
                 }, ctx.cmd);
-                m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+                m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eGraphics);
 
                 const vk::Buffer cmd_buffer = ctx.get_buffer(m_shadow_draw_commands_handles[m_current_frame]);
                 const vk::Buffer count_buffer = ctx.get_buffer(m_shadow_draw_count_handles[m_current_frame]);
 
                 for (u32 mat_slot : m_scene_materials) {
 
-                    const material_slot& entry = m_material_slots[mat_slot];
+                    const material_slot& entry = m_shared->get_material(mat_slot);
                     if (!entry.alive || !entry.pipeline)
                         continue;
 
                     ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
 
                     const u32 descriptor_offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(mat_slot);
-                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, 1, descriptor_offset, ctx.cmd, vk::PipelineBindPoint::eGraphics);
+                    m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 1, 1, descriptor_offset, ctx.cmd, vk::PipelineBindPoint::eGraphics);
 
                     ctx.cmd.drawIndexedIndirectCount(
                         cmd_buffer,
@@ -632,16 +611,14 @@ namespace GLT::renderer::vk_rasterizer {
                         static_cast<vk::DeviceSize>(mat_slot) * sizeof(u32),
                         MAX_COMMANDS_PER_MATERIAL,
                         sizeof(vk::DrawIndexedIndirectCommand));
-                    m_frame_draw_calls++;
                 }
 
                 ctx.end_rendering();
-                m_frame_render_passes++;
             });
     }
 
 
-    void renderer::add_local_shadow_passes() {
+    void scene_renderer::add_local_shadow_passes() {
 
         if (m_local_shadow_view_count == 0)
             return;
@@ -668,8 +645,8 @@ namespace GLT::renderer::vk_rasterizer {
                     return;
 
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_local_shadow_cull_pipeline);
-                m_dev->bind_descriptor_buffer({ m_local_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
-                m_dev->bind_descriptor_set(m_local_shadow_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
+                m_plugin.get_dev()->bind_descriptor_buffer({ m_local_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
+                m_plugin.get_dev()->bind_descriptor_set(m_local_shadow_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
                 ctx.cmd.dispatch((m_instance_count + 63) / 64, m_local_shadow_view_count, 1);   // y = view
             });
 
@@ -692,10 +669,10 @@ namespace GLT::renderer::vk_rasterizer {
 
                 ctx.begin_rendering();
 
-                ctx.cmd.bindVertexBuffers(0, { m_vertex_buffer.buffer }, { 0 });
-                ctx.cmd.bindIndexBuffer(m_index_buffer.buffer, 0, vk::IndexType::eUint32);
+                ctx.cmd.bindVertexBuffers(0, { m_shared->get_vertex_buffer() }, { 0 });
+                ctx.cmd.bindIndexBuffer(m_shared->get_index_buffer(), 0, vk::IndexType::eUint32);
 
-                m_dev->bind_descriptor_buffer({ view_desc_buffer, mat_desc_buffer }, ctx.cmd);
+                m_plugin.get_dev()->bind_descriptor_buffer({ view_desc_buffer, mat_desc_buffer }, ctx.cmd);
 
                 for (const auto& tile : m_local_shadow_tiles) {
 
@@ -704,19 +681,19 @@ namespace GLT::renderer::vk_rasterizer {
                     ctx.cmd.setScissor(0, vk::Rect2D({ static_cast<i32>(tile.x), static_cast<i32>(tile.y) }, { tile.size, tile.size }));
 
                     // set 0 = per-view shadow camera UBO
-                    m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 0, /*bufferIndex=*/0,
+                    m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 0, /*bufferIndex=*/0,
                         view_desc_buffer.get_offset_to_set(tile.view), ctx.cmd, vk::PipelineBindPoint::eGraphics);
 
                     for (u32 mat_slot : m_scene_materials) {
 
-                        const material_slot& entry = m_material_slots[mat_slot];
+                        const material_slot& entry = m_shared->get_material(mat_slot);
                         if (!entry.alive || !entry.pipeline)
                             continue;
 
                         ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
 
                         // set 1 = material descriptor, per-material offset
-                        m_dev->bind_descriptor_set(m_mesh_pipeline_layout, 1, /*bufferIndex=*/1,
+                        m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 1, /*bufferIndex=*/1,
                             mat_desc_buffer.get_offset_to_set(mat_slot), ctx.cmd, vk::PipelineBindPoint::eGraphics);
 
                         // per (view, material) command bucket
@@ -726,15 +703,13 @@ namespace GLT::renderer::vk_rasterizer {
 
                         ctx.cmd.drawIndexedIndirectCount(
                             commands, cmd_off,
-                            counts,   cnt_off,
+                            counts, cnt_off,
                             MAX_COMMANDS_PER_MATERIAL,
                             sizeof(vk::DrawIndexedIndirectCommand));
-                        m_frame_draw_calls++;
                     }
                 }
 
                 ctx.end_rendering();
-                m_frame_render_passes++;
             });
     }
 

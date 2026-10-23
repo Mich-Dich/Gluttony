@@ -7,12 +7,13 @@
 #include <glm/glm.hpp>
 #include <glm/vec4.hpp>
 
+#include "plugin_system/plugin_manager.h"
 #include "plugin_system/i_plugin.h"
 #include "render/image.h"
 #include "render/render_mode.h"
 #include "render/i_shader_compiler.h"
+#include "render/i_scene_renderer.h"
 #include "debug/profiler.h"
-#include "plugin_system/plugin_manager.h"
 #include "asset/mesh.h"
 #include "asset/material.h"
 #include "world/camera_snapshot.h" 
@@ -42,11 +43,11 @@ namespace GLT::render {
     // Renderer capability flags (optional, can be used for feature queries)
     enum class renderer_feature : u8 {
 
-        none                = 0,
-        compute_shaders     = BIT(0),
-        tessellation        = BIT(1),
-        ray_tracing         = BIT(2),
-        bindless_resources  = BIT(3),
+        none                                    = 0,
+        compute_shaders                         = BIT(0),
+        tessellation                            = BIT(1),
+        ray_tracing                             = BIT(2),
+        bindless_resources                      = BIT(3),
     };
 
 
@@ -62,12 +63,12 @@ namespace GLT::render {
     // driven by the scene's directional light
     struct sun_settings {
 
-        glm::vec3   direction = { 0.5f, 1.0f, 0.3f };       // pointing TOWARD the sun
-        glm::vec3   color = { 1.0f, 0.95f, 0.85f };         // linear
-        f32         intensity = 3.0f;
-        f32         angular_radius = 0.035f;                // radians
-        u32         samples = 4u;                           // shadow rays per hit
-        f32         shadow_ray_tmax = 10000.0f;
+        glm::vec3                               direction = { 0.5f, 1.0f, 0.3f };       // pointing TOWARD the sun
+        glm::vec3                               color = { 1.0f, 0.95f, 0.85f };         // linear
+        f32                                     intensity = 3.0f;
+        f32                                     angular_radius = 0.035f;                // radians
+        u32                                     samples = 4u;                           // shadow rays per hit
+        f32                                     shadow_ray_tmax = 10000.0f;
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -95,15 +96,12 @@ namespace GLT::render {
 
     // Core renderer plugin interface.
     //
-    // This interface abstracts the low‑level graphics device, swapchain, and
-    // frame lifecycle. Concrete rendering backends (e.g., Direct3D 12, Metal)
-    // implement this interface so that the engine core can drive rendering
-    // without depending on a specific graphics API.
+    // This interface abstracts the low‑level graphics device, swapchain, and frame lifecycle. Concrete rendering backends
+    // (e.g., Direct3D 12, Metal) implement this interface so that the engine core can drive rendering without depending on
+    // a specific graphics API
     //
-    // The renderer typically depends on a window plugin to obtain the native
-    // window handle and to handle resizing. It can retrieve the window plugin
-    // via plugin_manager::get_plugin<platform::i_window_plugin>
-    // (interface::window) during create().
+    // The renderer typically depends on a window plugin to obtain the native window handle and to handle resizing
+    // It can retrieve the window plugin via plugin_manager::get_plugin<platform::i_window_plugin> (interface::window) during create()
     //
     // Typical lifecycle:
     //   1. create()
@@ -120,11 +118,9 @@ namespace GLT::render {
 
         // @brief Creates and initialises all renderer resources.
         //
-        // This is called after the plugin has been loaded and the window is
-        // ready. The implementation should:
+        // This is called after the plugin has been loaded and the window is ready. The implementation should:
         // - Retrieve the window plugin and obtain the native surface/window handle.
-        // - Create the graphics device, swapchain, and associated synchronisation
-        //   objects.
+        // - Create the graphics device, swapchain, and associated synchronisation objects
         // - Create render targets, shader/pipeline state, and other GPU resources.
         // - Initialise any debug/UI overlays if used.
         // - Subscribe to window resize events if necessary.
@@ -137,207 +133,57 @@ namespace GLT::render {
 
         // @brief Destroys all renderer resources and shuts down the device.
         //
-        // The implementation must wait for all pending GPU work to finish before
-        // releasing resources. It should unsubscribe from any events, destroy the
-        // swapchain, render targets, pipelines, buffers, and any UI/overlay
-        // resources, then release the native device and surface handles.
+        // The implementation must wait for all pending GPU work to finish before releasing resources. It should unsubscribe
+        // from any events, destroy the swapchain, render targets, pipelines, buffers, and any UI/overlay resources, then release
+        // the native device and surface handles
         virtual void destroy() = 0;
-
-        // --- frame control ---------------------------------------------------------
-
-        // @brief Begins recording a new frame.
-        //
-        // Acquires the next available swapchain image and prepares command buffers
-        // for this frame. Typical responsibilities:
-        // - Wait for the previous frame using the current frame index to finish.
-        // - Acquire the next presentable image. If the swapchain is out of date,
-        //   recreate it and return early.
-        // - Begin the frame command buffer.
-        // - Update per-frame uniform/constant data (e.g., camera matrices).
-        // - Bind required resources and render targets.
-        // - Clear the render target with the configured clear colour.
-        // - Issue scene rendering commands into the offscreen render target.
-        // - Prepare UI/overlay rendering for this frame.
-        //
-        // After this call, the frame is ready to be finished and presented by
-        // draw_frame().
-        virtual void begin_frame() = 0;
-
-
-        // @brief Finishes and presents the current frame.
-        //
-        // Completes UI/overlay rendering, ends the frame command buffer, submits
-        // all recorded commands to the graphics queue, and presents the swapchain
-        // image. It should handle swapchain out-of-date conditions by recreating
-        // the swapchain if necessary, then advance to the next frame index.
-        virtual void draw_frame() = 0;
-
-
-        // @brief Blocks until all pending GPU work has completed.
-        //
-        // This is useful when the application needs to safely destroy GPU
-        // resources, read back data, or perform timing measurements without
-        // interfering with in-flight work.
-        virtual void wait_for_gpu() = 0;
-
-        // --- swapchain & configuration ---------------------------------------------
-
-        // @brief Returns the current size of the swapchain images in pixels.
-        //
-        // The returned size corresponds to the presentation surface size and may
-        // differ from the internal render size set by set_render_size().
-        //
-        // @return Swapchain image dimensions in pixels.
-        [[nodiscard]] virtual glm::ivec2 get_swapchain_size() const = 0;
-
-
-        // @brief Enables or disables vertical synchronisation.
-        //
-        // When enabled, presentation waits for the display refresh to avoid
-        // tearing. When disabled, the implementation may use an immediate or
-        // mailbox presentation mode. This may require recreating the swapchain
-        // for the change to take effect.
-        //
-        // @param enabled True to enable vsync, false to disable.
-        virtual void set_vsync(const bool enabled) = 0;
-
-
-        // @brief Returns whether vertical synchronisation is currently enabled.
-        //
-        // @return True if vsync is enabled, false otherwise.
-        [[nodiscard]] virtual bool get_vsync() const = 0;
-
-
-        // @brief Sets the colour used to clear the render target at the start of
-        // each frame.
-        //
-        // @param color RGBA colour with components in [0,1].
-        virtual void set_clear_color(const glm::vec4& color) = 0;
-        
-        
-        // @brief Sets the internal offscreen render resolution.
-        //
-        // This is the resolution at which the scene is rendered before it is
-        // blitted or presented to the swapchain. It may be independent of the
-        // swapchain size, allowing for render scaling.
-        //
-        // @param size Internal render target dimensions in pixels.
-        virtual void set_render_size(const glm::ivec2& size) = 0;
 
         // --- feature queries -------------------------------------------------------
 
-        // @brief Returns a bitmask of renderer capabilities supported by this
-        // backend.
+        virtual void begin_frame(const u64 frame_number) = 0;
+
+
+        [[nodiscard]] virtual std::expected<std::unique_ptr<i_scene_renderer>, scene_renderer_error> create_scene_renderer(
+            const GLT::render::scene_renderer_desc& desc) = 0;
+
+
+        // @brief Returns a bitmask of renderer capabilities supported by this backend
         //
-        // The engine can query this value to determine which optional features are
-        // available (e.g., ray tracing, mesh shaders, bindless resources).
+        // The engine can query this value to determine which optional features are available (e.g., ray tracing, mesh shaders,
+        // bindless resources)
         //
         // @return Bitmask of supported renderer features.
         [[nodiscard]] virtual renderer_feature get_supported_features() const = 0;
 
 
-        // @brief Returns the graphics API backend implemented by this renderer.
+        // @brief Returns the graphics API backend implemented by this renderer
         //
-        // This allows the engine to identify the concrete backend without
-        // exposing API-specific types.
+        // This allows the engine to identify the concrete backend without exposing API-specific types
         //
         // @return The backend API identifier.
         [[nodiscard]] virtual backend_api get_backend_api() const = 0;
 
         // --- native access ---------------------------------------------------------
 
-        // @brief Returns a texture handle for the latest rendered image.
+        // @brief Returns an opaque handle to the native graphics device
         //
-        // The returned handle is intended for use with the engine's UI system to
-        // display the rendered frame. The texture remains valid until the next
-        // frame or until the renderer is destroyed, depending on the backend.
-        //
-        // @return Texture identifier for the current output image.
-        [[nodiscard]] virtual void* get_rendered_image() = 0;
-
-
-        [[nodiscard]] virtual glm::uvec2 get_rendered_image_size() = 0;
-
-
-        // @brief Returns an opaque handle to the native graphics device.
-        //
-        // This is intended for advanced interop scenarios where the engine or
-        // plugins need direct access to the graphics API device. The actual type
-        // is backend-specific.
+        // This is intended for advanced interop scenarios where the engine or plugins need direct access to the graphics API device
+        // The actual type is backend-specific
         //
         // @return Opaque pointer to the native device, or nullptr if unavailable.
         [[nodiscard]] virtual void* get_native_device_handle() const = 0;
 
 
-        // @brief Returns an opaque handle to the native graphics context.
+        // @brief Returns an opaque handle to the native graphics context
         //
-        // The context may represent the API instance, command queue, or other
-        // backend-specific object used to submit work. The exact type depends on
-        // the backend implementation.
+        // The context may represent the API instance, command queue, or other backend-specific object used to submit work
+        // The exact type depends on the backend implementation
         //
         // @return Opaque pointer to the native context, or nullptr if unavailable.
         [[nodiscard]] virtual void* get_native_context_handle() const = 0;
 
 
         [[nodiscard]] virtual debug::render_stats get_render_stats() const = 0;
-
-        // uploaded mesh data ------------------------------------------------------------------------------------------
-
-        // load a mesh asset by pyth (must be a content relative path!)
-        // the renderer remembers the uploaded meshes and skips if mesh already loaded
-        virtual bool load_mesh(const std::filesystem::path& content_relative_path) = 0;
-
-
-        // the renderer remembers the uploaded meshes and skips if mesh already loaded
-        virtual bool load_mesh(const GLT::asset::handle handle) = 0;
-
-
-        // the renderer remembers the uploaded meshes and skips if mesh not loaded
-        virtual void unload_mesh(GLT::asset::handle handle) = 0;
-
-        // --- scene submission (called from the world layer during update) --------
-
-        // Replace the renderer's view of the scene. The renderer copies the span. Thread-safe: may be called from a worker thread.
-        // Meshes referenced by the submitted instances are automatically retained; meshes that are no longer referenced
-        // (and not externally retained via retain_mesh) are queued for unload at the next safe point.
-        virtual void submit_scene(std::span<const GLT::asset::mesh::instance> instances) = 0;
-
-
-        // Copy the world's lights for the upcoming frame. Called by the world layer during update; the renderer copies
-        // the span. Semantically parallel to [submit_scene]: the renderer's `m_lights` is fully replaced.
-        //
-        // Threading: same contract as submit_scene — may be called from the update thread. This is a *handoff*, not a
-        // callback into the world.
-        virtual void submit_lights(std::span<const GLT::world::light_snapshot> lights) = 0;
-
-
-        // Explicitly keep a mesh resident regardless of the submitted scene. Use for global assets (skybox, debug gizmos). Idempotent
-        virtual void retain_mesh(GLT::asset::handle mesh) = 0;
-
-
-        // Drop a retain_mesh() reference. The mesh is unloaded once it's neither retained nor referenced by the current scene.
-        virtual void release_mesh(GLT::asset::handle mesh) = 0;
-
-
-        // Push the active camera for the upcoming frame. Called by the world layer during update; the renderer copies the snapshot
-        // and uses it in begin_frame.
-        virtual void set_active_camera(const GLT::world::camera_snapshot& camera) = 0;
-
-        // preview -----------------------------------------------------------------------------------------------------
-
-        // DISABLED DURING MATERIAL REFACTOR
-        // TODO: reenable after refactor is done
-
-        // // Queues a material preview render for the next frame. The sphere is at world origin, radius 1; the camera orbits at
-        // // radius |camera_pos| looking at origin. [params] is what gets rendered - pass an edit buffer to see unsaved changes
-        // // [material] supplies the texture handles; pass INVALID_HANDLE for a texture-less preview
-        // //
-        // // Returns an ImGui-compatible texture handle (ImTextureID) for the internal 256x256 preview image. 
-        // // The handle is stable across calls and valid until the renderer is destroyed. The first call returns a blank image; 
-        // // subsequent calls show the previous frame's render.
-        // [[nodiscard]] virtual void* render_material_preview(GLT::asset::handle material, const GLT::asset::material::material_params& params,
-        //     std::span<const GLT::asset::handle> textures, const glm::vec3& camera_pos) = 0;
-
 
         // render output modes -----------------------------------------------------------------------------------------
 
@@ -349,26 +195,7 @@ namespace GLT::render {
         // @return Span over the renderer's static mode table. Valid for the plugin's lifetime
         [[nodiscard]] virtual std::span<const render_mode_info> supported_modes() const = 0;
 
-
-        // @brief Activates a render output mode
-        //
-        // No-op if [mode_id] isn't in supported_modes(). The renderer is expected to pass the id through to its shader(s)
-        // n the next frame
-        //
-        // @param mode_id  Id from supported_modes()
-        virtual void set_render_mode(u32 mode_id) = 0;
-
-
-        // @brief Returns the currently active render mode
-        [[nodiscard]] virtual u32 get_render_mode() const = 0;
-
         // settings ----------------------------------------------------------------------------------------------------
-
-        virtual void set_sun_settings(const sun_settings& settings) = 0;
-
-
-        virtual const sun_settings& get_sun_settings() const = 0;
-
 
         // @brief Returns the reflection descriptor of the renderer's tunable settings
         //
@@ -390,14 +217,6 @@ namespace GLT::render {
         // The renderer uses this to invalidate any state derived from the changed values (typically: reset temporal
         // accumulation, re-upload constants, invalidate caches)
         virtual void on_settings_changed() = 0;
-
-
-        // @brief Tells the renderer whether any system currently needs the world image
-        // While false, the renderer may skip all world/scene passes and only present UI
-        virtual void set_world_render_enabled(bool enabled) = 0;
-
-
-        [[nodiscard]] virtual bool is_world_render_enabled() const = 0;
 
     };
 

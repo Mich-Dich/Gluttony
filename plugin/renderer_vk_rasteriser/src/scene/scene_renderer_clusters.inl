@@ -1,8 +1,6 @@
 
 #pragma once
 
-#include <glm/glm.hpp>
-
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -37,20 +35,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
-    // Grid + index list + global counter
-    //
-    // Layout:
-    //   light_grid[N]        = { offset, count }  uvec2   -> start into the index list + how many entries
-    //   light_index_list[M]  = u32                -> packed light indices, global atomic cursor
-    //   light_counter[1]     = u32                -> next free slot in the index list
-    //
-    // Semantics:
-    //   * The clear pass zeroes the counter, and the grid. It does NOT zero the index list — the culling
-    //     shader only reads list entries that it wrote this frame, so stale tail entries are never observed
-    //   * Every cluster must have a thread that writes its grid slot (even { 0, 0 } for empty clusters),
-    //     otherwise the frame reads a leftover entry from the previous clear
-
-    void renderer::create_cluster_resources() {
+    void scene_renderer::create_cluster_resources() {
 
         const u32 cluster_count = m_cluster_params.cluster_count;
         if (cluster_count == 0)
@@ -60,10 +45,8 @@ namespace GLT::renderer::vk_rasterizer {
             static_cast<vk::DeviceSize>(cluster_count) * sizeof(glm::uvec2);
 
         // Ideal size if every cluster saturated its per-cluster ceiling, capped at a hard upper bound
-        const vk::DeviceSize ideal_index_bytes =
-            static_cast<vk::DeviceSize>(cluster_count) * MAX_LIGHTS_PER_CLUSTER * sizeof(u32);
-        const vk::DeviceSize index_bytes = std::min<vk::DeviceSize>(
-            ideal_index_bytes,
+        const vk::DeviceSize ideal_index_bytes = static_cast<vk::DeviceSize>(cluster_count) * MAX_LIGHTS_PER_CLUSTER * sizeof(u32);
+        const vk::DeviceSize index_bytes = std::min<vk::DeviceSize>(ideal_index_bytes,
             static_cast<vk::DeviceSize>(MAX_CLUSTER_INDEX_ENTRIES) * sizeof(u32));
 
         for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
@@ -98,7 +81,7 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    void renderer::destroy_cluster_resources() {
+    void scene_renderer::destroy_cluster_resources() {
 
         // Handles are owned by the render graph; nothing to release here.
         // Just forget them so a later frame doesn't try to bind dangling slots.
@@ -109,10 +92,10 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    void renderer::update_cluster_dimensions() {
+    void scene_renderer::update_cluster_dimensions() {
 
-        const u32 grid_x = (static_cast<u32>(m_render_size.x) + CLUSTER_TILE_SIZE_X - 1) / CLUSTER_TILE_SIZE_X;
-        const u32 grid_y = (static_cast<u32>(m_render_size.y) + CLUSTER_TILE_SIZE_Y - 1) / CLUSTER_TILE_SIZE_Y;
+        const u32 grid_x = (m_extent.x + CLUSTER_TILE_SIZE_X - 1) / CLUSTER_TILE_SIZE_X;
+        const u32 grid_y = (m_extent.y + CLUSTER_TILE_SIZE_Y - 1) / CLUSTER_TILE_SIZE_Y;
         const u32 grid_z = CLUSTER_DEPTH_SLICES;
         const u32 count = grid_x * grid_y * grid_z;
 
@@ -127,7 +110,7 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    void renderer::add_clear_light_grid_pass() {
+    void scene_renderer::add_clear_light_grid_pass() {
 
         // Clears the grid (small) and the global counter. The index list is not cleared - culling only reads offsets it wrote this frame
         m_graph->add_pass("clear_light_grid",

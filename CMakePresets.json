@@ -49,21 +49,21 @@
       "name": "debug",
       "configurePreset": "debug",
       "environment": {
-        "CMAKE_BUILD_PARALLEL_LEVEL": "12"
+        "CMAKE_BUILD_PARALLEL_LEVEL": "32"
       }
     },
     {
       "name": "release",
       "configurePreset": "release",
       "environment": {
-        "CMAKE_BUILD_PARALLEL_LEVEL": "12"
+        "CMAKE_BUILD_PARALLEL_LEVEL": "32"
       }
     },
     {
       "name": "release_with_debug_info",
       "configurePreset": "release_with_debug_info",
       "environment": {
-        "CMAKE_BUILD_PARALLEL_LEVEL": "12"
+        "CMAKE_BUILD_PARALLEL_LEVEL": "32"
       }
     }
   ]

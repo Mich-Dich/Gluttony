@@ -19,6 +19,7 @@
 
 namespace GLT::render {
     class i_renderer_plugin;
+    class i_scene_renderer;
     class image;
 }
 
@@ -71,7 +72,7 @@ namespace GLT::editor {
 
         // Renders the floating mode selector in the top-left of the viewport image. Returns true while its combo popup is open,
         // so the caller can suppress viewport input
-        bool render_mode_selector_overlay();
+        bool render_mode_selector_overlay(const ImVec2& image_min);
 
         void render_details();
 
@@ -112,6 +113,7 @@ namespace GLT::editor {
         void update_selection_debug_draw();
 
 
+        GLT::render::i_scene_renderer*                  m_scene = nullptr;    // primary scene renderer, owned by application
         bool                                            m_viewport_image_drawn = false;
         std::vector<content_browser_window>             m_content_browsers{};
         GLT::ref<GLT::render::i_renderer_plugin>        m_renderer{};

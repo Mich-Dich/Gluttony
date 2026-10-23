@@ -2,7 +2,7 @@
 #pragma once
 
 #include "plugin_system/i_plugin.h"
-#include "event/event.h"               // core event base class
+#include "event/event.h"
 #include <glm/vec2.hpp>
 
 #include "plugin_system/plugin_manager.h"
@@ -95,11 +95,23 @@ namespace GLT::platform {
         const serializer::option option);
 
 
-    // @brief Fetches the process-wide window plugin
-    // @return Strong reference to the window plugin, or an empty ref if it isn't loaded
-    FORCE_INLINE_R ref<GLT::platform::i_window_plugin> get_window_ref() {
+    namespace window {
 
-        return GLT::plugin_manager::get_plugin_ref<platform::i_window_plugin>(plugin_manager::interface::window);
+        // @brief Hot-path accessor: cached raw pointer, thread-safe, no refcount traffic. Cache the result and compare
+        // `plugin_manager::get_generation()` for invalidation
+        // @return nullptr if the audio plugin is not loaded
+        FORCE_INLINE_R GLT::platform::i_window_plugin* get_ptr() noexcept {
+
+            return GLT::plugin_manager::get_plugin_raw<GLT::platform::i_window_plugin>(GLT::plugin_manager::interface::window);
+        }
+
+
+        // @brief Owning reference for cases where you need to keep the plugin alive across unload phases
+        FORCE_INLINE_R ref<GLT::platform::i_window_plugin> get_ref() {
+
+            return GLT::plugin_manager::get_plugin_ref_unsafe<GLT::platform::i_window_plugin>(GLT::plugin_manager::interface::window);
+        }
+
     }
 
     // TEMPLATE DECLARATION ============================================================================================

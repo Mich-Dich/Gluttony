@@ -2,10 +2,12 @@
 #include "util/pch.h"
 #include "world_layer.h"
 
+#include "application.h"
 #include "event/event_bus.h"
 #include "world/i_world.h"
 #include "world/i_world_scene.h"
 #include "render/i_renderer.h"
+#include "render/i_scene_renderer.h"
 #include "asset/i_asset_registry.h"
 
 
@@ -55,33 +57,34 @@ namespace GLT::world {
         if (!m_world)
             return;
 
-        auto* scene = m_world->as<GLT::world::i_world_scene>();
+        auto* world_scene = m_world->as<GLT::world::i_world_scene>();
 
         // Sample the camera before the world tick so the streaming pass (which
         // runs inside m_world->update) sees this frame's anchor.
         GLT::world::camera_snapshot cam{};
-        const bool has_camera = scene && scene->get_camera_view(cam);
+        const bool has_camera = world_scene && world_scene->get_camera_view(cam);
 
         if (has_camera)
             m_world->set_streaming_anchor(cam.position);
 
         m_world->update(delta_time);
 
-        if (!scene)
+        if (!world_scene)
             return;
 
         auto renderer = GLT::render::renderer::get_ref();
         if (!renderer)
             return;
 
-        scene->gather_scene(m_scene_buffer);
-        scene->gather_lights(m_light_buffer);
+        world_scene->gather_scene(m_scene_buffer);
+        world_scene->gather_lights(m_light_buffer);
 
-        renderer->submit_scene(m_scene_buffer);
-        renderer->submit_lights(m_light_buffer);
+        auto* main_world_scene_renderer = GLT::application::get().get_main_world_scene_renderer();
+        main_world_scene_renderer->submit_scene(m_scene_buffer);
+        main_world_scene_renderer->submit_lights(m_light_buffer);
 
         if (has_camera)
-            renderer->set_active_camera(cam);
+            main_world_scene_renderer->set_active_camera(cam);
     }
 
 

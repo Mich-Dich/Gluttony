@@ -31,7 +31,7 @@ namespace GLT::audio {
         // @brief Hot-path accessor: cached raw pointer, thread-safe, no refcount traffic. Cache the result and compare
         // `plugin_manager::get_generation()` for invalidation
         // @return nullptr if the audio plugin is not loaded
-        [[nodiscard]] FORCE_INLINE i_audio_plugin* get_ptr() noexcept {
+        FORCE_INLINE_R i_audio_plugin* get_ptr() noexcept {
 
             return GLT::plugin_manager::get_plugin_raw<GLT::audio::i_audio_plugin>(GLT::plugin_manager::interface::audio);
         }

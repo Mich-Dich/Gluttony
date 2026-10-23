@@ -2,8 +2,7 @@
 #pragma once
 
 #include "util/pch.h"
-#include "plugin_system/i_plugin.h"
-#include "render/i_renderer.h"
+#include "asset/type.h"
 #include "world/entity.h"
 
 

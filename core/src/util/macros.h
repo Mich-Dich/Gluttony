@@ -169,6 +169,8 @@ namespace GLT {
     #define DEFAULT_GETTER(type, name)				        FORCE_INLINE_R type get_##name() { return m_##name; }
     #define DEFAULT_GETTER_P(type, name)				    FORCE_INLINE_R type* get_##name() { return m_##name.get(); }
     #define DEFAULT_GETTER_REF(type, name)			        FORCE_INLINE_R type& get_##name##_ref() { return m_##name; }
+    #define DEFAULT_GETTER_REF_C(type, name)			    FORCE_INLINE_R type& get_##name##_ref() const { return m_##name; }
+    #define DEFAULT_GETTER_REF_CC(type, name)			    FORCE_INLINE_R const type& get_##name##_ref() const { return m_##name; }
     #define DEFAULT_GETTER_C(type, name)			        FORCE_INLINE_R type get_##name() const { return m_##name; }
     #define DEFAULT_GETTER_CC(type, name)			        FORCE_INLINE_R const type& get_##name() const { return m_##name; }
     #define DEFAULT_GETTER_POINTER(type, name)		        FORCE_INLINE_R type* get_##name##_pointer() { return &m_##name; }
@@ -183,6 +185,7 @@ namespace GLT {
     #define GETTER(type, func_name, var_name)		        FORCE_INLINE_R type get_##func_name() { return var_name; }
     #define GETTER_C(type, func_name, var_name)		        FORCE_INLINE_R type get_##func_name() const { return var_name; }
     #define GETTER_CC(type, func_name, var_name)		    FORCE_INLINE_R const type& get_##func_name() const { return var_name; }
+    #define GETTER_REF(type, func_name, var_name)			FORCE_INLINE_R type& get_##func_name##_ref() { return var_name; }
 
     // setters ---------------------------------------------------------------------------------------------------------
 

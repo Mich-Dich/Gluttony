@@ -87,11 +87,10 @@ target_compile_definitions(imgui                                        PRIVATE
 # =================================================================================================
 # Build resource limits (RAM-friendly build)
 # =================================================================================================
-# Ninja job pools cap concurrent link jobs independently of compile jobs.
-# Linking is by far the biggest RAM spike (Vulkan + ImGui + SoLoud + Slang).
-#   link_pool:   1 for ~8 GB RAM, 2 for 16 GB, 3 for 32 GB+
-# Compile jobs are already capped by CMAKE_BUILD_PARALLEL_LEVEL in the build preset.
-set_property(GLOBAL PROPERTY JOB_POOLS link_pool=12)
+# Ninja job pools cap concurrent link jobs independently of compile jobs
+# Linking is by far the biggest RAM spike (Vulkan + ImGui + SoLoud + Slang)
+# Compile jobs are already capped by CMAKE_BUILD_PARALLEL_LEVEL in the build preset
+set_property(GLOBAL PROPERTY JOB_POOLS link_pool=24)
 
 
 # ====== Core and plugins =========================================================================

@@ -4,6 +4,7 @@
 #include "event/event_bus.h"
 #include "event/application_event.h"
 #include "render/i_renderer.h"
+#include "render/i_scene_renderer.h"
 #include "plugin_system/plugin_manager.h"
 #include "platform/i_window.h"
 #include "plugin_system/i_game_loop_plugin.h"
@@ -49,21 +50,54 @@ namespace GLT {
 
         m_layer_stack.push_layer<GLT::world::world_layer>();
 
-        auto* window = GLT::plugin_manager::get_plugin_raw<GLT::platform::i_window_plugin>(GLT::plugin_manager::interface::window);
-        ASSERT(window, "", "Failed to load window plugin")
+        auto* p_window = GLT::platform::window::get_ptr();
+        ASSERT(p_window, "", "Failed to load window plugin")
         platform::window_attributes attributes;
         platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::load);
-        window->create(attributes);
+        p_window->create(attributes);
 
-        auto* audio = GLT::plugin_manager::get_plugin_raw<GLT::audio::i_audio_plugin>(GLT::plugin_manager::interface::audio);
+        auto* p_renderer = GLT::render::renderer::get_ptr();
+        ASSERT(p_renderer, "", "Failed to load render plugin")
+        p_renderer->create();
+
+        auto* audio = GLT::audio::manager::get_ptr();
         ASSERT(audio, "", "Failed to load audio plugin")
         audio->create();
 
-        auto* renderer = GLT::plugin_manager::get_plugin_raw<GLT::render::i_renderer_plugin>(GLT::plugin_manager::interface::renderer);
-        ASSERT(renderer, "", "Failed to load render plugin")
-        renderer->create();
+        // surface scene renderer: ALWAYS created, owns ImGui + presentation
+        {
+            GLT::render::surface_target_desc surface{
+                .window = GLT::platform::window::get_ref(),
+            };
+            GLT::render::scene_renderer_desc desc{
+                .target = surface,
+                .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),
+            };
+            auto primary = p_renderer->create_scene_renderer(desc);
+            if (primary)
+                m_scene_renderers.push_back(std::move(*primary));
+            else
+                LOG(error, "Failed to create surface scene renderer: {}", primary.error().message)
+        }
 
         plugin_manager::enter_phase(plugin_manager::phase::application_ready);
+        
+        // offscreen scene renderer: only when the editor exists
+        if (GLT::plugin_manager::get_plugin_raw<plugin_manager::i_plugin>(plugin_manager::interface::editor_core) != nullptr) {
+
+            m_scene_renderers.back()->set_active(false);    // Use surface scene renderer only for ImGui
+
+            GLT::render::offscreen_target_desc offscreen{};
+            GLT::render::scene_renderer_desc desc{
+                .target = offscreen,
+                .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),
+            };
+            auto viewport = p_renderer->create_scene_renderer(desc);
+            if (viewport)
+                m_scene_renderers.push_back(std::move(*viewport));
+            else
+                LOG(error, "Failed to create offscreen scene renderer: {}", viewport.error().message)
+        }
 
         LOG_INIT
     }
@@ -73,20 +107,24 @@ namespace GLT {
 
         plugin_manager::enter_phase(plugin_manager::phase::pre_application_shutdown);
 
-        auto* renderer = GLT::plugin_manager::get_plugin_raw<GLT::render::i_renderer_plugin>(GLT::plugin_manager::interface::renderer);
-        auto* audio = GLT::plugin_manager::get_plugin_raw<GLT::audio::i_audio_plugin>(GLT::plugin_manager::interface::audio);
-        auto* window = GLT::plugin_manager::get_plugin_raw<GLT::platform::i_window_plugin>(GLT::plugin_manager::interface::window);
+        auto* p_renderer = GLT::render::renderer::get_ptr();
+        auto* p_audio = GLT::audio::manager::get_ptr();
+        auto* p_window = GLT::platform::window::get_ptr();
 
-        if (renderer)
-            renderer->destroy();
+        for (auto it = m_scene_renderers.rbegin(); it != m_scene_renderers.rend(); it++)
+            it->reset();
+        m_scene_renderers.clear();
 
-        if (audio)
-            audio->destroy();
+        if (p_renderer)
+            p_renderer->destroy();
 
-        if (window) {
-            auto attributes = window->get_window_attributes();
+        if (p_audio)
+            p_audio->destroy();
+
+        if (p_window) {
+            auto attributes = p_window->get_window_attributes();
             platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::save);
-            window->destroy();
+            p_window->destroy();
         }
 
         m_project.serialize_projects_data(GLT::serializer::option::save);
@@ -154,6 +192,21 @@ namespace GLT {
 
         const u64 time = (1 / fps) * 1000000;
         m_fps_controller.set_target_interval_duration(std::chrono::microseconds(time));
+    }
+
+
+    GLT::render::i_scene_renderer* application::primary_scene_renderer() noexcept {
+
+        return m_scene_renderers.empty() ? nullptr : m_scene_renderers.front().get();
+    }
+
+
+    GLT::render::i_scene_renderer* application::get_main_world_scene_renderer() noexcept {
+
+        for (auto& scene_renderer : m_scene_renderers)
+            if (scene_renderer && scene_renderer->is_offscreen())
+                return scene_renderer.get();
+        return nullptr;
     }
 
     // CLASS PROTECTED =================================================================================================

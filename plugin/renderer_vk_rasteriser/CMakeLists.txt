@@ -21,6 +21,14 @@ set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES" "${PLUGIN_SOU
 compile_plugin(SHARED                                                   ${PLUGIN_NAME}          glm imgui)
 compile_plugin(STATIC                                                   ${PLUGIN_NAME}_static   glm imgui)
 target_compile_definitions(${PLUGIN_NAME}                               PRIVATE USE_IMGUI)
+target_compile_definitions(${PLUGIN_NAME}                               PRIVATE
+    IMGUI_DEFINE_MATH_OPERATORS
+    USE_IMGUI
+)
+target_compile_definitions(${PLUGIN_NAME}_static                        PRIVATE
+    IMGUI_DEFINE_MATH_OPERATORS
+    USE_IMGUI
+)
 
 find_package(glslang REQUIRED)
 target_link_libraries(${PLUGIN_NAME}                                    PRIVATE glslang)
@@ -171,6 +179,28 @@ foreach(_slang_target IN ITEMS ${PLUGIN_NAME} ${PLUGIN_NAME}_static)
     )
 endforeach()
 
+
+
+# ------------- PCH header ------------------------------------------------------------------------
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/util/util_pch.h")
+    target_precompile_headers(${PLUGIN_NAME}                            PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/util/util_pch.h"
+    )
+    target_precompile_headers(${PLUGIN_NAME}_static                     PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/util/util_pch.h"
+    )
+    target_compile_options(${PLUGIN_NAME}                               PRIVATE
+        "$<$<CXX_COMPILER_ID:MSVC>:/FI${CMAKE_CURRENT_SOURCE_DIR}/src/util/util_pch.h>"
+        "$<$<CXX_COMPILER_ID:GNU>:-include${CMAKE_CURRENT_SOURCE_DIR}/src/util/util_pch.h>"
+        "$<$<CXX_COMPILER_ID:Clang>:-include${CMAKE_CURRENT_SOURCE_DIR}/src/util/util_pch.h>"
+    )
+    target_compile_options(${PLUGIN_NAME}_static                        PRIVATE
+        "$<$<CXX_COMPILER_ID:MSVC>:/FI${CMAKE_CURRENT_SOURCE_DIR}/src/util/util_pch.h>"
+        "$<$<CXX_COMPILER_ID:GNU>:-include${CMAKE_CURRENT_SOURCE_DIR}/src/util/util_pch.h>"
+        "$<$<CXX_COMPILER_ID:Clang>:-include${CMAKE_CURRENT_SOURCE_DIR}/src/util/util_pch.h>"
+    )
+endif()
 
 
 

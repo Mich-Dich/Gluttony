@@ -1,6 +1,8 @@
-#pragma once
 
-#include <vulkan/vulkan.h>
+#include "util/pch.h"
+#include "util/util_pch.h"
+
+#include "image.h"
 
 #if defined(__GNUC__) || defined(__clang__)
     #pragma GCC diagnostic push
@@ -15,12 +17,9 @@
     #pragma GCC diagnostic pop
 #endif
 
+#include "shared/shared_resource_manager.h"
+#include "plugin/plugin.h"
 
-#include <plugin_system/plugin_manager.h>
-#include <render/i_renderer.h>
-#include <util/io/vfs.h>
-
-#include "util/utils.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -147,21 +146,32 @@ namespace GLT::renderer::vk_rasterizer {
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
-    // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
+    // FUNCTION IMPLEMENTATION =========================================================================================
 
-    image::image() {         
-        
-        allocate_memory(nullptr, glm::uvec3{2, 2, 1}, GLT::render::image_format::RGBA, false);      // super small image buffer
+    // CLASS IMPLEMENTATION ============================================================================================
+
+    // super small image buffer
+    image::image() {
+
+        auto* p_renderer = static_cast<GLT::renderer::vk_rasterizer::renderer*>(GLT::render::renderer::get_ptr());
+        m_shared = p_renderer->get_shared();
+        allocate_memory(nullptr, glm::uvec3{2, 2, 1}, GLT::render::image_format::RGBA, false);
     }
 
 
+    // super small image buffer
     image::image(const glm::uvec3 size) {
         
-        allocate_memory(nullptr, size, GLT::render::image_format::RGBA, false);      // super small image buffer
+        auto* p_renderer = static_cast<GLT::renderer::vk_rasterizer::renderer*>(GLT::render::renderer::get_ptr());
+        m_shared = p_renderer->get_shared();
+        allocate_memory(nullptr, size, GLT::render::image_format::RGBA, false);
     }
 
 
     image::image(const std::filesystem::path& image_path, const bool mipmapped) {
+
+        auto* p_renderer = static_cast<GLT::renderer::vk_rasterizer::renderer*>(GLT::render::renderer::get_ptr());
+        m_shared = p_renderer->get_shared();
 
         std::error_code error{};
         const auto image_exists = GLT::vfs::exists(image_path, error);
@@ -179,13 +189,15 @@ namespace GLT::renderer::vk_rasterizer {
 
     image::image(const void* data, const u32 width, const u32 height, const bool mipmapped) {
 
+        auto* p_renderer = static_cast<GLT::renderer::vk_rasterizer::renderer*>(GLT::render::renderer::get_ptr());
+        m_shared = p_renderer->get_shared();
         allocate_memory(data, glm::uvec3{width, height, 1}, GLT::render::image_format::RGBA, mipmapped);
     }
 
 
 	image::~image()                             { release(); }
 
-    // TEMPLATE CLASS PUBLIC ===========================================================================================
+    // CLASS PUBLIC ====================================================================================================
 
     glm::uvec2 image::get_size()                { return glm::uvec2{m_allocated_image.width, m_allocated_image.height}; }
 
@@ -243,7 +255,7 @@ namespace GLT::renderer::vk_rasterizer {
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
         vr_dev->update_buffer(staging, const_cast<void*>(data), data_size);
 
-        m_renderer->immediate_submit([&](vk::CommandBuffer cmd) {
+        m_shared->immediate_submit([&](vk::CommandBuffer cmd) {
 
             const vk::ImageSubresourceRange base_range = vk::ImageSubresourceRange()
                 .setAspectMask(vk::ImageAspectFlagBits::eColor)
@@ -324,7 +336,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         vr_dev->update_buffer(staging, const_cast<void*>(data), data_size);
 
-        m_renderer->immediate_submit([&](vk::CommandBuffer cmd) {
+        m_shared->immediate_submit([&](vk::CommandBuffer cmd) {
 
             const vk::ImageSubresourceRange level_range = vk::ImageSubresourceRange()
                 .setAspectMask(vk::ImageAspectFlagBits::eColor)
@@ -394,9 +406,9 @@ namespace GLT::renderer::vk_rasterizer {
         vr_dev->destroy_buffer(staging);
     }
 
-    // TEMPLATE CLASS PROTECTED ========================================================================================
+    // CLASS PROTECTED =================================================================================================
 
-    // TEMPLATE CLASS PRIVATE ==========================================================================================
+    // CLASS PRIVATE ===================================================================================================
 
     void image::allocate_memory(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped) {
 
@@ -464,7 +476,7 @@ namespace GLT::renderer::vk_rasterizer {
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
             vr_dev->update_buffer(staging, const_cast<void*>(data), data_size);
-            m_renderer->immediate_submit([&](vk::CommandBuffer cmd) {
+            m_shared->immediate_submit([&](vk::CommandBuffer cmd) {
 
                 const vk::ImageSubresourceRange base_range = vk::ImageSubresourceRange()
                     .setAspectMask(vk::ImageAspectFlagBits::eColor)

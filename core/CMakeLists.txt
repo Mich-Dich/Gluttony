@@ -63,13 +63,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/util/pch.h")
 endif()
 
 target_compile_options(${CORE_NAME}                                     PRIVATE
-    # C++-only: templates don't exist in C, and C sources in this target would warn/error.
     $<$<COMPILE_LANGUAGE:CXX>:-std=c++26>
     $<$<COMPILE_LANGUAGE:CXX>:-freflection>
-    # Cap template instantiation depth to keep per-TU RAM bounded.
     $<$<COMPILE_LANGUAGE:CXX>:-ftemplate-depth=512>
-    # Debug only: -g1 keeps file+line info (breakpoints work) but drops locals/macros.
-    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g1>
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g3>
     $<$<COMPILE_LANGUAGE:CXX>:-fdiagnostics-color=always>
 )
 

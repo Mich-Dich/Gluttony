@@ -32,11 +32,16 @@ namespace GLT::asset {
 
     namespace registry {
 
-        // @brief Fetches the process-wide asset registry plugin
-        // @return Strong reference to the registry, or an empty ref if it isn't loaded
-        FORCE_INLINE_R ref<GLT::asset::i_asset_registry_plugin> get_ref() {
+        FORCE_INLINE_R i_asset_registry_plugin* get_ptr() noexcept {
 
-            return GLT::plugin_manager::get_plugin_ref<GLT::asset::i_asset_registry_plugin>(plugin_manager::interface::asset_registry);
+            return GLT::plugin_manager::get_plugin_raw<GLT::asset::i_asset_registry_plugin>(plugin_manager::interface::asset_registry);
+        }
+
+
+        // @brief Owning reference for cases where you need to keep the plugin alive across unload phases
+        FORCE_INLINE_R ref<i_asset_registry_plugin> get_ref() {
+
+            return GLT::plugin_manager::get_plugin_ref_unsafe<GLT::asset::i_asset_registry_plugin>(plugin_manager::interface::asset_registry);
         }
 
     }
