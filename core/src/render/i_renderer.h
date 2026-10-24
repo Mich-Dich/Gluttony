@@ -143,7 +143,7 @@ namespace GLT::render {
         virtual void begin_frame(const u64 frame_number) = 0;
 
 
-        [[nodiscard]] virtual std::expected<std::unique_ptr<i_scene_renderer>, scene_renderer_error> create_scene_renderer(
+        [[nodiscard]] virtual std::expected<GLT::unique_ref<i_scene_renderer>, scene_renderer_error> create_scene_renderer(
             const GLT::render::scene_renderer_desc& desc) = 0;
 
 

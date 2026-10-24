@@ -262,8 +262,8 @@ public:
 
     // --- scene renderer factory ---
     // Constructs a scene renderer bound to this plugin's shared resource manager. The returned renderer is owned by the caller
-    virtual std::expected<std::unique_ptr<i_scene_renderer>, scene_renderer_error>
-        create_scene_renderer(const scene_renderer_desc& desc) = 0;
+    virtual std::expected<GLT::unique_ref<i_scene_renderer>, scene_renderer_error> create_scene_renderer(
+        const scene_renderer_desc& desc) = 0;
 
     // --- per-frame tick ---
     // Called once per frame by the application before any scene renderer's update()
@@ -429,7 +429,7 @@ public:
     void* output_image() const;              // UI-compatible
 
 private:
-    std::unique_ptr<i_scene_renderer>  m_renderer;
+    GLT::unique_ref<i_scene_renderer>  m_renderer;
     GLT::render::procedural_mesh_id    m_mesh;
     GLT::render::preview_camera        m_camera_state;
     std::vector<mesh::instance>        m_instances;

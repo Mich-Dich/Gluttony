@@ -42,7 +42,7 @@ namespace GLT::renderer::vk_rasterizer {
         public GLT::render::i_debug_draw {
     public:
 
-        static std::expected<std::unique_ptr<scene_renderer>, GLT::render::scene_renderer_error> create(renderer& plugin,
+        static std::expected<GLT::unique_ref<scene_renderer>, GLT::render::scene_renderer_error> create(renderer& plugin,
             const GLT::render::scene_renderer_desc& desc);
 
         ~scene_renderer() override;

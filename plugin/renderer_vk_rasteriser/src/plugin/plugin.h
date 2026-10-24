@@ -46,7 +46,7 @@ namespace GLT::renderer::vk_rasterizer {
         bool create() override;
         void destroy() override;
         void begin_frame(u64 frame_number) override;
-        std::expected<std::unique_ptr<GLT::render::i_scene_renderer>, GLT::render::scene_renderer_error> create_scene_renderer(
+        std::expected<GLT::unique_ref<GLT::render::i_scene_renderer>, GLT::render::scene_renderer_error> create_scene_renderer(
             const GLT::render::scene_renderer_desc& desc) override;
         [[nodiscard]] GLT::render::renderer_feature get_supported_features() const override { return m_features; }
         [[nodiscard]] GLT::render::backend_api get_backend_api() const override { return GLT::render::backend_api::vulkan; }

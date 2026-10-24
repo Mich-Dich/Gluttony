@@ -4,7 +4,6 @@
 #include "event/event_bus.h"
 #include "event/application_event.h"
 #include "render/i_renderer.h"
-#include "render/i_scene_renderer.h"
 #include "plugin_system/plugin_manager.h"
 #include "platform/i_window.h"
 #include "plugin_system/i_game_loop_plugin.h"
@@ -73,11 +72,7 @@ namespace GLT {
                 .target = surface,
                 .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),
             };
-            auto primary = p_renderer->create_scene_renderer(desc);
-            if (primary)
-                m_scene_renderers.push_back(std::move(*primary));
-            else
-                LOG(error, "Failed to create surface scene renderer: {}", primary.error().message)
+            (void)create_scene_renderer(desc);
         }
 
         plugin_manager::enter_phase(plugin_manager::phase::application_ready);
@@ -85,18 +80,14 @@ namespace GLT {
         // offscreen scene renderer: only when the editor exists
         if (GLT::plugin_manager::get_plugin_raw<plugin_manager::i_plugin>(plugin_manager::interface::editor_core) != nullptr) {
 
-            m_scene_renderers.back()->set_active(false);    // Use surface scene renderer only for ImGui
+            m_scene_renderers.front()->set_active(false);    // use first renderer only for swapchain/ImGui
 
             GLT::render::offscreen_target_desc offscreen{};
             GLT::render::scene_renderer_desc desc{
                 .target = offscreen,
                 .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),
             };
-            auto viewport = p_renderer->create_scene_renderer(desc);
-            if (viewport)
-                m_scene_renderers.push_back(std::move(*viewport));
-            else
-                LOG(error, "Failed to create offscreen scene renderer: {}", viewport.error().message)
+            (void)create_scene_renderer(desc);
         }
 
         LOG_INIT
@@ -203,10 +194,41 @@ namespace GLT {
 
     GLT::render::i_scene_renderer* application::get_main_world_scene_renderer() noexcept {
 
-        for (auto& scene_renderer : m_scene_renderers)
-            if (scene_renderer && scene_renderer->is_offscreen())
-                return scene_renderer.get();
+        // if editor is bound, the first offscreen renderer is the main scene renderer
+        if (GLT::plugin_manager::get_plugin_raw<plugin_manager::i_plugin>(plugin_manager::interface::editor_core) != nullptr) {
+            for (auto& scene_renderer : m_scene_renderers)
+                if (scene_renderer && scene_renderer->is_offscreen())
+                    return scene_renderer.get();
+        
+        } else
+            return primary_scene_renderer();            // if no editor, the very first renderer handles the scene
+
         return nullptr;
+    }
+
+
+    GLT::render::i_scene_renderer* application::create_scene_renderer(const GLT::render::scene_renderer_desc& desc) noexcept {
+
+        auto* p_renderer = GLT::render::renderer::get_ptr();
+        VALIDATE(p_renderer, return {}, "", "Failed to load render plugin")
+        auto scene_renderer = p_renderer->create_scene_renderer(desc);
+        if (scene_renderer) {
+
+            m_scene_renderers.push_back(std::move(*scene_renderer));
+            return m_scene_renderers.back().get();
+        
+        } else
+            LOG(error, "Failed to create offscreen scene renderer: {}", scene_renderer.error().message)
+
+        return {};
+    }
+
+
+    void application::destroy_scene_renderer(GLT::render::i_scene_renderer* p_scene_renderer) noexcept {
+
+        if (!p_scene_renderer)
+            return;
+        std::erase_if(m_scene_renderers, [p_scene_renderer](const auto& r) { return r.get() == p_scene_renderer; });
     }
 
     // CLASS PROTECTED =================================================================================================

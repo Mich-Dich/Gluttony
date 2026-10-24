@@ -59,7 +59,7 @@ namespace GLT::renderer::vk_rasterizer::util {
     private:
 
         struct impl;
-        std::unique_ptr<impl> m_impl;
+        GLT::unique_ref<impl> m_impl;
 
         friend class slang_compiler;
     };

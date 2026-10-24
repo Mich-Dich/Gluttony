@@ -50,18 +50,18 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Register the image factory (used by external consumers of `render::image`).
         GLT::render::image::factory_table table{};
-        table.default_fn = []() -> std::unique_ptr<GLT::render::image> {
+        table.default_fn = []() -> GLT::unique_ref<GLT::render::image> {
             return std::make_unique<GLT::renderer::vk_rasterizer::image>();
         };
-        table.size_fn = [](const glm::uvec3& size) -> std::unique_ptr<GLT::render::image> {
+        table.size_fn = [](const glm::uvec3& size) -> GLT::unique_ref<GLT::render::image> {
             return std::make_unique<GLT::renderer::vk_rasterizer::image>(size);
         };
         table.data_fn = [](const void* data, const u32 width, const u32 height, const bool mipmapped = false)
-            -> std::unique_ptr<GLT::render::image> {
+            -> GLT::unique_ref<GLT::render::image> {
             return std::make_unique<GLT::renderer::vk_rasterizer::image>(data, width, height, mipmapped);
         };
         table.path_fn = [](const std::filesystem::path& path, bool mipmapped)
-            -> std::unique_ptr<GLT::render::image> {
+            -> GLT::unique_ref<GLT::render::image> {
             return std::make_unique<GLT::renderer::vk_rasterizer::image>(path, mipmapped);
         };
         GLT::render::image::register_factory(table);
@@ -114,14 +114,14 @@ namespace GLT::renderer::vk_rasterizer {
     void renderer::begin_frame(u64 frame_number) { m_shared->begin_frame(frame_number); }
 
 
-    std::expected<std::unique_ptr<GLT::render::i_scene_renderer>, GLT::render::scene_renderer_error> renderer::create_scene_renderer(
+    std::expected<GLT::unique_ref<GLT::render::i_scene_renderer>, GLT::render::scene_renderer_error> renderer::create_scene_renderer(
         const GLT::render::scene_renderer_desc& desc) {
 
         auto result = scene_renderer::create(*this, desc);
         if (!result)
             return std::unexpected(result.error());
 
-        std::unique_ptr<GLT::render::i_scene_renderer> base = std::move(*result);
+        GLT::unique_ref<GLT::render::i_scene_renderer> base = std::move(*result);
         return base;
     }
 
@@ -213,6 +213,11 @@ namespace GLT::renderer::vk_rasterizer {
         m_deletion_queue.shutdown();
 
         if (m_dev) {
+
+            // char* stats = nullptr;
+            // vmaBuildStatsString(m_dev->get_allocator(), &stats, VK_TRUE);
+            // LOG(warn, "VMA stats before device teardown:\n{}", stats);
+            // vmaFreeStatsString(m_dev->get_allocator(), stats);
             delete m_dev;
             m_dev = nullptr;
         }

@@ -92,12 +92,6 @@ namespace GLT::renderer::vk_rasterizer {
         sampler_info.addressModeW = vk::SamplerAddressMode::eClampToEdge;
         sampler_info.maxLod = 0.0f;
 
-        // Per-frame meta UBO. Allocated empty; content is written each frame by update_light_meta_ubo()
-        for (u32 frame_index = 0; frame_index < MAX_CONCURRENT_FRAMES; ++frame_index) {
-            m_light_meta_ubos[frame_index] = m_plugin.get_dev()->create_buffer(sizeof(glm::uvec4),
-                vk::BufferUsageFlagBits::eUniformBuffer, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        }
-
         // Descriptor buffers are not created here — they depend on the cluster buffers, which only
         // exist once begin_frame() has computed the grid dimensions. update_light_cull_descriptors()
         // creates them lazily on the first frame and updates them in place thereafter

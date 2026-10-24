@@ -114,12 +114,12 @@ namespace GLT {
 
 	// @brief Detects a plugin-registered "virtual constructor" hook: a static
 	// T::create_instance(args...) returning something convertible to a
-	// std::unique_ptr<T>. Lets create_ref/create_unique_ref transparently
+	// GLT::unique_ref<T>. Lets create_ref/create_unique_ref transparently
 	// defer to a runtime-registered derived type instead of constructing T
 	// directly - see GLT::render::image for the reference implementation.
 	template <typename T, typename... args>
 	concept has_create_instance = requires(args&&... arguments) {
-		{ T::create_instance(std::forward<args>(arguments)...) } -> std::convertible_to<std::unique_ptr<T>>;
+		{ T::create_instance(std::forward<args>(arguments)...) } -> std::convertible_to<GLT::unique_ref<T>>;
 	};
 
 

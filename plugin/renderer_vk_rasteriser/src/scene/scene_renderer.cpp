@@ -101,7 +101,6 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph = GLT::create_unique_ref<graph::render_graph>(m_plugin.get_dev());
         init_gpu_state();
 
-        create_debug_draw_resources();          // Debug draw resources
         if (!m_offscreen)                       // ImGui (surface only)
             imgui_init();
 
@@ -113,7 +112,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     // CLASS PUBLIC ====================================================================================================
 
-    std::expected<std::unique_ptr<scene_renderer>, GLT::render::scene_renderer_error> scene_renderer::create(renderer& plugin,
+    std::expected<GLT::unique_ref<scene_renderer>, GLT::render::scene_renderer_error> scene_renderer::create(renderer& plugin,
         const GLT::render::scene_renderer_desc& desc) {
 
         if (std::holds_alternative<GLT::render::surface_target_desc>(desc.target)) {
@@ -128,7 +127,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         try {
 
-            return std::unique_ptr<scene_renderer>(new scene_renderer(plugin, desc));
+            return GLT::unique_ref<scene_renderer>(new scene_renderer(plugin, desc));
 
         } catch (const std::exception& e) {
             return std::unexpected(GLT::render::scene_renderer_error{
@@ -236,11 +235,11 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph->execute(frame.cmd);
         m_graph->end_frame();
 
-        if (m_dup_counter >= 300) {
-            LOG(info, "{}", m_graph->dump())
-            m_dup_counter = 0;
-        }
-        m_dup_counter++;
+        // if (m_dup_counter >= 300) {
+        //     LOG(info, "{}", m_graph->dump())
+        //     m_dup_counter = 0;
+        // }
+        // m_dup_counter++;
 
         if (m_offscreen)
             m_output_image->get_accessible_image_ref().layout = m_graph->texture_layout(m_scene_color);

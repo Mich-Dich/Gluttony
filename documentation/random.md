@@ -17,6 +17,10 @@ ssh -T git@github.com
 [ ] render debug stuff in lines (light cones/radius, Colliders, AABBs, ...)
 [ ] HiZ occlusion culling
 [ ] Post-processing: Complete the render pipeline with tonemapping, bloom, etc.
+[ ] Renderer feature: anti-aliasing (msaa, ...)
+[ ] Renderer feature: post processing
+[ ] Renderer feature: SSAO
+[ ] Renderer feature: SDFGI
 
 
 # Existing Editors

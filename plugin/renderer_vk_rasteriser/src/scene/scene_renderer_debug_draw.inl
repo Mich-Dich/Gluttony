@@ -430,8 +430,14 @@ namespace GLT::renderer::vk_rasterizer {
         cb.blendEnable = VK_TRUE;
         cb.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
         cb.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
-        cb.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                                 vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        cb.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+        cb.dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+        cb.alphaBlendOp = vk::BlendOp::eAdd;
+        cb.colorWriteMask = vk::ColorComponentFlagBits::eR |
+            vk::ColorComponentFlagBits::eG |
+            vk::ColorComponentFlagBits::eB |
+            vk::ColorComponentFlagBits::eA;
+
         vk::PipelineColorBlendStateCreateInfo cbs{};
         cbs.attachmentCount = 1; cbs.pAttachments = &cb;
 

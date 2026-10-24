@@ -3,7 +3,7 @@
 
 #include "util/timing/interval_controller.h"
 #include "config/project.h"
-
+#include "render/i_scene_renderer.h"
 #include "debug/profiler.h"
 
 
@@ -16,7 +16,6 @@ namespace GLT::platform {
 
 namespace GLT::render {
     class i_renderer_plugin;
-    class i_scene_renderer;
 }
 
 namespace GLT::audio {
@@ -76,12 +75,19 @@ namespace GLT {
         void shutdown();
 
 
-        // Convenience: the first scene renderer created by the application. Used by the editor
-        // to bind its primary viewport. Returns nullptr if no scene renderer exists (headless / pre-init)
+        // Convenience: the first scene renderer created by the application, responsible for swapchain/imgui (maybe scene rendering)
+        // Returns nullptr if no scene renderer exists (headless / pre-init)
         [[nodiscard]] GLT::render::i_scene_renderer* primary_scene_renderer() noexcept;
 
 
         [[nodiscard]] GLT::render::i_scene_renderer* get_main_world_scene_renderer() noexcept;
+
+        // @brief create a ew scene renderer that follows the game loop's per-frame update/render pass
+        // @return the raw pointer (the application has ownership) Caller stores the raw ptr and calls destroy_scene_renderer()
+        [[nodiscard]] GLT::render::i_scene_renderer* create_scene_renderer(const GLT::render::scene_renderer_desc& desc) noexcept;
+
+
+        void destroy_scene_renderer(GLT::render::i_scene_renderer* p_scene_renderer) noexcept;
 
     private:
 
