@@ -3,6 +3,7 @@
 
 #include "util/timing/interval_controller.h"
 #include "config/project.h"
+#include "asset/asset_ref.h"
 #include "render/i_scene_renderer.h"
 #include "debug/profiler.h"
 
@@ -55,6 +56,7 @@ namespace GLT {
         DEFAULT_GETTER_CC(f32,                                                              total_time)
         DEFAULT_SETTER(f32,                                                                 total_time)
         DEFAULT_GETTER_C(project,                                                           project)
+        DEFAULT_GETTER_C(GLT::asset::asset_ref,                                             current_world)
         DEFAULT_GETTER_REF(project,                                                         project)
         GETTER(std::filesystem::path,                                                       project_path,   m_project.project_path)
         DEFAULT_GETTER_REF(std::vector<GLT::unique_ref<GLT::render::i_scene_renderer>>,     scene_renderers)
@@ -102,7 +104,7 @@ namespace GLT {
         project                                                             m_project{};
         debug::application_stats                                            m_application_stats{};
         std::vector<GLT::unique_ref<GLT::render::i_scene_renderer>>         m_scene_renderers;
-
+        GLT::asset::asset_ref                                               m_current_world{};
     };
 
 }

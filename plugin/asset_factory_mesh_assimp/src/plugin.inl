@@ -395,7 +395,7 @@ namespace GLT::asset::factory::mesh_assimp {
                 .key = "scale",
                 .label = "Scale factor",
                 .type = desc::kind::real,
-                .default_value = "1.0",
+                .default_value = "0.01",
                 .enumeration_values = "",
                 .tooltip = "Uniform scale applied to all vertex positions after import. Use 0.01 for centimeters -> meters, 0.0254 for inches -> meters.",
             },

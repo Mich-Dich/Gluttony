@@ -1,7 +1,8 @@
 
 #include "util/pch.h"
-
 #include "asset_ref.h"
+
+#include "asset/i_asset_registry.h"
 
 
 
@@ -51,11 +52,15 @@ namespace GLT::asset {
     asset_ref::asset_ref(asset_ref&& other) noexcept : m_handle(std::exchange(other.m_handle, INVALID_HANDLE)) {}
 
 
+    asset_ref::asset_ref(handle h, adopt_ref_t) noexcept : m_handle(h) {}
+
+
     asset_ref::~asset_ref() { reset(); }
 
     // CLASS PUBLIC ====================================================================================================
 
     void asset_ref::reset() {
+
         if (m_handle != INVALID_HANDLE) {
             registry::get_ref()->release(m_handle);
             m_handle = INVALID_HANDLE;

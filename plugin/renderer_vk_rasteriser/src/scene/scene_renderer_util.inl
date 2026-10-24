@@ -58,12 +58,14 @@ namespace GLT::renderer::vk_rasterizer {
             if (!current.contains(it->first)) {
                 m_shared->release_mesh(it->second);
                 it = m_resident_meshes.erase(it);
-            } else ++it;
+            } else
+                it++;
         }
 
         // Ensure every current mesh has a reference
         for (auto h : current) {
-            if (m_resident_meshes.contains(h)) continue;
+            if (m_resident_meshes.contains(h))
+                continue;
             auto r = m_shared->ensure_mesh(h);
             if (r) m_resident_meshes.emplace(h, *r);
         }
@@ -81,14 +83,14 @@ namespace GLT::renderer::vk_rasterizer {
         cam.inv_projection = glm::inverse(proj);
         cam.cluster_dims = glm::uvec4(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z, 0u);
         cam.cluster_depth = glm::vec4(m_active_camera.near_plane, m_active_camera.far_plane,
-                                         static_cast<f32>(m_extent.x), static_cast<f32>(m_extent.y));
+            static_cast<f32>(m_extent.x), static_cast<f32>(m_extent.y));
         cam.light_view_proj = m_shadow.view_proj;
         cam.shadow_params = m_shadow.params;
 
         // Frustum planes
         const glm::mat4 t = glm::transpose(cam.view_proj);
         glm::vec4 p[6] = { t[3] + t[0], t[3] - t[0], t[3] + t[1], t[3] - t[1], t[3] + t[2], t[3] - t[2] };
-        for (u32 i = 0; i < 6; ++i) {
+        for (u32 i = 0; i < 6; i++) {
             const f32 len = glm::length(glm::vec3(p[i]));
             cam.frustum_planes[i] = (len > 0.f) ? p[i] / len : p[i];
         }
@@ -134,7 +136,7 @@ namespace GLT::renderer::vk_rasterizer {
         using BU = vk::BufferUsageFlagBits;
 
         // Per-frame buffers
-        for (u32 i = 0; i < MAX_CONCURRENT_FRAMES; ++i) {
+        for (u32 i = 0; i < MAX_CONCURRENT_FRAMES; i++) {
             m_camera_ubos[i] = dev->create_buffer(sizeof(camera_ubo_data), BU::eUniformBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
             m_globals_ubos[i] = dev->create_buffer(sizeof(gpu_globals), BU::eUniformBuffer,
@@ -364,7 +366,7 @@ namespace GLT::renderer::vk_rasterizer {
         using VKSF = vk::ShaderStageFlagBits;
 
         // Per-frame material descriptor buffers (layout is on the shared manager)
-        for (u32 i = 0; i < MAX_CONCURRENT_FRAMES; ++i) {
+        for (u32 i = 0; i < MAX_CONCURRENT_FRAMES; i++) {
 
             std::vector<util::descriptor_item> items;
             items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);

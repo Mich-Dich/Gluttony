@@ -19,8 +19,8 @@ namespace GLT::world {
     // TYPES ===========================================================================================================
 
     struct entity_position {
-        entity_id   id{};
-        glm::vec3   world_position{ 0.f };
+        entity_id                                           id{};
+        glm::vec3                                           world_position{ 0.f };
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -31,10 +31,10 @@ namespace GLT::world {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // Optional side-interface a world plugin can implement so the engine can pull a renderable snapshot out of it without knowing about ECS
+    // Optional side-interface a world plugin can implement so the engine can pull a renderable snapshot out of it without
+    // knowing about ECS
     //
-    // Same discovery pattern as i_world_inspector:
-    //     if (auto* scene = world->as<i_world_scene>()) { ... }
+    // Same discovery pattern as i_world_inspector:         if (auto* scene = world->as<i_world_scene>()) { ... }
     //
     // Contract:
     //   - Called once per frame during the update phase, from the update thread

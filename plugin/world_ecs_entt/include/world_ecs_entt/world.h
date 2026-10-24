@@ -60,7 +60,7 @@ namespace GLT::world::world_ecs_entt {
 
         // world lifecycle ---------------------------------------------------------------------------------------------
 
-        [[nodiscard]] std::expected<void, GLT::asset::load_error> load_world(GLT::asset::handle world) override;
+        [[nodiscard]] std::expected<void, GLT::asset::load_error> load_world(GLT::asset::asset_ref world) override;
 
 
         void unload_world() noexcept override;
@@ -356,7 +356,7 @@ namespace GLT::world::world_ecs_entt {
         std::unordered_map<GLT::UUID, region_state>         m_region_states{};
         std::vector<slot>                                   m_slots{};
         std::vector<u32>                                    m_free{};
-        GLT::asset::handle                                  m_world{};
+        GLT::asset::asset_ref                               m_world{};
         glm::vec3                                           m_streaming_anchor{ 0.f };
         f32                                                 m_streaming_radius{ 1024.f };
         component_registry                                  m_components{ *this };

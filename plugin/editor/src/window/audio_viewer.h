@@ -8,7 +8,8 @@
 #include <filesystem>
 #include <string>
 
-#include <asset/type.h>                 // GLT::asset::handle, INVALID_HANDLE
+#include <asset/type.h>
+#include <asset/asset_ref.h>
 #include <plugin_system/plugin_manager.h>
 
 #include "window/base/base_window.h"
@@ -61,7 +62,7 @@ namespace GLT::editor {
 
     namespace audio {
 
-        // Produced on the worker thread and applied on the main thread.
+        // Produced on the worker thread and applied on the main thread
         struct decode_result {
     
             bool                                            ok = false;
@@ -69,10 +70,9 @@ namespace GLT::editor {
             std::vector<std::vector<audio_peak_pair>>       peaks{};
             u32                                             peak_count = 0;
     
-            // Registry handle for the loaded audio asset. On discard this is
-            // unloaded by the main-thread callback; on success it becomes
-            // m_asset_handle and is used for playback.
-            GLT::asset::handle                              asset_handle = INVALID_HANDLE;
+            // Registry handle for the loaded audio asset. On discard this is unloaded by the main-thread callback; on
+            // success it becomes m_asset_handle and is used for playback
+            GLT::asset::asset_ref                           asset_ref = INVALID_HANDLE;
         };
 
     }
@@ -85,9 +85,8 @@ namespace GLT::editor {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // Dockable editor window that previews an audio file (loaded through the
-    // asset registry), shows its metadata, and provides basic transport
-    // controls (play/pause/stop, seek, volume, pan, playback speed, loop).
+    // Dockable editor window that previews an audio file (loaded through the asset registry), shows its metadata, and
+    // provides basic transport controls (play/pause/stop, seek, volume, pan, playback speed, loop)
     class audio_viewer_window : public base_window {
     public:
 
@@ -158,7 +157,7 @@ namespace GLT::editor {
 
         void apply_decode_result(audio::decode_result&& result);
 
-        // Stops the active voice (if any) and unloads the current asset.
+        // Stops the active voice (if any) and unloads the current asset
         void teardown_playback();
 
 
@@ -173,14 +172,14 @@ namespace GLT::editor {
         std::vector<std::vector<audio_peak_pair>>       m_peaks{};
         u32                                             m_peak_count = 0;
 
-        // Display state.
+        // Display state
         f32                                             m_visible_start_sec = 0.0f;
         f32                                             m_visible_end_sec = 0.0f;
         bool                                            m_fit_pending = true;
 
-        // Playback state.
+        // Playback state
         GLT::weak_ref<GLT::audio::i_audio_plugin>       m_audio_manager{};
-        GLT::asset::handle                              m_asset_handle = INVALID_HANDLE;
+        GLT::asset::asset_ref                           m_asset_handle = INVALID_HANDLE;
         handle                                          m_voice_handle = 0;
         bool                                            m_playing = false;
         bool                                            m_looping = false;

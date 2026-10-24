@@ -139,23 +139,34 @@ namespace GLT::UI {
     };
 
 
-    // Access trait: abstracts “read the handle”, “write the handle”, “clear the handle” over both a raw handle and an asset_ref.
     template<typename H>
     struct picker_handle_access;
 
 
+    // Raw-handle callers
+    //
+    // The widget CANNOT retain on the caller's behalf, because the caller's raw handle has no destructor to eventually release with
+    // So the only correct behavior here is: extract the handle, and let the caller promote it to an asset_ref (or explicitly retain)
+    // before the picker's return value goes out of scope. In practice: migrate call sites to the asset_ref overload
     template<>
     struct picker_handle_access<GLT::asset::handle> {
+
         static GLT::asset::handle get(const GLT::asset::handle& h) noexcept { return h; }
-        static void set(GLT::asset::handle& h, GLT::asset::handle v) noexcept { h = v; }
+        static void set(GLT::asset::handle& h, GLT::asset::asset_ref v) {
+            h = v.valid() ? v.get() : INVALID_HANDLE;
+            // `v` destructs at return, dropping its +1. If the caller wanted a
+            // persistent handle, they should have used the asset_ref overload.
+        }
         static void clear(GLT::asset::handle& h) noexcept { h = INVALID_HANDLE; }
     };
 
 
+    // asset_ref callers (the ones that matter — this is what component::mesh uses)
     template<>
     struct picker_handle_access<GLT::asset::asset_ref> {
+
         static GLT::asset::handle get(const GLT::asset::asset_ref& h) noexcept { return h.get(); }
-        static void set(GLT::asset::asset_ref& h, GLT::asset::handle v) { h = GLT::asset::asset_ref{ v }; }
+        static void set(GLT::asset::asset_ref& h, GLT::asset::asset_ref v) { h = std::move(v); }
         static void clear(GLT::asset::asset_ref& h) { h.reset(); }
     };
 
@@ -176,9 +187,12 @@ namespace GLT::UI {
     std::string extension_for(GLT::asset::type t);
 
 
-    // Resolve a chosen path to a handle, going through the registry so that hot-reload and refcounting stay consistent.
-    std::optional<GLT::asset::handle> resolve_path(const GLT::ref<GLT::asset::i_asset_registry_plugin>& registry,
-        const std::filesystem::path& path);
+    // Returns an owning reference on success. The caller is responsible for either keeping the asset_ref (to hold ownership)
+    // or letting it destruct (to drop it)
+    //
+    // The previous version returned a raw `handle` extracted from the temporary asset_ref — which released its +1 on the way out,
+    // leaving the caller with a dead handle whose slot had already been recycled
+    std::optional<GLT::asset::asset_ref> resolve_path(GLT::asset::i_asset_registry_plugin* registry, const std::filesystem::path& path);
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
@@ -215,17 +229,18 @@ namespace GLT::UI {
     std::string extension_for(GLT::asset::type t) { return std::string(GLT::asset::type_to_extension(t)); }
 
 
-    std::optional<GLT::asset::handle> resolve_path(const GLT::ref<GLT::asset::i_asset_registry_plugin>& registry,
-        const std::filesystem::path& path) {
+    std::optional<GLT::asset::asset_ref> resolve_path(GLT::asset::i_asset_registry_plugin* registry, const std::filesystem::path& path) {
 
+        // Fast path: already loaded. find() returns a borrowed handle, so upgrade
+        // to an owning asset_ref via the retain-ing constructor.
         if (auto h = registry->find(path); h != INVALID_HANDLE)
-            return h;
+            return GLT::asset::asset_ref{ h };
 
-        auto loaded = registry->load(path);
+        auto loaded = registry->load(path);              // owning asset_ref
         if (!loaded)
             return std::nullopt;
 
-        return *loaded;
+        return std::move(*loaded);                       // transfer ownership out
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -235,7 +250,7 @@ namespace GLT::UI {
 
         using access = picker_handle_access<H>;
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto* registry = GLT::asset::registry::get_ptr();
         if (!registry) {
             ImGui::TextDisabled("no asset registry");
             return false;
@@ -284,33 +299,28 @@ namespace GLT::UI {
 
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(GLT::UI::ASSET_DRAG_PAYLOAD)) {
 
-                const std::string wanted_ext = "." + ext;       // `ext` is dotless today ("glt_material")
-
+                const std::string wanted_ext = "." + ext;
                 bool saw_any = false;
+
                 for (const auto& abs : parse_asset_drag_payload(payload)) {
                     saw_any = true;
 
-                    // The registry speaks project-relative paths. Absolute paths come off the payload; anything outside
-                    // PROJECT_CONTENT_DIR is skipped
                     const auto rel = GLT::project::to_content_relative(abs);
                     if (rel.empty())
                         continue;
 
-                    // Filter on extension BEFORE calling load(): rejects the wrong asset type without paying for a parse
-                    // and a slot claim
                     if (rel.extension() != wanted_ext)
                         continue;
 
-                    if (auto h = resolve_path(registry, rel)) {
-                        if (*h != access::get(in_out)) {
-                            access::set(in_out, *h);
+                    if (auto ref = resolve_path(registry, rel)) {
+                        if (ref->get() != access::get(in_out)) {
+                            access::set(in_out, std::move(*ref));
                             changed = true;
                         }
-                    } else {
+                    } else
                         LOG(warn, "dropped asset failed to load [{}]", rel.generic_string())
-                    }
 
-                    break;      // first compatible item wins
+                    break;
                 }
 
                 if (saw_any && !changed)
@@ -383,9 +393,9 @@ namespace GLT::UI {
                         const bool selected = (live != INVALID_HANDLE) && registry->info(live).virtual_path == path;
 
                         if (ImGui::Selectable(shown.c_str(), selected)) {
-                            if (auto h = resolve_path(registry, path)) {
-                                if (*h != access::get(in_out)) {
-                                    access::set(in_out, *h);
+                            if (auto ref = resolve_path(registry, path)) {
+                                if (ref->get() != access::get(in_out)) {
+                                    access::set(in_out, std::move(*ref));
                                     changed = true;
                                 }
                             } else

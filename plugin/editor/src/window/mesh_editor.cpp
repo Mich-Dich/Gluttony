@@ -30,12 +30,6 @@ namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr f32                                   OUTLINER_PANEL_WIDTH = 240.0f;
-
-    constexpr f32                                   INSPECTOR_PANEL_WIDTH = 340.0f;
-
-    constexpr f32                                   PANEL_GAP = 4.0f;
-
     constexpr f32                                   MIN_PREVIEW_SIDE = 64.0f;
 
     constexpr f32                                   MIN_CAM_DISTANCE = 0.05f;
@@ -46,9 +40,16 @@ namespace GLT::editor {
 
     constexpr const char*                           DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
 
-    static constexpr const char*                    kRenderModeLabels[] = {
-        "Lit", "Unlit", "Wireframe", "Wireframe Overlay", "Normals", "UVs"
-    };
+    // Panel layout defaults for the three-column body
+    constexpr f32                                   SPLITTER_WIDTH = 6.0f;
+
+    constexpr f32                                   MIN_OUTLINER_WIDTH = 150.0f;
+
+    constexpr f32                                   MIN_INSPECTOR_WIDTH = 200.0f;
+
+    constexpr f32                                   BODY_MIN_WIDTH = 400.0f;
+
+    constexpr f32                                   BODY_MIN_HEIGHT = 200.0f;
 
     // MACROS ==========================================================================================================
 
@@ -134,6 +135,40 @@ namespace GLT::editor {
             debug.capsule(a, b, radius, color);
         }
 
+        // ---- splitter ----------------------------------------------------------------------------------------------
+        //
+        // A 6px vertical invisible button that edits [width] while dragged.
+        // [invert] is used for the right-hand splitter, where the panel grows
+        // to the LEFT as the mouse moves right (so we subtract the delta).
+        void draw_panel_splitter(const char* id, f32& width, f32 min_w, f32 max_w, bool invert, f32 height) {
+
+            const ImVec2 cursor = ImGui::GetCursorScreenPos();
+
+            ImGui::InvisibleButton(id, ImVec2(SPLITTER_WIDTH, height));
+
+            const bool hovered = ImGui::IsItemHovered();
+            const bool active  = ImGui::IsItemActive();
+
+            if (active) {
+                const f32 delta = ImGui::GetIO().MouseDelta.x;
+                width = std::clamp(width + (invert ? -delta : delta), min_w, max_w);
+            }
+
+            if (hovered || active)
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+
+            // Draw a 2px visual bar centered in the splitter zone
+            const ImU32 col = (hovered || active)
+                ? IM_COL32(200, 200, 200, 220)
+                : IM_COL32(100, 100, 100, 100);
+
+            const f32 cx = cursor.x + SPLITTER_WIDTH * 0.5f;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(cx - 1.0f, cursor.y + 4.0f),
+                ImVec2(cx + 1.0f, cursor.y + height - 4.0f),
+                col);
+        }
+
     }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -185,12 +220,10 @@ namespace GLT::editor {
         }
 
         std::error_code error{};
-        VALIDATE(GLT::vfs::exists(PROJECT_CONTENT_DIR / path, error) && !error,
-            m_load_failed = true; m_show_window = true; return,
+        VALIDATE(GLT::vfs::exists(PROJECT_CONTENT_DIR / path, error) && !error, m_load_failed = true; m_show_window = true; return,
             "", "file not found [{}]", (path.generic_string()))
 
-        VALIDATE(!GLT::vfs::is_directory(PROJECT_CONTENT_DIR / path, error) && !error,
-            m_load_failed = true; m_show_window = true; return,
+        VALIDATE(!GLT::vfs::is_directory(PROJECT_CONTENT_DIR / path, error) && !error, m_load_failed = true; m_show_window = true; return,
             "", "path is a directory [{}]", (path.generic_string()))
 
         auto registry = GLT::asset::registry::get_ref();
@@ -199,9 +232,11 @@ namespace GLT::editor {
         auto loaded = registry->load(path);
         VALIDATE(loaded, m_load_failed = true; m_show_window = true; return, "", "failed to load mesh [{}]", (path.generic_string()))
 
-        if (!load_from_handle(*loaded)) {
-            registry->unload(*loaded);
+        if (!load_from_handle(std::move(*loaded))) {
+
             m_load_failed = true;
+            m_show_window = true;
+            return;
         }
 
         ensure_preview();
@@ -215,17 +250,10 @@ namespace GLT::editor {
 
         destroy_preview();
 
-        if (m_asset_handle != INVALID_HANDLE) {
-            if (auto registry = GLT::asset::registry::get_ref())
-                registry->unload(m_asset_handle);
-            m_asset_handle = INVALID_HANDLE;
-        }
-
+        m_asset_handle.reset();
         m_has_mesh = false;
         m_dirty = false;
-
         m_submesh_bounds_cache.clear();
-
         m_hovered_submesh = -1;
         m_selected_submesh = -1;
         m_hovered_collider = -1;
@@ -285,14 +313,14 @@ namespace GLT::editor {
 
     bool mesh_editor_window::save() {
 
-        if (!m_has_mesh || m_asset_handle == INVALID_HANDLE)
+        if (!m_has_mesh || !m_asset_handle.valid())
             return false;
 
         auto registry = GLT::asset::registry::get_ref();
         if (!registry)
             return false;
 
-        auto result = registry->save(m_asset_handle);
+        auto result = registry->save(m_asset_handle.get());
         if (!result) {
             LOG(error, "mesh_editor: save failed for [{}] (error {}). "
                        "Meshes currently return [no_handler] from the handler.",
@@ -303,6 +331,8 @@ namespace GLT::editor {
         m_dirty = false;
         return true;
     }
+
+	// CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
 
@@ -371,36 +401,63 @@ namespace GLT::editor {
 
         const ImVec2 avail = ImGui::GetContentRegionAvail();
 
-        if (avail.x < 100.0f || avail.y < 100.0f)
+        if (avail.x < BODY_MIN_WIDTH || avail.y < BODY_MIN_HEIGHT)
             return;
 
-        const f32 body_width = avail.x;
-        const f32 outliner_w = OUTLINER_PANEL_WIDTH;
-        const f32 inspector_w = INSPECTOR_PANEL_WIDTH;
+        const ImVec2 start_pos = ImGui::GetCursorScreenPos();
+        const f32    total_w   = avail.x;
+        const f32    total_h   = avail.y;
 
-        f32 preview_w = body_width - outliner_w - inspector_w - PANEL_GAP * 2.0f;
-        if (preview_w < MIN_PREVIEW_SIDE) {
-            // Shrink the side panels proportionally if the window is too narrow
-            const f32 scale = std::max(0.4f, (body_width - MIN_PREVIEW_SIDE - PANEL_GAP * 2.0f) / (outliner_w + inspector_w));
-            const f32 o = outliner_w * scale;
-            const f32 i = inspector_w * scale;
-            preview_w = body_width - o - i - PANEL_GAP * 2.0f;
-            ImGui::BeginChild("##outliner", ImVec2(o, 0.0f), true);
-        } else {
-            ImGui::BeginChild("##outliner", ImVec2(outliner_w, 0.0f), true);
+        // Clamp the stored widths so they always leave room for the preview.
+        // Any excess is trimmed proportionally so both sides stay visible.
+        {
+            const f32 min_preview_reserved = MIN_PREVIEW_SIDE + 2.0f * SPLITTER_WIDTH;
+            const f32 max_combined         = total_w - min_preview_reserved;
+
+            if (m_outliner_width + m_inspector_width > max_combined) {
+                const f32 scale = max_combined / (m_outliner_width + m_inspector_width);
+                m_outliner_width  = std::max(MIN_OUTLINER_WIDTH,  m_outliner_width  * scale);
+                m_inspector_width = std::max(MIN_INSPECTOR_WIDTH, m_inspector_width * scale);
+            }
+
+            m_outliner_width  = std::max(m_outliner_width,  MIN_OUTLINER_WIDTH);
+            m_inspector_width = std::max(m_inspector_width, MIN_INSPECTOR_WIDTH);
         }
+
+        const f32 max_outliner_w = std::max(MIN_OUTLINER_WIDTH,
+            total_w - m_inspector_width - MIN_PREVIEW_SIDE - 2.0f * SPLITTER_WIDTH);
+        const f32 max_inspector_w = std::max(MIN_INSPECTOR_WIDTH,
+            total_w - m_outliner_width - MIN_PREVIEW_SIDE - 2.0f * SPLITTER_WIDTH);
+
+        // ---- outliner ----------------------------------------------------------------------------------------------
+        ImGui::SetCursorScreenPos(start_pos);
+        ImGui::BeginChild("##outliner", ImVec2(m_outliner_width, total_h), true);
         draw_outliner_panel();
         ImGui::EndChild();
 
-        ImGui::SameLine(0.0f, PANEL_GAP);
+        // ---- left splitter -----------------------------------------------------------------------------------------
+        ImGui::SetCursorScreenPos(ImVec2(start_pos.x + m_outliner_width, start_pos.y));
+        draw_panel_splitter("##splitter_left", m_outliner_width,
+            MIN_OUTLINER_WIDTH, max_outliner_w, false, total_h);
 
-        ImGui::BeginChild("##preview_region", ImVec2(preview_w, 0.0f), false);
+        // ---- preview -----------------------------------------------------------------------------------------------
+        const f32 preview_x = start_pos.x + m_outliner_width + SPLITTER_WIDTH;
+        const f32 preview_w = std::max(MIN_PREVIEW_SIDE,
+            total_w - m_outliner_width - m_inspector_width - 2.0f * SPLITTER_WIDTH);
+
+        ImGui::SetCursorScreenPos(ImVec2(preview_x, start_pos.y));
+        ImGui::BeginChild("##preview_region", ImVec2(preview_w, total_h), false);
         draw_preview_panel();
         ImGui::EndChild();
 
-        ImGui::SameLine(0.0f, PANEL_GAP);
+        // ---- right splitter ----------------------------------------------------------------------------------------
+        ImGui::SetCursorScreenPos(ImVec2(preview_x + preview_w, start_pos.y));
+        draw_panel_splitter("##splitter_right", m_inspector_width,
+            MIN_INSPECTOR_WIDTH, max_inspector_w, true, total_h);
 
-        ImGui::BeginChild("##inspector", ImVec2(0.0f, 0.0f), true);
+        // ---- inspector ---------------------------------------------------------------------------------------------
+        ImGui::SetCursorScreenPos(ImVec2(preview_x + preview_w + SPLITTER_WIDTH, start_pos.y));
+        ImGui::BeginChild("##inspector", ImVec2(0.0f, total_h), true);
         draw_inspector_panel();
         ImGui::EndChild();
     }
@@ -447,7 +504,6 @@ namespace GLT::editor {
         ImGui::Separator();
 
         i32 new_hovered_sub = -1;
-        i32 new_hovered_col = -1;
 
         ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 12.0f);
 
@@ -487,6 +543,8 @@ namespace GLT::editor {
         }
 
         // ---- colliders ----
+        m_hovered_collider = -1;
+
         const bool colliders_open =
             ImGui::TreeNodeEx("Colliders", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
 
@@ -510,7 +568,6 @@ namespace GLT::editor {
         ImGui::PopStyleVar();
 
         m_hovered_submesh = new_hovered_sub;
-        m_hovered_collider = new_hovered_col;
 
         // Deferred collider delete — safe after iteration
         if (m_pending_delete_collider >= 0) {
@@ -793,40 +850,33 @@ namespace GLT::editor {
 
     void mesh_editor_window::draw_mesh_summary_section() {
 
-        if (!UI::begin_collapsing_header_section("Summary"))
+        if (!ImGui::CollapsingHeader("Summary", ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
         auto registry = GLT::asset::registry::get_ref();
-        if (!registry) {
-            UI::end_collapsing_header_section();
+        if (!registry)
             return;
-        }
 
         auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle);
-        if (!mesh) {
-            UI::end_collapsing_header_section();
+        if (!mesh)
             return;
-        }
 
-        if (!GLT::UI::begin_table("mesh_summary_table", false, ImVec2(0, 0), 0.0f, true, 0.42f)) {
-            UI::end_collapsing_header_section();
+        if (!GLT::UI::begin_table("mesh_summary_table", false, ImVec2(0, 0), 0.0f, true, 0.42f))
             return;
-        }
 
-        GLT::UI::table_row("vertices", std::to_string(mesh->vertices.size()));
-        GLT::UI::table_row("indices", std::to_string(mesh->indices.size()));
+        GLT::UI::table_row("vertices",  std::to_string(mesh->vertices.size()));
+        GLT::UI::table_row("indices",   std::to_string(mesh->indices.size()));
         GLT::UI::table_row("triangles", std::to_string(mesh->indices.size() / 3));
         GLT::UI::table_row("submeshes", std::to_string(mesh->submesh_count()));
-        GLT::UI::table_row("memory", GLT::util::format_bytes(mesh->memory_usage()));
+        GLT::UI::table_row("memory",    GLT::util::format_bytes(mesh->memory_usage()));
 
         GLT::UI::end_table();
-        UI::end_collapsing_header_section();
     }
 
 
     void mesh_editor_window::draw_mesh_bounds_section() {
 
-        if (!UI::begin_collapsing_header_section("Bounds"))
+        if (!ImGui::CollapsingHeader("Bounds"))
             return;
 
         auto registry = GLT::asset::registry::get_ref();
@@ -841,11 +891,8 @@ namespace GLT::editor {
         compute_mesh_bounds(*mesh, mn, mx);
         const glm::vec3 size = mx - mn;
 
-        if (!GLT::UI::begin_table("mesh_bounds_table", false, ImVec2(0, 0), 0.0f, true, 0.42f)) {
-            
-            UI::end_collapsing_header_section();
+        if (!GLT::UI::begin_table("mesh_bounds_table", false, ImVec2(0, 0), 0.0f, true, 0.42f))
             return;
-        }
 
         char buf[128];
 
@@ -859,16 +906,16 @@ namespace GLT::editor {
         GLT::UI::table_row("size", std::string_view{ buf });
 
         GLT::UI::end_table();
-        UI::end_collapsing_header_section();
     }
 
 
     void mesh_editor_window::draw_preview_settings_section() {
 
-        if (!UI::begin_collapsing_header_section("Preview"))
+        if (!ImGui::CollapsingHeader("Preview"))
             return;
 
-        if (ImGui::ColorEdit4("Background", &m_background_color.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
+        if (ImGui::ColorEdit4("Background", &m_background_color.x,
+                ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
             // m_preview_scene->set_clear_color(m_background_color);
         }
 
@@ -877,39 +924,35 @@ namespace GLT::editor {
             ImGui::SetNextItemWidth(-1.0f);
             ImGui::SliderFloat("##auto_rotate_speed", &m_auto_rotate_speed, 0.01f, 100.f, "%.2f %%");
         }
-
-        UI::end_collapsing_header_section();
     }
 
 
     void mesh_editor_window::draw_camera_section() {
 
-        if (!UI::begin_collapsing_header_section("Camera"))
+        if (!ImGui::CollapsingHeader("Camera"))
             return;
 
         if (ImGui::Button("Reset to fit", ImVec2(-1.0f, 0.0f)))
             reset_camera_to_fit();
 
         ImGui::SliderFloat("Distance", &m_preview_camera.distance, MIN_CAM_DISTANCE, MAX_CAM_DISTANCE, "%.2f");
-        ImGui::SliderFloat("FOV", &m_preview_camera.fov_deg, 15.0f, 110.0f, "%.0f deg");
-        ImGui::DragFloat3("Target", &m_preview_camera.target.x, 0.01f);
-        ImGui::DragFloat("Yaw", &m_preview_camera.yaw_rad,   0.01f);
-        ImGui::DragFloat("Pitch", &m_preview_camera.pitch_rad, 0.01f);
-        UI::end_collapsing_header_section();
+        ImGui::SliderFloat("FOV",      &m_preview_camera.fov_deg, 15.0f, 110.0f, "%.0f deg");
+        ImGui::DragFloat3("Target",    &m_preview_camera.target.x, 0.01f);
+        ImGui::DragFloat("Yaw",        &m_preview_camera.yaw_rad,   0.01f);
+        ImGui::DragFloat("Pitch",      &m_preview_camera.pitch_rad, 0.01f);
     }
 
 
     void mesh_editor_window::draw_lighting_section() {
 
-        if (!UI::begin_collapsing_header_section("Lighting"))
+        if (!ImGui::CollapsingHeader("Lighting"))
             return;
 
-        ImGui::SliderFloat("Key", &m_preview_lighting.key_intensity,  0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Key",  &m_preview_lighting.key_intensity,  0.0f, 1.0f, "%.2f");
         ImGui::SliderFloat("Fill", &m_preview_lighting.fill_intensity, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Rim", &m_preview_lighting.rim_intensity,  0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Rim",  &m_preview_lighting.rim_intensity,  0.0f, 1.0f, "%.2f");
 
         ImGui::Checkbox("Headlight (key follows camera)", &m_preview_lighting.headlight);
-        UI::end_collapsing_header_section();
     }
 
     // collider state helpers -------------------------------------------------------------------------------------------
@@ -921,7 +964,6 @@ namespace GLT::editor {
         item.kind = kind;
         item.name = std::string(collider_shape_kind_name(kind)) + " " + std::to_string(item.id);
 
-        // Seed geometry from mesh bounds where it makes sense
         auto registry = GLT::asset::registry::get_ref();
         if (registry) {
             auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle);
@@ -1044,6 +1086,10 @@ namespace GLT::editor {
         const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + avail.y);
         void* tex = m_preview_scene->get_output_image();
 
+        // Important: allow overlay buttons to claim hover before the
+        // invisible interaction area does. Without this, the InvisibleButton
+        // below would set g.HoveredId and block subsequent items.
+        ImGui::SetNextItemAllowOverlap();
         ImGui::InvisibleButton("##mesh_preview_canvas", avail,
             ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
 
@@ -1057,9 +1103,9 @@ namespace GLT::editor {
         }
 
         // ---------- camera input ----------
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active_left = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
-        const bool active_middle = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle);
+        const bool hovered        = ImGui::IsItemHovered();
+        const bool active_left    = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+        const bool active_middle  = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle);
         ImGuiIO& io = ImGui::GetIO();
 
         if (hovered && io.MouseWheel != 0.0f) {
@@ -1070,7 +1116,7 @@ namespace GLT::editor {
 
         if (active_left) {
             m_preview_camera.yaw_rad   -= io.MouseDelta.x * 0.008f;
-            m_preview_camera.pitch_rad = GLT::math::clamp(
+            m_preview_camera.pitch_rad  = GLT::math::clamp(
                 m_preview_camera.pitch_rad - io.MouseDelta.y * 0.008f, -1.45f, 1.45f);
         }
 
@@ -1080,24 +1126,53 @@ namespace GLT::editor {
                 std::sin(m_preview_camera.pitch_rad),
                 std::cos(m_preview_camera.pitch_rad) * std::cos(m_preview_camera.yaw_rad));
             const glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0, 1, 0)));
-            const glm::vec3 up = glm::normalize(glm::cross(right, fwd));
+            const glm::vec3 up    = glm::normalize(glm::cross(right, fwd));
             m_preview_camera.target += (-right * io.MouseDelta.x + up * io.MouseDelta.y)
                                      * (m_preview_camera.distance * 0.0025f);
         }
 
-        // ---------- overlay buttons ----------
-        ImGui::SetCursorScreenPos(ImVec2(canvas_min.x + 10.0f, canvas_max.y - 30.0f));
-        ImGui::BeginGroup();
-        if (ImGui::Button("Fit"))   reset_camera_to_fit();
-        ImGui::SameLine();
-        if (ImGui::Button("Front")) { m_preview_camera.yaw_rad = 0.0f; m_preview_camera.pitch_rad = 0.0f; }
-        ImGui::SameLine();
-        if (ImGui::Button("Top"))   { m_preview_camera.yaw_rad = 0.0f; m_preview_camera.pitch_rad = 1.4f; }
-        ImGui::SameLine();
-        if (ImGui::Button("Side"))  { m_preview_camera.yaw_rad = glm::half_pi<f32>(); m_preview_camera.pitch_rad = 0.0f; }
-        ImGui::EndGroup();
+        // ---------- overlay buttons (lower-right, gizmo style) ----------
+        //
+        // Uses the same color ladder as world_viewport's gizmo_toggle_button
+        // so the two surfaces read as the same UI family.
+        {
+            const ImVec4& c_weak   = ImVec4(0.10f, 0.10f, 0.10f, 0.55f);
+            const ImVec4& c_hover  = GLT::imgui_config::get_action_color00_default_ref();
+            const ImVec4& c_active = GLT::imgui_config::get_action_color00_hover_ref();
 
-        ImGui::SetCursorScreenPos(ImVec2(canvas_min.x + 10.0f, canvas_max.y - 54.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button,        c_weak);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c_hover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  c_active);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,  ImVec2(8.0f, 4.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(4.0f, 4.0f));
+
+            // Measure the total width of the four buttons so we can right-align
+            const char* labels[] = { "Fit", "Front", "Top", "Side" };
+            const f32   frame_pad_x = ImGui::GetStyle().FramePadding.x * 2.0f;
+            const f32   item_gap    = ImGui::GetStyle().ItemSpacing.x;
+            f32         total_w     = item_gap * 3.0f;
+            for (const char* l : labels)
+                total_w += ImGui::CalcTextSize(l).x + frame_pad_x;
+
+            const f32 x = canvas_max.x - total_w - 10.0f;
+            const f32 y = canvas_max.y - ImGui::GetFrameHeight() - 10.0f;
+            ImGui::SetCursorScreenPos(ImVec2(x, y));
+
+            if (ImGui::Button("Fit"))   reset_camera_to_fit();
+            ImGui::SameLine();
+            if (ImGui::Button("Front")) { m_preview_camera.yaw_rad = 0.0f; m_preview_camera.pitch_rad = 0.0f; }
+            ImGui::SameLine();
+            if (ImGui::Button("Top"))   { m_preview_camera.yaw_rad = 0.0f; m_preview_camera.pitch_rad = 1.4f; }
+            ImGui::SameLine();
+            if (ImGui::Button("Side"))  { m_preview_camera.yaw_rad = glm::half_pi<f32>(); m_preview_camera.pitch_rad = 0.0f; }
+
+            ImGui::PopStyleVar(3);
+            ImGui::PopStyleColor(3);
+        }
+
+        // ---------- hint text (lower-left) ----------
+        ImGui::SetCursorScreenPos(ImVec2(canvas_min.x + 10.0f, canvas_max.y - ImGui::GetFrameHeight() - 10.0f));
         ImGui::TextDisabled("LMB orbit   MMB pan   wheel zoom");
     }
 
@@ -1159,11 +1234,11 @@ namespace GLT::editor {
         const glm::vec3 position = m_preview_camera.target - forward * m_preview_camera.distance;
 
         GLT::world::camera_snapshot cam{};
-        cam.position = position;
-        cam.view = glm::lookAt(position, m_preview_camera.target, glm::vec3(0, 1, 0));
-        cam.fov = m_preview_camera.fov_deg;
+        cam.position   = position;
+        cam.view       = glm::lookAt(position, m_preview_camera.target, glm::vec3(0, 1, 0));
+        cam.fov        = m_preview_camera.fov_deg;
         cam.near_plane = std::max(0.01f, m_preview_camera.distance * 0.01f);
-        cam.far_plane = m_preview_camera.distance * 10.0f + 1000.0f;
+        cam.far_plane  = m_preview_camera.distance * 10.0f + 1000.0f;
         return cam;
     }
 
@@ -1185,10 +1260,10 @@ namespace GLT::editor {
 
         const glm::vec3 extent = mx - mn;
         const f32 radius = 0.5f * glm::length(extent);
-        m_preview_camera.distance = GLT::math::clamp(radius * 2.5f, MIN_CAM_DISTANCE, MAX_CAM_DISTANCE);
-        m_preview_camera.yaw_rad = -0.42f;
+        m_preview_camera.distance  = GLT::math::clamp(radius * 2.5f, MIN_CAM_DISTANCE, MAX_CAM_DISTANCE);
+        m_preview_camera.yaw_rad   = -0.42f;
         m_preview_camera.pitch_rad = -0.56f;
-        m_preview_camera.fov_deg = 45.0f;
+        m_preview_camera.fov_deg   = 45.0f;
     }
 
     // helpers ---------------------------------------------------------------------------------------------------------
@@ -1262,7 +1337,6 @@ namespace GLT::editor {
 
         rebuild_submesh_bounds_cache(*mesh);
 
-        // Keep inspector state consistent if the new mesh has fewer submeshes
         if (m_inspector_target == inspector_target::submesh &&
             (m_selected_submesh < 0 || m_selected_submesh >= static_cast<i32>(mesh->submesh_count()))) {
             select_mesh();
@@ -1317,7 +1391,7 @@ namespace GLT::editor {
         if (m_show_grid) {
             constexpr i32 GRID_HALF = 10;
             constexpr f32 GRID_STEP = 1.0f;
-            constexpr f32 GRID_EXT = GRID_HALF * GRID_STEP;
+            constexpr f32 GRID_EXT  = GRID_HALF * GRID_STEP;
             const glm::vec4 minor{ 0.30f, 0.30f, 0.34f, 0.55f };
             const glm::vec4 major{ 0.45f, 0.45f, 0.50f, 0.85f };
             const glm::vec4 axis_x{ 0.75f, 0.20f, 0.20f, 1.0f };
@@ -1400,11 +1474,13 @@ namespace GLT::editor {
                     break;
 
                 case collider_shape_kind::capsule:
-                    draw_capsule_wireframe(*debug, c.position, c.rotation, c.capsule_radius, c.capsule_half_height, color);
+                    draw_capsule_wireframe(*debug, c.position, c.rotation,
+                        c.capsule_radius, c.capsule_half_height, color);
                     break;
 
                 case collider_shape_kind::cylinder:
-                    draw_cylinder_wireframe(*debug, c.position, c.rotation, c.cylinder_radius, c.cylinder_half_height, color);
+                    draw_cylinder_wireframe(*debug, c.position, c.rotation,
+                        c.cylinder_radius, c.cylinder_half_height, color);
                     break;
 
                 case collider_shape_kind::convex_hull:

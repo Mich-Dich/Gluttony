@@ -133,8 +133,32 @@ namespace GLT::renderer::vk_rasterizer {
 
     private:
 
+        // Linear pool — one per (vertex, index, submesh). Handles range allocation from a free list, bump allocation past the
+        // high water mark, coalescing, tail reclaim, growth and shrink
+        struct linear_pool {
+
+            util::allocated_buffer*                         buffer = nullptr;
+            u32                                             element_size = 0;
+            u32                                             capacity = 0;       // in elements
+            u32                                             high_water = 0;     // bump pointer, in elements
+            u32                                             live = 0;           // total live allocation, in elements
+            u32                                             min_headroom = 0;   // min slack added on grow/shrink
+            bool                                            growable = true;
+            std::vector<free_range>                         free_ranges{};      // sorted by offset
+        };
+
+        struct mesh_alloc {
+
+            u32                                             vertex_offset = 0;
+            u32                                             index_offset = 0;
+            u32                                             submesh_offset = 0;
+        };
+
+
+
         // lifecycle helpers -------------------------------------------------------------------------------------------
 
+        void init_pools();
         void create_layouts();
         void destroy_layouts();
         void create_samplers();
@@ -150,10 +174,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         [[nodiscard]] mesh_slot* find_slot(GLT::asset::handle handle);
         [[nodiscard]] const mesh_slot* find_slot(GLT::asset::handle handle) const;
-        bool reserve_mesh_space(u32 vertex_count, u32 index_count);
         void upload_mesh_slice(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh);
         void pack_mesh_into_ssbo(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh);
-        void clear_mesh_ssbo_entry(mesh_slot& slot);
         shared_mesh_id load_mesh_internal(GLT::asset::handle handle);
 
         // texture internal --------------------------------------------------------------------------------------------
@@ -178,6 +200,24 @@ namespace GLT::renderer::vk_rasterizer {
         void create_shader_compiler();
         void destroy_shader_compiler();
 
+        // pool primitives ---------------------------------------------------------------------------------------------
+
+        [[nodiscard]] bool pool_can_fit(const linear_pool& p, u32 count) const;
+        std::optional<u32> pool_try_allocate(linear_pool& p, u32 count);
+        void pool_free(linear_pool& p, u32 offset, u32 count);
+        bool pool_resize(linear_pool& p, u32 new_capacity);
+
+        // compaction --------------------------------------------------------------------------------------------------
+
+        [[nodiscard]] bool can_compact() const;
+        [[nodiscard]] bool should_opportunistic_compact() const;
+        void try_compact();
+        void shrink_pools();
+
+        // mesh allocation transaction ---------------------------------------------------------------------------------
+
+        std::optional<mesh_alloc> allocate_mesh_ranges(u32 v, u32 i, u32 s);
+
 
 
         vk::Device                                                          m_device = nullptr;
@@ -196,19 +236,12 @@ namespace GLT::renderer::vk_rasterizer {
 
         util::allocated_buffer                                              m_vertex_buffer{};
         util::allocated_buffer                                              m_index_buffer{};
-        u32                                                                 m_vertex_capacity = 0;
-        u32                                                                 m_index_capacity = 0;
-        u32                                                                 m_vertex_used = 0;
-        u32                                                                 m_index_used = 0;
-
+        util::allocated_buffer                                              m_submesh_data_buffer{};
+        util::allocated_buffer                                              m_mesh_data_buffer{};
         std::vector<mesh_slot>                                              m_mesh_slots{};
         std::vector<u32>                                                    m_free_slots{};
         std::unordered_set<GLT::asset::handle>                              m_failed_mesh_loads{};
         std::unordered_map<GLT::asset::handle, shared_mesh_id>              m_mesh_id_by_asset{};
-
-        util::allocated_buffer                                              m_mesh_data_buffer{};
-        util::allocated_buffer                                              m_submesh_data_buffer{};
-        u32                                                                 m_submesh_used = 0;
 
         // textures ----------------------------------------------------------------------------------------------------
 
@@ -243,6 +276,13 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                                 m_live_buffer_count = 0;
         u32                                                                 m_live_pipeline_count = 0;
         u32                                                                 m_live_descriptor_set_count = 0;
+
+        // pools -------------------------------------------------------------------------------------------------------
+
+        linear_pool                                                         m_vertex_pool{};
+        linear_pool                                                         m_index_pool{};
+        linear_pool                                                         m_submesh_pool{};
+        u64                                                                 m_frames_since_compact = 0;
 
     };
 

@@ -39,7 +39,7 @@ namespace GLT::world::world_ecs_entt {
     // Inverse of write_asset_handle. `offset` is advanced past the consumed bytes. A missing, truncated, or unresolvable
     // asset degrades to INVALID_HANDLE rather than aborting the whole entity load - the outliner still shows the component,
     // the renderer just skips it.
-    GLT::asset::handle read_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, 
+    GLT::asset::asset_ref read_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, 
         std::span<const std::byte> in_bytes, size_t& offset);
 
 
@@ -90,7 +90,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    GLT::asset::handle read_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, 
+    GLT::asset::asset_ref read_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, 
         std::span<const std::byte> in_bytes, size_t& offset) {
 
         if (in_bytes.size() < offset + sizeof(u32))
@@ -112,18 +112,18 @@ namespace GLT::world::world_ecs_entt {
         offset += path_length;
 
         if (!asset_registry)
-            return INVALID_HANDLE;
+            return {};
 
-        // Fast path - the asset is already resident.
-        if (const auto existing_handle = asset_registry->find(asset_path); existing_handle != INVALID_HANDLE)
-            return existing_handle;
+        // Fast path: already resident. Upgrade borrowed handle to an owning ref.
+        if (const auto borrowed = asset_registry->find(asset_path); borrowed != INVALID_HANDLE)
+            return GLT::asset::asset_ref{ borrowed };
 
-        // Slow path - trigger a load. Failure is non-fatal.
-        if (auto load_result = asset_registry->load(asset_path); load_result)
-            return *load_result;
+        // Slow path: load and return the owning ref.
+        if (auto loaded = asset_registry->load(asset_path); loaded)
+            return std::move(*loaded);
 
         LOG(warn, "failed to resolve asset [{}] while loading a component", asset_path.generic_string());
-        return INVALID_HANDLE;
+        return {};
     }
 
 
@@ -235,7 +235,7 @@ namespace GLT::world::world_ecs_entt {
                 auto& mesh_component = entity_registry.emplace_or_replace<component::mesh>(entity_handle);
 
                 size_t offset = 0;
-                mesh_component.mesh = GLT::asset::asset_ref{ read_asset_handle(asset_registry, in_bytes, offset) };
+                mesh_component.mesh = read_asset_handle(asset_registry, in_bytes, offset);
 
                 if (in_bytes.size() < offset + sizeof(u32))
                     return;
@@ -246,8 +246,7 @@ namespace GLT::world::world_ecs_entt {
                 mesh_component.material_overrides.clear();
                 mesh_component.material_overrides.reserve(count);
                 for (u32 i = 0; i < count; ++i)
-                    mesh_component.material_overrides.emplace_back(
-                        GLT::asset::asset_ref{ read_asset_handle(asset_registry, in_bytes, offset) });
+                    mesh_component.material_overrides.emplace_back(read_asset_handle(asset_registry, in_bytes, offset));
 
                 mesh_component.visible = (in_bytes.size() > offset) ? (in_bytes[offset] != std::byte{0}) : true;
 
@@ -290,7 +289,7 @@ namespace GLT::world::world_ecs_entt {
                 auto& audio_component = entity_registry.emplace_or_replace<component::audio_source>(entity_handle);
 
                 size_t offset = 0;
-                audio_component.clip = GLT::asset::asset_ref{ read_asset_handle(asset_registry, in_bytes, offset) };
+                audio_component.clip = read_asset_handle(asset_registry, in_bytes, offset);
 
                 // Config was written in full at save time. If it's missing or truncated the blob came from a different
                 // (or hand-edited) writer - leave the config at its default-constructed values rather than risk reading past the buffer.
@@ -365,14 +364,14 @@ namespace GLT::world::world_ecs_entt {
 
     // world lifecycle -------------------------------------------------------------------------------------------------
 
-    std::expected<void, GLT::asset::load_error> ecs_world_plugin::load_world(GLT::asset::handle world) {
+    std::expected<void, GLT::asset::load_error> ecs_world_plugin::load_world(GLT::asset::asset_ref world) {
 
         if (m_world == world)
             return {};        // already loaded
         unload_world();
 
-        auto registry = GLT::asset::registry::get_ref();
-        const auto* world_asset = registry->data_as<GLT::asset::world::world_asset>(world);
+        auto* registry = GLT::asset::registry::get_ptr();
+        const auto* world_asset = registry->data_as<GLT::asset::world::world_asset>(world.get());
         if (!world_asset)
             return std::unexpected(GLT::asset::load_error::corrupt_header);
 
@@ -412,8 +411,7 @@ namespace GLT::world::world_ecs_entt {
                     const auto& inf = registry->info(h);
                     if (inf.asset_type == GLT::asset::core_types::region) {
 
-                        region.asset = h;
-                        registry->retain(h);
+                        region.asset = GLT::asset::asset_ref{ h };
                         LOG(info, "recovered region {:#x} via UUID lookup", static_cast<unsigned long long>(region.id));
                         continue;
                     }
@@ -469,19 +467,19 @@ namespace GLT::world::world_ecs_entt {
 
         m_regions.clear();
         m_region_states.clear();
-        m_world = {};
+        m_world.reset();
         m_registry.clear();
         m_slots.clear();
         m_free.clear();
     }
 
 
-    GLT::asset::handle ecs_world_plugin::world_handle() const noexcept { return m_world; }
+    GLT::asset::handle ecs_world_plugin::world_handle() const noexcept { return m_world.get(); }
 
 
     std::expected<void, GLT::asset::load_error> ecs_world_plugin::save_world() {
 
-        if (m_world == INVALID_HANDLE)
+        if (!m_world.valid())
             return std::unexpected{ GLT::asset::load_error::not_found };
 
         auto registry = GLT::asset::registry::get_ref();
@@ -492,7 +490,7 @@ namespace GLT::world::world_ecs_entt {
             return result;
 
         sync_world_asset();
-        return registry->save(m_world);
+        return registry->save(m_world.get());
     }
 
 
@@ -503,7 +501,7 @@ namespace GLT::world::world_ecs_entt {
 
         auto registry = GLT::asset::registry::get_ref();
 
-        if (m_world == INVALID_HANDLE) {    // fresh world -------------------------------------------------------------
+        if (!m_world.valid()) {    // fresh world ----------------------------------------------------------------------
 
             // Register the world first so ensure_region_for_cell() has a path to anchor against
             auto world_asset = GLT::create_unique_ref<GLT::asset::world::world_asset>();
@@ -524,7 +522,7 @@ namespace GLT::world::world_ecs_entt {
         }
 
         // existing handle, path differs: migrate the canonical path
-        if (registry->info(m_world).virtual_path != path) {
+        if (registry->info(m_world.get()).virtual_path != path) {
 
             reassign_all_entities();
             prune_empty_regions();
@@ -532,7 +530,7 @@ namespace GLT::world::world_ecs_entt {
                 return result;
 
             sync_world_asset();
-            return registry->save_as(m_world, path);
+            return registry->save_as(m_world.get(), path);
         }
 
         return save_world();
@@ -1130,7 +1128,7 @@ namespace GLT::world::world_ecs_entt {
 
     void ecs_world_plugin::activate(GLT::asset::region::region& region) {
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto* registry = GLT::asset::registry::get_ptr();
 
         // We treat region.asset as already resolved (see notes at bottom)
         VALIDATE(region.asset != INVALID_HANDLE, region.is_active = true; return, 
@@ -1348,7 +1346,7 @@ namespace GLT::world::world_ecs_entt {
     void ecs_world_plugin::sync_world_asset() {
 
         auto registry = GLT::asset::registry::get_ref();
-        auto* world_asset = registry->data_as<GLT::asset::world::world_asset>(m_world);
+        auto* world_asset = registry->data_as<GLT::asset::world::world_asset>(m_world.get());
         if (!world_asset)
             return;
 
@@ -1363,10 +1361,10 @@ namespace GLT::world::world_ecs_entt {
     std::filesystem::path ecs_world_plugin::region_path_for_cell(const glm::ivec3& cell) const {
 
         auto registry = GLT::asset::registry::get_ref();
-        if (!registry || m_world == INVALID_HANDLE)
+        if (!registry || !m_world.valid())
             return {};
 
-        const std::filesystem::path world_path = registry->info(m_world).virtual_path;
+        const std::filesystem::path world_path = registry->info(m_world.get()).virtual_path;
         if (world_path.empty())
             return {};
 
@@ -1378,37 +1376,53 @@ namespace GLT::world::world_ecs_entt {
 
     GLT::asset::handle ecs_world_plugin::resolve_region_handle(const glm::ivec3& cell, GLT::UUID expected_id) {
 
-        auto registry = GLT::asset::registry::get_ref();
-        if (!registry || m_world == INVALID_HANDLE)
+        auto* registry = GLT::asset::registry::get_ptr();
+        if (!registry || !m_world.valid())
             return INVALID_HANDLE;
+
+        // load()/register_runtime() now hand back an owning asset_ref (their own +1 refcount). This function's contract,
+        // however, is: return a raw handle with +1 refcount owned by the caller (who releases it later, e.g. unload_world)
+        //
+        // Bridge the two by bumping the refcount once more before the asset_ref dies:
+        //     ref_count entering hand_off:  N   (asset_ref's own +1)
+        //     retain(h):                    N+1 (caller's +1)
+        //     ref destructs at end of fn:   N
+        // Net: exactly +1 for the caller, regardless of N.
+        auto hand_off = [registry](GLT::asset::asset_ref ref) -> GLT::asset::handle {
+            if (!ref.valid())
+                return INVALID_HANDLE;
+            const GLT::asset::handle h = ref.get();
+            registry->retain(h);           // +1 owned by caller
+            return h;
+        };                                 // ref destructs → releases its own +1
 
         // already loaded, by UUID -------------------------------------------------------------------------------------
 
         if (expected_id != 0) {
             if (auto h = registry->find_by_id(expected_id); h != INVALID_HANDLE) {
 
-                // Guard: verify the UUID actually names a region. A hand-edited
-                // world file could point at a mesh's UUID, and adopting that as
-                // a region would corrupt the plugin's state.
+                // Guard: verify the UUID actually names a region. A hand-edited world file could point at a mesh's UUID,
+                // and adopting that as a region would corrupt the plugin's state
                 const auto& inf = registry->info(h);
                 if (inf.asset_type == GLT::asset::core_types::region) {
+                    // find_by_id returns a borrowed handle → bump once for the caller
                     registry->retain(h);
                     return h;
                 }
 
                 LOG(warn, "UUID {:#x} is a {} asset, not a region - refusing to adopt",
-                    static_cast<unsigned long long>(expected_id),
-                    GLT::asset::type_to_string(inf.asset_type));
+                    static_cast<unsigned long long>(expected_id), GLT::asset::type_to_string(inf.asset_type));
             }
         }
 
-        // ath-based lookup / load -------------------------------------------------------------------------------------
+        // path-based lookup / load ------------------------------------------------------------------------------------
 
         const std::filesystem::path path = region_path_for_cell(cell);
         if (path.empty())
             return INVALID_HANDLE;
 
         if (auto h = registry->find(path); h != INVALID_HANDLE) {
+            // find() returns a borrowed handle → bump once for the caller
             registry->retain(h);
             return h;
         }
@@ -1417,8 +1431,9 @@ namespace GLT::world::world_ecs_entt {
         if (GLT::vfs::exists(PROJECT_CONTENT_DIR / path, ec) && !ec) {
 
             if (auto loaded = registry->load(path); loaded) {
-                registry->retain(*loaded);
-                return *loaded;
+                // `loaded` is owning (ref_count == 1 owned by the asset_ref inside the expected). hand_off adds +1 for the
+                // caller; the asset_ref's +1 is released when it destructs at the end of hand_off
+                return hand_off(std::move(*loaded));
             }
 
             LOG(warn, "region file [{}] exists but failed to load - falling back to a fresh region",
@@ -1433,13 +1448,9 @@ namespace GLT::world::world_ecs_entt {
 
         const std::string stem = path.stem().string();
         auto handle_res = registry->register_runtime(std::move(region_asset), path, stem, expected_id);
-        if (!handle_res) {
-            LOG(warn, "failed to register region [{}]", path.generic_string());
-            return INVALID_HANDLE;
-        }
+        VALIDATE(handle_res, return INVALID_HANDLE, "", "failed to register region [{}]", (path.generic_string()))
 
-        registry->retain(*handle_res);
-        return *handle_res;
+        return hand_off(std::move(*handle_res));
     }
 
     // region grid -----------------------------------------------------------------------------------------------------

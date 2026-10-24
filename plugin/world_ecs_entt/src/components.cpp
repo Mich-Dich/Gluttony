@@ -111,20 +111,20 @@ namespace GLT::world::world_ecs_entt::component {
 
                 if (submesh_count > 0) {
 
-                    // The codec + begin_override() both keep this invariant; if a hand-edited file slipped
-                    // through, clear rather than rendering with a mismatched vector
+                    // The codec + begin_override() both keep this invariant; if a hand-edited file slipped through, clear rather
+                    // than rendering with a mismatched vector
                     if (!mr.material_overrides.empty() && !mr.overrides_match(submesh_count))
                         mr.material_overrides.clear();
 
                     if (mr.material_overrides.empty()) {
 
-                        // Zero-override state: one picker that, when set, fills every slot with the same
-                        // handle. Leaving it at INVALID_HANDLE keeps the asset defaults.
-                        GLT::asset::handle uniform = INVALID_HANDLE;
+                        // Zero-override state: one picker that, when set, fills every slot with the same handle. Leaving it at
+                        // INVALID_HANDLE keeps the asset defaults
+                        GLT::asset::asset_ref uniform{};
                         if (GLT::UI::table_row_asset_picker("Material Override", uniform, GLT::asset::core_types::material)) {
                             mr.begin_override(submesh_count);
                             for (auto& slot : mr.material_overrides)
-                                slot = GLT::asset::asset_ref{ uniform };
+                                slot = uniform;
                         }
 
                     } else {

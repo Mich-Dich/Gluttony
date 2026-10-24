@@ -164,7 +164,7 @@ namespace GLT {
         auto world = world_layer->get_world();
         VALIDATE(world, return, "", "Failed to get world from world layer")
 
-        // TODO: check the world for real and 
+        // TODO: check the world for real
         if (!override_current)                         // already set, dont override
             return;
 
@@ -173,8 +173,9 @@ namespace GLT {
 
         auto result = registry->load(world_path);
         VALIDATE(result, return, "", "Registry failed to load world [{}]", (world_path.generic_string()))
+        m_current_world = std::move(*result);
 
-        const auto world_result = world->load_world(*result);
+        const auto world_result = world->load_world(m_current_world);
         VALIDATE(world_result, return, "", "Failed to load world")
     }
 

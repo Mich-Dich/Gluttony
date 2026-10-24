@@ -330,9 +330,8 @@ namespace GLT::editor {
 
         ImGui::SameLine();
 
-        // Primary action uses the theme's main accent color. Only blocked by
-        // *validation* errors - an operation error is informational, and the
-        // user is allowed to retry (e.g. after fixing something externally).
+        // Primary action uses the theme's main accent color. Only blocked by *validation* errors - an operation error is
+        // informational, and the user is allowed to retry (e.g. after fixing something externally)
         ImGui::BeginDisabled(has_validation_error);
         ImGui::PushStyleColor(ImGuiCol_Button,        GLT::imgui_config::get_action_color00_default_ref());
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, GLT::imgui_config::get_action_color00_hover_ref());
@@ -349,7 +348,7 @@ namespace GLT::editor {
 
     bool asset_create_window::try_create() {
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto* registry = GLT::asset::registry::get_ptr();
         if (!registry) {
             m_operation_error = "No asset registry";
             return false;
@@ -376,20 +375,12 @@ namespace GLT::editor {
             asset->textures.fill(INVALID_HANDLE);
             asset->name = filename.stem().string();
 
-            auto registered = registry->register_runtime(
-                std::move(asset), rel_target, filename.stem().string());
-
+            auto registered = registry->register_runtime(std::move(asset), rel_target, filename.stem().string());
             VALIDATE(registered.has_value(), return false, 
                 "", "asset_create: register_runtime failed for [{}]", (rel_target.generic_string()))
 
-            auto save_result = registry->save(*registered);
-            if (!save_result) {
-
-                LOG(error, "asset_create: failed to write [{}] (error {})",
-                    rel_target.generic_string(), static_cast<int>(save_result.error()));
-
-                // Slot exists only in memory; drop it so a retry doesn't collide.
-                registry->unload(*registered);
+            if (auto save_result = registry->save(*registered); !save_result) {
+                LOG(error, "asset_create: failed to write [{}] (error {})", rel_target.generic_string(), static_cast<int>(save_result.error()))
                 m_operation_error = "Failed to write asset to disk.";
                 return false;
             }
@@ -403,8 +394,7 @@ namespace GLT::editor {
             return true;
         }
 
-        // Placeholder for future creatable types - the create button is only
-        // enabled for types with a real branch above.
+        // Placeholder for future creatable types - the create button is only enabled for types with a real branch above
         m_operation_error = "Unsupported target type.";
         return false;
     }

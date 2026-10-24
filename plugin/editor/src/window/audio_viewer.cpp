@@ -250,9 +250,9 @@ namespace GLT::editor {
                 result->ok = false;
             } else if (auto loaded = registry->load(relative_path); loaded) {
 
-                result->asset_handle = *loaded;
+                result->asset_ref = std::move(*loaded);
 
-                const auto* runtime = registry->data(result->asset_handle);
+                const auto* runtime = registry->data(result->asset_ref);
                 const auto* asset = dynamic_cast<const GLT::asset::audio::audio_asset*>(runtime);
                 if (asset) {
 
@@ -280,14 +280,8 @@ namespace GLT::editor {
                 if (lifetime.expired())
                     return;                          // window was destroyed while loading
 
-                if (generation != m_load_generation) {
-                    // A newer open() superseded us - release whatever we loaded.
-                    if (result->asset_handle != INVALID_HANDLE) {
-                        if (auto registry = GLT::asset::registry::get_ref())
-                            registry->unload(result->asset_handle);
-                    }
+                if (generation != m_load_generation)
                     return;
-                }
 
                 apply_decode_result(std::move(*result));
             });
@@ -350,12 +344,7 @@ namespace GLT::editor {
         }
         m_voice_handle = 0;
         m_playing = false;
-
-        if (m_asset_handle != INVALID_HANDLE) {
-            if (auto registry = GLT::asset::registry::get_ref())
-                registry->unload(m_asset_handle);
-            m_asset_handle = INVALID_HANDLE;
-        }
+        m_asset_handle.reset();
     }
 
     // details panel ---------------------------------------------------------------------------------------------------
@@ -856,12 +845,6 @@ namespace GLT::editor {
         m_loading = false;
 
         if (!result.ok) {
-            // If the registry did produce a handle but our post-processing failed,
-            // don't leak it.
-            if (result.asset_handle != INVALID_HANDLE) {
-                if (auto registry = GLT::asset::registry::get_ref())
-                    registry->unload(result.asset_handle);
-            }
             m_load_failed = true;
             return;
         }
@@ -871,7 +854,7 @@ namespace GLT::editor {
         m_peak_count = result.peak_count;
 
         m_audio_manager = GLT::audio::manager::get_ref();
-        m_asset_handle = result.asset_handle;
+        m_asset_handle = std::move(result.asset_ref);
 
         m_has_audio = true;
         m_fit_pending = true;
@@ -881,7 +864,7 @@ namespace GLT::editor {
     void audio_viewer_window::transport_play() {
 
         auto plugin = m_audio_manager.lock();
-        if (!plugin || m_asset_handle == INVALID_HANDLE)
+        if (!plugin || !m_asset_handle.valid())
             return;
 
         if (m_voice_handle && plugin->is_valid(m_voice_handle)) {

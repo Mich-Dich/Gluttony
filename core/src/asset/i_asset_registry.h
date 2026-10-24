@@ -2,6 +2,7 @@
 #pragma once
 
 #include "asset/type.h"
+#include "asset/asset_ref.h"
 #include "plugin_system/plugin_manager.h"
 #include "asset/i_asset_factory.h"
 
@@ -63,16 +64,7 @@ namespace GLT::asset {
         //
         // @param path  CAUTION - content-dir-relative path (PROJECT_CONTENT_DIR / path)
         // @return Handle to the loaded asset, or a load_error
-        [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::load_error> load(std::filesystem::path path) = 0;
-
-
-        // @brief Drops one reference to an asset
-        //
-        // The asset is unloaded and its slot freed once the last reference is released. Prefer [asset_ref] (RAII
-        // over calling this directly
-        //
-        // @param h Handle to release
-        virtual void unload(GLT::asset::handle h) noexcept = 0;
+        [[nodiscard]] virtual std::expected<asset_ref, load_error> load(const std::filesystem::path& path) = 0;
 
         // persistence -------------------------------------------------------------------------------------------------
 
@@ -159,7 +151,7 @@ namespace GLT::asset {
         // @param name   Optional display name; defaults to the path's stem
         // @param id     Optional preassigned UUID; a fresh one is minted when zero
         // @return Handle to the newly-registered asset, or a load_error
-        [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::load_error> register_runtime(
+        [[nodiscard]] virtual std::expected<GLT::asset::asset_ref, GLT::asset::load_error> register_runtime(
             GLT::unique_ref<GLT::asset::i_runtime_asset> asset, const std::filesystem::path& path, std::string_view name = {},
             GLT::UUID id = {}) = 0;
 
@@ -236,7 +228,7 @@ namespace GLT::asset {
         // @param out_path     Optional explicit output path
         // @param opts         Import-time options forwarded to the factory
         // @return Handle to the imported asset, or an import_error
-        [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::import_error> import(const std::filesystem::path& source, 
+        [[nodiscard]] virtual std::expected<asset_ref, GLT::asset::import_error> import(const std::filesystem::path& source,
             GLT::asset::type target_type, const std::filesystem::path& out_path = {}, const GLT::asset::import_options& opts = {}) = 0;
 
 
@@ -295,19 +287,22 @@ namespace GLT::asset {
         //
         // @param path Content-dir-relative path
         // @return Future producing the load result
-        [[nodiscard]] virtual std::future<std::expected<GLT::asset::handle, GLT::asset::load_error>> load_async(std::filesystem::path path) = 0;
+        [[nodiscard]] virtual std::future<std::expected<asset_ref, GLT::asset::load_error>> load_async(
+            const std::filesystem::path& path) = 0;
 
         // manage asset lifetime ---------------------------------------------------------------------------------------
 
-        // @brief Adds one reference to an asset
+        // CAUTION: used by asset_ref. Do NOT call directly from user code
+        //
+        // Adds one reference to an asset
         // @param handle Asset to retain
         virtual void retain(GLT::asset::handle handle) = 0;
 
 
-        // @brief Drops one reference to an asset
+        // CAUTION: used by asset_ref. Do NOT call directly from user code
         //
-        // When the last reference goes away, the asset's data is destroyed, its slot freed, and its own dependencies
-        // released in turn. Prefer [asset_ref] (RAII) over calling this directly
+        // Drops one reference to an asset. When the last reference goes away, the asset's data is destroyed,
+        // its slot freed, and its own dependencies released in turn. Prefer [asset_ref] (RAII) over calling this directly
         //
         // @param handle Asset to release
         virtual void release(GLT::asset::handle handle) = 0;

@@ -2,7 +2,6 @@
 #pragma once
 
 #include "asset/type.h"
-#include "asset/i_asset_registry.h"
 
 
 
@@ -10,11 +9,16 @@
 
 namespace GLT::asset {
 
-    // CONSTANTS =======================================================================================================
-
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
+
+    // asset_ref.h — add near the existing ctor
+    struct adopt_ref_t {};
+
+    // CONSTANTS =======================================================================================================
+
+    inline constexpr adopt_ref_t            adopt_ref;
 
     // STATIC VARIABLES ================================================================================================
 
@@ -56,6 +60,10 @@ namespace GLT::asset {
         // @brief Move-constructs, transferring ownership from `other`
         // @param other Reference to move from. Left in an invalid state
         asset_ref(asset_ref&& other) noexcept;
+
+
+        // Caller has already retained. Used by the registry to hand out owning refs while it holds its own lock
+        asset_ref(handle h, adopt_ref_t) noexcept;
 
 
         // @brief Releases this reference (if any) back to the registry

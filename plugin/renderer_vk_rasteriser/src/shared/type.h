@@ -89,7 +89,15 @@ namespace GLT::renderer::vk_rasterizer {
         }
     };
 
-    // A single resident mesh slot inside the shared storage
+
+    // Free-range entry for the linear pools. Sorted by offset, coalesced on free.
+    struct free_range {
+        u32                                                         offset = 0;
+        u32                                                         size = 0;
+    };
+
+
+    // A single resident mesh slot inside the shared storage.
     struct mesh_slot {
 
         GLT::asset::handle                                          asset{};
@@ -97,11 +105,13 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         vertex_count = 0;
         u32                                                         index_offset = 0;   // in indices
         u32                                                         index_count = 0;
+        u32                                                         submesh_offset = 0;  // in gpu_submesh_data
+        u32                                                         submesh_count = 0;
         bool                                                        alive = false;
-        std::vector<u32>                                            material_slots{};    // per submesh, resolved material slot
+        std::vector<u32>                                            material_slots{};
         glm::vec3                                                   local_min{0.0f};
         glm::vec3                                                   local_max{0.0f};
-        u32                                                         ref_count = 0; 
+        u32                                                         ref_count = 0;
     };
 
 

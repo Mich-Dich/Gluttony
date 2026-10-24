@@ -5,6 +5,7 @@
 #include <TextEditor.h>
 
 #include <asset/type.h>
+#include <asset/asset_ref.h>
 #include <asset/material.h>
 
 #include "window/base/asset_editor.h"
@@ -146,7 +147,7 @@ namespace GLT::editor {
         // ---- state -------------------------------------------------------------------------------------------------
 
         std::filesystem::path                                   m_material_path{};
-        GLT::asset::handle                                      m_asset_handle = INVALID_HANDLE;
+        GLT::asset::asset_ref                                   m_asset_handle = INVALID_HANDLE;
         std::string                                             m_material_name{};
 
         bool                                                    m_has_material = false;

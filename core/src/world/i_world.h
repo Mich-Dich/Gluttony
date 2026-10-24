@@ -2,6 +2,7 @@
 
 #include "util/data_structures/UUID.h"
 #include "asset/type.h"
+#include "asset/asset_ref.h"
 #include "asset/region.h"
 #include "world/entity.h"
 #include "plugin_system/plugin_manager.h"
@@ -56,7 +57,7 @@ namespace GLT::world {
 
         // Bind a world asset to this plugin. Any previously bound world is unloaded first. 
         // Returns an error if the handle isn't a world asset or its regions couldn't be indexed.
-        [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> load_world(const GLT::asset::handle world) = 0;
+        [[nodiscard]] virtual std::expected<void, GLT::asset::load_error> load_world(const GLT::asset::asset_ref world) = 0;
 
 
         virtual void unload_world() noexcept = 0;

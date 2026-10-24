@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <asset/type.h>
+#include <asset/asset_ref.h>
 #include <asset/mesh.h>
 #include <render/i_renderer.h>
 #include <render/i_debug_draw.h>
@@ -30,34 +31,21 @@ namespace GLT::editor {
 
     // TYPES ===========================================================================================================
 
-    // STATIC VARIABLES ================================================================================================
-
-    // FUNCTION DECLARATION ============================================================================================
-
-    // TEMPLATE DECLARATION ============================================================================================
-
-    // CLASS DECLARATION ===============================================================================================
-
-    // Which shape family the editor currently exposes. Each kind maps 1:1 to a
-    // physics::shape_data alternative once the collider pipeline is wired up.
     enum class collider_shape_kind : u8 {
 
         box = 0,
         sphere,
         capsule,
         cylinder,
-        convex_hull,        // future: auto-fit from the mesh's vertex cloud
-        triangle_mesh,      // future: use the mesh's own triangle soup
+        convex_hull,
+        triangle_mesh,
     };
 
-    [[nodiscard]] const char* collider_shape_kind_name(collider_shape_kind k) noexcept;
 
-
-    // Editor-side description of a single collider entry.
+    // Editor-side description of a single collider entry
     //
-    // This is NOT the runtime physics object. It is a flat, trivially-iterable
-    // representation the UI can iterate without a std::visit per row. Fields
-    // not relevant to [kind] are simply ignored.
+    // This is NOT the runtime physics object. It is a flat, trivially-iterable representation the UI can iterate without a
+    // std::visit per row. Fields not relevant to [kind] are simply ignored
     struct collider_editor_item {
 
         u64                                     id{ 0 };
@@ -65,29 +53,35 @@ namespace GLT::editor {
         collider_shape_kind                     kind = collider_shape_kind::box;
         bool                                    visible = true;
         glm::vec4                               color{ 0.20f, 0.90f, 0.40f, 1.00f };
-
         glm::vec3                               position{ 0.0f };
         glm::quat                               rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
-
-        // Shape parameters (only the ones for [kind] are used)
         glm::vec3                               box_half_extents{ 0.5f };
         f32                                     sphere_radius = 0.5f;
         f32                                     capsule_radius = 0.25f;
         f32                                     capsule_half_height = 0.5f;
         f32                                     cylinder_radius = 0.25f;
         f32                                     cylinder_half_height = 0.5f;
-
         GLT::physics::physics_material          material{};
     };
 
+    // STATIC VARIABLES ================================================================================================
+
+    // FUNCTION DECLARATION ============================================================================================
+
+    [[nodiscard]] const char* collider_shape_kind_name(collider_shape_kind k) noexcept;
+
+    // TEMPLATE DECLARATION ============================================================================================
+
     // CLASS DECLARATION ===============================================================================================
 
-    // Dockable editor window for a mesh asset + its collider set.
+    // Dockable editor window for a mesh asset + its collider set
     //
     // Three-panel layout:
     //   - Outliner: mesh hierarchy / submeshes / collider list
     //   - Preview : 3D viewport with camera controls and collider wireframes
     //   - Inspector: properties for the currently selected item
+    //
+    // Both side panels are resizable via a 6px splitter handle between panels
     class mesh_editor_window : public asset_editor {
     public:
 
@@ -200,7 +194,7 @@ namespace GLT::editor {
 
 
         std::filesystem::path                                   m_mesh_path{};
-        GLT::asset::handle                                      m_asset_handle = INVALID_HANDLE;
+        GLT::asset::asset_ref                                   m_asset_handle = INVALID_HANDLE;
         std::string                                             m_mesh_name{};
 
         bool                                                    m_has_mesh = false;
@@ -222,6 +216,12 @@ namespace GLT::editor {
 
         u64                                                     m_next_collider_id = 1;
         bool                                                    m_show_colliders_in_preview = true;
+
+        // ---- panel layout ------------------------------------------------------------------------------------------
+
+        // Widths of the two side panels. The splitter handles between panels edit these directly, so they persist across frames
+        f32                                                     m_outliner_width = 240.0f;
+        f32                                                     m_inspector_width = 340.0f;
 
         // ---- preview state -----------------------------------------------------------------------------------------
 

@@ -108,12 +108,18 @@ namespace GLT::renderer::vk_rasterizer {
         m_device.waitIdle();
 
         for (auto& slot : m_material_slots) {
-            if (slot.pipeline)          m_device.destroyPipeline(slot.pipeline);
-            if (slot.depth_pipeline)    m_device.destroyPipeline(slot.depth_pipeline);
-            if (slot.vertex_module)     m_device.destroyShaderModule(slot.vertex_module);
-            if (slot.fragment_module)   m_device.destroyShaderModule(slot.fragment_module);
-            if (slot.depth_module)      m_device.destroyShaderModule(slot.depth_module);
-            if (slot.params_ubo.buffer) m_dev->destroy_buffer(slot.params_ubo);
+            if (slot.pipeline)
+                m_device.destroyPipeline(slot.pipeline);
+            if (slot.depth_pipeline)
+                m_device.destroyPipeline(slot.depth_pipeline);
+            if (slot.vertex_module)
+                m_device.destroyShaderModule(slot.vertex_module);
+            if (slot.fragment_module)
+                m_device.destroyShaderModule(slot.fragment_module);
+            if (slot.depth_module)
+                m_device.destroyShaderModule(slot.depth_module);
+            if (slot.params_ubo.buffer)
+                m_dev->destroy_buffer(slot.params_ubo);
         }
         m_material_slots.clear();
         m_free_material_slots.clear();
@@ -130,21 +136,37 @@ namespace GLT::renderer::vk_rasterizer {
             if (slot.alive)
                 for (u32 material_slot : slot.material_slots)
                     release_material(material_slot);
+
         m_mesh_slots.clear();
         m_free_slots.clear();
         m_failed_mesh_loads.clear();
         m_mesh_id_by_asset.clear();
 
-        if (m_vertex_buffer.buffer)       { m_dev->destroy_buffer(m_vertex_buffer);       m_vertex_buffer = {}; }
-        if (m_index_buffer.buffer)        { m_dev->destroy_buffer(m_index_buffer);        m_index_buffer = {}; }
-        if (m_mesh_data_buffer.buffer)    { m_dev->destroy_buffer(m_mesh_data_buffer);    m_mesh_data_buffer = {}; }
-        if (m_submesh_data_buffer.buffer) { m_dev->destroy_buffer(m_submesh_data_buffer); m_submesh_data_buffer = {}; }
+        if (m_vertex_buffer.buffer) {
+            m_dev->destroy_buffer(m_vertex_buffer);
+            m_vertex_buffer = {}; 
+        }
+        if (m_index_buffer.buffer) {
+            m_dev->destroy_buffer(m_index_buffer);
+            m_index_buffer = {}; 
+        }
+        if (m_mesh_data_buffer.buffer) {
+            m_dev->destroy_buffer(m_mesh_data_buffer);
+            m_mesh_data_buffer = {}; 
+        }
+        if (m_submesh_data_buffer.buffer) {
+            m_dev->destroy_buffer(m_submesh_data_buffer);
+            m_submesh_data_buffer = {}; 
+        }
 
         destroy_layouts();
         destroy_samplers();
         destroy_shader_compiler();
         destroy_immediate_submit();
 
+        m_vertex_pool = {};
+        m_index_pool = {};
+        m_submesh_pool = {};
         m_live_buffer_count = 0;
         m_live_pipeline_count = 0;
         m_live_descriptor_set_count = 0;
@@ -154,9 +176,18 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::begin_frame(u64 /*frame_number*/) {
+
+        m_frames_since_compact++;
+
         if ((++m_material_poll_counter % MATERIAL_POLL_INTERVAL) == 0)
             poll_material_changes();
-        // v1: no deferred/async work — ensure_* is synchronous.
+
+        // Opportunistic compaction: a growable pool is >2x its live size && at least 10 frames between hiccups
+        if (should_opportunistic_compact() && can_compact()) {
+
+            try_compact();
+            shrink_pools();
+        }
     }
 
 
@@ -475,29 +506,34 @@ namespace GLT::renderer::vk_rasterizer {
     void shared_resource_manager::pack_material(u32 slot_index) {
 
         material_slot& slot = m_material_slots[slot_index];
-        if (slot.asset == INVALID_HANDLE || !slot.alive) return;
+        if (slot.asset == INVALID_HANDLE || !slot.alive)
+            return;
 
         auto registry = GLT::asset::registry::get_ref();
-        if (!registry) return;
+        if (!registry)
+            return;
         const auto* asset = registry->data_as<GLT::asset::material::material_asset>(slot.asset);
-        if (!asset) return;
+        if (!asset)
+            return;
 
         if (asset->bytecode_hash != slot.bytecode_hash) {
             destroy_material_shaders(slot);
             bool ok = false;
             if (asset->bytecode_hash != 0)
                 ok = load_material_shaders(slot, *asset);
-            if (ok) slot.bytecode_hash = asset->bytecode_hash;
+            if (ok)
+                slot.bytecode_hash = asset->bytecode_hash;
         }
 
         for (u32 i = 0; i < MATERIAL_TEXTURE_SLOTS; ++i) {
             const auto wanted = asset->textures[i];
-            if (wanted == slot.texture_assets[i]) continue;
+            if (wanted == slot.texture_assets[i])
+                continue;
             if (slot.texture_assets[i] != INVALID_HANDLE)
                 release_texture_internal(slot.texture_slots[i]);
             slot.texture_assets[i] = wanted;
             slot.texture_slots[i] = (wanted == INVALID_HANDLE) ? fallback_texture_slot_for(i)
-                                                                : acquire_texture_internal(wanted);
+                : acquire_texture_internal(wanted);
         }
 
         const u32 needed = static_cast<u32>(asset->packed_params.size());

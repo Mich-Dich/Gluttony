@@ -291,7 +291,7 @@ namespace GLT::asset::registry_default {
 
     // lifecycle -------------------------------------------------------------------------------------------------------
 
-    std::expected<GLT::asset::handle, GLT::asset::load_error> plugin::load(std::filesystem::path path) {
+    std::expected<GLT::asset::asset_ref, GLT::asset::load_error> plugin::load(const std::filesystem::path& path) {
 
         const auto relative = GLT::project::to_content_relative(path);
         if (relative.empty())
@@ -299,37 +299,12 @@ namespace GLT::asset::registry_default {
 
         std::unique_lock lock(m_mutex);
         std::unordered_set<std::string> in_flight;
-        return load_unlocked(relative, in_flight);
-    }
+        auto res = load_unlocked(relative, in_flight);
+        if (!res)
+            return std::unexpected{ res.error() };
 
-
-    void plugin::unload(GLT::asset::handle h) noexcept {
-
-        std::unique_lock lock(m_mutex);
-        slot* s = slot_for(h);
-        if (!s)
-            return;
-
-        // Detach from every dependent so their info.dependents shrinks correctly.
-        for (GLT::asset::handle dep : s->dependents_storage) {
-            if (slot* d = slot_for(dep)) {
-                auto& v = d->dependents_storage;
-                v.erase(std::remove(v.begin(), v.end(), h), v.end());
-                d->asset_info.dependents = v;
-            }
-        }
-
-        // Detach from every dep so their info.dependents shrinks correctly.
-        for (GLT::asset::handle dep : s->deps_storage) {
-            if (slot* d = slot_for(dep)) {
-                auto& v = d->dependents_storage;
-                v.erase(std::remove(v.begin(), v.end(), h), v.end());
-                d->asset_info.dependents = v;
-            }
-        }
-
-        m_by_path.erase(s->canonical_path.generic_string());
-        release_slot(h);
+        retain_unlocked(*res);                              // +1 ref, still under lock
+        return GLT::asset::asset_ref{ *res, GLT::asset::adopt_ref };
     }
 
 
@@ -585,8 +560,8 @@ namespace GLT::asset::registry_default {
 
     // persistence -----------------------------------------------------------------------------------------------------
 
-    std::expected<GLT::asset::handle, GLT::asset::load_error>plugin::register_runtime(GLT::unique_ref<GLT::asset::i_runtime_asset> asset,
-        const std::filesystem::path& path, std::string_view name, GLT::UUID id) {
+    std::expected<GLT::asset::asset_ref, GLT::asset::load_error> plugin::register_runtime(
+        GLT::unique_ref<GLT::asset::i_runtime_asset> asset, const std::filesystem::path& path, std::string_view name, GLT::UUID id) {
 
         if (!asset)
             return std::unexpected{ GLT::asset::load_error::out_of_memory };
@@ -631,7 +606,7 @@ namespace GLT::asset::registry_default {
         ai.format_version = GLT::asset::header::CURRENT_VERSION;
         ai.engine_version = GLT::asset::header::CURRENT_VERSION;
         ai.virtual_path = relative;
-        ai.source_path = std::filesystem::path{};                                        // caller can set later
+        ai.source_path = std::filesystem::path{};                    // caller can set later
         ai.name = name.empty() ? relative.stem().string() : std::string(name);
         ai.chunks = slot->chunks_storage;
         ai.dependencies = slot->deps_storage;
@@ -644,7 +619,12 @@ namespace GLT::asset::registry_default {
         m_by_path.emplace(key, handle);
         m_by_id.emplace(id, handle);
 
-        return handle;
+        // Hand the caller an owning reference. We're still inside m_mutex, so
+        // constructing asset_ref{handle} (which calls retain() → takes m_mutex)
+        // would self-deadlock. Use retain_unlocked() and the adopt constructor,
+        // which assumes the caller has already bumped ref_count on our behalf.
+        retain_unlocked(handle);
+        return GLT::asset::asset_ref{ handle, GLT::asset::adopt_ref };
     }
 
     // queries ---------------------------------------------------------------------------------------------------------
@@ -747,7 +727,7 @@ namespace GLT::asset::registry_default {
 
     // import (editor / build-time) --------------------------------------------------------------------------------
 
-    std::expected<GLT::asset::handle, GLT::asset::import_error> plugin::import(const std::filesystem::path& source,
+    std::expected<GLT::asset::asset_ref, GLT::asset::import_error> plugin::import(const std::filesystem::path& source,
         GLT::asset::type target_type, const std::filesystem::path& out_path, const GLT::asset::import_options& opts) {
 
         // Source is typically absolute (drag-drop from OS). We never store it absolute, but factories expect the real path for reading
@@ -837,11 +817,11 @@ namespace GLT::asset::registry_default {
             };
         }
 
-        auto handle_res = load(out_rel);            // load() re-normalizes; harmless
-        VALIDATE(handle_res, return std::unexpected{ GLT::asset::import_error::handler_rejected }, 
+        auto ref_res = load(out_rel);
+        VALIDATE(ref_res, return std::unexpected{ GLT::asset::import_error::handler_rejected },
             "", "import: finalize ok but load failed for [{}]", (out_rel.generic_string()));
 
-        return *handle_res;
+        return std::move(*ref_res);
     }
 
 
@@ -938,15 +918,9 @@ namespace GLT::asset::registry_default {
 
     // async -----------------------------------------------------------------------------------------------------------
 
-    std::future<std::expected<GLT::asset::handle, GLT::asset::load_error>> plugin::load_async(std::filesystem::path path) {
+    std::future<std::expected<asset_ref, GLT::asset::load_error>> plugin::load_async(const std::filesystem::path& path) {
 
-        // Straightforward approach: run load() on the thread pool. If you have a
-        // per-frame streaming budget you'd want a task queue instead, but this is
-        // the correct starting point.
-        return std::async(std::launch::async,
-            [this, path = std::move(path)]() {
-                return load(path);
-            });
+        return std::async(std::launch::async, [this, path = std::move(path)]() { return load(path); });
     }
 
     // manage asset lifetime -------------------------------------------------------------------------------------------
@@ -1090,8 +1064,18 @@ namespace GLT::asset::registry_default {
         }
 
         GLT::asset::registry_default::slot& slot = m_slots[idx];
-        slot = GLT::asset::registry_default::slot{};                   // reset (bumps generation the first time)
         slot.alive = true;
+        slot.ref_count = 0;
+        slot.canonical_path.clear();
+        slot.asset_info = {};
+        slot.chunks_storage.clear();
+        slot.deps_storage.clear();
+        slot.dep_ids_storage.clear();
+        slot.dependents_storage.clear();
+        slot.data.reset();
+        slot.handler = nullptr;
+        // generation intentionally untouched
+
         return make_handle(idx, slot.generation);
     }
 

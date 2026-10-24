@@ -183,10 +183,7 @@ namespace GLT::asset::registry_default {
         // lifecycle ---------------------------------------------------------------------------------------------------
 
         // the path supplied to the asset_registry should be inside the PROJECT_CONTENT_DIR
-        [[nodiscard]] std::expected<GLT::asset::handle, GLT::asset::load_error> load(std::filesystem::path path) override;
-
-
-        void unload(GLT::asset::handle h) noexcept override;
+        [[nodiscard]] std::expected<GLT::asset::asset_ref, GLT::asset::load_error> load(const std::filesystem::path& path) override;
 
         // persistence -------------------------------------------------------------------------------------------------
 
@@ -211,7 +208,7 @@ namespace GLT::asset::registry_default {
 
         // persistence -------------------------------------------------------------------------------------------------
 
-        [[nodiscard]] std::expected<GLT::asset::handle, GLT::asset::load_error> register_runtime(
+        [[nodiscard]] std::expected<GLT::asset::asset_ref, GLT::asset::load_error> register_runtime(
             GLT::unique_ref<GLT::asset::i_runtime_asset> asset, const std::filesystem::path& path, std::string_view name, GLT::UUID id) override;
 
         // queries -----------------------------------------------------------------------------------------------------
@@ -246,7 +243,7 @@ namespace GLT::asset::registry_default {
         // Routes to whichever factory binds (source_extension, target_type)
         // If out_path is empty, the registry derives one next to the source (or under a configured import root)
         // On success the imported asset is loaded and its handle returned - the editor basically always wants a preview right away
-        [[nodiscard]] virtual std::expected<GLT::asset::handle, GLT::asset::import_error> import(const std::filesystem::path& source, 
+        [[nodiscard]] virtual std::expected<GLT::asset::asset_ref, GLT::asset::import_error> import(const std::filesystem::path& source, 
             GLT::asset::type target_type, const std::filesystem::path& out_path = {}, const GLT::asset::import_options& opts = {}) override;
 
 
@@ -272,7 +269,7 @@ namespace GLT::asset::registry_default {
 
         // async -------------------------------------------------------------------------------------------------------
 
-        [[nodiscard]] std::future<std::expected<GLT::asset::handle, GLT::asset::load_error>> load_async(std::filesystem::path path) override;
+        [[nodiscard]] std::future<std::expected<asset_ref, GLT::asset::load_error>> load_async(const std::filesystem::path& path) override;
 
         // manage asset lifetime ---------------------------------------------------------------------------------------
 
