@@ -204,6 +204,7 @@ namespace GLT::renderer::vk_rasterizer {
         bool                                                                m_active = true;
         GLT::render::scene_renderer_desc                                    m_desc{};
         bool                                                                m_offscreen = false;
+        GLT::platform::window_handle                                        m_window{};
         glm::uvec2                                                          m_extent{0, 0};
         glm::vec4                                                           m_clear_color{0.09f, 0.09f, 0.09f, 1.f};
         u32                                                                 m_active_mode = 0;

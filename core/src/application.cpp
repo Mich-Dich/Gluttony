@@ -1,5 +1,6 @@
 
 #include "util/pch.h"
+#include "application.h"
 
 #include "event/event_bus.h"
 #include "event/application_event.h"
@@ -10,10 +11,10 @@
 #include "plugin_system/i_audio_plugin.h"
 #include "config/imgui_config.h"
 #include "asset/i_asset_registry.h"
-#include "world/world_layer.h"
 #include "world/i_world.h"
-
-#include "application.h"
+#include "physics/i_physics_plugin.h"
+#include "game/game_layer.h"
+#include "game/game_session.h"
 
 
 
@@ -47,26 +48,26 @@ namespace GLT {
 
         plugin_manager::enter_phase(plugin_manager::phase::pre_application);
 
-        m_layer_stack.push_layer<GLT::world::world_layer>();
+        auto game_layer = m_layer_stack.push_layer<GLT::game::game_layer>();
 
         auto* p_window = GLT::platform::window::get_ptr();
         ASSERT(p_window, "", "Failed to load window plugin")
         platform::window_attributes attributes;
         platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::load);
-        p_window->create(attributes);
+        m_main_window = p_window->create(attributes);
 
         auto* p_renderer = GLT::render::renderer::get_ptr();
         ASSERT(p_renderer, "", "Failed to load render plugin")
-        p_renderer->create();
+        p_renderer->create(m_main_window);
 
         auto* audio = GLT::audio::manager::get_ptr();
         ASSERT(audio, "", "Failed to load audio plugin")
         audio->create();
 
-        // surface scene renderer: ALWAYS created, owns ImGui + presentation
+        // surface scene renderer: ALWAYS created, owns at least ImGui + presentation
         {
             GLT::render::surface_target_desc surface{
-                .window = GLT::platform::window::get_ref(),
+                .window = m_main_window,
             };
             GLT::render::scene_renderer_desc desc{
                 .target = surface,
@@ -75,20 +76,13 @@ namespace GLT {
             (void)create_scene_renderer(desc);
         }
 
-        plugin_manager::enter_phase(plugin_manager::phase::application_ready);
-        
-        // offscreen scene renderer: only when the editor exists
-        if (GLT::plugin_manager::get_plugin_raw<plugin_manager::i_plugin>(plugin_manager::interface::editor_core) != nullptr) {
-
-            m_scene_renderers.front()->set_active(false);    // use first renderer only for swapchain/ImGui
-
-            GLT::render::offscreen_target_desc offscreen{};
-            GLT::render::scene_renderer_desc desc{
-                .target = offscreen,
-                .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),
-            };
-            (void)create_scene_renderer(desc);
+        if (auto* physics = GLT::physics::get_ptr()) {
+            auto result = physics->init();
+            VALIDATE(result, , "Physics backend: {}", (physics->backend_name()),
+                "Failed to init physics plugin: error {}", (static_cast<int>(result.error())))
         }
+
+        plugin_manager::enter_phase(plugin_manager::phase::application_ready);
 
         LOG_INIT
     }
@@ -96,6 +90,11 @@ namespace GLT {
 
     application::~application() {
 
+        m_current_world.reset();
+
+        if (auto* physics = GLT::physics::get_ptr())
+            physics->shutdown();
+    
         plugin_manager::enter_phase(plugin_manager::phase::pre_application_shutdown);
 
         auto* p_renderer = GLT::render::renderer::get_ptr();
@@ -113,9 +112,9 @@ namespace GLT {
             p_audio->destroy();
 
         if (p_window) {
-            auto attributes = p_window->get_window_attributes();
+            auto attributes = p_window->get_window_attributes(m_main_window);
             platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::save);
-            p_window->destroy();
+            p_window->destroy(m_main_window);
         }
 
         m_project.serialize_projects_data(GLT::serializer::option::save);
@@ -137,7 +136,11 @@ namespace GLT {
         ASSERT(game_loop, "", "Failed to load game_loop plugin");
 
         auto close_sub = event_bus::subscribe_scoped<window_close_event>(
-            [game_loop](const window_close_event&) { game_loop->request_stop(); }
+            [game_loop, this](const window_close_event& event) {
+            
+                if (event.get_window() == m_main_window)
+                    game_loop->request_stop();
+            }
         );
 
         game_loop::context ctx{
@@ -158,25 +161,25 @@ namespace GLT {
 
     void application::load_world(const std::filesystem::path& world_path, const bool override_current) {
 
-        auto* world_layer = m_layer_stack.get<GLT::world::world_layer>();
-        VALIDATE(world_layer, return, "", "Failed to get world layer from layer stack")
+        // auto* world_layer = m_layer_stack.get<GLT::world::world_layer>();
+        // VALIDATE(world_layer, return, "", "Failed to get world layer from layer stack")
         
-        auto world = world_layer->get_world();
-        VALIDATE(world, return, "", "Failed to get world from world layer")
+        // auto world = world_layer->get_world();
+        // VALIDATE(world, return, "", "Failed to get world from world layer")
 
-        // TODO: check the world for real
-        if (!override_current)                         // already set, dont override
-            return;
+        // // TODO: check the world for real
+        // if (!override_current)                         // already set, dont override
+        //     return;
 
-        auto registry = GLT::asset::registry::get_ref();
-        VALIDATE(registry, return, "", "Failed to get asset-registry")
+        // auto registry = GLT::asset::registry::get_ref();
+        // VALIDATE(registry, return, "", "Failed to get asset-registry")
 
-        auto result = registry->load(world_path);
-        VALIDATE(result, return, "", "Registry failed to load world [{}]", (world_path.generic_string()))
-        m_current_world = std::move(*result);
+        // auto result = registry->load(world_path);
+        // VALIDATE(result, return, "", "Registry failed to load world [{}]", (world_path.generic_string()))
+        // m_current_world = std::move(*result);
 
-        const auto world_result = world->load_world(m_current_world);
-        VALIDATE(world_result, return, "", "Failed to load world")
+        // const auto world_result = world->load_world(m_current_world);
+        // VALIDATE(world_result, return, "", "Failed to load world")
     }
 
 
@@ -184,27 +187,6 @@ namespace GLT {
 
         const u64 time = (1 / fps) * 1000000;
         m_fps_controller.set_target_interval_duration(std::chrono::microseconds(time));
-    }
-
-
-    GLT::render::i_scene_renderer* application::primary_scene_renderer() noexcept {
-
-        return m_scene_renderers.empty() ? nullptr : m_scene_renderers.front().get();
-    }
-
-
-    GLT::render::i_scene_renderer* application::get_main_world_scene_renderer() noexcept {
-
-        // if editor is bound, the first offscreen renderer is the main scene renderer
-        if (GLT::plugin_manager::get_plugin_raw<plugin_manager::i_plugin>(plugin_manager::interface::editor_core) != nullptr) {
-            for (auto& scene_renderer : m_scene_renderers)
-                if (scene_renderer && scene_renderer->is_offscreen())
-                    return scene_renderer.get();
-        
-        } else
-            return primary_scene_renderer();            // if no editor, the very first renderer handles the scene
-
-        return nullptr;
     }
 
 

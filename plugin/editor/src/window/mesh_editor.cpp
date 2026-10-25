@@ -59,116 +59,273 @@ namespace GLT::editor {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
+    // Core-GLM TRS extraction. Assumes a well-formed affine matrix (no skew/projection).
+    // Safe to call on any TRS product including ones where the gizmo baked scale in.
+    inline void decompose_trs(const glm::mat4& m, glm::vec3& out_t, glm::quat& out_r, glm::vec3& out_s);
+
+
+    void draw_box_wireframe(GLT::render::i_debug_draw& debug, const glm::mat4& xform, const glm::vec3& he, const glm::vec4& color);
+
+
+    void draw_cylinder_wireframe(GLT::render::i_debug_draw& debug, const glm::vec3& position, const glm::quat& rotation,
+        f32 radius, f32 half_height, const glm::vec4& color, u32 segments = 16);
+
+
+    void draw_capsule_wireframe(GLT::render::i_debug_draw& debug, const glm::vec3& position, const glm::quat& rotation,
+        f32 radius, f32 half_height, const glm::vec4& color);
+
+
+    void draw_panel_splitter(const char* id, f32& width, f32 min_w, f32 max_w, bool invert, f32 height);
+
+
+    // Push a scale vector into the shape parameters of an editor item. For box we can use per-axis scale; the primitive
+    // "single radius" shapes have to collapse to a representative scalar, otherwise their invariant breaks
+    void apply_scale_to_collider(collider_editor_item& item, const glm::vec3& scale);
+
+
+    bool editor_collider_to_mesh(const collider_editor_item& item, GLT::asset::mesh::mesh_collider& out);
+
+
+    bool mesh_collider_to_editor(const GLT::asset::mesh::mesh_collider& mc, collider_editor_item& out, u64 id);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-    namespace {
+    inline void decompose_trs(const glm::mat4& m, glm::vec3& out_t, glm::quat& out_r, glm::vec3& out_s) {
 
-        // ---- wireframe helpers -------------------------------------------------------------------------------------
+        out_t = glm::vec3(m[3]);
 
-        void draw_box_wireframe(GLT::render::i_debug_draw& debug, const glm::mat4& xform, const glm::vec3& he,
-            const glm::vec4& color) {
+        const glm::vec3 c0(m[0]);
+        const glm::vec3 c1(m[1]);
+        const glm::vec3 c2(m[2]);
 
-            static constexpr glm::vec3 LOCAL[8] = {
-                { -1.f, -1.f, -1.f }, { +1.f, -1.f, -1.f }, { +1.f, +1.f, -1.f }, { -1.f, +1.f, -1.f },
-                { -1.f, -1.f, +1.f }, { +1.f, -1.f, +1.f }, { +1.f, +1.f, +1.f }, { -1.f, +1.f, +1.f },
-            };
+        out_s = glm::vec3(glm::length(c0), glm::length(c1), glm::length(c2));
 
-            static constexpr int EDGES[12][2] = {
-                { 0,1 },{ 1,2 },{ 2,3 },{ 3,0 },
-                { 4,5 },{ 5,6 },{ 6,7 },{ 7,4 },
-                { 0,4 },{ 1,5 },{ 2,6 },{ 3,7 },
-            };
+        // Guard against a degenerate (zero-scale) matrix so normalize() doesn't NaN out
+        const glm::vec3 n0 = (out_s.x > 1e-8f) ? c0 / out_s.x : glm::vec3(1, 0, 0);
+        const glm::vec3 n1 = (out_s.y > 1e-8f) ? c1 / out_s.y : glm::vec3(0, 1, 0);
+        const glm::vec3 n2 = (out_s.z > 1e-8f) ? c2 / out_s.z : glm::vec3(0, 0, 1);
 
-            glm::vec3 corners[8];
-            for (int i = 0; i < 8; ++i)
-                corners[i] = glm::vec3(xform * glm::vec4(LOCAL[i] * he, 1.0f));
+        out_r = glm::quat_cast(glm::mat3(n0, n1, n2));
+    }
 
-            for (const auto& e : EDGES)
-                debug.line(corners[e[0]], corners[e[1]], color, 0.0f, true);
+
+    void draw_box_wireframe(GLT::render::i_debug_draw& debug, const glm::mat4& xform, const glm::vec3& he, const glm::vec4& color) {
+
+        static constexpr glm::vec3 LOCAL[8] = {
+            { -1.f, -1.f, -1.f }, { +1.f, -1.f, -1.f }, { +1.f, +1.f, -1.f }, { -1.f, +1.f, -1.f },
+            { -1.f, -1.f, +1.f }, { +1.f, -1.f, +1.f }, { +1.f, +1.f, +1.f }, { -1.f, +1.f, +1.f },
+        };
+
+        static constexpr int EDGES[12][2] = {
+            { 0,1 },{ 1,2 },{ 2,3 },{ 3,0 },
+            { 4,5 },{ 5,6 },{ 6,7 },{ 7,4 },
+            { 0,4 },{ 1,5 },{ 2,6 },{ 3,7 },
+        };
+
+        glm::vec3 corners[8];
+        for (int i = 0; i < 8; ++i)
+            corners[i] = glm::vec3(xform * glm::vec4(LOCAL[i] * he, 1.0f));
+
+        for (const auto& e : EDGES)
+            debug.line(corners[e[0]], corners[e[1]], color, 0.0f, true);
+    }
+
+
+    void draw_cylinder_wireframe(GLT::render::i_debug_draw& debug, const glm::vec3& position, const glm::quat& rotation,
+        f32 radius, f32 half_height, const glm::vec4& color, u32 segments) {
+
+        const glm::vec3 axis = rotation * glm::vec3(0, 1, 0);
+
+        glm::vec3 tangent = glm::cross(axis, glm::vec3(1, 0, 0));
+        if (glm::dot(tangent, tangent) < 1e-4f)
+            tangent = glm::cross(axis, glm::vec3(0, 0, 1));
+        tangent = glm::normalize(tangent);
+        const glm::vec3 bitangent = glm::normalize(glm::cross(axis, tangent));
+
+        const glm::vec3 top_center = position + axis * half_height;
+        const glm::vec3 bot_center = position - axis * half_height;
+
+        std::vector<glm::vec3> top_pts, bot_pts;
+        top_pts.reserve(segments);
+        bot_pts.reserve(segments);
+
+        for (u32 i = 0; i < segments; ++i) {
+            const f32 a = glm::two_pi<f32>() * static_cast<f32>(i) / static_cast<f32>(segments);
+            const glm::vec3 offset = (std::cos(a) * tangent + std::sin(a) * bitangent) * radius;
+            top_pts.push_back(top_center + offset);
+            bot_pts.push_back(bot_center + offset);
         }
 
+        debug.polyline(top_pts, color, 0.0f, true, true);
+        debug.polyline(bot_pts, color, 0.0f, true, true);
 
-        void draw_cylinder_wireframe(GLT::render::i_debug_draw& debug, const glm::vec3& position, const glm::quat& rotation,
-            f32 radius, f32 half_height, const glm::vec4& color, u32 segments = 16) {
+        for (u32 i = 0; i < 4; ++i) {
+            const u32 idx = i * segments / 4;
+            debug.line(top_pts[idx], bot_pts[idx], color, 0.0f, true);
+        }
+    }
 
-            const glm::vec3 axis = rotation * glm::vec3(0, 1, 0);
 
-            glm::vec3 tangent = glm::cross(axis, glm::vec3(1, 0, 0));
-            if (glm::dot(tangent, tangent) < 1e-4f)
-                tangent = glm::cross(axis, glm::vec3(0, 0, 1));
-            tangent = glm::normalize(tangent);
-            const glm::vec3 bitangent = glm::normalize(glm::cross(axis, tangent));
+    void draw_capsule_wireframe(GLT::render::i_debug_draw& debug, const glm::vec3& position, const glm::quat& rotation,
+        f32 radius, f32 half_height, const glm::vec4& color) {
 
-            const glm::vec3 top_center = position + axis * half_height;
-            const glm::vec3 bot_center = position - axis * half_height;
+        const glm::vec3 axis = rotation * glm::vec3(0, 1, 0);
+        const glm::vec3 a = position - axis * half_height;
+        const glm::vec3 b = position + axis * half_height;
 
-            std::vector<glm::vec3> top_pts, bot_pts;
-            top_pts.reserve(segments);
-            bot_pts.reserve(segments);
+        debug.capsule(a, b, radius, color);
+    }
 
-            for (u32 i = 0; i < segments; ++i) {
-                const f32 a = glm::two_pi<f32>() * static_cast<f32>(i) / static_cast<f32>(segments);
-                const glm::vec3 offset = (std::cos(a) * tangent + std::sin(a) * bitangent) * radius;
-                top_pts.push_back(top_center + offset);
-                bot_pts.push_back(bot_center + offset);
-            }
 
-            debug.polyline(top_pts, color, 0.0f, true, true);
-            debug.polyline(bot_pts, color, 0.0f, true, true);
+    void draw_panel_splitter(const char* id, f32& width, f32 min_w, f32 max_w, bool invert, f32 height) {
 
-            for (u32 i = 0; i < 4; ++i) {
-                const u32 idx = i * segments / 4;
-                debug.line(top_pts[idx], bot_pts[idx], color, 0.0f, true);
-            }
+        const ImVec2 cursor = ImGui::GetCursorScreenPos();
+
+        ImGui::InvisibleButton(id, ImVec2(SPLITTER_WIDTH, height));
+
+        const bool hovered = ImGui::IsItemHovered();
+        const bool active  = ImGui::IsItemActive();
+
+        if (active) {
+            const f32 delta = ImGui::GetIO().MouseDelta.x;
+            width = std::clamp(width + (invert ? -delta : delta), min_w, max_w);
         }
 
+        if (hovered || active)
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
 
-        void draw_capsule_wireframe(GLT::render::i_debug_draw& debug, const glm::vec3& position, const glm::quat& rotation,
-            f32 radius, f32 half_height, const glm::vec4& color) {
+        // Draw a 2px visual bar centered in the splitter zone
+        const ImU32 col = (hovered || active)
+            ? IM_COL32(200, 200, 200, 220)
+            : IM_COL32(100, 100, 100, 100);
 
-            const glm::vec3 axis = rotation * glm::vec3(0, 1, 0);
-            const glm::vec3 a = position - axis * half_height;
-            const glm::vec3 b = position + axis * half_height;
+        const f32 cx = cursor.x + SPLITTER_WIDTH * 0.5f;
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(cx - 1.0f, cursor.y + 4.0f),
+            ImVec2(cx + 1.0f, cursor.y + height - 4.0f),
+            col);
+    }
 
-            debug.capsule(a, b, radius, color);
+
+    void apply_scale_to_collider(collider_editor_item& item, const glm::vec3& scale) {
+
+        switch (item.kind) {
+
+            case collider_shape_kind::box:
+                item.box_half_extents *= scale;
+                break;
+
+            case collider_shape_kind::sphere:
+                item.sphere_radius *= (scale.x + scale.y + scale.z) / 3.0f;
+                break;
+
+            case collider_shape_kind::capsule:
+                item.capsule_radius      *= (scale.x + scale.z) * 0.5f;
+                item.capsule_half_height *= scale.y;
+                break;
+
+            case collider_shape_kind::cylinder:
+                item.cylinder_radius      *= (scale.x + scale.z) * 0.5f;
+                item.cylinder_half_height *= scale.y;
+                break;
+
+            default: break;
+        }
+    }
+
+
+    bool editor_collider_to_mesh(const collider_editor_item& item, GLT::asset::mesh::mesh_collider& out) {
+
+        switch (item.kind) {
+
+            case collider_shape_kind::box:
+                out.shape = GLT::asset::mesh::collider_shape::box;
+                out.box.half_extents = item.box_half_extents;
+                break;
+
+            case collider_shape_kind::sphere:
+                out.shape = GLT::asset::mesh::collider_shape::sphere;
+                out.sphere.radius = item.sphere_radius;
+                break;
+
+            case collider_shape_kind::capsule:
+                out.shape = GLT::asset::mesh::collider_shape::capsule;
+                out.capsule.radius      = item.capsule_radius;
+                out.capsule.half_height = item.capsule_half_height;
+                break;
+
+            case collider_shape_kind::cylinder:
+                out.shape = GLT::asset::mesh::collider_shape::cylinder;
+                out.cylinder.radius      = item.cylinder_radius;
+                out.cylinder.half_height = item.cylinder_half_height;
+                break;
+
+            case collider_shape_kind::triangle_mesh:
+                out.shape = GLT::asset::mesh::collider_shape::triangle_mesh;
+                break;
+
+            case collider_shape_kind::convex_hull:
+                return false;       // runtime collider format has no convex_hull yet
         }
 
-        // ---- splitter ----------------------------------------------------------------------------------------------
-        //
-        // A 6px vertical invisible button that edits [width] while dragged.
-        // [invert] is used for the right-hand splitter, where the panel grows
-        // to the LEFT as the mouse moves right (so we subtract the delta).
-        void draw_panel_splitter(const char* id, f32& width, f32 min_w, f32 max_w, bool invert, f32 height) {
+        out.material        = item.material;
+        out.local_transform = glm::translate(glm::mat4(1.0f), item.position) * glm::mat4_cast(item.rotation);
+        return true;
+    }
 
-            const ImVec2 cursor = ImGui::GetCursorScreenPos();
 
-            ImGui::InvisibleButton(id, ImVec2(SPLITTER_WIDTH, height));
+    bool mesh_collider_to_editor(const GLT::asset::mesh::mesh_collider& mc, collider_editor_item& out, u64 id) {
 
-            const bool hovered = ImGui::IsItemHovered();
-            const bool active  = ImGui::IsItemActive();
+        switch (mc.shape) {
 
-            if (active) {
-                const f32 delta = ImGui::GetIO().MouseDelta.x;
-                width = std::clamp(width + (invert ? -delta : delta), min_w, max_w);
-            }
+            case GLT::asset::mesh::collider_shape::box:
+                out.kind = collider_shape_kind::box;
+                out.box_half_extents = mc.box.half_extents;
+                break;
 
-            if (hovered || active)
-                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            case GLT::asset::mesh::collider_shape::sphere:
+                out.kind = collider_shape_kind::sphere;
+                out.sphere_radius = mc.sphere.radius;
+                break;
 
-            // Draw a 2px visual bar centered in the splitter zone
-            const ImU32 col = (hovered || active)
-                ? IM_COL32(200, 200, 200, 220)
-                : IM_COL32(100, 100, 100, 100);
+            case GLT::asset::mesh::collider_shape::capsule:
+                out.kind = collider_shape_kind::capsule;
+                out.capsule_radius      = mc.capsule.radius;
+                out.capsule_half_height = mc.capsule.half_height;
+                break;
 
-            const f32 cx = cursor.x + SPLITTER_WIDTH * 0.5f;
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                ImVec2(cx - 1.0f, cursor.y + 4.0f),
-                ImVec2(cx + 1.0f, cursor.y + height - 4.0f),
-                col);
+            case GLT::asset::mesh::collider_shape::cylinder:
+                out.kind = collider_shape_kind::cylinder;
+                out.cylinder_radius      = mc.cylinder.radius;
+                out.cylinder_half_height = mc.cylinder.half_height;
+                break;
+
+            case GLT::asset::mesh::collider_shape::triangle_mesh:
+                out.kind = collider_shape_kind::triangle_mesh;
+                break;
+
+            default: return false;
         }
 
+        out.id = id;
+        out.name = std::string(collider_shape_kind_name(out.kind)) + " " + std::to_string(id);
+        out.material = mc.material;
+
+        glm::vec3 translation{}, scale{};
+        glm::quat rotation{};
+        decompose_trs(mc.local_transform, translation, rotation, scale);
+
+        out.position = translation;
+        out.rotation = rotation;
+
+        // Bake any scale that snuck into the matrix into the shape params so the
+        // runtime canonical form (unit-shape params + rigid transform) is preserved.
+        if (glm::distance(scale, glm::vec3(1.0f)) > 1e-4f)
+            apply_scale_to_collider(out, scale);
+
+        return true;
     }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -316,14 +473,16 @@ namespace GLT::editor {
         if (!m_has_mesh || !m_asset_handle.valid())
             return false;
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto* registry = GLT::asset::registry::get_ptr();
         if (!registry)
+            return false;
+
+        if (!sync_colliders_to_mesh())
             return false;
 
         auto result = registry->save(m_asset_handle.get());
         if (!result) {
-            LOG(error, "mesh_editor: save failed for [{}] (error {}). "
-                       "Meshes currently return [no_handler] from the handler.",
+            LOG(error, "mesh_editor: save failed for [{}] (error {}). Meshes currently return [no_handler] from the handler.",
                 m_mesh_name, static_cast<int>(result.error()));
             return false;
         }
@@ -365,6 +524,7 @@ namespace GLT::editor {
         ImGui::Checkbox("Origin", &m_show_origin);
         ImGui::SameLine();
         ImGui::Checkbox("Colliders", &m_show_colliders_in_preview);
+        draw_collider_gizmo_toolbar();
 
         if (m_preview_scene) {
 
@@ -776,60 +936,55 @@ namespace GLT::editor {
 
         // ---- transform ----
         ImGui::TextUnformatted("Transform");
+        bool changed = false;
 
-        ImGui::DragFloat3("Position", &item.position.x, 0.01f);
+        changed |= ImGui::DragFloat3("Position", &item.position.x, 0.01f);
 
         glm::vec3 euler = glm::degrees(glm::eulerAngles(item.rotation));
-        if (ImGui::DragFloat3("Rotation", &euler.x, 0.5f))
+        if (ImGui::DragFloat3("Rotation", &euler.x, 0.5f)) {
             item.rotation = glm::quat(glm::radians(euler));
+            changed = true;
+        }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        // ---- shape parameters ----
+        ImGui::Spacing(); ImGui::Separator();
         ImGui::TextUnformatted("Shape");
 
         switch (item.kind) {
-
             case collider_shape_kind::box:
-                ImGui::DragFloat3("Half Extents", &item.box_half_extents.x, 0.01f, 0.001f, 10000.0f);
+                changed |= ImGui::DragFloat3("Half Extents", &item.box_half_extents.x, 0.01f, 0.001f, 10000.0f);
                 break;
-
             case collider_shape_kind::sphere:
-                ImGui::DragFloat("Radius", &item.sphere_radius, 0.01f, 0.001f, 10000.0f);
+                changed |= ImGui::DragFloat("Radius", &item.sphere_radius, 0.01f, 0.001f, 10000.0f);
                 break;
-
             case collider_shape_kind::capsule:
-                ImGui::DragFloat("Radius",      &item.capsule_radius,      0.01f, 0.001f, 10000.0f);
-                ImGui::DragFloat("Half Height", &item.capsule_half_height, 0.01f, 0.0f,   10000.0f);
+                changed |= ImGui::DragFloat("Radius",      &item.capsule_radius,      0.01f, 0.001f, 10000.0f);
+                changed |= ImGui::DragFloat("Half Height", &item.capsule_half_height, 0.01f, 0.0f,   10000.0f);
                 break;
-
             case collider_shape_kind::cylinder:
-                ImGui::DragFloat("Radius",      &item.cylinder_radius,      0.01f, 0.001f, 10000.0f);
-                ImGui::DragFloat("Half Height", &item.cylinder_half_height, 0.01f, 0.001f, 10000.0f);
+                changed |= ImGui::DragFloat("Radius",      &item.cylinder_radius,      0.01f, 0.001f, 10000.0f);
+                changed |= ImGui::DragFloat("Half Height", &item.cylinder_half_height, 0.01f, 0.001f, 10000.0f);
                 break;
-
             case collider_shape_kind::convex_hull:
-                ImGui::TextDisabled("Auto-generated from mesh vertices (not yet plumbed).");
+                ImGui::TextDisabled("Auto-generated from mesh vertices.");
+                ImGui::TextColored(ImVec4(1.f, 0.7f, 0.3f, 1.f),
+                    "Not yet supported by the runtime format - will be skipped on save.");
                 break;
-
             case collider_shape_kind::triangle_mesh:
-                ImGui::TextDisabled("Auto-generated from mesh triangle soup (not yet plumbed).");
+                ImGui::TextDisabled("Auto-generated from mesh triangle soup.");
                 break;
         }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        // ---- material ----
+        ImGui::Spacing(); ImGui::Separator();
         ImGui::TextUnformatted("Material");
 
-        ImGui::SliderFloat("Friction",    &item.material.friction,    0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Restitution", &item.material.restitution, 0.0f, 1.0f, "%.2f");
-        ImGui::DragFloat("Density",       &item.material.density,     10.0f, 0.0f, 30000.0f, "%.0f kg/m³");
+        changed |= ImGui::SliderFloat("Friction",    &item.material.friction,    0.0f, 1.0f, "%.2f");
+        changed |= ImGui::SliderFloat("Restitution", &item.material.restitution, 0.0f, 1.0f, "%.2f");
+        changed |= ImGui::DragFloat ("Density",      &item.material.density,     10.0f, 0.0f, 30000.0f, "%.0f kg/m³");
 
-        ImGui::Spacing();
-        ImGui::Separator();
+        if (changed)
+            m_dirty = true;
+
+        ImGui::Spacing(); ImGui::Separator();
 
         // ---- actions ----
         ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(140, 40, 40, 255));
@@ -992,6 +1147,7 @@ namespace GLT::editor {
 
         m_colliders.push_back(std::move(item));
         select_collider(static_cast<i32>(m_colliders.size() - 1));
+        m_dirty = true;
     }
 
 
@@ -1001,6 +1157,7 @@ namespace GLT::editor {
             return;
 
         m_colliders.erase(m_colliders.begin() + index);
+        m_dirty = true;
 
         if (m_selected_collider == index)
             select_mesh();
@@ -1101,10 +1258,11 @@ namespace GLT::editor {
         } else {
             ImGui::GetWindowDrawList()->AddRectFilled(canvas_min, canvas_max, IM_COL32(24, 24, 28, 255));
         }
+        render_collider_gizmo(canvas_min, avail);
 
-        // ---------- camera input ----------
-        const bool hovered        = ImGui::IsItemHovered();
-        const bool active_left    = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+        // camera input
+        const bool hovered = ImGui::IsItemHovered();
+        const bool active_left = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
         const bool active_middle  = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle);
         ImGuiIO& io = ImGui::GetIO();
 
@@ -1336,6 +1494,7 @@ namespace GLT::editor {
         m_selected_submesh = -1;
 
         rebuild_submesh_bounds_cache(*mesh);
+        load_colliders_from_mesh(*mesh);
 
         if (m_inspector_target == inspector_target::submesh &&
             (m_selected_submesh < 0 || m_selected_submesh >= static_cast<i32>(mesh->submesh_count()))) {
@@ -1525,6 +1684,145 @@ namespace GLT::editor {
         lights[2].intensity = m_preview_lighting.rim_intensity;
 
         m_preview_scene->submit_lights(lights);
+    }
+
+
+    void mesh_editor_window::draw_collider_gizmo_toolbar() {
+
+        if (m_inspector_target != inspector_target::collider || m_selected_collider < 0)
+            return;
+
+        auto toggle = [](const char* label, bool active) {
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.50f, 0.80f, 1.0f));
+            const bool clicked = ImGui::Button(label);
+            if (active) ImGui::PopStyleColor();
+            return clicked;
+        };
+
+        ImGui::SameLine(0.0f, 24.0f);
+        ImGui::TextUnformatted("Gizmo:");
+        ImGui::SameLine();
+        if (toggle("T", m_collider_gizmo_operation == ImGuizmo::TRANSLATE))
+            m_collider_gizmo_operation = ImGuizmo::TRANSLATE;
+        ImGui::SameLine();
+        if (toggle("R", m_collider_gizmo_operation == ImGuizmo::ROTATE))
+            m_collider_gizmo_operation = ImGuizmo::ROTATE;
+        ImGui::SameLine();
+        if (toggle("S", m_collider_gizmo_operation == ImGuizmo::SCALE))
+            m_collider_gizmo_operation = ImGuizmo::SCALE;
+
+        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::TextUnformatted("Space:");
+        ImGui::SameLine();
+        if (toggle("World", m_collider_gizmo_mode == ImGuizmo::WORLD))
+            m_collider_gizmo_mode = ImGuizmo::WORLD;
+        ImGui::SameLine();
+        if (toggle("Local", m_collider_gizmo_mode == ImGuizmo::LOCAL))
+            m_collider_gizmo_mode = ImGuizmo::LOCAL;
+    }
+
+
+    void mesh_editor_window::render_collider_gizmo(const ImVec2& image_min, const ImVec2& image_size) {
+
+        if (m_inspector_target != inspector_target::collider)
+            return;
+
+        if (m_selected_collider < 0 || m_selected_collider >= static_cast<i32>(m_colliders.size()))
+            return;
+
+        if (!m_preview_scene)
+            return;
+
+        if (image_size.x <= 1.0f || image_size.y <= 1.0f)
+            return;
+
+        auto& item = m_colliders[static_cast<size_t>(m_selected_collider)];
+
+        // Matrix carries translation + rotation only; scale lives in the shape params
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), item.position) * glm::mat4_cast(item.rotation);
+
+        const GLT::world::camera_snapshot cam = build_camera_snapshot();
+        const f32 aspect = image_size.x / image_size.y;
+        const glm::mat4 projection = glm::perspective(glm::radians(cam.fov), aspect, cam.near_plane, cam.far_plane);
+
+        ImGuizmo::SetDrawlist();
+        ImGuizmo::SetRect(image_min.x, image_min.y, image_size.x, image_size.y);
+        ImGuizmo::Manipulate(glm::value_ptr(cam.view), glm::value_ptr(projection), m_collider_gizmo_operation,
+            m_collider_gizmo_mode, glm::value_ptr(model));
+
+        if (!ImGuizmo::IsUsing()) {
+            m_gizmo_last_scale = glm::vec3(1.0f);   // reset for next drag
+            return;
+        }
+        glm::vec3 translation{}, scale{};
+        glm::quat rotation{};
+        decompose_trs(model, translation, rotation, scale);
+
+        item.position = translation;
+        item.rotation = rotation;
+
+        if (m_collider_gizmo_operation == ImGuizmo::SCALE) {
+
+            const glm::vec3 delta = scale / m_gizmo_last_scale;
+            if (glm::distance(delta, glm::vec3(1.0f)) > 1e-4f)
+                apply_scale_to_collider(item, delta);
+
+            m_gizmo_last_scale = scale;
+            m_dirty = true;
+        }
+        m_dirty = true;
+    }
+
+
+    void mesh_editor_window::load_colliders_from_mesh(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        m_colliders.clear();
+        m_next_collider_id = 1;
+
+        for (const auto& mc : mesh.colliders) {
+
+            collider_editor_item item{};
+            if (!mesh_collider_to_editor(mc, item, m_next_collider_id)) {
+                LOG(warn, "mesh_editor: skipping unrepresentable runtime collider (shape id {})", static_cast<int>(mc.shape));
+                continue;
+            }
+
+            m_colliders.push_back(std::move(item));
+            ++m_next_collider_id;
+        }
+
+        if (m_selected_collider >= static_cast<i32>(m_colliders.size())) {
+            m_selected_collider = -1;
+            if (m_inspector_target == inspector_target::collider)
+                m_inspector_target = inspector_target::mesh;
+        }
+    }
+
+
+    bool mesh_editor_window::sync_colliders_to_mesh() {
+
+        auto registry = GLT::asset::registry::get_ref();
+        if (!registry)
+            return false;
+
+        auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle);
+        if (!mesh)
+            return false;
+
+        mesh->colliders.clear();
+        mesh->colliders.reserve(m_colliders.size());
+
+        for (const auto& item : m_colliders) {
+
+            GLT::asset::mesh::mesh_collider mc{};
+            if (editor_collider_to_mesh(item, mc))
+                mesh->colliders.push_back(mc);
+            else
+                LOG(warn, "mesh_editor: collider [{}] ({}) will not be saved - unsupported by the runtime format",
+                    item.name, collider_shape_kind_name(item.kind));
+        }
+
+        return true;
     }
 
 }

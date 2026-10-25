@@ -30,19 +30,6 @@ namespace GLT::renderer::vk_rasterizer::util {
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
-    vk::SurfaceKHR create_surface(vk::Instance instance) {
-        ASSERT(glfwVulkanSupported() == GLFW_TRUE, "", "Vulkan is not supported on this system");
-
-        VkSurfaceKHR rawSurface;
-        auto window_plugin = GLT::plugin_manager::get_plugin_raw<GLT::platform::i_window_plugin>(GLT::plugin_manager::interface::audio);
-        VkResult result = glfwCreateWindowSurface(static_cast<VkInstance>(instance), 
-            (GLFWwindow*)window_plugin->get_native_window_handle(), nullptr, &rawSurface);
-
-        ASSERT_VK(result, "", "Failed to create Vulkan Surface");
-        return vk::SurfaceKHR(rawSurface);
-    }
-
-
     IGNORE_UNUSED_PARAMETER_START
     IGNORE_UNUSED_VARIABLE_START
     

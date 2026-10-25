@@ -1,8 +1,7 @@
 #pragma once
 
 #include <imgui.h>
-#include <string>
-#include <vector>
+#include <ImGuizmo.h>
 
 #include <asset/type.h>
 #include <asset/asset_ref.h>
@@ -138,7 +137,7 @@ namespace GLT::editor {
             bool                                        headlight = false;
         };
 
-        // ---- top level panels --------------------------------------------------------------------------------------
+        // top level panels --------------------------------------------------------------------------------------------
 
         void draw_toolbar();
         void draw_body();
@@ -146,7 +145,7 @@ namespace GLT::editor {
         void draw_preview_panel();
         void draw_inspector_panel();
 
-        // ---- inspector sections ------------------------------------------------------------------------------------
+        // inspector sections ------------------------------------------------------------------------------------------
 
         void draw_inspector_mesh();
         void draw_inspector_submesh();
@@ -158,12 +157,12 @@ namespace GLT::editor {
         void draw_lighting_section();
         void draw_camera_section();
 
-        // ---- outliner helpers --------------------------------------------------------------------------------------
+        // outliner helpers --------------------------------------------------------------------------------------------
 
         void draw_collider_row(i32 index);
         void draw_add_collider_popup();
 
-        // ---- collider state ----------------------------------------------------------------------------------------
+        // collider state ----------------------------------------------------------------------------------------------
 
         void add_collider(collider_shape_kind kind);
         void remove_collider(i32 index);
@@ -173,7 +172,7 @@ namespace GLT::editor {
         void select_submesh(i32 index);
         void select_collider(i32 index);
 
-        // ---- preview plumbing --------------------------------------------------------------------------------------
+        // preview plumbing --------------------------------------------------------------------------------------------
 
         void ensure_preview();
         void destroy_preview();
@@ -185,7 +184,15 @@ namespace GLT::editor {
         void submit_collider_debug_draws();
         void submit_preview_lights();
 
-        // ---- helpers -----------------------------------------------------------------------------------------------
+        // collider <-> asset sync -------------------------------------------------------------------------------------
+        void load_colliders_from_mesh(const GLT::asset::mesh::mesh_asset& mesh);
+        bool sync_colliders_to_mesh();
+
+        // collider gizmo ----------------------------------------------------------------------------------------------
+        void draw_collider_gizmo_toolbar();
+        void render_collider_gizmo(const ImVec2& image_min, const ImVec2& image_size);
+
+        // helpers -----------------------------------------------------------------------------------------------------
 
         void compute_mesh_bounds(const GLT::asset::mesh::mesh_asset& mesh, glm::vec3& out_min, glm::vec3& out_max) const;
         void rebuild_submesh_bounds_cache(const GLT::asset::mesh::mesh_asset& mesh);
@@ -203,7 +210,7 @@ namespace GLT::editor {
 
         std::vector<submesh_bounds>                             m_submesh_bounds_cache{};
 
-        // ---- collider editor state ---------------------------------------------------------------------------------
+        // collider editor state ---------------------------------------------------------------------------------------
 
         std::vector<collider_editor_item>                       m_colliders{};
         inspector_target                                        m_inspector_target = inspector_target::mesh;
@@ -217,13 +224,13 @@ namespace GLT::editor {
         u64                                                     m_next_collider_id = 1;
         bool                                                    m_show_colliders_in_preview = true;
 
-        // ---- panel layout ------------------------------------------------------------------------------------------
+        // panel layout ------------------------------------------------------------------------------------------------
 
         // Widths of the two side panels. The splitter handles between panels edit these directly, so they persist across frames
         f32                                                     m_outliner_width = 240.0f;
         f32                                                     m_inspector_width = 340.0f;
 
-        // ---- preview state -----------------------------------------------------------------------------------------
+        // preview state -----------------------------------------------------------------------------------------------
 
         GLT::render::i_scene_renderer*                          m_preview_scene = nullptr;
         preview_camera_state                                    m_preview_camera{};
@@ -236,6 +243,10 @@ namespace GLT::editor {
         f32                                                     m_auto_rotate_speed = 0.5f;
         bool                                                    m_preview_image_drawn = false;
         glm::uvec2                                              m_last_preview_size{ 0, 0 };
+        ImGuizmo::OPERATION                                     m_collider_gizmo_operation = ImGuizmo::TRANSLATE;
+        ImGuizmo::MODE                                          m_collider_gizmo_mode = ImGuizmo::LOCAL;
+        glm::vec3                                               m_gizmo_last_scale{ 1.0f };
+
     };
 
 }

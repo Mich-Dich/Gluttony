@@ -10,12 +10,14 @@
 #include <event/event_bus.h>
 #include <event/application_event.h>
 #include <asset/i_asset_registry.h>
+#include <config/config.h>
 #include <config/imgui_config.h>
 #include <render/image.h>
 #include <render/i_renderer.h>
 #include <world/world_layer.h>
 #include <util/ui/asset_picker.h>
 #include <util/ui/pannel_collection.h>
+#include <util/io/serializer_yaml.h>
 
 #include "window/base/asset_editor.h"
 #include "window/content_browser.h"
@@ -54,7 +56,7 @@ namespace GLT::editor {
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
-    // Draws a single top-level menu entry ("File", "Edit", ...) that looks like plain text but highlights on hover / while its popup is open.
+    // Draws a single top-level menu entry ("File", "Edit", ...) that looks like plain text but highlights on hover / while its popup is open
     template <typename F>
     void toolbar_menu(const char* label, F&& popup_content);
 
@@ -133,8 +135,10 @@ namespace GLT::editor {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    editor_layer::editor_layer() 
-        : layer("editor_layer") {
+    editor_layer::editor_layer() : layer("editor_layer") {
+
+        auto& scene_renderers = GLT::application::get().get_scene_renderers_ref();
+        scene_renderers.front()->set_active(false);
 
         m_logo = GLT::create_unique_ref<GLT::render::image>(GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "image/logo.png");
         add_window<world_viewport_window>();
@@ -149,9 +153,12 @@ namespace GLT::editor {
         m_notification_sub_handle = GLT::event_bus::subscribe<notification_event>(std::bind_front(&editor_layer::on_notification_event, this));
         m_asset_create_request_event_sub_handle = GLT::event_bus::subscribe<asset_create_request_event>(std::bind_front(&editor_layer::on_asset_create_request_event, this));
         m_save_sub_handle = GLT::event_bus::subscribe<GLT::save_event>(std::bind_front(&editor_layer::on_save_event, this));
+        m_window_close_sub = GLT::event_bus::subscribe<GLT::window_close_event>(std::bind_front(&editor_layer::on_window_close_event, this));
 
         if (auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>())
             world_layer->set_controller<GLT::editor::input::editor_controller>();                       // create controller
+
+        load_simulation_settings();
 
         // load the editor world
         const auto& editor_world_path = GLT::application::get().get_project().editor_start_world;
@@ -173,6 +180,7 @@ namespace GLT::editor {
 
         GLT::event_bus::post(GLT::save_event());                // save before closing
 
+        GLT::event_bus::unsubscribe(m_window_close_sub);
         GLT::event_bus::unsubscribe(m_save_sub_handle);
         GLT::event_bus::unsubscribe(m_asset_create_request_event_sub_handle);
         GLT::event_bus::unsubscribe(m_notification_sub_handle);
@@ -183,6 +191,9 @@ namespace GLT::editor {
         file_watcher::shutdown();
         m_windows.clear();
         m_logo.reset();
+
+        auto& scene_renderers = GLT::application::get().get_scene_renderers_ref();
+        scene_renderers.front()->set_active(true);
     }
 
     // CLASS PUBLIC ====================================================================================================
@@ -217,7 +228,7 @@ namespace GLT::editor {
 
     void editor_layer::render_imgui(const f32 delta_time) {
 
-        // ImGuizmo must see exactly one BeginFrame per ImGui frame.
+        // ImGuizmo must see exactly one BeginFrame per ImGui frame
         ImGuizmo::BeginFrame();
 
         render_toolbar();
@@ -297,7 +308,9 @@ namespace GLT::editor {
                 if (ImGui::MenuItem("Save",    "Ctrl + S"))             { /* TODO */ }
                 if (ImGui::MenuItem("Save As", "Ctrl + Shift + S"))     { /* TODO */ }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Exit", "Alt + F4"))                { GLT::event_bus::post(GLT::window_close_event()); }
+                if (ImGui::MenuItem("Exit", "Alt + F4")) {
+                    GLT::event_bus::post(GLT::window_close_event(GLT::application::get().get_main_window()));
+                }
             });
 
             ImGui::SameLine();
@@ -384,7 +397,7 @@ namespace GLT::editor {
                             GLT::imgui_config::update_ui_colors(ImVec4(saved_palette[n].x, saved_palette[n].y, saved_palette[n].z, GLT::imgui_config::get_main_color_ref().w));
 
                         // Allow user to drop colors into each palette entry. Note that ColorButton() is already a
-                        // drag source by default, unless specifying the ImGuiColorEditFlags_NoDragDrop flag.
+                        // drag source by default, unless specifying the ImGuiColorEditFlags_NoDragDrop flag
                         if (ImGui::BeginDragDropTarget()) {
 
                             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(IMGUI_PAYLOAD_TYPE_COLOR_3F))
@@ -413,6 +426,8 @@ namespace GLT::editor {
             toolbar_menu("Help", MAIN_MENU_BAR_POPUP, []{
                 if (ImGui::MenuItem("About"))                           { /* TODO */ }
             });
+
+            render_simulation_controls();
         }
         ImGui::End();
 
@@ -420,9 +435,212 @@ namespace GLT::editor {
     }
 
 
+    void editor_layer::render_simulation_controls() {
+
+        using namespace GLT::editor::icon_manager;
+
+        constexpr f32 WIN_PAD = 4.f;        // matches render_toolbar()
+        constexpr f32 LOGO_SIDE = 50.f;
+        constexpr f32 BTN_SIZE = 24.f;      // click footprint
+        constexpr f32 ICON_SIZE = 20.f;     // rendered icon (centred in the footprint)
+        constexpr f32 BTN_SPACING = 4.f;
+
+        const bool idle = (m_simulation_state == GLT::system_state::idle);
+        const bool running = (m_simulation_state == GLT::system_state::running);
+        const bool paused = (m_simulation_state == GLT::system_state::paused);
+
+        u32 visible = 0;
+        if (idle)
+            visible = 2;                    // Play, Settings
+
+        else if (running)
+            visible = 2;                    // Pause, Stop
+
+        else if (paused)
+            visible = 3;                    // Resume, Step, Stop
+
+        const f32 total_w = visible * BTN_SIZE + (visible - 1) * BTN_SPACING;
+
+        // Centre in the toolbar window - leaves the right side free for the project name that will land there later
+        const f32 x_pos = (ImGui::GetWindowWidth() - total_w) * 0.5f;
+        const f32 y_pos = WIN_PAD + (LOGO_SIDE - BTN_SIZE) * 0.5f;
+
+        ImGui::SetCursorPos(ImVec2(x_pos, y_pos));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.f, 0.f));
+
+        bool any_drawn = false;
+        ImVec2 settings_btn_min{};
+        ImVec2 settings_btn_max{};
+        bool settings_btn_drawn = false;
+
+        auto tinted_icon_button = [&](icon icon_id, const char* tooltip) -> bool {
+
+            if (any_drawn)
+                ImGui::SameLine(0, BTN_SPACING);
+
+            any_drawn = true;
+            const ImVec2 btn_pos = ImGui::GetCursorScreenPos();
+
+            ImGui::InvisibleButton(tooltip, ImVec2(BTN_SIZE, BTN_SIZE));
+            const bool clicked = ImGui::IsItemClicked();
+            const bool hovered = ImGui::IsItemHovered();
+            const bool active = ImGui::IsItemActive();
+
+            const auto data = icon_manager::get(icon_id);
+            if (data.image_size.x > 0.f && data.image_size.y > 0.f) {
+
+                const ImVec4& tint = active  ? GLT::imgui_config::get_action_color00_active_ref()
+                    : hovered ? GLT::imgui_config::get_action_color00_hover_ref()
+                    : GLT::imgui_config::get_main_color_ref();
+
+                const ImVec2 img_min = ImVec2(btn_pos.x + (BTN_SIZE - ICON_SIZE) * 0.5f, btn_pos.y + (BTN_SIZE - ICON_SIZE) * 0.5f);
+                const ImVec2 img_max = ImVec2(img_min.x + ICON_SIZE, img_min.y + ICON_SIZE);
+
+                ImGui::GetWindowDrawList()->AddImage(data.tex_ref, img_min, img_max, data.uv0, data.uv1, ImGui::GetColorU32(tint));
+            }
+
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", tooltip);
+
+            return clicked;
+        };
+
+        // Gray-backed image button - the settings gear keeps its visible frame so it reads as a distinct affordance from the transport row
+        auto gray_icon_button = [&](icon icon_id, const char* tooltip) -> bool {
+
+            if (any_drawn)
+                ImGui::SameLine(0, BTN_SPACING);
+                
+            any_drawn = true;
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.f, 2.f));
+            ImGui::PushStyleColor(ImGuiCol_Button, GLT::imgui_config::get_default_gray_ref());
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, GLT::imgui_config::get_action_color_gray_hover_ref());
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, GLT::imgui_config::get_action_color_gray_active_ref());
+
+            const auto data = icon_manager::get(icon_id);
+            bool clicked = false;
+            if (data.image_size.x > 0.f && data.image_size.y > 0.f)
+                clicked = ImGui::ImageButton(tooltip, data.tex_ref, ImVec2(ICON_SIZE, ICON_SIZE), data.uv0, data.uv1);
+            else
+                clicked = ImGui::Button(tooltip, ImVec2(ICON_SIZE, ICON_SIZE));
+
+            ImGui::PopStyleColor(3);
+            ImGui::PopStyleVar();
+
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", tooltip);
+
+            return clicked;
+        };
+
+        // Play / Resume
+        if (idle || paused)
+            if (tinted_icon_button(icon::play, idle ? "Play" : "Resume")) {
+                if (idle)
+                    spawn_simulation_windows();     // first play from idle spawns the windows
+                m_simulation_state = GLT::system_state::running;
+            }
+
+        // Settings (idle only)
+        if (idle) {
+            if (gray_icon_button(icon::settings, "Simulation Settings"))
+                ImGui::OpenPopup("##sim_settings_popup");
+
+            settings_btn_min = ImGui::GetItemRectMin();
+            settings_btn_max = ImGui::GetItemRectMax();
+            settings_btn_drawn = true;
+        }
+
+        // Pause
+        if (running)
+            if (tinted_icon_button(icon::pause, "Pause"))
+                m_simulation_state = GLT::system_state::paused;
+
+        if (paused)
+            if (tinted_icon_button(icon::step, "Step")) {
+                // GLT::event_bus::post(GLT::simulation_step_event());
+            }
+
+        if (running || paused)
+            if (tinted_icon_button(icon::stop, "Stop")) {
+                m_simulation_state = GLT::system_state::idle;
+                destroy_simulation_windows();       // tearing the sim down also tears the windows down
+            }
+
+        ImGui::PopStyleVar();   // outer FramePadding
+
+        // Settings popup
+        if (idle && settings_btn_drawn) {
+            ImGui::SetNextWindowPos(ImVec2(settings_btn_min.x, settings_btn_max.y + 4.f), ImGuiCond_Appearing);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(440.f, 180.f), ImVec2(FLT_MAX, FLT_MAX));
+        }
+
+        if (ImGui::BeginPopup("##sim_settings_popup", ImGuiWindowFlags_AlwaysAutoResize)) {
+
+            if (!idle)
+                ImGui::CloseCurrentPopup();
+
+            else {
+
+                // Fixed table width flips begin_table() into its fixed/stretch column mode - without this, ImGui's default SizingFixedFit
+                // collapses both columns to content width and the combo never gets room to grow
+                constexpr f32 TABLE_W = 420.f;
+                if (UI::begin_table("##sim_settings_tbl", false, ImVec2(TABLE_W, 0.f))) {
+
+                    const std::vector<std::string> mode_options = {
+                        "In current viewport",
+                        "In a new window",
+                        "In multiple windows",
+                    };
+                    int mode_idx = static_cast<int>(m_simulation_mode);
+                    if (UI::table_row("Mode", mode_idx, mode_options))
+                        m_simulation_mode = static_cast<simulation_mode>(mode_idx);
+
+                    // ---- window count (multiple_windows only) ----
+                    if (m_simulation_mode == simulation_mode::multiple_windows) {
+                        int count = static_cast<int>(m_sim_window_count);
+                        if (UI::table_row_slider_int("Window count", count, 1, 4))
+                            m_sim_window_count = static_cast<u32>(count);
+                    }
+
+                    // ---- per-window config ----
+                    if (m_simulation_mode != simulation_mode::current_viewport) {
+
+                        const u32 effective_count = (m_simulation_mode == simulation_mode::new_window) ? 1u : m_sim_window_count;
+                        auto& layout = m_sim_layouts[effective_count - 1];
+
+                        for (u32 index = 0; index < effective_count; ++index) {
+
+                            auto& cfg = layout.windows[index];
+                            ImGui::PushID(static_cast<int>(index));
+
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextDisabled("Window %u", index + 1);
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::Separator();
+
+                            UI::table_row("Position", cfg.position, 1.f, 0.f, 8000.f);
+                            UI::table_row("Size", cfg.size, 1.f, 100.f, 8000.f);
+                            UI::table_row("Maximized", cfg.maximized);
+                            UI::table_row("VSync", cfg.vsync);
+
+                            ImGui::PopID();
+                        }
+                    }
+
+                    UI::end_table();
+                }
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+
     void editor_layer::render_dockspace() {
 
-        // Same math as render_toolbar() - keep these in sync if you tweak the toolbar.
+        // Same math as render_toolbar() - keep these in sync if you tweak the toolbar
         constexpr f32 logo_side = 50.0f;
         constexpr f32 win_pad =  4.0f;
         constexpr f32 toolbar_height = logo_side + win_pad * 2.0f;
@@ -453,7 +671,7 @@ namespace GLT::editor {
         const ImVec2  dockspace_size(vp->WorkSize.x, vp->WorkSize.y - toolbar_height);
 
         // Build the layout on the very first frame, after a manual reset,
-        // or if the docking data is missing from the .ini (e.g. deleted file).
+        // or if the docking data is missing from the .ini (e.g. deleted file)
         if (m_reset_layout || (ImGui::DockBuilderGetNode(m_dockspace_id) == nullptr)) {
 
             m_reset_layout = false;
@@ -511,7 +729,7 @@ namespace GLT::editor {
             GLT::event_bus::post(GLT::save_event(shift_pressed));
 
         if (alt_pressed && event.is(GLT::key_code::key_F4, GLT::key_state::press))
-            GLT::event_bus::post(GLT::window_close_event());
+            GLT::event_bus::post(GLT::window_close_event(GLT::application::get().get_main_window()));
 
         if (event.is(GLT::key_code::key_F5, GLT::key_state::press)) {
 
@@ -575,11 +793,34 @@ namespace GLT::editor {
     void editor_layer::on_save_event(const GLT::save_event& /*event*/) {
 
         GLT::application::get().get_project_ref().serialize_projects_data(GLT::serializer::option::save);
+        save_simulation_settings();
+    }
+
+
+    void editor_layer::on_window_close_event(const GLT::window_close_event& event) {
+
+        const auto event_handle = event.get_window();
+
+        auto it = std::ranges::find_if(m_sim_windows, [event_handle](const sim_window& w) { return w.handle == event_handle; });
+        if (it == m_sim_windows.end())
+            return;
+
+        // Renderer first (see destroy_simulation_windows for the reason)
+        if (it->scene_renderer)
+            GLT::application::get().destroy_scene_renderer(it->scene_renderer);
+
+        if (auto* p_window = GLT::platform::window::get_ptr())
+            p_window->destroy(it->handle);
+
+        m_sim_windows.erase(it);
+
+        if (m_sim_windows.empty())
+            m_simulation_state = GLT::system_state::idle;
     }
 
     // notification ----------------------------------------------------------------------------------------------------
 
-    // Buffered: the event can fire from anywhere in the frame, we only mutate the stack during our update pass.
+    // Buffered: the event can fire from anywhere in the frame, we only mutate the stack during our update pass
     void editor_layer::on_notification_event(const notification_event& event) { m_notification_event_buffer.push_back(event); }
 
 
@@ -596,7 +837,7 @@ namespace GLT::editor {
         };
         m_notifications.push_back(std::move(notif));
 
-        // Hard cap the visible stack - drop the oldest first (front of the vector).
+        // Hard cap the visible stack - drop the oldest first (front of the vector)
         if (m_notifications.size() > MAX_NOTIFICATIONS)
             m_notifications.erase(m_notifications.begin(), m_notifications.begin() + (m_notifications.size() - MAX_NOTIFICATIONS));
     }
@@ -604,7 +845,7 @@ namespace GLT::editor {
 
     void editor_layer::render_notifications(const f32 delta_time) {
 
-        // ---- tick lifetimes ------------------------------------------------------------
+        // tick lifetimes
         for (auto& notif : m_notifications)
             if (notif.lifetime >= 0.0f)
                 notif.lifetime -= (delta_time / 1000.f);
@@ -645,7 +886,7 @@ namespace GLT::editor {
 
         if (ImGui::Begin("##notifications_stack", nullptr, flags)) {
 
-            // Render oldest -> newest so that the newest sits at the bottom (window grows upward).
+            // Render oldest -> newest so that the newest sits at the bottom (window grows upward)
             for (auto& notif : m_notifications) {
 
                 ImGui::PushID(static_cast<int>(notif.id));
@@ -709,7 +950,7 @@ namespace GLT::editor {
         ImGui::PopStyleVar(4);
 
         // Dock spaces and docked windows keep their z-order across frames, so the notification stack can end up behind them as
-        // soon as the user clicks any editor window. Force it to the top of the display list every frame.
+        // soon as the user clicks any editor window. Force it to the top of the display list every frame
         if (ImGuiWindow* window = ImGui::FindWindowByName("##notifications_stack"))
             ImGui::BringWindowToDisplayFront(window);
     }
@@ -748,6 +989,196 @@ namespace GLT::editor {
     void editor_layer::on_asset_create_request_event(const asset_create_request_event& event) { 
 
         m_asset_create_request_event_buffer.push_back(event);
+    }
+
+
+    void editor_layer::save_simulation_settings() {
+
+        const auto path = GLT::application::get().get_project_path() / GLT::config::config_type_to_filepath(GLT::config::type::app_settings);
+
+        bool success = false;
+        GLT::serializer::yaml cfg(path, "simulation_settings", GLT::serializer::option::save, &success);
+        VALIDATE(success, return, "", "simulation_settings: could not open [{}] for writing", (path.generic_string()))
+
+        i32 mode_int = static_cast<i32>(m_simulation_mode);
+        cfg.entry("mode", mode_int);
+
+        i32 count_int = static_cast<i32>(m_sim_window_count);
+        cfg.entry("window_count", count_int);
+
+        // Save every layout — index 0 = 1 window, index 3 = 4 windows
+        // Only the meaningful entries are written; the file stays compact
+        for (u32 layout_idx = 0; layout_idx < 4; ++layout_idx) {
+
+            const u32 layout_count = layout_idx + 1;
+            const auto& layout = m_sim_layouts[layout_idx];
+
+            cfg.sub_section("layout_" + std::to_string(layout_count), [&](GLT::serializer::yaml& y) {
+
+                for (u32 win_idx = 0; win_idx < layout_count; ++win_idx) {
+
+                    const auto& w = layout.windows[win_idx];
+
+                    // Copy to locals so entry() gets non-const refs and we
+                    // don't touch the live state on the load path
+                    f32  px = w.position.x;
+                    f32  py = w.position.y;
+                    f32  sx = w.size.x;
+                    f32  sy = w.size.y;
+                    bool m = w.maximized;
+                    bool v = w.vsync;
+
+                    y.sub_section("window_" + std::to_string(win_idx),
+                        [&](GLT::serializer::yaml& y2) {
+                            y2.entry("pos_x", px);
+                            y2.entry("pos_y", py);
+                            y2.entry("size_x", sx);
+                            y2.entry("size_y", sy);
+                            y2.entry("maximized", m);
+                            y2.entry("vsync", v);
+                        });
+                }
+            });
+        }
+    }
+
+
+    void editor_layer::load_simulation_settings() {
+
+        const auto path = GLT::application::get().get_project_path() / GLT::config::config_type_to_filepath(GLT::config::type::app_settings);
+        std::error_code ec{};
+        if (!GLT::vfs::exists(path, ec) || ec)
+            return;                                     // first run — defaults are fine
+
+        bool success = false;
+        GLT::serializer::yaml cfg(path, "simulation_settings", GLT::serializer::option::load, &success);
+        VALIDATE(success, return, "", "simulation_settings: could not parse [{}]", (path.generic_string()))
+
+        // Global state. Clamp on load so a hand-edited file can't put us into
+        // an out-of-range enum value
+        i32 mode_int = static_cast<i32>(m_simulation_mode);
+        cfg.entry("mode", mode_int);
+        m_simulation_mode = static_cast<simulation_mode>(std::clamp<i32>(mode_int, 0, 2));
+
+        i32 count_int = static_cast<i32>(m_sim_window_count);
+        cfg.entry("window_count", count_int);
+        m_sim_window_count = static_cast<u32>(std::clamp<i32>(count_int, 1, 4));
+
+        // ---- per-count layouts ----
+        for (u32 layout_idx = 0; layout_idx < 4; ++layout_idx) {
+
+            const u32 layout_count = layout_idx + 1;
+            auto& layout = m_sim_layouts[layout_idx];
+
+            cfg.sub_section("layout_" + std::to_string(layout_count), [&](GLT::serializer::yaml& y) {
+
+                for (u32 win_idx = 0; win_idx < layout_count; ++win_idx) {
+
+                    auto& w = layout.windows[win_idx];
+
+                    // Seed with current values so a partial file leaves
+                    // missing fields at their defaults rather than 0
+                    f32  px = w.position.x;
+                    f32  py = w.position.y;
+                    f32  sx = w.size.x;
+                    f32  sy = w.size.y;
+                    bool m = w.maximized;
+                    bool v = w.vsync;
+
+                    y.sub_section("window_" + std::to_string(win_idx),
+                        [&](GLT::serializer::yaml& y2) {
+                            y2.entry("pos_x", px);
+                            y2.entry("pos_y", py);
+                            y2.entry("size_x", sx);
+                            y2.entry("size_y", sy);
+                            y2.entry("maximized", m);
+                            y2.entry("vsync", v);
+                        });
+
+                    w.position = { px, py };
+                    w.size = { sx, sy };
+                    w.maximized = m;
+                    w.vsync = v;
+                }
+            });
+        }
+    }
+
+
+    void editor_layer::spawn_simulation_windows() {
+
+        if (m_simulation_mode == simulation_mode::current_viewport)
+            return;
+
+        auto* p_window = GLT::platform::window::get_ptr();
+        VALIDATE(p_window, return, "", "Failed to get window plugin")
+
+        const u32 count = (m_simulation_mode == simulation_mode::new_window) ? 1u : m_sim_window_count;
+        const auto& layout = m_sim_layouts[count - 1];
+        m_sim_windows.reserve(count);
+
+        for (u32 index = 0; index < count; index++) {
+
+            const auto& cfg = layout.windows[index];
+
+            GLT::platform::window_attributes attrs{};
+            attrs.title = "GLT-game-" + std::to_string(index + 1);
+            attrs.width = static_cast<u32>(cfg.size.x);
+            attrs.height = static_cast<u32>(cfg.size.y);
+            attrs.pos_x = static_cast<u32>(cfg.position.x);
+            attrs.pos_y = static_cast<u32>(cfg.position.y);
+            attrs.vsync = cfg.vsync;
+            attrs.size_state = cfg.maximized
+                ? GLT::platform::window_size_state::fullscreen_windowed
+                : GLT::platform::window_size_state::windowed;
+
+            const auto handle = p_window->create(attrs);
+            VALIDATE(handle.is_valid(), continue, "",
+                "Failed to create simulation window {} of {}", (index + 1, count))
+
+            // Per-window 3D scene renderer. ImGui is intentionally disabled — the GLFW backend is bound to the primary window,
+            // and one ImGui context can't drive two native windows. Multi-window 3D-only works fine with a shared context
+            GLT::render::surface_target_desc surface{ .window = handle };
+            GLT::render::scene_renderer_desc desc{
+                .target = surface,
+                .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),
+                .enable_imgui = false,
+            };
+
+            auto* scene_renderer = GLT::application::get().create_scene_renderer(desc);
+            if (!scene_renderer) {
+                LOG(error, "Failed to create scene renderer for simulation window {}", index + 1)
+                p_window->destroy(handle);      // don't leak a headless window
+                continue;
+            }
+
+            if (auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>())
+                world_layer->add_scene_renderer(scene_renderer);
+
+            m_sim_windows.push_back({ handle, scene_renderer });
+        }
+    }
+
+
+    void editor_layer::destroy_simulation_windows() {
+
+        if (m_sim_windows.empty())
+            return;
+
+        // Renderers first: each one releases its ref on the window's VkSurfaceKHR in its destructor. If we destroy the window
+        // first, release_surface() sees an invalid handle, short-circuits, and the surface leaks (or worse, the driver's queue
+        // bookkeeping goes stale)
+        for (auto& w : m_sim_windows) {
+            if (w.scene_renderer)
+                GLT::application::get().destroy_scene_renderer(w.scene_renderer);
+            w.scene_renderer = nullptr;
+        }
+
+        if (auto* p_window = GLT::platform::window::get_ptr())
+            for (const auto& w : m_sim_windows)
+                p_window->destroy(w.handle);
+
+        m_sim_windows.clear();
     }
 
 }

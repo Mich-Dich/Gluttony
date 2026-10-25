@@ -67,10 +67,16 @@ namespace GLT::renderer::vk_rasterizer {
 
         auto window = m_plugin.get_window();
         ASSERT(window, "", "imgui_init: no window plugin")
+        ASSERT(window->is_valid(m_window), "", "imgui_init: invalid window handle")
 
+        // Note: per-window ImGui context management lives in the platform plugin's imgui_init(handle,…).
+        // The renderer-side backend (ImGui_ImplVulkan) is bound to whichever context is current when
+        // it initialises. If you later need independent ImGui state per window, replace
+        // imgui_config::get_context_imgui() below with a per-window context fetched from the platform
+        // plugin (e.g. via a new get_imgui_context(handle) accessor).
         ImGui::SetCurrentContext(imgui_config::get_context_imgui());
 
-        window->imgui_init(GLT::render::backend_api::vulkan);
+        window->imgui_init(m_window, GLT::render::backend_api::vulkan);
 
         vk::Instance inst = m_plugin.get_instance();
         ASSERT(ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_4,
@@ -92,7 +98,7 @@ namespace GLT::renderer::vk_rasterizer {
             m_imgui_framebuffers,
             m_imgui_initialized);
 
-        LOG(trace, "scene_renderer: ImGui initialised");
+        LOG(trace, " ImGui initialised for window [{}, {}]", m_window.index, m_window.generation);
     }
 
 
@@ -100,6 +106,9 @@ namespace GLT::renderer::vk_rasterizer {
 
         if (m_offscreen || !m_imgui_initialized)
             return;
+
+        // Ensure the shared context is current before tearing down its backends
+        ImGui::SetCurrentContext(imgui_config::get_context_imgui());
 
         util::destroy_imgui_resources(
             m_plugin.get_vk_device_ref(),
@@ -109,7 +118,7 @@ namespace GLT::renderer::vk_rasterizer {
             m_imgui_initialized);
 
         if (auto window = m_plugin.get_window())
-            window->imgui_shutdown();
+            window->imgui_shutdown(m_window);
 
         m_imgui_framebuffers.clear();
     }
@@ -120,7 +129,7 @@ namespace GLT::renderer::vk_rasterizer {
         VALIDATE_IMGUI_INIT
         ImGui::SetCurrentContext(imgui_config::get_context_imgui());
         ImGui_ImplVulkan_NewFrame();
-        m_plugin.get_window()->begin_imgui_frame();
+        m_plugin.get_window()->begin_imgui_frame(m_window);
         ImGui::NewFrame();
     }
 

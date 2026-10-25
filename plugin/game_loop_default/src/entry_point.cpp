@@ -76,7 +76,7 @@ namespace GLT::game_loop {
             
             refresh_if_stale();
             if (m_window)
-                m_window->show(true);
+                m_window->show(GLT::application::get().get_main_window(), true);
         }
 
 
@@ -123,7 +123,7 @@ namespace GLT::game_loop {
                     auto result = scene->render(frame);
                     if (!result) {
                         if (result.error().kind == GLT::render::render_error::code::target_out_of_date && !scene->is_offscreen()) {
-                            const auto fb = m_window->get_framebuffer_size();
+                            const auto fb = m_window->get_framebuffer_size(GLT::application::get().get_main_window());
                             scene->resize({ static_cast<u32>(fb.x), static_cast<u32>(fb.y) });
                         } else {
                             LOG(error, "scene_renderer::render failed: {}", result.error().message)

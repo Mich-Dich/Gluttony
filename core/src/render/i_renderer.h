@@ -19,6 +19,8 @@
 #include "world/camera_snapshot.h" 
 #include "world/light_snapshot.h"
 #include "reflection/registry.h"
+#include "render/type.h"
+#include "platform/type.h"
 
 
 
@@ -39,37 +41,6 @@ namespace GLT::render {
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
-
-    // Renderer capability flags (optional, can be used for feature queries)
-    enum class renderer_feature : u8 {
-
-        none                                    = 0,
-        compute_shaders                         = BIT(0),
-        tessellation                            = BIT(1),
-        ray_tracing                             = BIT(2),
-        bindless_resources                      = BIT(3),
-    };
-
-
-    enum class backend_api : u8 {
-
-        vulkan = 0,
-        open_gl,
-        direct_x,
-        metal,
-    };
-
-
-    // driven by the scene's directional light
-    struct sun_settings {
-
-        glm::vec3                               direction = { 0.5f, 1.0f, 0.3f };       // pointing TOWARD the sun
-        glm::vec3                               color = { 1.0f, 0.95f, 0.85f };         // linear
-        f32                                     intensity = 3.0f;
-        f32                                     angular_radius = 0.035f;                // radians
-        u32                                     samples = 4u;                           // shadow rays per hit
-        f32                                     shadow_ray_tmax = 10000.0f;
-    };
 
     // STATIC VARIABLES ================================================================================================
 
@@ -94,7 +65,7 @@ namespace GLT::render {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // Core renderer plugin interface.
+    // Core renderer plugin interface
     //
     // This interface abstracts the low‑level graphics device, swapchain, and frame lifecycle. Concrete rendering backends
     // (e.g., Direct3D 12, Metal) implement this interface so that the engine core can drive rendering without depending on
@@ -116,22 +87,18 @@ namespace GLT::render {
 
         virtual ~i_renderer_plugin() = default;
 
-        // @brief Creates and initialises all renderer resources.
+        // @brief Creates and initialises all renderer resources
         //
-        // This is called after the plugin has been loaded and the window is ready. The implementation should:
-        // - Retrieve the window plugin and obtain the native surface/window handle.
-        // - Create the graphics device, swapchain, and associated synchronisation objects
-        // - Create render targets, shader/pipeline state, and other GPU resources.
-        // - Initialise any debug/UI overlays if used.
-        // - Subscribe to window resize events if necessary.
+        // [primary_window] is used for device + queue family selection (Vulkan requires *one* surface to
+        // query present support). Subsequent windows are handled lazily via
+        // [create_scene_renderer] with a [surface_target_desc] holding their own [window_handle]
         //
-        // After this call returns true, the renderer is ready to process frames.
-        //
-        // @return true on success, false on failure.
-        virtual bool create() = 0;
+        // @param primary_window  A valid window handle; the plugin may create additional surfaces later
+        // @return true on success, false on failure
+        virtual bool create(GLT::platform::window_handle primary_window) = 0;
 
 
-        // @brief Destroys all renderer resources and shuts down the device.
+        // @brief Destroys all renderer resources and shuts down the device
         //
         // The implementation must wait for all pending GPU work to finish before releasing resources. It should unsubscribe
         // from any events, destroy the swapchain, render targets, pipelines, buffers, and any UI/overlay resources, then release
@@ -152,7 +119,7 @@ namespace GLT::render {
         // The engine can query this value to determine which optional features are available (e.g., ray tracing, mesh shaders,
         // bindless resources)
         //
-        // @return Bitmask of supported renderer features.
+        // @return Bitmask of supported renderer features
         [[nodiscard]] virtual renderer_feature get_supported_features() const = 0;
 
 
@@ -160,7 +127,7 @@ namespace GLT::render {
         //
         // This allows the engine to identify the concrete backend without exposing API-specific types
         //
-        // @return The backend API identifier.
+        // @return The backend API identifier
         [[nodiscard]] virtual backend_api get_backend_api() const = 0;
 
         // --- native access ---------------------------------------------------------
@@ -170,7 +137,7 @@ namespace GLT::render {
         // This is intended for advanced interop scenarios where the engine or plugins need direct access to the graphics API device
         // The actual type is backend-specific
         //
-        // @return Opaque pointer to the native device, or nullptr if unavailable.
+        // @return Opaque pointer to the native device, or nullptr if unavailable
         [[nodiscard]] virtual void* get_native_device_handle() const = 0;
 
 
@@ -179,7 +146,7 @@ namespace GLT::render {
         // The context may represent the API instance, command queue, or other backend-specific object used to submit work
         // The exact type depends on the backend implementation
         //
-        // @return Opaque pointer to the native context, or nullptr if unavailable.
+        // @return Opaque pointer to the native context, or nullptr if unavailable
         [[nodiscard]] virtual void* get_native_context_handle() const = 0;
 
 

@@ -55,6 +55,7 @@ namespace GLT::editor::icon_manager {
         play,
         pause,
         stop,
+        step,
         file,
         file_big,
         script,

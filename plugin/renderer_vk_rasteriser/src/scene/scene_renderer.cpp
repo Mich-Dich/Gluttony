@@ -84,7 +84,9 @@ namespace GLT::renderer::vk_rasterizer {
         if (std::holds_alternative<GLT::render::surface_target_desc>(desc.target)) {
 
             m_offscreen = false;
-            init_surface_target(std::get<GLT::render::surface_target_desc>(desc.target));
+            const auto& surface = std::get<GLT::render::surface_target_desc>(desc.target);
+            m_window = surface.window;
+            init_surface_target(surface);
 
         } else {
 
@@ -101,10 +103,11 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph = GLT::create_unique_ref<graph::render_graph>(m_plugin.get_dev());
         init_gpu_state();
 
-        if (!m_offscreen)                       // ImGui (surface only)
+        if (!m_offscreen && m_desc.enable_imgui)
             imgui_init();
 
-        LOG(trace, "scene_renderer created ({}x{}, offscreen={})", m_extent.x, m_extent.y, m_offscreen);
+        LOG(trace, "scene_renderer created ({}x{}, offscreen={}, window=[{},{}])",
+            m_extent.x, m_extent.y, m_offscreen, m_window.index, m_window.generation);
     }
 
 
@@ -115,12 +118,25 @@ namespace GLT::renderer::vk_rasterizer {
     std::expected<GLT::unique_ref<scene_renderer>, GLT::render::scene_renderer_error> scene_renderer::create(renderer& plugin,
         const GLT::render::scene_renderer_desc& desc) {
 
+        // Validate the surface target. Any window the platform plugin confirms as live is acceptable;
+        // the renderer will happily create a swapchain for it (there is no longer a "only the plugin's
+        // own window" restriction — that was a v1 limitation).
         if (std::holds_alternative<GLT::render::surface_target_desc>(desc.target)) {
+
             const auto& surface = std::get<GLT::render::surface_target_desc>(desc.target);
-            if (surface.window != plugin.get_window()) {
+
+            if (!surface.window.is_valid()) {
                 return std::unexpected(GLT::render::scene_renderer_error{
-                    GLT::render::scene_renderer_error::code::feature_unsupported,
-                    "surface scene renderers must use the plugin's primary window in v1"
+                    GLT::render::scene_renderer_error::code::target_invalid,
+                    "surface target did not specify a window handle"
+                });
+            }
+
+            auto* window = plugin.get_window();
+            if (!window || !window->is_valid(surface.window)) {
+                return std::unexpected(GLT::render::scene_renderer_error{
+                    GLT::render::scene_renderer_error::code::target_invalid,
+                    "surface target references a window that does not exist"
                 });
             }
         }
@@ -194,6 +210,9 @@ namespace GLT::renderer::vk_rasterizer {
 
         frame.cmd.reset();
         frame.cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+
+        LOG(trace, "render: window=[{},{}] active={} instances={} lights={}",
+            m_window.index, m_window.generation, m_active, m_instance_count, m_light_count)
 
         m_graph->begin_frame();
         update_cluster_dimensions();
@@ -349,16 +368,27 @@ namespace GLT::renderer::vk_rasterizer {
         auto device = m_plugin.get_vk_device();
         const auto& queues = m_plugin.get_queues_ref();
 
-        m_swapchain_builder = util::swapchain_builder(device, m_plugin.get_physical_device(), m_plugin.get_surface(), queues.graphics_index,
-            queues.present_index);
+        auto* window = m_plugin.get_window();
+        ASSERT(window, "", "init_surface_target: no window plugin")
+        ASSERT(window->is_valid(target.window), "", "init_surface_target: invalid window handle")
 
-        const auto fb = target.window->get_framebuffer_size();
-        m_swapchain_builder.width = static_cast<u32>(fb.x);
-        m_swapchain_builder.height = static_cast<u32>(fb.y);
+        // Renderer owns the surface; we just take a ref for the lifetime of this scene renderer.
+        const vk::SurfaceKHR surface = m_plugin.get_or_create_surface(target.window);
+        if (!surface)
+            throw std::runtime_error(" failed to acquire a Vulkan surface for the target window");
+
+        m_swapchain_builder = util::swapchain_builder(device, m_plugin.get_physical_device(), surface,
+            queues.graphics_index, queues.present_index);
+
+        const auto fb = window->get_framebuffer_size(target.window);
+        m_swapchain_builder.width  = static_cast<u32>(std::max(fb.x, 1));
+        m_swapchain_builder.height = static_cast<u32>(std::max(fb.y, 1));
         m_swapchain_builder.back_buffer_count = MAX_CONCURRENT_FRAMES;
         m_swapchain_builder.image_usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
         m_swapchain_builder.desired_format = vk::Format::eB8G8R8A8Unorm;
-        m_swapchain_builder.present_mode = target.window->get_vsync() ? vk::PresentModeKHR::eFifo : vk::PresentModeKHR::eMailbox;
+        m_swapchain_builder.present_mode = window->get_vsync(target.window)
+            ? vk::PresentModeKHR::eFifo
+            : vk::PresentModeKHR::eMailbox;
 
         m_swapchain = m_swapchain_builder.build_swapchain();
         m_image_count = static_cast<u32>(m_swapchain.swapchain_images.size());
@@ -452,6 +482,11 @@ namespace GLT::renderer::vk_rasterizer {
         for (const auto& [h, id] : m_resident_meshes)
             m_shared->release_mesh(id);
         m_resident_meshes.clear();
+
+        // Hand the surface back to the renderer. It was refcounted; if this was the last holder the
+        // renderer destroys the surface. The window itself is unaffected — the platform plugin owns it.
+        if (!m_offscreen && m_window.is_valid())
+            m_plugin.release_surface(m_window);
     }
 
 

@@ -8,6 +8,7 @@
 #include <config/imgui_config.h>
 #include <plugin_system/plugin_manager.h>
 #include <platform/i_window.h>
+#include <layer/layer_stack.h>
 #include <asset/i_asset_registry.h>
 #include <render/image.h>
 #include <render/i_renderer.h>
@@ -52,10 +53,19 @@ namespace GLT::editor {
     // CLASS IMPLEMENTATION ============================================================================================
 
     world_viewport_window::world_viewport_window() {
-        
+
+        // offscreen scene renderer
+        GLT::render::offscreen_target_desc offscreen{};
+        GLT::render::scene_renderer_desc desc{
+            .target = offscreen,
+            .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),
+        };
+        m_scene = GLT::application::get().create_scene_renderer(desc);
+        auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>();
+        world_layer->add_scene_renderer(m_scene);
+
         make_window_name("World Viewport");
         m_renderer = GLT::render::renderer::get_ref();
-        m_scene = GLT::application::get().get_main_world_scene_renderer();
         m_content_browsers.push_back(GLT::editor::content_browser_window());       // create first content browser
 
         m_save_sub_handle = GLT::event_bus::subscribe<GLT::save_event>(std::bind_front(&world_viewport_window::on_save_event, this), 10);
@@ -68,6 +78,7 @@ namespace GLT::editor {
         GLT::event_bus::unsubscribe(m_save_as_sub_handle);
         GLT::event_bus::unsubscribe(m_save_sub_handle);
         m_content_browsers.clear();
+        GLT::application::get().destroy_scene_renderer(m_scene);
         m_renderer.reset();
     }
 
@@ -114,7 +125,6 @@ namespace GLT::editor {
     void world_viewport_window::update(const f32 /*delta_time*/) {
 
         // refresh in case the app recreated it
-        m_scene = GLT::application::get().get_main_world_scene_renderer();
         if (m_scene) {
 
             const auto extent = glm::uvec2(static_cast<u32>(std::max(1.f, m_viewport_size.x)),
@@ -628,7 +638,7 @@ namespace GLT::editor {
         if (!window)
             return;
 
-        window->set_cursor_mode(captured
+        window->set_cursor_mode(GLT::application::get().get_main_window(), captured
             ? GLT::platform::cursor_mode::cursor_disabled   // hidden + relative motion, frozen visually
             : GLT::platform::cursor_mode::cursor_normal);
     }

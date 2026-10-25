@@ -1,6 +1,6 @@
-
 #include "util/pch.h"
-#include "world.h"
+#include "ecs_world.h"
+#include "ecs_world_plugin.h"
 
 #include <glm/gtc/type_ptr.hpp>
 #include <cmath>
@@ -8,8 +8,6 @@
 #include <application.h>
 #include <asset/world.h>
 #include <asset/i_asset_registry.h>
-
-#include "components.h"
 
 
 
@@ -27,114 +25,29 @@ namespace GLT::world::world_ecs_entt {
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
-    // INTERNAL FUNCTION DECLARATION ===================================================================================
-
-    // Serializes an asset handle as its registry virtual path, length-prefixed. A zero-length path encodes INVALID_HANDLE.
-    //
-    //   [path_length : u32][path_bytes : path_length bytes]
-    void write_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, GLT::asset::handle handle, 
-        std::vector<std::byte>& out_bytes);
+    static glm::mat4 compose_transform(const component::transform& t);
 
 
-    // Inverse of write_asset_handle. `offset` is advanced past the consumed bytes. A missing, truncated, or unresolvable
-    // asset degrades to INVALID_HANDLE rather than aborting the whole entity load - the outliner still shows the component,
-    // the renderer just skips it.
-    GLT::asset::asset_ref read_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, 
-        std::span<const std::byte> in_bytes, size_t& offset);
-
-
-    // position/rotation(euler,rad)/scale -> mat4. YXZ order, which matches what camera/controller use elsewhere in the engine.
-    static glm::mat4 compose_transform(const GLT::world::world_ecs_entt::component::transform& t);
-
-
-    // Rotation-only matrix from euler angles, matching compose_transform's YXZ order. Used by translate_local to rotate
-    // a local-frame delta into the entity's frame without going through a full compose().
     static glm::mat3 rotation_matrix_from_euler(const glm::vec3& euler_rad);
 
 
-    // Quaternion for the same rotation as rotation_matrix_from_euler(): Ry * Rx * Rz (intrinsic YXZ).
-    // Because the quaternion product mirrors matrix composition, this is qy * qx * qz.
     static glm::quat quat_from_euler_yxz(const glm::vec3& euler_rad);
 
 
-    // Inverse of quat_from_euler_yxz(). Extracts YXZ euler angles from a (unit) quaternion.
-    //
-    // With M = Ry * Rx * Rz, the relevant entries are:
-    //     M[1][2] = -sx        M[2][0] = sy*cx        M[0][2] = sy*cx
-    //     M[1][0] = cx*sz      M[2][2] = cy*cx        M[0][0] = cy*cz + sy*sx*sz
-    //     M[1][1] = cx*cz
-    //
-    // glm::mat3 m stores column-major, so m[col][row] == M[row][col].
     static glm::vec3 euler_yxz_from_quat(const glm::quat& q);
+
+    // INTERNAL FUNCTION DECLARATION ===================================================================================
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
-    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
-
-    void write_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, GLT::asset::handle handle, 
-        std::vector<std::byte>& out_bytes) {
-
-        std::string asset_path;
-
-        if (handle != INVALID_HANDLE && asset_registry)
-            asset_path = asset_registry->info(handle).virtual_path.generic_string();
-
-        const u32 path_length = static_cast<u32>(asset_path.size());
-        const auto* length_bytes = reinterpret_cast<const std::byte*>(&path_length);
-        out_bytes.insert(out_bytes.end(), length_bytes, length_bytes + sizeof(path_length));
-
-        if (path_length != 0) {
-            const auto* path_bytes = reinterpret_cast<const std::byte*>(asset_path.data());
-            out_bytes.insert(out_bytes.end(), path_bytes, path_bytes + path_length);
-        }
-    }
-
-
-    GLT::asset::asset_ref read_asset_handle(const GLT::ref<GLT::asset::i_asset_registry_plugin>& asset_registry, 
-        std::span<const std::byte> in_bytes, size_t& offset) {
-
-        if (in_bytes.size() < offset + sizeof(u32))
-            return INVALID_HANDLE;
-
-        u32 path_length = 0;
-        std::memcpy(&path_length, in_bytes.data() + offset, sizeof(path_length));
-        offset += sizeof(path_length);
-
-        if (path_length == 0)
-            return INVALID_HANDLE;
-
-        if (in_bytes.size() < offset + path_length)
-            return INVALID_HANDLE;
-
-        const std::filesystem::path asset_path{
-            std::string(reinterpret_cast<const char*>(in_bytes.data() + offset), path_length)
-        };
-        offset += path_length;
-
-        if (!asset_registry)
-            return {};
-
-        // Fast path: already resident. Upgrade borrowed handle to an owning ref.
-        if (const auto borrowed = asset_registry->find(asset_path); borrowed != INVALID_HANDLE)
-            return GLT::asset::asset_ref{ borrowed };
-
-        // Slow path: load and return the owning ref.
-        if (auto loaded = asset_registry->load(asset_path); loaded)
-            return std::move(*loaded);
-
-        LOG(warn, "failed to resolve asset [{}] while loading a component", asset_path.generic_string());
-        return {};
-    }
-
-
-    static glm::mat4 compose_transform(const GLT::world::world_ecs_entt::component::transform& transform) {
-
-        glm::mat4 matrix = glm::translate(glm::mat4(1.0f), transform.position);
-        matrix = glm::rotate(matrix, transform.rotation.y, glm::vec3(0, 1, 0));
-        matrix = glm::rotate(matrix, transform.rotation.x, glm::vec3(1, 0, 0));
-        matrix = glm::rotate(matrix, transform.rotation.z, glm::vec3(0, 0, 1));
-        matrix = glm::scale(matrix, transform.scale);
-        return matrix;
+    // position/rotation(euler,rad)/scale -> mat4. YXZ order.
+    static glm::mat4 compose_transform(const component::transform& t) {
+        glm::mat4 m = glm::translate(glm::mat4(1.0f), t.position);
+        m = glm::rotate(m, t.rotation.y, glm::vec3(0, 1, 0));
+        m = glm::rotate(m, t.rotation.x, glm::vec3(1, 0, 0));
+        m = glm::rotate(m, t.rotation.z, glm::vec3(0, 0, 1));
+        m = glm::scale(m, t.scale);
+        return m;
     }
 
 
@@ -152,11 +65,9 @@ namespace GLT::world::world_ecs_entt {
         const f32 hx = euler_rad.x * 0.5f;
         const f32 hy = euler_rad.y * 0.5f;
         const f32 hz = euler_rad.z * 0.5f;
-
-        const glm::quat qx{ std::cos(hx), std::sin(hx), 0.f,          0.f };
-        const glm::quat qy{ std::cos(hy), 0.f,           std::sin(hy), 0.f };
-        const glm::quat qz{ std::cos(hz), 0.f,           0.f,          std::sin(hz) };
-
+        const glm::quat qx{ std::cos(hx), std::sin(hx), 0.f,        0.f };
+        const glm::quat qy{ std::cos(hy), 0.f,         std::sin(hy), 0.f };
+        const glm::quat qz{ std::cos(hz), 0.f,         0.f,         std::sin(hz) };
         return qy * qx * qz;
     }
 
@@ -165,21 +76,20 @@ namespace GLT::world::world_ecs_entt {
 
         const glm::quat n = glm::normalize(q);
         const glm::mat3 m = glm::mat3_cast(n);
-
         glm::vec3 euler{ 0.f };
         euler.x = std::asin(glm::clamp(-m[2][1], -1.f, 1.f));
-
         const f32 cx = std::cos(euler.x);
         if (std::abs(cx) > 1e-6f) {
             euler.y = std::atan2(m[0][2], m[2][2]);
             euler.z = std::atan2(m[0][1], m[1][1]);
         } else {
-            // Gimbal lock: y and z become coupled. Fold everything into y and zero z.
             euler.y = std::atan2(-m[0][2], m[0][0]);
             euler.z = 0.f;
         }
         return euler;
     }
+
+    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
@@ -187,208 +97,51 @@ namespace GLT::world::world_ecs_entt {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    ecs_world_plugin::ecs_world_plugin() = default;
+    ecs_world::ecs_world(ecs_world_plugin& plugin, asset::asset_ref asset)
+        : m_plugin(plugin)
+        , m_codec(plugin.codec())
+        , m_components(*this)
+        , m_asset(std::move(asset)) {
+
+        component::register_all_component_descriptors(m_components);
+    }
 
 
-    ecs_world_plugin::~ecs_world_plugin() = default;
+    ecs_world::~ecs_world() {
+
+        // Same release loop as old unload_world().
+        if (auto registry = asset::registry::get_ref()) {
+            for (const auto& region : m_regions)
+                if (region.asset != INVALID_HANDLE)
+                    registry->release(region.asset);
+        }
+        // m_registry / m_slots / etc. unwind via their own destructors.
+    }
 
     // CLASS PUBLIC ====================================================================================================
 
-    // i_plugin --------------------------------------------------------------------------------------------------------
-
-    void ecs_world_plugin::on_load() {
-
-        // Register the asset handler for world + region - everything below depends on the registry being able to reach
-        m_asset_handler.on_load();
-
-        // POD components ----------------------------------------------------------------------------------------------
-
-        m_codec.register_component<component::transform>("glt.transform");
-        m_codec.register_component<component::no_inherit_transform>("glt.no_inherit_transform");
-        m_codec.register_component<component::camera>("glt.camera");
-        m_codec.register_component<component::light>("glt.light");
-
-        // custom components -------------------------------------------------------------------------------------------
-
-        m_codec.register_custom_component<component::mesh>("glt.mesh_renderer",
-
-            [](const entt::registry& entity_registry, entt::entity entity_handle, std::vector<std::byte>& out_bytes) {
-
-                const auto& mesh_component = entity_registry.get<component::mesh>(entity_handle);
-                auto asset_registry = GLT::asset::registry::get_ref();
-
-                write_asset_handle(asset_registry, mesh_component.mesh, out_bytes);
-
-                const u32 count = static_cast<u32>(mesh_component.material_overrides.size());
-                const auto* comp_bytes = reinterpret_cast<const std::byte*>(&count);
-                out_bytes.insert(out_bytes.end(), comp_bytes, comp_bytes + sizeof(count));
-
-                for (const auto& ov : mesh_component.material_overrides)
-                    write_asset_handle(asset_registry, ov, out_bytes);
-
-                out_bytes.push_back(mesh_component.visible ? std::byte{1} : std::byte{0});
-            },
-
-            [](entt::registry& entity_registry, entt::entity entity_handle, std::span<const std::byte> in_bytes) {
-
-                auto asset_registry = GLT::asset::registry::get_ref();
-                auto& mesh_component = entity_registry.emplace_or_replace<component::mesh>(entity_handle);
-
-                size_t offset = 0;
-                mesh_component.mesh = read_asset_handle(asset_registry, in_bytes, offset);
-
-                if (in_bytes.size() < offset + sizeof(u32))
-                    return;
-                u32 count = 0;
-                std::memcpy(&count, in_bytes.data() + offset, sizeof(count));
-                offset += sizeof(count);
-
-                mesh_component.material_overrides.clear();
-                mesh_component.material_overrides.reserve(count);
-                for (u32 i = 0; i < count; ++i)
-                    mesh_component.material_overrides.emplace_back(read_asset_handle(asset_registry, in_bytes, offset));
-
-                mesh_component.visible = (in_bytes.size() > offset) ? (in_bytes[offset] != std::byte{0}) : true;
-
-                // Defence in depth: if the asset is already resident, verify the count.
-                // (If it isn't loaded yet we can't validate here — do it on first submit.)
-                if (const auto* asset = asset_registry->data_as<GLT::asset::mesh::mesh_asset>(mesh_component.mesh)) {
-                    if (!mesh_component.overrides_match(asset->submesh_count())) {
-                        LOG(warn, "mesh component override count {} doesn't match submesh count {} - clearing",
-                            mesh_component.material_overrides.size(), asset->submesh_count());
-                        mesh_component.material_overrides.clear();
-                    }
-                }
-                
-            });
+    std::expected<void, asset::load_error> ecs_world::init() { return init_from_world_asset(); }
 
 
-        m_codec.register_custom_component<component::audio_source>("glt.audio_source",
+    std::expected<void, asset::load_error> ecs_world::init_from_world_asset() {
 
-            // Layout:
-            //   [clip_path_length : u32][clip_path : bytes]    // length == 0 ⇒ INVALID_HANDLE
-            //   [source_config    : raw bytes]                 // memcpy of GLT::asset::audio::source_config
-            //   [autoplay         : u8]
-
-            [](const entt::registry& entity_registry, entt::entity entity_handle, std::vector<std::byte>& out_bytes) {  // save
-
-                const auto& audio_component = entity_registry.get<component::audio_source>(entity_handle);
-                auto asset_registry = GLT::asset::registry::get_ref();
-
-                write_asset_handle(asset_registry, audio_component.clip, out_bytes);
-
-                const auto* config_bytes = reinterpret_cast<const std::byte*>(&audio_component.config);
-                out_bytes.insert(out_bytes.end(), config_bytes, config_bytes + sizeof(audio_component.config));
-
-                out_bytes.push_back(audio_component.autoplay ? std::byte{ 1 } : std::byte{ 0 });
-            },
-
-            [](entt::registry& entity_registry, entt::entity entity_handle, std::span<const std::byte> in_bytes) {      // load
-
-                auto asset_registry = GLT::asset::registry::get_ref();
-                auto& audio_component = entity_registry.emplace_or_replace<component::audio_source>(entity_handle);
-
-                size_t offset = 0;
-                audio_component.clip = read_asset_handle(asset_registry, in_bytes, offset);
-
-                // Config was written in full at save time. If it's missing or truncated the blob came from a different
-                // (or hand-edited) writer - leave the config at its default-constructed values rather than risk reading past the buffer.
-                if (in_bytes.size() < offset + sizeof(audio_component.config))
-                    return;
-
-                std::memcpy(&audio_component.config, in_bytes.data() + offset, sizeof(audio_component.config));
-                offset += sizeof(audio_component.config);
-
-                // Trailing byte; optional for forward compatibility
-                audio_component.autoplay = (in_bytes.size() > offset) ? (in_bytes[offset] != std::byte{ 0 }) : false;
-            });
-
-
-        // name_component and hierarchy own heap data, so they get explicit codecs.
-        m_codec.register_custom_component<component::name>("glt.name",
-
-            [](const entt::registry& r, entt::entity entity, std::vector<std::byte>& out) {
-
-                const auto& n = r.get<component::name>(entity);
-                const u32 len = static_cast<u32>(n.name.size());
-                const auto* lp = reinterpret_cast<const std::byte*>(&len);
-                out.insert(out.end(), lp, lp + sizeof(len));
-                const auto* sp = reinterpret_cast<const std::byte*>(n.name.data());
-                out.insert(out.end(), sp, sp + len);
-            },
-
-            [](entt::registry& r, entt::entity entity, std::span<const std::byte> data) {
-
-                if (data.size() < sizeof(u32))
-                    return;
-                u32 len;
-                std::memcpy(&len, data.data(), sizeof(len));
-                if (data.size() < sizeof(u32) + len)
-                    return;
-                auto& n = r.emplace_or_replace<component::name>(entity);
-                n.name.assign(reinterpret_cast<const char*>(data.data() + sizeof(u32)), len);
-            });
-
-
-        // hierarchy: parent pointer only. children lists are rebuilt after load by rebuild_hierarchy() so we don't duplicate
-        // the tree in every blob
-        m_codec.register_custom_component<component::hierarchy>("glt.hierarchy",
-
-            [](const entt::registry& r, entt::entity entity, std::vector<std::byte>& out) {
-                const auto& h = r.get<component::hierarchy>(entity);
-                const auto* parent = reinterpret_cast<const std::byte*>(&h.parent);
-                out.insert(out.end(), parent, parent + sizeof(h.parent));
-            },
-
-            [](entt::registry& r, entt::entity entity, std::span<const std::byte> data) {
-                if (data.size() != sizeof(entity_id)) return;
-                auto& h = r.emplace_or_replace<component::hierarchy>(entity);
-                std::memcpy(&h.parent, data.data(), sizeof(entity_id));
-            });
-
-
-        // Editor-side registrations (the UI side). May be empty in a runtime build; components still work, they just don't show a panel
-        component::register_all_component_descriptors(m_components);
-
-        LOG_LOADED
-    }
-
-
-    void ecs_world_plugin::on_unload() {
-
-        unload_world();
-        m_asset_handler.on_unload();
-        m_active_camera = INVALID_ENTITY;
-        LOG_UNLOADED
-    }
-
-    // world lifecycle -------------------------------------------------------------------------------------------------
-
-    std::expected<void, GLT::asset::load_error> ecs_world_plugin::load_world(GLT::asset::asset_ref world) {
-
-        if (m_world == world)
-            return {};        // already loaded
-        unload_world();
-
-        auto* registry = GLT::asset::registry::get_ptr();
-        const auto* world_asset = registry->data_as<GLT::asset::world::world_asset>(world.get());
+        auto registry = asset::registry::get_ref();
+        const auto* world_asset = registry->data_as<asset::world::world_asset>(m_asset.get());
         if (!world_asset)
-            return std::unexpected(GLT::asset::load_error::corrupt_header);
+            return std::unexpected{ asset::load_error::corrupt_header };
 
-        m_world = world;
-
-        m_region_cell_size = world_asset->region_cell_size;                     // pick up the world's grid
+        m_region_cell_size = world_asset->region_cell_size;
         VALIDATE(m_region_cell_size.x > 0.f && m_region_cell_size.y > 0.f && m_region_cell_size.z > 0.f,
-            m_region_cell_size = glm::vec3(256.f), "", "Corrupt file holds invalid region cell size, resetting to default of [256.f]");
+            m_region_cell_size = glm::vec3(256.f), "", "Corrupt file holds invalid region cell size");
 
         m_streaming_radius = world_asset->streaming_radius;
-        VALIDATE(m_streaming_radius >= 0.f, m_streaming_radius = 512.f, 
-            "", "corrupt file has invalid streaming radius, resetting to [512.f]");
+        VALIDATE(m_streaming_radius >= 0.f, m_streaming_radius = 512.f, "", "corrupt file has invalid streaming radius");
 
         m_regions = world_asset->region_index;
         m_region_states.clear();
         for (const auto& r : m_regions)
             m_region_states.try_emplace(r.id);
+
 
         // resolve + retain --------------------------------------------------------------------------------------------
 
@@ -416,8 +169,8 @@ namespace GLT::world::world_ecs_entt {
                         continue;
                     }
 
-                    LOG(warn, "UUID {:#x} is a {} asset - skipping", static_cast<unsigned long long>(region.id), 
-                        GLT::asset::type_to_string(inf.asset_type));
+                    LOG(warn, "UUID {:#x} is a {} asset - skipping",
+                        static_cast<unsigned long long>(region.id), GLT::asset::type_to_string(inf.asset_type));
                 }
             }
 
@@ -428,117 +181,89 @@ namespace GLT::world::world_ecs_entt {
             region.asset = h;
 
             const GLT::UUID actual_id = registry->info(h).id;
-            VALIDATE(actual_id == region.id, region.id = actual_id, 
+            VALIDATE(actual_id == region.id, region.id = actual_id,
                 "", "region file at cell ({},{},{}) has UUID {:#x} but world declared {:#x} - reconciling",
                 (cell.x, cell.y, cell.z, static_cast<unsigned long long>(actual_id), static_cast<unsigned long long>(region.id)))
         }
 
-        // Region-state map keys may have shifted if any UUID was reconciled
+        // rebuild region_states map if any UUID was reconciled
         {
-            std::unordered_map<GLT::UUID, region_state> fresh;
+            std::unordered_map<UUID, region_state> fresh;
             fresh.reserve(m_regions.size());
-            for (const auto& region : m_regions)
-                fresh.try_emplace(region.id);
+            for (const auto& r : m_regions) fresh.try_emplace(r.id);
             m_region_states = std::move(fresh);
         }
 
-        // World must always have at least one region
         if (m_regions.empty())
             (void)ensure_region_for_cell(glm::ivec3(0));
 
-        m_active_camera = (world_asset->active_camera_index == 0xFFFFFFFFu) ? INVALID_ENTITY 
+        m_active_camera = (world_asset->active_camera_index == 0xFFFFFFFFu) ? INVALID_ENTITY
             : entity_id{ world_asset->active_camera_index, world_asset->active_camera_generation };
 
         return {};
     }
 
+    // i_world persistence ---------------------------------------------------------------------------------------------
 
-    void ecs_world_plugin::unload_world() noexcept {
+    std::expected<void, asset::load_error> ecs_world::save() {
 
-        for (auto& region : m_regions)
-            if (region.is_active)
-                deactivate(region);
+        if (!m_asset.valid())
+            return std::unexpected{ asset::load_error::not_found };
 
-        if (auto registry = GLT::asset::registry::get_ref()) {
-            for (const auto& region : m_regions)
-                if (region.asset != INVALID_HANDLE)
-                    registry->release(region.asset);
-        }
-
-        m_regions.clear();
-        m_region_states.clear();
-        m_world.reset();
-        m_registry.clear();
-        m_slots.clear();
-        m_free.clear();
-    }
-
-
-    GLT::asset::handle ecs_world_plugin::world_handle() const noexcept { return m_world.get(); }
-
-
-    std::expected<void, GLT::asset::load_error> ecs_world_plugin::save_world() {
-
-        if (!m_world.valid())
-            return std::unexpected{ GLT::asset::load_error::not_found };
-
-        auto registry = GLT::asset::registry::get_ref();
+        auto registry = asset::registry::get_ref();
 
         reassign_all_entities();
-        prune_empty_regions(); 
-        if (auto result = flush_regions(); !result)
-            return result;
+        prune_empty_regions();
+        if (auto r = flush_regions(); !r)
+            return r;
 
         sync_world_asset();
-        return registry->save(m_world.get());
+        return registry->save(m_asset.get());
     }
 
 
-    std::expected<void, GLT::asset::load_error> ecs_world_plugin::save_world_as(const std::filesystem::path& path) {
+    std::expected<void, asset::load_error> ecs_world::save_as(const std::filesystem::path& path) {
 
         if (path.empty())
-            return std::unexpected{ GLT::asset::load_error::not_found };
+            return std::unexpected{ asset::load_error::not_found };
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto registry = asset::registry::get_ref();
 
-        if (!m_world.valid()) {    // fresh world ----------------------------------------------------------------------
+        if (!m_asset.valid()) {
 
-            // Register the world first so ensure_region_for_cell() has a path to anchor against
-            auto world_asset = GLT::create_unique_ref<GLT::asset::world::world_asset>();
-            world_asset->asset_type = GLT::asset::core_types::world;
+            // Mint a fresh world asset at `path`.
+            auto world_asset = create_unique_ref<asset::world::world_asset>();
+            world_asset->asset_type = asset::core_types::world;
             world_asset->region_cell_size = m_region_cell_size;
 
             auto handle_res = registry->register_runtime(std::move(world_asset), path, path.stem().string());
             if (!handle_res)
                 return std::unexpected{ handle_res.error() };
+            m_asset = std::move(*handle_res);
 
-            m_world = *handle_res;
-
-            // Guarantee the core region exists before anything tries to spawn into it
             if (m_regions.empty())
                 (void)ensure_region_for_cell(glm::ivec3(0));
 
-            return save_world();
+            return save();
         }
 
-        // existing handle, path differs: migrate the canonical path
-        if (registry->info(m_world.get()).virtual_path != path) {
+        if (registry->info(m_asset.get()).virtual_path != path) {
 
             reassign_all_entities();
             prune_empty_regions();
-            if (auto result = flush_regions(); !result)
-                return result;
+            if (auto r = flush_regions(); !r)
+                return r;
 
             sync_world_asset();
-            return registry->save_as(m_world.get(), path);
+            return registry->save_as(m_asset.get(), path);
         }
 
-        return save_world();
+        return save();
     }
 
     // entity lifecycle ------------------------------------------------------------------------------------------------
 
-    entity_id ecs_world_plugin::spawn() {
+    entity_id ecs_world::spawn() {
 
         const entity_id id = alloc_slot();
 
@@ -551,10 +276,10 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::despawn(entity_id id) noexcept { release_slot(id); }
+    void ecs_world::despawn(entity_id id) noexcept { release_slot(id); }
 
 
-    bool ecs_world_plugin::alive(entity_id id) const noexcept {
+    bool ecs_world::alive(entity_id id) const noexcept {
 
         if (id.index >= m_slots.size())
             return false;
@@ -566,7 +291,7 @@ namespace GLT::world::world_ecs_entt {
 
     // transform -------------------------------------------------------------------------------------------------------
 
-    glm::vec3 ecs_world_plugin::get_local_position(entity_id id) const {
+    glm::vec3 ecs_world::get_local_position(entity_id id) const {
 
         const entt::entity entity = entt_of(id);
         if (entity == entt::null)
@@ -579,7 +304,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    glm::vec3 ecs_world_plugin::get_local_rotation(entity_id id) const {
+    glm::vec3 ecs_world::get_local_rotation(entity_id id) const {
 
         const entt::entity entity = entt_of(id);
         if (entity == entt::null)
@@ -592,7 +317,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::translate_local(entity_id id, const glm::vec3& local_delta) {
+    void ecs_world::translate_local(entity_id id, const glm::vec3& local_delta) {
 
         if (!alive(id))
             return;
@@ -605,7 +330,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::rotate_local(entity_id id, const glm::vec3& euler_delta) {
+    void ecs_world::rotate_local(entity_id id, const glm::vec3& euler_delta) {
 
         if (!alive(id))
             return;
@@ -616,7 +341,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    glm::quat ecs_world_plugin::get_local_rotation_q(entity_id id) const {
+    glm::quat ecs_world::get_local_rotation_q(entity_id id) const {
 
         const entt::entity entity = entt_of(id);
         if (entity == entt::null)
@@ -629,7 +354,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::set_local_rotation_q(entity_id id, const glm::quat& rotation) {
+    void ecs_world::set_local_rotation_q(entity_id id, const glm::quat& rotation) {
 
         if (!alive(id))
             return;
@@ -641,7 +366,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    glm::vec3 ecs_world_plugin::get_local_scale(entity_id id) const {
+    glm::vec3 ecs_world::get_local_scale(entity_id id) const {
 
         const entt::entity entity = entt_of(id);
         if (entity == entt::null)
@@ -654,7 +379,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::set_local_scale(entity_id id, const glm::vec3& scale) {
+    void ecs_world::set_local_scale(entity_id id, const glm::vec3& scale) {
 
         if (!alive(id))
             return;
@@ -667,10 +392,10 @@ namespace GLT::world::world_ecs_entt {
 
     // region queries --------------------------------------------------------------------------------------------------
 
-    std::span<const GLT::asset::region::region> ecs_world_plugin::regions() const noexcept { return m_regions; }
+    std::span<const GLT::asset::region::region> ecs_world::regions() const noexcept { return m_regions; }
 
 
-    const GLT::asset::region::region* ecs_world_plugin::region_at(const glm::vec3& point) const noexcept {
+    const GLT::asset::region::region* ecs_world::region_at(const glm::vec3& point) const noexcept {
 
         const GLT::asset::region::region* best = nullptr;
         f32 best_volume = std::numeric_limits<f32>::max();
@@ -686,7 +411,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    bool ecs_world_plugin::is_region_active(GLT::UUID id) const noexcept {
+    bool ecs_world::is_region_active(GLT::UUID id) const noexcept {
 
         for (const auto& region : m_regions)
             if (region.id == id)
@@ -695,7 +420,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::set_region_active(GLT::UUID id, bool active) {
+    void ecs_world::set_region_active(GLT::UUID id, bool active) {
 
         auto* region = find_region(id);
         if (!region)
@@ -710,20 +435,20 @@ namespace GLT::world::world_ecs_entt {
 
     // streaming -------------------------------------------------------------------------------------------------------
 
-    void ecs_world_plugin::set_streaming_anchor(const glm::vec3& position) { m_streaming_anchor = position; }
+    void ecs_world::set_streaming_anchor(const glm::vec3& position) { m_streaming_anchor = position; }
 
 
-    [[nodiscard]] glm::vec3 ecs_world_plugin::get_streaming_anchor() const noexcept { return m_streaming_anchor; }
+    [[nodiscard]] glm::vec3 ecs_world::get_streaming_anchor() const noexcept { return m_streaming_anchor; }
 
 
-    void ecs_world_plugin::set_streaming_radius(const f32 radius) { m_streaming_radius = radius > 0.f ? radius : 0.f; };
+    void ecs_world::set_streaming_radius(const f32 radius) { m_streaming_radius = radius > 0.f ? radius : 0.f; };
 
 
-    [[nodiscard]] f32 ecs_world_plugin::get_streaming_radius() const noexcept { return m_streaming_radius; }
+    [[nodiscard]] f32 ecs_world::get_streaming_radius() const noexcept { return m_streaming_radius; }
 
     // update ----------------------------------------------------------------------------------------------------------
 
-    void ecs_world_plugin::update(f32 /*delta_time*/) {
+    void ecs_world::update(f32 /*delta_time*/) {
 
         // The only engine-driven work here is streaming. Game systems run outside the plugin (the concrete world's own update path)
         stream_pass();
@@ -731,7 +456,7 @@ namespace GLT::world::world_ecs_entt {
 
     // hierarchy -------------------------------------------------------------------------------------------------------
 
-    std::vector<entity_id> ecs_world_plugin::root_entities() const {
+    std::vector<entity_id> ecs_world::root_entities() const {
 
         std::vector<entity_id> roots;
         roots.reserve(m_slots.size());
@@ -752,7 +477,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    std::vector<entity_id> ecs_world_plugin::children_of(entity_id id) const {
+    std::vector<entity_id> ecs_world::children_of(entity_id id) const {
 
         if (const component::hierarchy* h = hierarchy_of(id))
             return h->children;
@@ -760,7 +485,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    std::string_view ecs_world_plugin::entity_name(entity_id id) const {
+    std::string_view ecs_world::entity_name(entity_id id) const {
 
         if (const auto* n = m_registry.try_get<component::name>(entt_of(id)))
             return n->name;
@@ -768,7 +493,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    bool ecs_world_plugin::has_children(entity_id id) const noexcept {
+    bool ecs_world::has_children(entity_id id) const noexcept {
 
         if (const component::hierarchy* h = hierarchy_of(id))
             return !h->children.empty();
@@ -776,7 +501,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::set_parent(entity_id child, entity_id new_parent) {
+    void ecs_world::set_parent(entity_id child, entity_id new_parent) {
 
         if (!alive(child))
             return;
@@ -814,9 +539,11 @@ namespace GLT::world::world_ecs_entt {
         }
     }
 
-    // builder API -----------------------------------------------------------------------------------------------------
+    // CLASS PROTECTED =================================================================================================
 
-    entity_builder ecs_world_plugin::make_entity(std::string_view name) {
+    // CLASS PRIVATE ===================================================================================================
+
+    entity_builder ecs_world::make_entity(std::string_view name) {
 
         const entity_id id = spawn();
         entity_builder b{ *this, id };
@@ -826,20 +553,11 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    entity_builder ecs_world_plugin::edit(entity_id id) { return entity_builder{ *this, id }; }
-
-    // hierarchy queries -----------------------------------------------------------------------------------------------
-
-    entity_id ecs_world_plugin::parent_of(entity_id id) const noexcept {
-
-        if (const component::hierarchy* h = hierarchy_of(id))
-            return h->parent;
-        return INVALID_ENTITY;
-    }
+    entity_builder ecs_world::edit(entity_id id) { return entity_builder{ *this, id }; }
 
     // ECS internals (used by entity_builder) --------------------------------------------------------------------------
 
-    entt::entity ecs_world_plugin::entt_of(entity_id id) const noexcept {
+    entt::entity ecs_world::entt_of(entity_id id) const noexcept {
 
         if (id.index >= m_slots.size())
             return entt::null;
@@ -852,7 +570,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    entity_id ecs_world_plugin::id_of(entt::entity e) const noexcept {
+    entity_id ecs_world::id_of(entt::entity e) const noexcept {
 
         for (u32 i = 0; i < m_slots.size(); ++i)
             if (m_slots[i].handle == e)
@@ -860,86 +578,25 @@ namespace GLT::world::world_ecs_entt {
         return INVALID_ENTITY;
     }
 
-    // region grid ------------------------------------------------------------------------------------
-
-    glm::vec3 ecs_world_plugin::get_region_cell_size() const noexcept { return m_region_cell_size; }
-
-
-    void ecs_world_plugin::set_region_cell_size(const glm::vec3& size) {
-
-        if (size.x <= 0.f || size.y <= 0.f || size.z <= 0.f) {
-            LOG(warn, "set_region_cell_size ignored: non-positive component ({}, {}, {})", size.x, size.y, size.z);
-            return;
-        }
-
-        m_region_cell_size = size;
-        reassign_all_entities();
-    }
-
-
-    void ecs_world_plugin::reassign_all_entities() {
-
-        // Regions that are currently inactive have an empty state list already
-        // (deactivate() clears them), so this only affects what's resident right now.
-        for (auto& [rid, state] : m_region_states)
-            state.entities.clear();
-
-        for (u32 index = 0; index < m_slots.size(); ++index) {
-
-            const slot& slot = m_slots[index];
-            if (slot.handle == entt::null)
-                continue;
-
-            const entity_id id{ index, slot.generation };
-            const glm::vec3 world_pos = glm::vec3(world_transform_of(id)[3]);
-            const glm::ivec3 cell = cell_coord_of(world_pos);
-
-            const GLT::UUID region_id = ensure_region_for_cell(cell);
-            if (region_id)
-                m_region_states[region_id].entities.push_back(id);
-        }
-    }
-
-
-    void ecs_world_plugin::gather_entity_positions(std::vector<GLT::world::entity_position>& out) const {
-
-        out.clear();
-        out.reserve(m_slots.size());                 // upper bound: one transform per slot
-
-        auto view = m_registry.view<const component::transform>();
-
-        for (auto entity : view) {
-
-            const entity_id id = id_of(entity);
-            if (!id.is_valid())
-                continue;
-
-            GLT::world::entity_position p{};
-            p.id = id;
-            p.world_position = glm::vec3(world_transform_of(id)[3]);
-            out.push_back(p);
-        }
-    }
-
     // i_world_inspector -----------------------------------------------------------------------------------------------
 
-    std::span<const GLT::world::component_descriptor> ecs_world_plugin::descriptors() const noexcept { return m_components.all(); }
+    std::span<const component_descriptor> ecs_world::descriptors() const noexcept { return m_components.all(); }
 
 
-    std::vector<const GLT::world::component_descriptor*> ecs_world_plugin::components_on(entity_id id) const { return m_components.on(id); }
+    std::vector<const component_descriptor*> ecs_world::components_on(entity_id id) const { return m_components.on(id); }
 
 
-    bool ecs_world_plugin::add_component(entity_id id, u64 hash) { return m_components.add(id, hash); }
+    bool ecs_world::add_component(entity_id id, u64 hash) { return m_components.add(id, hash); }
 
 
-    bool ecs_world_plugin::remove_component(entity_id id, u64 hash) { return m_components.remove(id, hash); }
+    bool ecs_world::remove_component(entity_id id, u64 hash) { return m_components.remove(id, hash); }
 
 
-    void ecs_world_plugin::copy_components(entity_id from, entity_id to) { m_components.copy(from, to); }
+    void ecs_world::copy_components(entity_id from, entity_id to) { m_components.copy(from, to); }
 
     // i_world_scene ---------------------------------------------------------------------------------------------------
 
-    void ecs_world_plugin::gather_scene(std::vector<GLT::asset::mesh::instance>& out) const {
+    void ecs_world::gather_scene(std::vector<GLT::asset::mesh::instance>& out) const {
 
         out.clear();
         auto view = m_registry.view<const component::mesh, const component::transform>();    // entt iterates both component storages once
@@ -966,7 +623,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::gather_lights(std::vector<GLT::world::light_snapshot>& out) const {
+    void ecs_world::gather_lights(std::vector<GLT::world::light_snapshot>& out) const {
 
         out.clear();
         auto view = m_registry.view<const component::light, const component::transform>();   // transform is required, so view constrains both
@@ -997,7 +654,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    bool ecs_world_plugin::get_camera_view(GLT::world::camera_snapshot& out) const {
+    bool ecs_world::get_camera_view(GLT::world::camera_snapshot& out) const {
 
         if (!m_active_camera.is_valid())
             return false;
@@ -1028,23 +685,32 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::set_active_camera(entity_id id) { m_active_camera = id; }
+    void ecs_world::set_active_camera(entity_id id) { m_active_camera = id; }
 
-    // CLASS PROTECTED =================================================================================================
 
-    // CLASS PRIVATE ===================================================================================================
+    void ecs_world::gather_entity_positions(std::vector<GLT::world::entity_position>& out) const {
 
-    entity_id ecs_world_plugin::entity_id_for(entt::entity entity) const noexcept {
+        out.clear();
+        out.reserve(m_slots.size());                 // upper bound: one transform per slot
 
-        for (u32 i = 0; i < m_slots.size(); ++i)
-            if (m_slots[i].handle == entity)
-                return { i, m_slots[i].generation };
-        return INVALID_ENTITY;
+        auto view = m_registry.view<const component::transform>();
+
+        for (auto entity : view) {
+
+            const entity_id id = id_of(entity);
+            if (!id.is_valid())
+                continue;
+
+            GLT::world::entity_position p{};
+            p.id = id;
+            p.world_position = glm::vec3(world_transform_of(id)[3]);
+            out.push_back(p);
+        }
     }
 
     // slot management -------------------------------------------------------------------------------------------------
 
-    entity_id ecs_world_plugin::alloc_slot() {
+    entity_id ecs_world::alloc_slot() {
 
         if (!m_free.empty()) {
             const u32 idx = m_free.back();
@@ -1060,7 +726,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::release_slot(entity_id id) {
+    void ecs_world::release_slot(entity_id id) {
 
         if (id.index >= m_slots.size())
             return;
@@ -1077,7 +743,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    std::pair<entity_id, entt::entity> ecs_world_plugin::allocate_for_load(entity_id preferred) {
+    std::pair<entity_id, entt::entity> ecs_world::allocate_for_load(entity_id preferred) {
 
         if (preferred.index >= m_slots.size())
             m_slots.resize(preferred.index + 1);
@@ -1096,9 +762,18 @@ namespace GLT::world::world_ecs_entt {
         return { fresh, m_slots[fresh.index].handle };
     }
 
+
+    entity_id ecs_world::entity_id_for(entt::entity entity) const noexcept {
+
+        for (u32 i = 0; i < m_slots.size(); ++i)
+            if (m_slots[i].handle == entity)
+                return { i, m_slots[i].generation };
+        return INVALID_ENTITY;
+    }
+
     // streaming -------------------------------------------------------------------------------------------------------
 
-    bool ecs_world_plugin::should_be_active(const GLT::asset::region::region& region) const noexcept {
+    bool ecs_world::should_be_active(const GLT::asset::region::region& region) const noexcept {
 
         if (region.flags & 0x01)            // TODO: replace with GLT::asset::region::flag::always_loaded
             return true;                    // always_loaded
@@ -1110,7 +785,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::stream_pass() {
+    void ecs_world::stream_pass() {
 
         // Pass 1: activate everything that should be hot. Loading is the slow half, so getting it in first means pass
         // 2 never tears down a region whose neighbors aren't ready yet
@@ -1126,7 +801,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::activate(GLT::asset::region::region& region) {
+    void ecs_world::activate(GLT::asset::region::region& region) {
 
         auto* registry = GLT::asset::registry::get_ptr();
 
@@ -1168,7 +843,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::deactivate(GLT::asset::region::region& region) {
+    void ecs_world::deactivate(GLT::asset::region::region& region) {
 
         auto& state = m_region_states[region.id];
         for (const entity_id id : state.entities)
@@ -1178,7 +853,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    GLT::asset::region::region* ecs_world_plugin::find_region(GLT::UUID id) noexcept {
+    GLT::asset::region::region* ecs_world::find_region(GLT::UUID id) noexcept {
 
         for (auto& region : m_regions)
             if (region.id == id)
@@ -1187,7 +862,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    component::hierarchy* ecs_world_plugin::hierarchy_of(entity_id id) noexcept {
+    component::hierarchy* ecs_world::hierarchy_of(entity_id id) noexcept {
 
         const entt::entity e = entt_of(id);
         if (e == entt::null)
@@ -1196,7 +871,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    const component::hierarchy* ecs_world_plugin::hierarchy_of(entity_id id) const noexcept {
+    const component::hierarchy* ecs_world::hierarchy_of(entity_id id) const noexcept {
 
         const entt::entity e = entt_of(id);
         if (e == entt::null)
@@ -1205,7 +880,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    std::expected<void, GLT::asset::load_error> ecs_world_plugin::flush_regions() {
+    std::expected<void, GLT::asset::load_error> ecs_world::flush_regions() {
 
         auto registry = GLT::asset::registry::get_ref();
 
@@ -1245,7 +920,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::prune_empty_regions() {
+    void ecs_world::prune_empty_regions() {
 
         auto registry = GLT::asset::registry::get_ref();
         if (!registry)
@@ -1316,7 +991,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    glm::mat4 ecs_world_plugin::world_transform_of(entity_id id) const noexcept {
+    glm::mat4 ecs_world::world_transform_of(entity_id id) const noexcept {
 
         const entt::entity entity = entt_of(id);
         if (entity == entt::null)
@@ -1343,10 +1018,10 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::sync_world_asset() {
+    void ecs_world::sync_world_asset() {
 
         auto registry = GLT::asset::registry::get_ref();
-        auto* world_asset = registry->data_as<GLT::asset::world::world_asset>(m_world.get());
+        auto* world_asset = registry->data_as<GLT::asset::world::world_asset>(m_asset.get());
         if (!world_asset)
             return;
 
@@ -1358,13 +1033,13 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    std::filesystem::path ecs_world_plugin::region_path_for_cell(const glm::ivec3& cell) const {
+    std::filesystem::path ecs_world::region_path_for_cell(const glm::ivec3& cell) const {
 
         auto registry = GLT::asset::registry::get_ref();
-        if (!registry || !m_world.valid())
+        if (!registry || !m_asset.valid())
             return {};
 
-        const std::filesystem::path world_path = registry->info(m_world.get()).virtual_path;
+        const std::filesystem::path world_path = registry->info(m_asset.get()).virtual_path;
         if (world_path.empty())
             return {};
 
@@ -1374,10 +1049,10 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    GLT::asset::handle ecs_world_plugin::resolve_region_handle(const glm::ivec3& cell, GLT::UUID expected_id) {
+    GLT::asset::handle ecs_world::resolve_region_handle(const glm::ivec3& cell, GLT::UUID expected_id) {
 
         auto* registry = GLT::asset::registry::get_ptr();
-        if (!registry || !m_world.valid())
+        if (!registry || !m_asset.valid())
             return INVALID_HANDLE;
 
         // load()/register_runtime() now hand back an owning asset_ref (their own +1 refcount). This function's contract,
@@ -1455,7 +1130,7 @@ namespace GLT::world::world_ecs_entt {
 
     // region grid -----------------------------------------------------------------------------------------------------
 
-    glm::ivec3 ecs_world_plugin::cell_coord_of(const glm::vec3& world_pos) const noexcept {
+    glm::ivec3 ecs_world::cell_coord_of(const glm::vec3& world_pos) const noexcept {
 
         const glm::vec3 half = m_region_cell_size * 0.5f;
         const glm::vec3 cell = (world_pos + half) / m_region_cell_size;
@@ -1468,7 +1143,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    GLT::AABB ecs_world_plugin::cell_bounds(const glm::ivec3& cell) const noexcept {
+    GLT::AABB ecs_world::cell_bounds(const glm::ivec3& cell) const noexcept {
 
         GLT::AABB bounds{};
         const glm::vec3 half = m_region_cell_size * 0.5f;
@@ -1478,7 +1153,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    GLT::UUID ecs_world_plugin::ensure_region_for_cell(const glm::ivec3& cell) {
+    GLT::UUID ecs_world::ensure_region_for_cell(const glm::ivec3& cell) {
 
         // Already have an in-memory entry for this cell?
         for (const auto& region : m_regions) {
@@ -1509,7 +1184,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world_plugin::assign_entity_to_cell(entity_id id) {
+    void ecs_world::assign_entity_to_cell(entity_id id) {
 
         if (!alive(id))
             return;
@@ -1540,6 +1215,15 @@ namespace GLT::world::world_ecs_entt {
         }
 
         m_region_states[target].entities.push_back(id);
+    }
+
+
+    entity_id ecs_world_plugin::entity_id_for(entt::entity entity) const noexcept {
+
+        for (u32 i = 0; i < m_slots.size(); ++i)
+            if (m_slots[i].handle == entity)
+                return { i, m_slots[i].generation };
+        return INVALID_ENTITY;
     }
 
 }

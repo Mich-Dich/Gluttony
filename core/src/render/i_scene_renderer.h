@@ -2,10 +2,12 @@
 
 #include "util/pch.h"
 #include "asset/mesh.h"
+#include "platform/i_window.h"
 #include "world/camera_snapshot.h"
 #include "world/light_snapshot.h"
 #include "render/i_debug_draw.h"
 #include "render/render_mode.h"
+#include "render/type.h"
 
 
 
@@ -28,7 +30,7 @@ namespace GLT::render {
 
     struct surface_target_desc {
 
-        ref<GLT::platform::i_window_plugin>             window;
+        GLT::platform::window_handle                    window = GLT::platform::INVALID_WINDOW_HANDLE;
     };
 
 
@@ -47,6 +49,11 @@ namespace GLT::render {
         std::optional<glm::vec4>                        clear_color;
         u32                                             frames_in_flight = 3;
         u64                                             procedural_mesh_capacity_bytes = 8ull * 1024 * 1024;
+
+        // When false, this surface renderer will NOT touch ImGui at all — no backend init, no begin/end frame, no imgui pass
+        // Required for secondary windows: the ImGui GLFW backend can only be bound to one native window per context, so a
+        // second surface renderer that called imgui_init() would steal the binding from the primary and break editor input
+        bool enable_imgui = true;
     };
 
 

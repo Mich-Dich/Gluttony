@@ -35,8 +35,8 @@ namespace GLT::world::world_ecs_entt {
     template<typename T, typename... Args>
     entity_builder& entity_builder::add(Args&&... args) {
 
-        auto& reg = m_plugin->registry();
-        reg.emplace_or_replace<T>(m_plugin->entt_of(m_id), std::forward<Args>(args)...);
+        auto& reg = m_world->registry();
+        reg.emplace_or_replace<T>(m_world->entt_of(m_id), std::forward<Args>(args)...);
         return *this;
     }
 
@@ -44,8 +44,8 @@ namespace GLT::world::world_ecs_entt {
     template<typename T>
     entity_builder& entity_builder::add_or_replace(T&& component) {
 
-        auto& reg = m_plugin->registry();
-        reg.emplace_or_replace<T>(m_plugin->entt_of(m_id), std::forward<T>(component));
+        auto& reg = m_world->registry();
+        reg.emplace_or_replace<T>(m_world->entt_of(m_id), std::forward<T>(component));
         return *this;
     }
 
@@ -53,21 +53,21 @@ namespace GLT::world::world_ecs_entt {
     template<typename T>
     entity_builder& entity_builder::remove() {
 
-        m_plugin->registry().remove<T>(m_plugin->entt_of(m_id));
+        m_world->registry().remove<T>(m_world->entt_of(m_id));
         return *this;
     }
 
 
     template<typename T>
-    bool entity_builder::has() const { return m_plugin->registry().all_of<T>(m_plugin->entt_of(m_id)); }
+    bool entity_builder::has() const { return m_world->registry().all_of<T>(m_world->entt_of(m_id)); }
 
 
     template<typename T>
-    T& entity_builder::get() { return m_plugin->registry().get<T>(m_plugin->entt_of(m_id)); }
+    T& entity_builder::get() { return m_world->registry().get<T>(m_world->entt_of(m_id)); }
 
 
     template<typename T>
-    const T& entity_builder::get() const { return m_plugin->registry().get<T>(m_plugin->entt_of(m_id)); }
+    const T& entity_builder::get() const { return m_world->registry().get<T>(m_world->entt_of(m_id)); }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

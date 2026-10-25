@@ -1,77 +1,42 @@
-
 #pragma once
 
 #include <world/i_world_inspector.h>
 #include <world/entity.h>
 
-
-
-// FORWARD DECLARATIONS ================================================================================================
-
 namespace GLT::world::world_ecs_entt {
-    class ecs_world_plugin;
+    class ecs_world;
 }
 
 namespace GLT::world::world_ecs_entt {
 
-    // CONSTANTS =======================================================================================================
-
-    // MACROS ==========================================================================================================
-
-    // TYPES ===========================================================================================================
-
-    // STATIC VARIABLES ================================================================================================
-
-    // FUNCTION DECLARATION ============================================================================================
-
-    // TEMPLATE DECLARATION ============================================================================================
-
-    // CLASS DECLARATION ===============================================================================================
-
-    // Registry that maps a component type to a descriptor. Owned by the
-    // ecs_world_plugin. Registration is one entry per component type and
-    // happens once during on_load().
+    // Per-world descriptor table. Each ecs_world owns exactly one of these, so
+    // the lambdas registered here close over the correct world (via `this`).
     //
-    // The registry knows the ECS (it holds a reference to the plugin), so
-    // registration lambdas can be tiny - just name/category/draw. The
-    // templated add<T>/remove<T>/has<T> are filled in by the helper.
+    // User-facing draw/summary lambdas take `ecs_world&` explicitly; the template
+    // wraps them with a `[this]` capture so the descriptor field itself stays
+    // `std::function<void(entity_id)>` (no i_world_inspector.h change needed).
     class component_registry {
     public:
 
-        explicit component_registry(ecs_world_plugin& plugin) noexcept;
-
+        explicit component_registry(ecs_world& world) noexcept;
 
         template<typename T>
-        void register_component(std::string_view name, std::string_view category, std::function<void(entity_id)> draw, // may be empty (runtime-only)
-            std::function<std::string(entity_id)> summary = {}, std::vector<u64> required = {});
-
-        // Descriptor access -------------------------------------------------------------------------------------------
+        void register_component(std::string_view name, std::string_view category, std::function<void(ecs_world&, entity_id)> draw,
+            std::function<std::string(ecs_world&, entity_id)> summary = {}, std::vector<u64> required = {});
 
         [[nodiscard]] std::span<const GLT::world::component_descriptor> all() const noexcept;
-
-
         [[nodiscard]] const GLT::world::component_descriptor* find(u64 hash) const noexcept;
-
-
         [[nodiscard]] std::vector<const GLT::world::component_descriptor*> on(entity_id id) const;
 
-        // Mutation ----------------------------------------------------------------------------------------------------
-
         [[nodiscard]] bool add(entity_id id, u64 hash);
-
-
         [[nodiscard]] bool remove(entity_id id, u64 hash);
-
-
         void copy(entity_id from, entity_id to);
 
     private:
 
-        ecs_world_plugin&                                       m_plugin;
+        ecs_world&                                              m_world;
         std::vector<GLT::world::component_descriptor>           m_descriptors;
     };
-
 }
 
-// NOTE: [component_registry.inl] is included at the bottom of [world.h], after ecs_world_plugin has been fully defined.
-// Including it here would only see a forward declaration and fail to compile the lambdas.
+// [component_registry.inl] is included at the bottom of [ecs_world.h].

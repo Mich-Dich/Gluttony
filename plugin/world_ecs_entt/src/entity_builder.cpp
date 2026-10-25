@@ -32,8 +32,7 @@ namespace GLT::world::world_ecs_entt {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    entity_builder::entity_builder(ecs_world_plugin& plugin, entity_id id) noexcept
-        : m_plugin(&plugin), m_id(id) {}
+    entity_builder::entity_builder(ecs_world& world, entity_id id) noexcept : m_world(&world), m_id(id) { }
 
     // CLASS PUBLIC ====================================================================================================
 
@@ -52,8 +51,8 @@ namespace GLT::world::world_ecs_entt {
 
     entity_builder& entity_builder::set_mesh(GLT::asset::handle mesh, bool visible) {
 
-        auto& reg = m_plugin->registry();
-        const auto e = m_plugin->entt_of(m_id);
+        auto& reg = m_world->registry();
+        const auto e = m_world->entt_of(m_id);
 
         // Invariant: every [component::mesh] has a transform. emplace() returns the existing component if one is already present, 
         // so this is a no-op when the user already set a transform
@@ -80,8 +79,8 @@ namespace GLT::world::world_ecs_entt {
 
     entity_builder& entity_builder::set_light(GLT::world::light_type type, const glm::vec3& color, f32 intensity) {
 
-        auto& reg = m_plugin->registry();
-        const auto e = m_plugin->entt_of(m_id);
+        auto& reg = m_world->registry();
+        const auto e = m_world->entt_of(m_id);
 
         // Same invariant as set_mesh: every light is a placement, so make sure a transform exists
         if (!reg.all_of<component::transform>(e))
@@ -97,21 +96,21 @@ namespace GLT::world::world_ecs_entt {
 
     entity_builder& entity_builder::parent(entity_id p) {
 
-        m_plugin->set_parent(m_id, p);
+        m_world->set_parent(m_id, p);
         return *this;
     }
 
 
     entity_builder& entity_builder::detach() {
 
-        m_plugin->set_parent(m_id, INVALID_ENTITY);
+        m_world->set_parent(m_id, INVALID_ENTITY);
         return *this;
     }
 
 
     entity_builder& entity_builder::adopt(entity_id child) {
 
-        m_plugin->set_parent(child, m_id);
+        m_world->set_parent(child, m_id);
         return *this;
     }
 
@@ -119,7 +118,7 @@ namespace GLT::world::world_ecs_entt {
     entity_builder& entity_builder::disown(entity_id child) {
 
         // set_parent handles removing `child` from this entity's children list.
-        m_plugin->set_parent(child, INVALID_ENTITY);
+        m_world->set_parent(child, INVALID_ENTITY);
         return *this;
     }
 
