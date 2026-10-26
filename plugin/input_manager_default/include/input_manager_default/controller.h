@@ -72,30 +72,23 @@ namespace GLT::input::input_manager_default {
 
         DELETE_COPY_CONSTRUCTOR(controller)
 
-        // ---- target ---------------------------------------------------------
+        // configuration -----------------------------------------------------------------------------------------------
 
-        // Which entity this controller drives. INVALID_ENTITY = "unresolved". The controller itself decides how to resolve it
-        // (active camera, spawn-time id, player slot, …); the session never assumes
-        DEFAULT_GETTERS(GLT::world::entity_id,          target)
-        DEFAULT_SETTER(GLT::world::entity_id,           target)
-
-        // -- configuration ------------------------------------------------------
-
-        // Register a new action. Returns a stable handle for querying / removal. `action::name` is retained for debug UI and serialization only.
+        // Register a new action. Returns a stable handle for querying / removal. `action::name` is retained for debug UI and serialization only
         [[nodiscard]] handle add_action(action action);
 
-        // Remove an action. All outstanding handles for that action become invalid.
+        // Remove an action. All outstanding handles for that action become invalid
         void remove_action(handle handle);
 
         void clear_actions();
 
-        // -- per-frame step -----------------------------------------------------
+        // per-frame step ----------------------------------------------------------------------------------------------
 
         // Evaluate all actions from the raw input snapshot. Derived controllers that override this MUST call controller::update(dt) 
-        // somewhere in their own implementation to keep action state in sync.
+        // somewhere in their own implementation to keep action state in sync
         virtual void update(f32 dt);
 
-        // -- read-only query surface for scripts --------------------------------
+        // read-only query surface for scripts -------------------------------------------------------------------------
 
         [[nodiscard]] bool is_active(::handle handle) const;
 
@@ -111,7 +104,7 @@ namespace GLT::input::input_manager_default {
 
         [[nodiscard]] f32 get_held_time(::handle handle) const;
 
-        // -- raw access (rare) --------------------------------------------------
+        // raw access (rare) -------------------------------------------------------------------------------------------
 
         [[nodiscard]] bool is_key_down(GLT::key_code code) const;
 
@@ -150,7 +143,7 @@ namespace GLT::input::input_manager_default {
         [[nodiscard]] action_slot* find(::handle handle);
 
         // Event handlers - never mark events as handled; other subscribers
-        // (debug overlays, replay recorders, …) may still want them.
+        // (debug overlays, replay recorders, …) may still want them
         void on_key_event(GLT::key_event& event);
 
         void on_mouse_event(GLT::mouse_event& event);
@@ -172,7 +165,6 @@ namespace GLT::input::input_manager_default {
         raw_state                                       m_raw{};
         GLT::event_bus::subscription_guard              m_key_sub{};
         GLT::event_bus::subscription_guard              m_mouse_sub{};
-        GLT::world::entity_id                           m_target = GLT::world::INVALID_ENTITY;
 
     };
 

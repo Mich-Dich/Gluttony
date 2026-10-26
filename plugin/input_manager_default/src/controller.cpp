@@ -122,6 +122,14 @@ namespace GLT::input::input_manager_default {
             action_runtime.prev_value = action_runtime.value;
             action_runtime.prev_active = action_runtime.active;
 
+            // Disabled: freeze everything at zero
+            if (!get_input_enabled()) {
+                action_runtime.value = glm::vec3{ 0.0f };
+                action_runtime.active = false;
+                action_runtime.held_time = 0.0f;
+                continue;
+            }
+
             glm::vec3 accumulated_value{0.0f};
             bool any_binding_active = false;
 

@@ -461,205 +461,209 @@ namespace GLT::platform::glfw_backend {
         // Every callback recovers the slot via the user pointer, so the outgoing event carries
         // the correct window_handle. (Requires events to have a `window` member — see file header note.)
         glfwSetWindowRefreshCallback(slot.native, [](GLFWwindow* w) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            GLT::window_refresh_event event(s->handle);
+            GLT::window_refresh_event event(slot->handle);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetWindowSizeCallback(slot.native, [](GLFWwindow* w, int width, int height) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            if (s->data.size_state == GLT::platform::window_size_state::windowed) {
-                s->data.width = static_cast<u32>(width);
-                s->data.height = static_cast<u32>(height);
+            if (slot->data.size_state == GLT::platform::window_size_state::windowed) {
+                slot->data.width = static_cast<u32>(width);
+                slot->data.height = static_cast<u32>(height);
             }
-            GLT::window_resize_event event(s->handle, static_cast<u32>(width), static_cast<u32>(height));
+            GLT::window_resize_event event(slot->handle, static_cast<u32>(width), static_cast<u32>(height));
             GLT::event_bus::post(event);
         });
 
 
         glfwSetFramebufferSizeCallback(slot.native, [](GLFWwindow* w, int width, int height) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            GLT::window_framebuffer_resize_event event(s->handle, static_cast<u32>(width), static_cast<u32>(height));
+            GLT::window_framebuffer_resize_event event(slot->handle, static_cast<u32>(width), static_cast<u32>(height));
             GLT::event_bus::post(event);
         });
 
 
         glfwSetWindowFocusCallback(slot.native, [](GLFWwindow* w, int focused) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            GLT::window_focus_event event(s->handle, focused == GLFW_TRUE);
+            GLT::window_focus_event event(slot->handle, focused == GLFW_TRUE);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetWindowCloseCallback(slot.native, [](GLFWwindow* w) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            GLT::window_close_event event(s->handle);
+            GLT::window_close_event event(slot->handle);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetWindowPosCallback(slot.native, [](GLFWwindow* w, int x, int y) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            s->data.pos_x = static_cast<u32>(x);
-            s->data.pos_y = static_cast<u32>(y);
-            GLT::window_move_event event(s->handle, x, y);
+            slot->data.pos_x = static_cast<u32>(x);
+            slot->data.pos_y = static_cast<u32>(y);
+            GLT::window_move_event event(slot->handle, x, y);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetWindowIconifyCallback(slot.native, [](GLFWwindow* w, int iconified) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            GLT::window_iconify_event event(s->handle, iconified == GLFW_TRUE);
+            GLT::window_iconify_event event(slot->handle, iconified == GLFW_TRUE);
             GLT::event_bus::post(event);
-            s->data.size_state = iconified
+            slot->data.size_state = iconified
                 ? GLT::platform::window_size_state::minimized
                 : GLT::platform::window_size_state::windowed;
         });
 
 
         glfwSetWindowMaximizeCallback(slot.native, [](GLFWwindow* w, int maximized) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            GLT::window_maximize_event event(s->handle, maximized == GLFW_TRUE);
+            GLT::window_maximize_event event(slot->handle, maximized == GLFW_TRUE);
             GLT::event_bus::post(event);
-            s->data.size_state = maximized
+            slot->data.size_state = maximized
                 ? GLT::platform::window_size_state::fullscreen_windowed
                 : GLT::platform::window_size_state::windowed;
         });
 
 
         glfwSetWindowContentScaleCallback(slot.native, [](GLFWwindow* w, float xscale, float yscale) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            GLT::window_content_scale_event event(s->handle, xscale, yscale);
+            GLT::window_content_scale_event event(slot->handle, xscale, yscale);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetDropCallback(slot.native, [](GLFWwindow* w, int count, const char** paths) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
             std::vector<std::string> list;
             list.reserve(static_cast<size_t>(count));
             for (int i = 0; i < count; ++i) list.emplace_back(paths[i]);
-            GLT::window_drop_event event(s->handle, std::move(list));
+            GLT::window_drop_event event(slot->handle, std::move(list));
             GLT::event_bus::post(event);
         });
 
 
-        glfwSetKeyCallback(slot.native, [](GLFWwindow* w, int key, int /* scancode */, int action, int mods) {
-            auto* s = slot_from_window(w);
-            if (!s)
+        glfwSetKeyCallback(slot.native, [](GLFWwindow* w, int key, int scancode, int action, int mods) {
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
 
-            dispatch_to_imgui(*s, [](GLFWwindow* ww) { ImGui_ImplGlfw_KeyCallback(ww, 0, 0, 0, 0); }, w);
-            // ^ placeholder
+            if (slot->imgui_context) {
+                ImGuiContext* prev = ImGui::GetCurrentContext();
+                ImGui::SetCurrentContext(slot->imgui_context);
+                ImGui_ImplGlfw_KeyCallback(w, key, scancode, action, mods);
+                ImGui::SetCurrentContext(prev);
+            }
 
-            GLT::key_event event(s->handle, static_cast<GLT::key_code>(key), static_cast<GLT::key_state>(action), mods);
+            GLT::key_event event(slot->handle, static_cast<GLT::key_code>(key), static_cast<GLT::key_state>(action), mods);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetCharCallback(slot.native, [](GLFWwindow* w, unsigned int codepoint) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
 
-            if (s->imgui_context) {
+            if (slot->imgui_context) {
                 ImGuiContext* prev = ImGui::GetCurrentContext();
-                ImGui::SetCurrentContext(s->imgui_context);
+                ImGui::SetCurrentContext(slot->imgui_context);
                 ImGui_ImplGlfw_CharCallback(w, codepoint);
                 ImGui::SetCurrentContext(prev);
             }
 
-            GLT::char_event event(s->handle, codepoint);
+            GLT::char_event event(slot->handle, codepoint);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetCharModsCallback(slot.native, [](GLFWwindow* w, unsigned int codepoint, int mods) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
-            GLT::char_event event(s->handle, codepoint, mods);
+            GLT::char_event event(slot->handle, codepoint, mods);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetMouseButtonCallback(slot.native, [](GLFWwindow* w, int button, int action, int mods) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
 
-            if (s->imgui_context) {
+            if (slot->imgui_context) {
                 ImGuiContext* prev = ImGui::GetCurrentContext();
-                ImGui::SetCurrentContext(s->imgui_context);
+                ImGui::SetCurrentContext(slot->imgui_context);
                 ImGui_ImplGlfw_MouseButtonCallback(w, button, action, mods);
                 ImGui::SetCurrentContext(prev);
             }
 
-            GLT::key_event event(s->handle, static_cast<GLT::key_code>(button), static_cast<GLT::key_state>(action), mods);
+            GLT::key_event event(slot->handle, static_cast<GLT::key_code>(button), static_cast<GLT::key_state>(action), mods);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetCursorPosCallback(slot.native, [](GLFWwindow* w, double x, double y) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
 
             const glm::vec2 pos{ static_cast<f32>(x), static_cast<f32>(y) };
-            if (s->cursor_first_sample) {
-                s->last_cursor_pos = pos;
-                s->cursor_first_sample = false;
+            if (slot->cursor_first_sample) {
+                slot->last_cursor_pos = pos;
+                slot->cursor_first_sample = false;
                 return;
             }
-            const glm::vec2 delta = pos - s->last_cursor_pos;
-            s->last_cursor_pos = pos;
+            const glm::vec2 delta = pos - slot->last_cursor_pos;
+            slot->last_cursor_pos = pos;
             if (delta.x == 0.0f && delta.y == 0.0f)
                 return;
 
-            GLT::event_bus::post(GLT::mouse_event(s->handle, GLT::mouse_event::action_type::move, delta));
+            GLT::event_bus::post(GLT::mouse_event(slot->handle, GLT::mouse_event::action_type::move, delta));
         });
 
 
         glfwSetCursorEnterCallback(slot.native, [](GLFWwindow* w, int entered) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
             if (!entered)
-                s->cursor_first_sample = true;   // suppress the next jump when the cursor re-enters
-            GLT::mouse_event event(s->handle, entered == GLFW_TRUE);
+                slot->cursor_first_sample = true;   // suppress the next jump when the cursor re-enters
+            GLT::mouse_event event(slot->handle, entered == GLFW_TRUE);
             GLT::event_bus::post(event);
         });
 
 
         glfwSetScrollCallback(slot.native, [](GLFWwindow* w, double x_offset, double y_offset) {
-            auto* s = slot_from_window(w);
-            if (!s)
+            auto* slot = slot_from_window(w);
+            if (!slot)
                 return;
 
-            if (s->imgui_context) {
+            if (slot->imgui_context) {
                 ImGuiContext* prev = ImGui::GetCurrentContext();
-                ImGui::SetCurrentContext(s->imgui_context);
+                ImGui::SetCurrentContext(slot->imgui_context);
                 ImGui_ImplGlfw_ScrollCallback(w, x_offset, y_offset);
                 ImGui::SetCurrentContext(prev);
             }
@@ -667,20 +671,8 @@ namespace GLT::platform::glfw_backend {
             const glm::vec2 delta{ static_cast<f32>(y_offset), static_cast<f32>(x_offset) };
             if (delta.x == 0.0f && delta.y == 0.0f)
                 return;
-            GLT::event_bus::post(GLT::mouse_event(s->handle, GLT::mouse_event::action_type::scroll, delta));
+            GLT::event_bus::post(GLT::mouse_event(slot->handle, GLT::mouse_event::action_type::scroll, delta));
         });
-    }
-
-
-    void plugin::dispatch_to_imgui(window_slot& slot, void(*fn)(GLFWwindow*), GLFWwindow* w) {
-
-        // (kept as a trampoline for the exposed ImGui callbacks; see bind_event_callbacks)
-        if (!slot.imgui_context)
-            return;
-        ImGuiContext* prev = ImGui::GetCurrentContext();
-        ImGui::SetCurrentContext(slot.imgui_context);
-        fn(w);
-        ImGui::SetCurrentContext(prev);
     }
 
 }

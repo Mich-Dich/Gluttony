@@ -110,6 +110,7 @@ namespace GLT::editor {
             GLT::platform::window_handle                handle{};
             GLT::render::i_scene_renderer*              scene_renderer{};   // non-owning; app owns
             GLT::game::game_session*                    session{};
+            bool                                        cursor_captured = false;
         };
 
 
@@ -187,6 +188,18 @@ namespace GLT::editor {
 
         // Destroys every handle collected in m_sim_window_handles and clears the list.
         void destroy_simulation_windows();
+
+
+        editor_layer::simulation_instance* find_sim_instance(GLT::platform::window_handle handle);
+
+
+        void on_window_focus_event(const GLT::window_focus_event& event);
+
+
+        void capture_sim_window(simulation_instance& instance);
+
+
+        void release_sim_cursor();
 
 
 

@@ -6,8 +6,6 @@
 #include <application.h>
 #include <world/i_world_scene.h>
 
-#include "util/context.h"
-
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -118,7 +116,7 @@ namespace GLT::editor::input {
     void editor_controller::update(const f32 delta_time) {
         controller::update(delta_time);
 
-        if (!GLT::editor::context::get().get_viewport_interacted())
+        if (!get_input_enabled())
             return;
 
         if (!m_session)

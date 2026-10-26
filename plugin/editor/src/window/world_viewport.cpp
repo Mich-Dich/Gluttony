@@ -15,6 +15,7 @@
 #include <render/i_debug_draw.h>
 #include <world/i_world.h>
 #include <world/i_world_scene.h>
+#include <world/controller.h>
 #include <game/game_layer.h>
 #include <game/game_session.h>
 #include <render/i_scene_renderer.h>
@@ -23,7 +24,6 @@
 #include "util/ui/pannel_collection.h"
 #include "resource_manager/icon_manager.h"
 #include "window/content_browser.h"
-#include "util/context.h"
 
 
 
@@ -228,22 +228,29 @@ namespace GLT::editor {
             const bool mode_popup_open = render_mode_selector_overlay(image_min);
             const bool settings_popup_open = render_settings_overlay();
             const bool overlay_active = mode_popup_open || settings_popup_open;
+            const bool right_down = ImGui::IsMouseDown(ImGuiMouseButton_Right);
 
             // Gizmo is self-contained: it takes the rect explicitly
             render_gizmo_toolbar(image_min, image_size);
             render_gizmo(image_min, image_size);
 
-            const bool right_down = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            auto* game_layer = GLT::application::get().get_game_layer_ptr();
+            auto* session = game_layer ? game_layer->get_primary_session() : nullptr;
+            auto* ctrl = session ? session->get_controller() : nullptr;
 
-            if (!m_cursor_captured && image_hovered && !overlay_active && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            if (!m_cursor_captured && image_hovered && !overlay_active &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                 set_cursor_captured(true);
-                GLT::editor::context::get().set_viewport_interacted(true);
+                if (ctrl)
+                    ctrl->set_input_enabled(true);
             }
 
             if (m_cursor_captured && !right_down) {
                 set_cursor_captured(false);
-                GLT::editor::context::get().set_viewport_interacted(false);
+                if (ctrl)
+                    ctrl->set_input_enabled(false);
             }
+
         }
 
         ImGui::End();

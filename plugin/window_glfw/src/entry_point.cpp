@@ -129,8 +129,6 @@ namespace GLT::platform::glfw_backend {
         u32                                                 m_active_count = 0;
         static bool                                         s_GLFWinitialized;
 
-        // Ensures the correct ImGui context is current while ImGui processes a GLFW callback for this window
-        static void dispatch_to_imgui(window_slot& slot, void(*fn)(GLFWwindow*), GLFWwindow* w);
     };
 }
 

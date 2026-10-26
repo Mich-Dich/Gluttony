@@ -160,6 +160,7 @@ namespace GLT::editor {
 
             if (auto* session = game_layer->get_primary_session())
                 session->set_controller(GLT::create_ref<GLT::editor::input::editor_controller>(session));
+
         }
 
         load_simulation_settings();
@@ -207,7 +208,7 @@ namespace GLT::editor {
 
 
     void editor_layer::update(const f32 delta_time) {
-
+        
         for (const auto& editor_window : m_windows)
             editor_window->update(delta_time);
 
@@ -741,6 +742,17 @@ namespace GLT::editor {
             // GLT::event_bus::post(GLT::application_refresh_event());
             // GLT::event_bus::post(GLT::notification_event("Refreshed", GLT::Logger::severity::info));
         }
+
+        if (event.is(GLT::key_code::key_F8, GLT::key_state::press))
+            release_sim_cursor();
+
+        // Clicking a sim window that isn't captured captures it. This is the "recapture after F8" path, focus doesn't change there,
+        // so the focus event won't fire
+        if (event.is(GLT::key_code::mouse_bu_left, GLT::key_state::press)) {
+            auto* sim = find_sim_instance(event.get_window());
+            if (sim && !sim->cursor_captured)
+                capture_sim_window(*sim);
+        }
     }
 
 
@@ -1135,7 +1147,7 @@ namespace GLT::editor {
         auto* primary = game_layer->get_primary_session();
         VALIDATE(primary, return, "", "No primary session")
 
-        // The asset the primary session is running. Empty if nothing is loaded.
+        // The asset the primary session is running. Empty if nothing is loaded
         const auto world_asset = primary->world_asset();
 
         const u32 count = (m_simulation_mode == simulation_mode::new_window) ? 1u : m_sim_window_count;
@@ -1188,12 +1200,19 @@ namespace GLT::editor {
                     LOG(error, "Sim session {} failed to load world: error {}", index + 1, static_cast<int>(r.error()))
                     // don't bail, the window will just be empty, which is more debuggable than a silently destroyed window
                 }
-            } else {
-                LOG(warn, "Play: no world loaded in primary session — sim window {} will be empty", index + 1)
-            }
+            } else
+                LOG(warn, "no world loaded in primary session, sim window {} will be empty", index + 1)
 
+            auto ctrl = GLT::create_ref<GLT::editor::input::editor_controller>(session);    // TODO: see if the game has a controller set
+            ctrl->set_input_enabled(false);                 // starts disabled
+            session->set_controller(ctrl);
             session->add_renderer(scene_renderer);
-            m_simulation_instances.emplace_back(handle, scene_renderer, session);
+            m_simulation_instances.push_back(simulation_instance{
+                .handle = handle,
+                .scene_renderer = scene_renderer,
+                .session = session,
+                .cursor_captured = false,
+            });
         }
     }
 
@@ -1225,6 +1244,79 @@ namespace GLT::editor {
         }
 
         m_simulation_instances.clear();
+    }
+
+
+    editor_layer::simulation_instance* editor_layer::find_sim_instance(GLT::platform::window_handle handle) {
+
+        for (auto& w : m_simulation_instances)
+            if (w.handle == handle)
+                return &w;
+        return nullptr;
+    }
+
+
+    void editor_layer::on_window_focus_event(const GLT::window_focus_event& event) {
+
+        auto* sim = find_sim_instance(event.get_window());
+        if (!sim)
+            return;
+
+        if (event.get_focused())
+            capture_sim_window(*sim);
+        else if (sim->cursor_captured)
+            release_sim_cursor();
+    }
+
+
+    void editor_layer::capture_sim_window(simulation_instance& instance) {
+
+        auto* window = GLT::platform::window::get_ptr();
+        if (!window)
+            return;
+
+        // Only one window can own the cursor. Release whatever else might be captured first
+        release_sim_cursor();
+
+        // The primary editor camera goes quiet while a sim runs — otherwise a stale
+        // right-button state in the editor viewport could drive both cameras at once
+        if (auto* game_layer = GLT::application::get().get_game_layer_ptr()) {
+            if (auto* primary = game_layer->get_primary_session()) {
+                if (auto* ctrl = primary->get_controller())
+                    ctrl->set_input_enabled(false);
+            }
+        }
+
+        window->set_cursor_mode(instance.handle, GLT::platform::cursor_mode::cursor_disabled);
+
+        if (instance.session) {
+            if (auto* ctrl = instance.session->get_controller())
+                ctrl->set_input_enabled(true);
+        }
+
+        instance.cursor_captured = true;
+    }
+
+
+    void editor_layer::release_sim_cursor() {
+
+        auto* window = GLT::platform::window::get_ptr();
+
+        for (auto& w : m_simulation_instances) {
+
+            if (!w.cursor_captured)
+                continue;
+
+            if (window)
+                window->set_cursor_mode(w.handle, GLT::platform::cursor_mode::cursor_normal);
+
+            if (w.session) {
+                if (auto* ctrl = w.session->get_controller())
+                    ctrl->set_input_enabled(false);
+            }
+
+            w.cursor_captured = false;
+        }
     }
 
 }

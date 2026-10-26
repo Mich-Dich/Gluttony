@@ -1,6 +1,8 @@
 
 #pragma once
 
+#include <world/entity.h>
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -27,6 +29,14 @@ namespace GLT::world {
         virtual ~controller() {}
 
         virtual void update(f32 /*delta_time*/) {}
+
+        DEFAULT_GETTER_SETTER(bool,                         input_enabled)
+        DEFAULT_GETTER_SETTER(GLT::world::entity_id,        target)
+
+    protected:
+
+        bool                                                m_input_enabled = false;
+        GLT::world::entity_id                               m_target = INVALID_ENTITY;
 
     };
 
