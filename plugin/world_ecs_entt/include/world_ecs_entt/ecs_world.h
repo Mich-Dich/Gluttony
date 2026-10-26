@@ -106,6 +106,7 @@ namespace GLT::world::world_ecs_entt {
         void gather_lights(std::vector<light_snapshot>& out) const override;
         void gather_entity_positions(std::vector<entity_position>& out) const override;
         [[nodiscard]] bool get_camera_view(camera_snapshot& out) const override;
+        [[nodiscard]] bool get_camera_view(world::entity_id camera, world::camera_snapshot& out) override;
         void set_active_camera(entity_id id) override;
         [[nodiscard]] entity_id get_active_camera() const noexcept override { return m_active_camera; }
 

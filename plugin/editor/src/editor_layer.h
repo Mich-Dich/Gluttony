@@ -25,6 +25,10 @@ namespace GLT::editor {
     class content_browser_window;
 }
 
+namespace GLT::game {
+    class game_session;
+}
+
 namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
@@ -46,6 +50,12 @@ namespace GLT::editor {
 
         editor_layer();
         ~editor_layer();
+
+
+        void on_attach() override;
+
+
+        void on_detach() override;
 
 
         void update(const f32 delta_time);
@@ -74,17 +84,16 @@ namespace GLT::editor {
         enum class simulation_mode : u8 {
 
             current_viewport = 0,                       // reuse the existing world-viewport window
-            new_window,                                 // single standalone simulation window
-            multiple_windows,                           // 2..4 standalone windows
+            new_window,                                 // 1-4 standalone windows
         };
 
 
         struct sim_window_config {
 
-            ImVec2 position{ 100.f, 100.f };
-            ImVec2 size    { 1280.f, 720.f };
-            bool   maximized{ false };
-            bool   vsync    { true };
+            ImVec2                                      position { 100.f, 100.f };
+            ImVec2                                      size { 1280.f, 720.f };
+            bool                                        maximized = false;
+            bool                                        vsync = true;
         };
 
 
@@ -96,10 +105,11 @@ namespace GLT::editor {
         };
 
 
-        struct sim_window {
+        struct simulation_instance {
 
             GLT::platform::window_handle                handle{};
-            GLT::render::i_scene_renderer*              scene_renderer = nullptr;   // non-owning; app owns
+            GLT::render::i_scene_renderer*              scene_renderer{};   // non-owning; app owns
+            GLT::game::game_session*                    session{};
         };
 
 
@@ -209,7 +219,7 @@ namespace GLT::editor {
         simulation_mode                                 m_simulation_mode{ simulation_mode::current_viewport };
         u32                                             m_sim_window_count{ 1 };
         std::array<sim_layout, 4>                       m_sim_layouts{}; // m_sim_layouts[N - 1] = layout for N windows. All 4 are always saved
-        std::vector<sim_window>                         m_sim_windows{};
+        std::vector<simulation_instance>                m_simulation_instances{};
         handle                                          m_window_close_sub{};
 
     };

@@ -38,16 +38,15 @@ namespace GLT::game {
         [[nodiscard]] game_session* create_session();
         void destroy_session(session_id id);
 
-        [[nodiscard]] game_session* get_session(session_id id) const noexcept;
-        [[nodiscard]] game_session* primary_session() const noexcept;
+        [[nodiscard]] game_session* get_get_session(session_id id) const noexcept;
+        [[nodiscard]] game_session* get_primary_session() const noexcept;
 
-        // Materialized snapshot of every live session. Allocated on call —
-        // fine for the editor / debug UI, do not call per-frame in a hot path.
-        [[nodiscard]] std::vector<game_session*> sessions() const;
+        // Materialized snapshot of every live session. Allocated on call, fine for the editor / debug UI, do not call per-frame in a hot path
+        [[nodiscard]] std::vector<game_session*> get_sessions() const;
 
         // ---- layer ----------------------------------------------------------
         void update(f32 delta_time) override;
-        void render_imgui(f32 delta_time) override {}
+        void render_imgui(f32 /* delta_time */) override {}
 
     private:
 

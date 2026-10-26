@@ -14,7 +14,8 @@
 #include <config/imgui_config.h>
 #include <render/image.h>
 #include <render/i_renderer.h>
-#include <world/world_layer.h>
+#include <game/game_layer.h>
+#include <game/game_session.h>
 #include <util/ui/asset_picker.h>
 #include <util/ui/pannel_collection.h>
 #include <util/io/serializer_yaml.h>
@@ -155,8 +156,11 @@ namespace GLT::editor {
         m_save_sub_handle = GLT::event_bus::subscribe<GLT::save_event>(std::bind_front(&editor_layer::on_save_event, this));
         m_window_close_sub = GLT::event_bus::subscribe<GLT::window_close_event>(std::bind_front(&editor_layer::on_window_close_event, this));
 
-        if (auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>())
-            world_layer->set_controller<GLT::editor::input::editor_controller>();                       // create controller
+        if (auto* game_layer = GLT::application::get().get_game_layer_ptr()) {
+
+            if (auto* session = game_layer->get_primary_session())
+                session->set_controller(GLT::create_ref<GLT::editor::input::editor_controller>(session));
+        }
 
         load_simulation_settings();
 
@@ -168,17 +172,15 @@ namespace GLT::editor {
             VALIDATE(registry, return, "", "Failed to get asset-registry")
 
             const auto result = registry->load(editor_world_path);                                      // registry CAN find the editor world
-            if (result) {
-                GLT::application::get().load_world(editor_world_path, true);                            // load project world if none loaded
-            } else
+            if (result)
+                (void)GLT::application::get().load_world(editor_world_path, true);                            // load project world if none loaded
+            else
                 GLT::application::get().get_project().editor_start_world = std::filesystem::path{};     // reset if asset was not found
         }
     }
 
 
     editor_layer::~editor_layer() {
-
-        GLT::event_bus::post(GLT::save_event());                // save before closing
 
         GLT::event_bus::unsubscribe(m_window_close_sub);
         GLT::event_bus::unsubscribe(m_save_sub_handle);
@@ -197,6 +199,12 @@ namespace GLT::editor {
     }
 
     // CLASS PUBLIC ====================================================================================================
+
+    void editor_layer::on_attach() { }
+
+
+    void editor_layer::on_detach() { GLT::event_bus::post(GLT::save_event()); }
+
 
     void editor_layer::update(const f32 delta_time) {
 
@@ -590,14 +598,13 @@ namespace GLT::editor {
                     const std::vector<std::string> mode_options = {
                         "In current viewport",
                         "In a new window",
-                        "In multiple windows",
                     };
                     int mode_idx = static_cast<int>(m_simulation_mode);
                     if (UI::table_row("Mode", mode_idx, mode_options))
                         m_simulation_mode = static_cast<simulation_mode>(mode_idx);
 
-                    // ---- window count (multiple_windows only) ----
-                    if (m_simulation_mode == simulation_mode::multiple_windows) {
+                    // window count
+                    if (m_simulation_mode != simulation_mode::current_viewport) {
                         int count = static_cast<int>(m_sim_window_count);
                         if (UI::table_row_slider_int("Window count", count, 1, 4))
                             m_sim_window_count = static_cast<u32>(count);
@@ -606,10 +613,8 @@ namespace GLT::editor {
                     // ---- per-window config ----
                     if (m_simulation_mode != simulation_mode::current_viewport) {
 
-                        const u32 effective_count = (m_simulation_mode == simulation_mode::new_window) ? 1u : m_sim_window_count;
-                        auto& layout = m_sim_layouts[effective_count - 1];
-
-                        for (u32 index = 0; index < effective_count; ++index) {
+                        auto& layout = m_sim_layouts[m_sim_window_count - 1];
+                        for (u32 index = 0; index < m_sim_window_count; index++) {
 
                             auto& cfg = layout.windows[index];
                             ImGui::PushID(static_cast<int>(index));
@@ -801,20 +806,31 @@ namespace GLT::editor {
 
         const auto event_handle = event.get_window();
 
-        auto it = std::ranges::find_if(m_sim_windows, [event_handle](const sim_window& w) { return w.handle == event_handle; });
-        if (it == m_sim_windows.end())
+        auto it = std::ranges::find_if(m_simulation_instances,
+            [event_handle](const simulation_instance& w) { return w.handle == event_handle; });
+        if (it == m_simulation_instances.end())
             return;
 
-        // Renderer first (see destroy_simulation_windows for the reason)
-        if (it->scene_renderer)
+        auto* game_layer = GLT::application::get().get_game_layer_ptr();
+
+        if (it->session && it->scene_renderer)
+            it->session->remove_renderer(it->scene_renderer);
+
+        if (it->scene_renderer) {
             GLT::application::get().destroy_scene_renderer(it->scene_renderer);
+            it->scene_renderer = nullptr;
+        }
 
         if (auto* p_window = GLT::platform::window::get_ptr())
             p_window->destroy(it->handle);
 
-        m_sim_windows.erase(it);
+        if (it->session && game_layer)
+            game_layer->destroy_session(it->session->get_id());
+        it->session = nullptr;
 
-        if (m_sim_windows.empty())
+        m_simulation_instances.erase(it);
+
+        if (m_simulation_instances.empty())
             m_simulation_state = GLT::system_state::idle;
     }
 
@@ -1113,9 +1129,18 @@ namespace GLT::editor {
         auto* p_window = GLT::platform::window::get_ptr();
         VALIDATE(p_window, return, "", "Failed to get window plugin")
 
+        auto* game_layer = GLT::application::get().get_game_layer_ptr();
+        VALIDATE(game_layer, return, "", "Failed to get game layer")
+
+        auto* primary = game_layer->get_primary_session();
+        VALIDATE(primary, return, "", "No primary session")
+
+        // The asset the primary session is running. Empty if nothing is loaded.
+        const auto world_asset = primary->world_asset();
+
         const u32 count = (m_simulation_mode == simulation_mode::new_window) ? 1u : m_sim_window_count;
         const auto& layout = m_sim_layouts[count - 1];
-        m_sim_windows.reserve(count);
+        m_simulation_instances.reserve(count);
 
         for (u32 index = 0; index < count; index++) {
 
@@ -1136,49 +1161,70 @@ namespace GLT::editor {
             VALIDATE(handle.is_valid(), continue, "",
                 "Failed to create simulation window {} of {}", (index + 1, count))
 
-            // Per-window 3D scene renderer. ImGui is intentionally disabled — the GLFW backend is bound to the primary window,
-            // and one ImGui context can't drive two native windows. Multi-window 3D-only works fine with a shared context
             GLT::render::surface_target_desc surface{ .window = handle };
             GLT::render::scene_renderer_desc desc{
                 .target = surface,
                 .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),
                 .enable_imgui = false,
             };
-
             auto* scene_renderer = GLT::application::get().create_scene_renderer(desc);
             if (!scene_renderer) {
                 LOG(error, "Failed to create scene renderer for simulation window {}", index + 1)
-                p_window->destroy(handle);      // don't leak a headless window
+                p_window->destroy(handle);
                 continue;
             }
 
-            if (auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>())
-                world_layer->add_scene_renderer(scene_renderer);
+            auto* session = game_layer->create_session();
+            if (!session) {
+                LOG(error, "Failed to create simulation session")
+                GLT::application::get().destroy_scene_renderer(scene_renderer);
+                p_window->destroy(handle);
+                continue;
+            }
 
-            m_sim_windows.push_back({ handle, scene_renderer });
+            // give the session a world
+            if (world_asset) {
+                if (auto r = session->load_world(world_asset); !r) {
+                    LOG(error, "Sim session {} failed to load world: error {}", index + 1, static_cast<int>(r.error()))
+                    // don't bail, the window will just be empty, which is more debuggable than a silently destroyed window
+                }
+            } else {
+                LOG(warn, "Play: no world loaded in primary session — sim window {} will be empty", index + 1)
+            }
+
+            session->add_renderer(scene_renderer);
+            m_simulation_instances.emplace_back(handle, scene_renderer, session);
         }
     }
 
 
     void editor_layer::destroy_simulation_windows() {
 
-        if (m_sim_windows.empty())
+        if (m_simulation_instances.empty())
             return;
 
-        // Renderers first: each one releases its ref on the window's VkSurfaceKHR in its destructor. If we destroy the window
-        // first, release_surface() sees an invalid handle, short-circuits, and the surface leaks (or worse, the driver's queue
-        // bookkeeping goes stale)
-        for (auto& w : m_sim_windows) {
-            if (w.scene_renderer)
-                GLT::application::get().destroy_scene_renderer(w.scene_renderer);
-            w.scene_renderer = nullptr;
-        }
+        auto* p_game_layer = GLT::application::get().get_game_layer_ptr();
+        auto* p_window = GLT::platform::window::get_ptr();
 
-        if (auto* p_window = GLT::platform::window::get_ptr())
-            for (const auto& w : m_sim_windows)
+        for (auto& w : m_simulation_instances) {
+
+            if (w.session && w.scene_renderer)
+                w.session->remove_renderer(w.scene_renderer);
+
+            if (w.scene_renderer) {
+                GLT::application::get().destroy_scene_renderer(w.scene_renderer);
+                w.scene_renderer = nullptr;
+            }
+
+            if (p_window)
                 p_window->destroy(w.handle);
 
-        m_sim_windows.clear();
+            if (w.session && p_game_layer)
+                p_game_layer->destroy_session(w.session->get_id());
+            w.session = nullptr;
+        }
+
+        m_simulation_instances.clear();
     }
 
 }

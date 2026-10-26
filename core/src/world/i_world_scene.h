@@ -61,6 +61,7 @@ namespace GLT::world {
         // Fill [out] from the active camera. Returns false if there is no active camera (the renderer keeps whatever view it last had)
         [[nodiscard]] virtual bool get_camera_view(camera_snapshot& out) const = 0;
 
+        [[nodiscard]] virtual bool get_camera_view(world::entity_id camera, world::camera_snapshot& out) = 0;
 
         // Select which entity drives the view. INVALID_ENTITY disables camera tracking (the renderer freezes)
         virtual void set_active_camera(entity_id id) = 0;

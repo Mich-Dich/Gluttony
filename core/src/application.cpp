@@ -48,7 +48,7 @@ namespace GLT {
 
         plugin_manager::enter_phase(plugin_manager::phase::pre_application);
 
-        auto game_layer = m_layer_stack.push_layer<GLT::game::game_layer>();
+        m_layer_stack.push_layer<GLT::game::game_layer>();
 
         auto* p_window = GLT::platform::window::get_ptr();
         ASSERT(p_window, "", "Failed to load window plugin")
@@ -60,14 +60,13 @@ namespace GLT {
         ASSERT(p_renderer, "", "Failed to load render plugin")
         p_renderer->create(m_main_window);
 
-        auto* audio = GLT::audio::manager::get_ptr();
-        ASSERT(audio, "", "Failed to load audio plugin")
-        audio->create();
+        auto* p_audio = GLT::audio::manager::get_ptr();
+        ASSERT(p_audio, "", "Failed to load audio plugin")
+        p_audio->create();
 
-        // surface scene renderer: ALWAYS created, owns at least ImGui + presentation
         {
             GLT::render::surface_target_desc surface{
-                .window = m_main_window,
+                .window = m_main_window
             };
             GLT::render::scene_renderer_desc desc{
                 .target = surface,
@@ -76,9 +75,9 @@ namespace GLT {
             (void)create_scene_renderer(desc);
         }
 
-        if (auto* physics = GLT::physics::get_ptr()) {
-            auto result = physics->init();
-            VALIDATE(result, , "Physics backend: {}", (physics->backend_name()),
+        if (auto* p_physics = GLT::physics::get_ptr()) {
+            auto result = p_physics->init();
+            VALIDATE(result, , "Physics backend: {}", (p_physics->backend_name()),
                 "Failed to init physics plugin: error {}", (static_cast<int>(result.error())))
         }
 
@@ -90,27 +89,28 @@ namespace GLT {
 
     application::~application() {
 
-        m_current_world.reset();
+        // world is owned by game_layer -> primary_session -> i_world. Dropping layer-stack releases the world (and its
+        // region handles) before plugins unload
+        m_layer_stack.clear();
 
         if (auto* physics = GLT::physics::get_ptr())
             physics->shutdown();
-    
+
         plugin_manager::enter_phase(plugin_manager::phase::pre_application_shutdown);
 
-        auto* p_renderer = GLT::render::renderer::get_ptr();
-        auto* p_audio = GLT::audio::manager::get_ptr();
-        auto* p_window = GLT::platform::window::get_ptr();
-
         for (auto it = m_scene_renderers.rbegin(); it != m_scene_renderers.rend(); it++)
-            it->reset();
+        it->reset();
         m_scene_renderers.clear();
 
+        auto* p_renderer = GLT::render::renderer::get_ptr();
         if (p_renderer)
-            p_renderer->destroy();
+        p_renderer->destroy();
 
+        auto* p_audio = GLT::audio::manager::get_ptr();
         if (p_audio)
-            p_audio->destroy();
+        p_audio->destroy();
 
+        auto* p_window = GLT::platform::window::get_ptr();
         if (p_window) {
             auto attributes = p_window->get_window_attributes(m_main_window);
             platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::save);
@@ -159,30 +159,6 @@ namespace GLT {
     }
 
 
-    void application::load_world(const std::filesystem::path& world_path, const bool override_current) {
-
-        // auto* world_layer = m_layer_stack.get<GLT::world::world_layer>();
-        // VALIDATE(world_layer, return, "", "Failed to get world layer from layer stack")
-        
-        // auto world = world_layer->get_world();
-        // VALIDATE(world, return, "", "Failed to get world from world layer")
-
-        // // TODO: check the world for real
-        // if (!override_current)                         // already set, dont override
-        //     return;
-
-        // auto registry = GLT::asset::registry::get_ref();
-        // VALIDATE(registry, return, "", "Failed to get asset-registry")
-
-        // auto result = registry->load(world_path);
-        // VALIDATE(result, return, "", "Registry failed to load world [{}]", (world_path.generic_string()))
-        // m_current_world = std::move(*result);
-
-        // const auto world_result = world->load_world(m_current_world);
-        // VALIDATE(world_result, return, "", "Failed to load world")
-    }
-
-
     void application::set_target_fps(const f32 fps) {
 
         const u64 time = (1 / fps) * 1000000;
@@ -212,6 +188,54 @@ namespace GLT {
         if (!p_scene_renderer)
             return;
         std::erase_if(m_scene_renderers, [p_scene_renderer](const auto& r) { return r.get() == p_scene_renderer; });
+    }
+
+    // ---- world access -------------------------------------------------------
+
+    const game::game_layer* application::get_game_layer_ptr() const noexcept { return m_layer_stack.get<GLT::game::game_layer>(); }
+
+
+    GLT::game::game_layer* application::get_game_layer_ptr() noexcept { return m_layer_stack.get<GLT::game::game_layer>(); }
+
+
+    world::i_world* application::current_world() const noexcept {
+
+        const auto* game_layer = get_game_layer_ptr();
+        if (!game_layer)
+            return nullptr;
+        auto* session = game_layer->get_primary_session();
+        return session ? session->get_world() : nullptr;
+    }
+
+
+    std::expected<void, asset::load_error> application::load_world(const std::filesystem::path& path, bool only_if_none) {
+
+        if (only_if_none && current_world())
+            return {};
+
+        const auto* game_layer = get_game_layer_ptr();
+        if (!game_layer)
+            return std::unexpected(asset::load_error::no_handler);
+
+        auto* session = game_layer->get_primary_session();
+        if (!session)
+            return std::unexpected(asset::load_error::not_found);
+
+        return session->load_world_from_path(path);
+    }
+
+
+    std::expected<void, asset::load_error> application::save_current_world() {
+
+        const auto* game_layer = get_game_layer_ptr();
+        if (!game_layer)
+            return std::unexpected(asset::load_error::no_handler);
+
+        auto* session = game_layer->get_primary_session();
+        if (!session)
+            return std::unexpected(asset::load_error::not_found);
+
+        return session->save_world();
     }
 
     // CLASS PROTECTED =================================================================================================

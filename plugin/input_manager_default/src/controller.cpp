@@ -29,9 +29,10 @@ namespace GLT::input::input_manager_default {
     // FUNCTION IMPLEMENTATION =========================================================================================
 
     // CLASS IMPLEMENTATION ============================================================================================
-
-    controller::controller()
-        : m_key_sub(event_bus::subscribe_scoped<GLT::key_event>([this](GLT::key_event& e){ on_key_event(e); }))
+    
+    controller::controller(GLT::game::game_session* session)
+        : m_session(session)
+        , m_key_sub(event_bus::subscribe_scoped<GLT::key_event>([this](GLT::key_event& e){ on_key_event(e); }))
         , m_mouse_sub(event_bus::subscribe_scoped<GLT::mouse_event>([this](GLT::mouse_event& e){ on_mouse_event(e); })) { }
 
 
@@ -107,7 +108,6 @@ namespace GLT::input::input_manager_default {
             m_free_indices.push_back(static_cast<u32>(&slot - m_slots.data()));
         }
     }
-
 
     // per-frame step --------------------------------------------------------------------------------------------------
 

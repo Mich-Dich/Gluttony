@@ -7,6 +7,10 @@
 #include <util/ui/pannel_collection.h>
 #include <util/ui/asset_picker.h>
 #include <asset/audio.h>
+#include <asset/i_asset_registry.h>
+#include <asset/mesh.h>
+#include <world/i_world_plugin.h>
+#include <world/i_world_scene.h>
 
 #include "ecs_world.h"
 
@@ -248,9 +252,8 @@ namespace GLT::world::world_ecs_entt::component {
                 GLT::UI::table_row("near plane", cam.near_plane, 0.01f, 0.001f, 100.f);
                 GLT::UI::table_row("far plane", cam.far_plane, 1.f, 0.01f, 100000.f);
 
-                // "Active camera" is a selection on the world, not a stored flag on the component. Expose it as a checkbox that
-                // routes through i_world_scene. Shows only if the concrete plugin implements the scene interface (it always does today,
-                // but keep the guard so headless / stripped world plugins don't crash the editor).
+                auto* plugin = GLT::world::manager::get_ptr();
+                VALIDATE(plugin, return, "", "world plugin not available")
                 if (auto* scene = plugin->as<GLT::world::i_world_scene>()) {
 
                     bool is_active = (scene->get_active_camera() == id);

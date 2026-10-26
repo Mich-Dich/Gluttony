@@ -454,6 +454,46 @@ namespace GLT::world::world_ecs_entt {
         stream_pass();
     }
 
+    // region grid ------------------------------------------------------------------------------------
+
+    glm::vec3 ecs_world::get_region_cell_size() const noexcept { return m_region_cell_size; }
+
+
+    void ecs_world::set_region_cell_size(const glm::vec3& size) {
+
+        if (size.x <= 0.f || size.y <= 0.f || size.z <= 0.f) {
+            LOG(warn, "set_region_cell_size ignored: non-positive component ({}, {}, {})", size.x, size.y, size.z);
+            return;
+        }
+
+        m_region_cell_size = size;
+        reassign_all_entities();
+    }
+
+
+    void ecs_world::reassign_all_entities() {
+
+        // Regions that are currently inactive have an empty state list already
+        // (deactivate() clears them), so this only affects what's resident right now.
+        for (auto& [rid, state] : m_region_states)
+            state.entities.clear();
+
+        for (u32 index = 0; index < m_slots.size(); ++index) {
+
+            const slot& slot = m_slots[index];
+            if (slot.handle == entt::null)
+                continue;
+
+            const entity_id id{ index, slot.generation };
+            const glm::vec3 world_pos = glm::vec3(world_transform_of(id)[3]);
+            const glm::ivec3 cell = cell_coord_of(world_pos);
+
+            const GLT::UUID region_id = ensure_region_for_cell(cell);
+            if (region_id)
+                m_region_states[region_id].entities.push_back(id);
+        }
+    }
+
     // hierarchy -------------------------------------------------------------------------------------------------------
 
     std::vector<entity_id> ecs_world::root_entities() const {
@@ -554,6 +594,15 @@ namespace GLT::world::world_ecs_entt {
 
 
     entity_builder ecs_world::edit(entity_id id) { return entity_builder{ *this, id }; }
+
+    // hierarchy queries -----------------------------------------------------------------------------------------------
+
+    entity_id ecs_world::parent_of(entity_id id) const noexcept {
+
+        if (const component::hierarchy* h = hierarchy_of(id))
+            return h->parent;
+        return INVALID_ENTITY;
+    }
 
     // ECS internals (used by entity_builder) --------------------------------------------------------------------------
 
@@ -670,6 +719,37 @@ namespace GLT::world::world_ecs_entt {
         // The camera's world transform is inherited through the hierarchy just like any other entity
         // a camera parented to a moving platform moves with it.
         const glm::mat4 world = world_transform_of(m_active_camera);
+
+        // // scale on a camera is meaningless, normalize it
+        // world[0] = glm::vec4(glm::normalize(glm::vec3(world[0])), 0.f);
+        // world[1] = glm::vec4(glm::normalize(glm::vec3(world[1])), 0.f);
+        // world[2] = glm::vec4(glm::normalize(glm::vec3(world[2])), 0.f);
+
+        out.view = glm::inverse(world);
+        out.position = glm::vec3(world[3]);       // the translation column
+        out.fov = c->fov;
+        out.near_plane = c->near_plane;
+        out.far_plane = c->far_plane;
+        return true;
+    }
+
+
+    bool ecs_world::get_camera_view(world::entity_id camera, world::camera_snapshot& out) {
+
+        if (!camera.is_valid())
+            return false;
+
+        const entt::entity entity = entt_of(camera);
+        if (entity == entt::null)
+            return false;
+
+        const auto* c = m_registry.try_get<GLT::world::world_ecs_entt::component::camera>(entity);
+        if (!c)
+            return false;
+
+        // The camera's world transform is inherited through the hierarchy just like any other entity
+        // a camera parented to a moving platform moves with it.
+        const glm::mat4 world = world_transform_of(camera);
 
         // // scale on a camera is meaningless, normalize it
         // world[0] = glm::vec4(glm::normalize(glm::vec3(world[0])), 0.f);
@@ -1215,15 +1295,6 @@ namespace GLT::world::world_ecs_entt {
         }
 
         m_region_states[target].entities.push_back(id);
-    }
-
-
-    entity_id ecs_world_plugin::entity_id_for(entt::entity entity) const noexcept {
-
-        for (u32 i = 0; i < m_slots.size(); ++i)
-            if (m_slots[i].handle == entity)
-                return { i, m_slots[i].generation };
-        return INVALID_ENTITY;
     }
 
 }

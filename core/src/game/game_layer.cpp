@@ -32,8 +32,8 @@ namespace GLT::game {
     game_layer::game_layer() : layer("game_layer") {
 
         // Primary session is eager: the editor needs a world to attach its viewport renderer to before any Play action happens
-        if (auto* s = create_session())
-            m_primary_id = s->id();
+        if (auto* session = create_session())
+            m_primary_id = session->get_id();
     }
 
 
@@ -67,8 +67,8 @@ namespace GLT::game {
 
     void game_layer::destroy_session(session_id id) {
 
-        auto* s = find_slot(id);
-        if (!s)
+        auto* slot = find_slot(id);
+        if (!slot)
             return;
 
         // Never destroy the primary: "Stop" must not delete the editor's world
@@ -77,33 +77,33 @@ namespace GLT::game {
             return;
         }
 
-        s->session.reset();
+        slot->session.reset();
         m_free_slots.push_back(id.index);
         // Generation is bumped on reuse, so any session_id still pointing at this slot compares unequal and find_slot returns nullptr
     }
 
 
-    game_session* game_layer::get_session(session_id id) const noexcept {
+    game_session* game_layer::get_get_session(session_id id) const noexcept {
 
-        const auto* s = find_slot(id);
-        return s ? s->session.get() : nullptr;
+        const auto* slot = find_slot(id);
+        return slot ? slot->session.get() : nullptr;
     }
 
 
-    game_session* game_layer::primary_session() const noexcept {
+    game_session* game_layer::get_primary_session() const noexcept {
 
-        const auto* s = find_slot(m_primary_id);
-        return s ? s->session.get() : nullptr;
+        const auto* slot = find_slot(m_primary_id);
+        return slot ? slot->session.get() : nullptr;
     }
 
 
-    std::vector<game_session*> game_layer::sessions() const {
+    std::vector<game_session*> game_layer::get_sessions() const {
 
         std::vector<game_session*> out;
         out.reserve(m_slots.size());
-        for (const auto& s : m_slots)
-            if (s.session)
-                out.push_back(s.session.get());
+        for (const auto& slot : m_slots)
+            if (slot.session)
+                out.push_back(slot.session.get());
         return out;
     }
 
@@ -111,9 +111,9 @@ namespace GLT::game {
     void game_layer::update(f32 dt) {
 
         // Primary first, then sim sessions in slot order. Deterministic and cheap — the slot table usually has 1..4 live entries
-        for (auto& s : m_slots)
-            if (s.session)
-                s.session->update(dt);
+        for (auto& slot : m_slots)
+            if (slot.session)
+                slot.session->update(dt);
     }
 
     // CLASS PROTECTED =================================================================================================
@@ -125,11 +125,11 @@ namespace GLT::game {
         if (id.index >= m_slots.size())
             return nullptr;
 
-        auto& s = m_slots[id.index];
-        if (s.generation != id.generation || !s.session)
+        auto& slot = m_slots[id.index];
+        if (slot.generation != id.generation || !slot.session)
             return nullptr;
 
-        return &s;
+        return &slot;
     }
 
 
@@ -138,11 +138,11 @@ namespace GLT::game {
         if (id.index >= m_slots.size())
             return nullptr;
 
-        const auto& s = m_slots[id.index];
-        if (s.generation != id.generation || !s.session)
+        const auto& slot = m_slots[id.index];
+        if (slot.generation != id.generation || !slot.session)
             return nullptr;
 
-        return &s;
+        return &slot;
     }
 
 }

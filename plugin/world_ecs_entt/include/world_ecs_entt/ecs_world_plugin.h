@@ -33,7 +33,7 @@ namespace GLT::world::world_ecs_entt {
     class ecs_world_plugin final : public i_world_plugin {
     public:
 
-        void on_load()   override;
+        void on_load() override;
         void on_unload() override;
 
         [[nodiscard]] std::expected<unique_ref<i_world>, asset::load_error> instantiate(asset::asset_ref asset) override;

@@ -15,7 +15,8 @@
 #include <render/i_debug_draw.h>
 #include <world/i_world.h>
 #include <world/i_world_scene.h>
-#include <world/world_layer.h>
+#include <game/game_layer.h>
+#include <game/game_session.h>
 #include <render/i_scene_renderer.h>
 #include <application.h>
 
@@ -61,8 +62,8 @@ namespace GLT::editor {
             .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),
         };
         m_scene = GLT::application::get().create_scene_renderer(desc);
-        auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>();
-        world_layer->add_scene_renderer(m_scene);
+        auto* session = GLT::application::get().get_game_layer_ptr()->get_primary_session();
+        session->add_renderer(m_scene);
 
         make_window_name("World Viewport");
         m_renderer = GLT::render::renderer::get_ref();
@@ -123,6 +124,9 @@ namespace GLT::editor {
 
 
     void world_viewport_window::update(const f32 /*delta_time*/) {
+
+        if (!m_world)
+            m_world = GLT::application::get().get_game_layer_ptr()->get_primary_session()->get_world();
 
         // refresh in case the app recreated it
         if (m_scene) {
@@ -477,9 +481,6 @@ namespace GLT::editor {
             return;
         }
 
-        if (!m_world)
-            m_world = GLT::world::manager::get_ref();
-
         if (!m_world) {
             ImGui::TextDisabled("No world plugin loaded");
             ImGui::End();
@@ -644,61 +645,53 @@ namespace GLT::editor {
     }
 
 
-    void world_viewport_window::on_save_event(const GLT::save_event& event) {
+    void world_viewport_window::on_save_event(const GLT::save_event& /*event*/) {
 
-        // save project data -------------------------------------------------------------------------------------------
         GLT::application::get().get_project_ref().serialize_projects_data(GLT::serializer::option::save);
 
+        auto* session = GLT::application::get().get_game_layer_ptr()->get_primary_session();
+        VALIDATE(session, return, "", "No primary session");
 
-        // save world --------------------------------------------------------------------------------------------------
-        auto* world_layer = GLT::application::get().get_layer_stack_ref().get<GLT::world::world_layer>();
-        VALIDATE(world_layer, return, "", "Failed to get world layer");
-
-        auto world = world_layer->get_world();
+        auto* world = session->get_world();
         VALIDATE(world, return, "", "Failed to get world");
 
-        const bool has_handle = world->world_handle() != GLT::asset::handle{};
-        const bool force_as = event.is_forced_save_as();
-        if (has_handle && !force_as) {
-
-            auto result = world->save_world();
-            if (result)
-                GLT::event_bus::post(GLT::notification_event("Saved", "World saved successfully", GLT::logger::severity::info));
-            else {
-
-                const auto description = std::format("Failed to save World [{}]", GLT::util::enum_to_string(result.error()));
-                GLT::event_bus::post(GLT::notification_event("Saved", description, GLT::logger::severity::warn));
-            }
+        // -- try direct save first ----------------------------------------------------------
+        if (auto result = world->save(); result) {
+            GLT::event_bus::post(GLT::notification_event("Saved", "World saved successfully", GLT::logger::severity::info));
             return;
+        } else {
+            GLT::event_bus::post(GLT::notification_event("Saved",
+                std::format("Failed to save World [{}]", GLT::util::enum_to_string(result.error())), GLT::logger::severity::warn));
         }
 
-        // need a location from the user
-        const auto world_name = GLT::asset::registry::get_ref()->info(world->world_handle()).name;
+        // -- fall through: prompt for a location --------------------------------------------
+        const auto& world_asset = world->asset();                 // i_world::asset()
+        const bool  has_asset = static_cast<bool>(world_asset);
+        const auto  world_name = has_asset
+            ? GLT::asset::registry::get_ref()->info(world_asset.get()).name
+            : std::string{ "untitled_world" };
+
         GLT::save_as_request_event::request req{
             .title = "Save World As",
-            .default_name = has_handle ? world_name : "untitled_world",
+            .default_name = world_name,
             .default_dir = PROJECT_CONTENT_DIR / "world",
             .extension = std::string(GLT::asset::type_to_extension(GLT::asset::core_types::world)),
             .on_resolved = [world](const std::filesystem::path& chosen) {
-    
+
                 if (chosen.empty())
-                    return;                                     // cancelled
+                    return;
 
-                if (auto result = world->save_world_as(chosen); !result) {
-
-                    LOG(error, "save_world_as failed: error {}", static_cast<int>(result.error()));
+                if (auto r = world->save_as(chosen); !r) {        // i_world::save_as()
+                    LOG(error, "save_as failed: error {}", static_cast<int>(r.error()));
                     return;
                 }
 
-                // if the project settings dont have a world defined -> save the newly created world
                 std::error_code error{};
                 auto& project = GLT::application::get().get_project_ref();
-                if (project.start_world.empty()
-                    || (!GLT::vfs::exists(PROJECT_CONTENT_DIR / project.start_world, error) && !error))
+                if (project.start_world.empty() || (!GLT::vfs::exists(PROJECT_CONTENT_DIR / project.start_world, error) && !error))
                     project.start_world = GLT::project::to_content_relative(chosen);
 
-                if (project.editor_start_world.empty()
-                    || (!GLT::vfs::exists(PROJECT_CONTENT_DIR / project.editor_start_world, error) && !error))
+                if (project.editor_start_world.empty() || (!GLT::vfs::exists(PROJECT_CONTENT_DIR / project.editor_start_world, error) && !error))
                     project.editor_start_world = GLT::project::to_content_relative(chosen);
             },
         };

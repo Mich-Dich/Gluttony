@@ -4,6 +4,8 @@
 #include <event/event_bus.h>
 #include <event/input_event.h>
 #include <world/controller.h>
+#include <world/entity.h>
+#include <game/game_session.h>
 
 #include "type.h"
 
@@ -54,7 +56,6 @@ namespace GLT::input::input_manager_default {
         bool                                            mouse_entered = false;
     };
 
-
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -66,10 +67,17 @@ namespace GLT::input::input_manager_default {
     class controller : public GLT::world::controller {
     public:
 
-        controller();
+        controller(GLT::game::game_session* session);
         virtual ~controller();
 
         DELETE_COPY_CONSTRUCTOR(controller)
+
+        // ---- target ---------------------------------------------------------
+
+        // Which entity this controller drives. INVALID_ENTITY = "unresolved". The controller itself decides how to resolve it
+        // (active camera, spawn-time id, player slot, …); the session never assumes
+        DEFAULT_GETTERS(GLT::world::entity_id,          target)
+        DEFAULT_SETTER(GLT::world::entity_id,           target)
 
         // -- configuration ------------------------------------------------------
 
@@ -108,6 +116,10 @@ namespace GLT::input::input_manager_default {
         [[nodiscard]] bool is_key_down(GLT::key_code code) const;
 
         [[nodiscard]] bool is_mouse_down(GLT::key_code code) const;
+
+    protected:
+
+        GLT::game::game_session*                        m_session{};
 
     private:
 
@@ -160,6 +172,7 @@ namespace GLT::input::input_manager_default {
         raw_state                                       m_raw{};
         GLT::event_bus::subscription_guard              m_key_sub{};
         GLT::event_bus::subscription_guard              m_mouse_sub{};
+        GLT::world::entity_id                           m_target = GLT::world::INVALID_ENTITY;
 
     };
 

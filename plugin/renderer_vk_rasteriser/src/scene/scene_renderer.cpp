@@ -211,8 +211,8 @@ namespace GLT::renderer::vk_rasterizer {
         frame.cmd.reset();
         frame.cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
 
-        LOG(trace, "render: window=[{},{}] active={} instances={} lights={}",
-            m_window.index, m_window.generation, m_active, m_instance_count, m_light_count)
+        // LOG(trace, "render: window=[{},{}] active={} instances={} lights={}",
+        //     m_window.index, m_window.generation, m_active, m_instance_count, m_light_count)
 
         m_graph->begin_frame();
         update_cluster_dimensions();

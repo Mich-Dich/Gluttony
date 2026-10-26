@@ -23,6 +23,10 @@ namespace GLT::render {
     class image;
 }
 
+namespace GLT::world {
+    class i_world;
+}
+
 namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
@@ -121,7 +125,7 @@ namespace GLT::editor {
         bool                                            m_reset_layout = true;
         bool                                            m_cursor_captured = false;
 
-        GLT::ref<GLT::world::i_world_plugin>            m_world{};
+        GLT::world::i_world*                            m_world{};
         GLT::world::entity_id                           m_selected_entity{ GLT::world::INVALID_ENTITY };
         GLT::world::i_world_inspector*                  m_inspector{ nullptr };
         u64                                             m_clipboard_component{ 0 };

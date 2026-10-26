@@ -48,14 +48,8 @@ namespace GLT {
         if (!shared)
             return;                                                     // layer is already gone
 
-        auto it = std::find_if(                                         // Search only the layer range, not overlays
-            m_layers.begin(),
-            layer_end(),
-            [&](const unique_ref<layer>& ptr) {
-                return ptr.get() == shared.get();
-            }
-        );
-
+        // Search only the layer range, not overlays
+        auto it = std::find_if(m_layers.begin(), layer_end(), [&](const unique_ref<layer>& ptr) {return ptr.get() == shared.get();});
         if (it == layer_end())
             return;                                                     // not found
 
@@ -79,8 +73,8 @@ namespace GLT {
 
     void layer_stack::clear() {
 
-        for (auto& layer : m_layers)                                    // Call on_detach for all layers and overlays
-            layer->on_detach();
+        for (auto layer = m_layers.end(); layer != m_layers.begin(); )
+            (*--layer)->on_detach();
 
         m_layers.clear();
         m_layer_count = 0;

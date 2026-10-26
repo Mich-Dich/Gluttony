@@ -1,23 +1,16 @@
+
 #include "util/pch.h"
 #include "ecs_world_plugin.h"
-#include "ecs_world.h"
 
 #include <asset/world.h>
 
-namespace GLT::world::world_ecs_entt {
+#include "ecs_world.h"
 
-}
-
-
-
-
-#include "util/pch.h"
-#include "ecs_world_plugin.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
 
-namespace GLT {
+namespace GLT::world::world_ecs_entt {
 
     // CONSTANTS =======================================================================================================
 
