@@ -29,6 +29,16 @@ namespace GLT::world::world_ecs_entt {
         entity_builder& named(std::string name);
         entity_builder& set_transform(const component::transform& t);
         entity_builder& set_mesh(GLT::asset::handle mesh, bool visible = true);
+        entity_builder& set_audio(GLT::asset::handle clip, const GLT::asset::audio::source_config& cfg = {}, bool autoplay = false);
+        entity_builder& set_light(GLT::world::light_type type = GLT::world::light_type::point, const glm::vec3& color = { 1.f, 1.f, 1.f },
+            f32 intensity = 1.f);
+
+        entity_builder& set_motion(physics::motion_type motion);
+        entity_builder& set_physics_material(const physics::physics_material& mat, bool use_mesh_material = false);
+
+
+        entity_builder& set_transform(const component::transform& t);
+        entity_builder& set_mesh(GLT::asset::handle mesh, bool visible = true);
         entity_builder& set_audio(GLT::asset::handle clip, const GLT::asset::audio::source_config& cfg = {},
                                   bool autoplay = false);
         entity_builder& set_light(GLT::world::light_type type = GLT::world::light_type::point,

@@ -104,6 +104,8 @@ namespace GLT::world::world_ecs_entt {
         , m_asset(std::move(asset)) {
 
         component::register_all_component_descriptors(m_components);
+        m_registry.on_construct<component::mesh>().template connect<&ecs_world::on_mesh_construct>(this);
+        m_registry.on_destroy<component::physics_body>().template connect<&ecs_world::on_physics_body_destroyed>(this);
     }
 
 
@@ -450,7 +452,7 @@ namespace GLT::world::world_ecs_entt {
 
     void ecs_world::update(f32 /*delta_time*/) {
 
-        // The only engine-driven work here is streaming. Game systems run outside the plugin (the concrete world's own update path)
+        sync_physics_to_transforms();
         stream_pass();
     }
 
@@ -626,6 +628,235 @@ namespace GLT::world::world_ecs_entt {
                 return { i, m_slots[i].generation };
         return INVALID_ENTITY;
     }
+
+
+    void ecs_world::set_physics(physics::i_physics* physics) {
+
+        if (m_physics == physics)
+            return;
+
+        // Detach: every entity loses its body — physics pointer is going away
+        if (!physics) {
+            auto view = m_registry.view<component::physics_body>();
+            for (auto e : view) {
+                auto& pb = view.get<component::physics_body>(e);
+                if (pb.body.is_valid() && m_physics)
+                    m_physics->destroy_body(pb.body);
+
+                if (pb.shape.is_valid() && m_physics)
+                    m_physics->release_shape(pb.shape);
+
+                pb.body = {};
+                pb.shape = {};
+            }
+            m_physics = nullptr;
+            return;
+        }
+
+        m_physics = physics;
+
+        // Walk every entity that already has a mesh. Regions activate before this runs in the common case
+        // (instantiate() → init() → activate()); the observer catches everything added afterwards
+        auto view = m_registry.view<component::mesh>();
+        for (auto e : view) {
+            const entity_id id = id_of(e);
+            if (id.is_valid())
+                create_physics_body_for(id);
+        }
+    }
+
+
+    void ecs_world::create_physics_body_for(entity_id id) {
+
+        if (!m_physics)
+            return;
+
+        const entt::entity ent = entt_of(id);
+        if (ent == entt::null)
+            return;
+
+        // Already has a live body? Nothing to do
+        if (const auto* existing = m_registry.try_get<component::physics_body>(ent);
+            existing && existing->body.is_valid())
+            return;
+
+        const auto* mesh_comp = m_registry.try_get<component::mesh>(ent);
+        if (!mesh_comp || !mesh_comp->mesh.valid())
+            return;
+
+        auto* registry = asset::registry::get_ptr();
+        const auto* mesh_asset = registry->data_as<asset::mesh::mesh_asset>(mesh_comp->mesh.get());
+        if (!mesh_asset || mesh_asset->colliders.empty())
+            return;
+
+        // Auto-attach the runtime component. Motion/material mirror the mesh's persisted settings, so a reload
+        // brings the dynamic/static intent back without touching the codec for physics_body itself
+        auto& pb = m_registry.get_or_emplace<component::physics_body>(ent);
+        pb.motion = mesh_comp->motion;
+        pb.material = mesh_comp->physics_material;
+        pb.use_mesh_material = mesh_comp->use_mesh_material;
+
+        // --- build the shape -----------------------------------------------------------------------------------------
+
+        // Compound children need to keep their span-backing storage alive through create_shape(); stash it on the stack
+        struct owned_child {
+            physics::shape_data                 data;
+            std::vector<glm::vec3>              positions;                 // only populated for triangle_mesh
+        };
+        std::vector<owned_child> owned;
+        owned.reserve(mesh_asset->colliders.size());
+
+        for (const auto& c : mesh_asset->colliders) {
+
+            owned_child child;
+            switch (c.shape) {
+                case asset::mesh::collider_shape::sphere:
+                    child.data = c.sphere;
+                    break;
+
+                case asset::mesh::collider_shape::box:
+                    child.data = c.box;
+                    break;
+
+                case asset::mesh::collider_shape::capsule:
+                    child.data = c.capsule;
+                    break;
+
+                case asset::mesh::collider_shape::cylinder:
+                    child.data = c.cylinder;
+                    break;
+
+                case asset::mesh::collider_shape::triangle_mesh:
+                    child.positions.reserve(mesh_asset->vertices.size());
+                    for (const auto& v : mesh_asset->vertices)
+                        child.positions.push_back(v.position);
+                    child.data = physics::triangle_mesh{
+                        .vertices = child.positions,
+                        .indices = mesh_asset->indices
+                    };
+                    break;
+            }
+            owned.push_back(std::move(child));
+        }
+
+        const physics::physics_material material = pb.use_mesh_material ? mesh_asset->colliders[0].material : pb.material;
+
+        std::expected<physics::shape_handle, physics::physics_error> shape_result = std::unexpected(
+            physics::physics_error::internal_error);
+
+        if (owned.size() == 1) {
+            shape_result = m_physics->create_shape({ .data = std::move(owned[0].data), .material = material });
+        } else {
+            auto compound = std::make_shared<physics::compound>();
+            compound->children.reserve(owned.size());
+            for (size_t i = 0; i < owned.size(); ++i) {
+                compound->children.push_back({
+                    std::make_shared<physics::shape_data>(std::move(owned[i].data)),
+                    mesh_asset->colliders[i].local_transform
+                });
+            }
+            physics::shape_data compound_data = compound;
+            shape_result = m_physics->create_shape({ .data = compound_data, .material = material });
+        }
+
+        if (!shape_result)
+            return;
+
+        pb.shape = *shape_result;
+
+        // --- build the body at the entity's current world transform -------------------------------------------------
+
+        const glm::mat4 world = world_transform_of(id);
+
+        physics::body_desc desc{};
+        desc.motion = pb.motion;
+        desc.shape = pb.shape;
+        desc.position = glm::vec3(world[3]);
+        desc.rotation = get_local_rotation_q(id);              // parents are rare on physics entities; refine later
+        desc.linear_damping = 0.02f;
+        desc.angular_damping = 0.05f;
+        desc.entity = id;
+
+        auto body_result = m_physics->create_body(desc);
+        if (!body_result) {
+            m_physics->release_shape(pb.shape);
+            pb.shape = {};
+            return;
+        }
+        pb.body = *body_result;
+    }
+
+
+    void ecs_world::rebuild_physics_body(entity_id id) {
+
+        const entt::entity ent = entt_of(id);
+        if (ent == entt::null)
+            return;
+
+        // Snapshot settings so the fresh component inherits them
+        physics::motion_type motion = physics::motion_type::static_body;
+        physics::physics_material material{};
+        bool use_mesh = true;
+
+        if (const auto* pb = m_registry.try_get<component::physics_body>(ent)) {
+            motion = pb->motion;
+            material = pb->material;
+            use_mesh = pb->use_mesh_material;
+        }
+
+        // remove triggers on_destroy → body + shape released for us
+        m_registry.remove<component::physics_body>(ent);
+
+        auto& fresh = m_registry.emplace<component::physics_body>(ent);
+        fresh.motion = motion;
+        fresh.material = material;
+        fresh.use_mesh_material = use_mesh;
+
+        create_physics_body_for(id);
+    }
+
+
+    void ecs_world::sync_physics_to_transforms() {
+
+        if (!m_physics)
+            return;
+
+        // Batch read is the fast path. Build body list + parallel entity list in one pass
+        std::vector<physics::body_handle> bodies;
+        std::vector<entt::entity> entities;
+
+        auto view = m_registry.view<component::physics_body, component::transform>();
+        bodies.reserve(view.size_hint());
+        entities.reserve(view.size_hint());
+
+        for (auto e : view) {
+            const auto& pb = view.get<component::physics_body>(e);
+            if (!pb.body.is_valid())
+                continue;
+
+            if (pb.motion != physics::motion_type::dynamic_body)
+                continue;
+
+            bodies.push_back(pb.body);
+            entities.push_back(e);
+        }
+
+        if (bodies.empty())
+            return;
+
+        std::vector<physics::body_state> states(bodies.size());
+        m_physics->get_body_states(bodies, states);
+
+        for (size_t i = 0; i < bodies.size(); ++i) {
+
+            if (!states[i].valid)
+                continue;
+
+            auto& transform = m_registry.get<component::transform>(entities[i]);
+            transform.position = states[i].position;
+            transform.rotation = euler_yxz_from_quat(states[i].rotation);
+        }
+    }  
 
     // i_world_inspector -----------------------------------------------------------------------------------------------
 
@@ -810,6 +1041,7 @@ namespace GLT::world::world_ecs_entt {
 
         if (id.index >= m_slots.size())
             return;
+
         slot& slot = m_slots[id.index];
         if (slot.generation != id.generation)
             return;   // stale handle
@@ -885,8 +1117,7 @@ namespace GLT::world::world_ecs_entt {
 
         auto* registry = GLT::asset::registry::get_ptr();
 
-        // We treat region.asset as already resolved (see notes at bottom)
-        VALIDATE(region.asset != INVALID_HANDLE, region.is_active = true; return, 
+        VALIDATE(region.asset != INVALID_HANDLE, region.is_active = true; return,
             "", "region asset handle is unresolved; skipping entity load")
 
         const auto* region_asset = registry->data_as<GLT::asset::region::region_asset>(region.asset);
@@ -896,16 +1127,18 @@ namespace GLT::world::world_ecs_entt {
         state.entities.clear();
 
         if (region_asset->entity_codec == CODEC_ENTT_V1 && !region_asset->entity_data.empty()) {
+
             state.entities = m_codec.load(
                 m_registry,
-                std::span<const std::byte>(region_asset->entity_data),
-                [this](entity_id saved) { return allocate_for_load(saved); });
+                std::span<const std::byte>(region_asset->entity_data), [this](entity_id saved) { return allocate_for_load(saved); });
+
+            if (m_physics) {
+                for (const entity_id id : state.entities)
+                    create_physics_body_for(id);
+            }
         }
 
-        // The entity blob stores parent pointers only. Rebuild the children lists so queries and the editor's outliner see a consistent tree
-        // Cheap: O(loaded entities) per activation, only when the region actually contains hierarchy components
         if (!state.entities.empty()) {
-
             for (const entity_id child : state.entities) {
 
                 auto* hierarchy = m_registry.try_get<component::hierarchy>(entt_of(child));
@@ -1177,7 +1410,7 @@ namespace GLT::world::world_ecs_entt {
             return INVALID_HANDLE;
 
         if (auto h = registry->find(path); h != INVALID_HANDLE) {
-            // find() returns a borrowed handle → bump once for the caller
+            // find() returns a borrowed handle -> bump once for the caller
             registry->retain(h);
             return h;
         }
@@ -1295,6 +1528,33 @@ namespace GLT::world::world_ecs_entt {
         }
 
         m_region_states[target].entities.push_back(id);
+    }
+
+    // observers -------------------------------------------------------------------------------------------------------
+
+    void ecs_world::on_mesh_construct(entt::registry&, entt::entity entity) {
+
+        if (!m_physics)
+            return;
+        const entity_id id = id_of(entity);
+        if (!id.is_valid())
+            return;
+        create_physics_body_for(id);
+    }
+
+
+    void ecs_world::on_physics_body_destroyed(entt::registry& reg, entt::entity entity) {
+
+        // entt still exposes the component during on_destroy. Read the handles, then let the world's own destruction proceed
+        const auto* pb = reg.try_get<component::physics_body>(entity);
+        if (!pb || !m_physics)
+            return;
+
+        if (pb->body.is_valid())
+            m_physics->destroy_body(pb->body);
+
+        if (pb->shape.is_valid())
+            m_physics->release_shape(pb->shape);
     }
 
 }

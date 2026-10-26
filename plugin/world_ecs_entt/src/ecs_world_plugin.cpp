@@ -125,6 +125,13 @@ namespace GLT::world::world_ecs_entt {
                     write_asset_handle(asset_registry, ov, out_bytes);
 
                 out_bytes.push_back(mesh_component.visible ? std::byte{1} : std::byte{0});
+
+                out_bytes.push_back(static_cast<std::byte>(mesh_component.motion));
+
+                const auto* mat_bytes = reinterpret_cast<const std::byte*>(&mesh_component.physics_material);
+                out_bytes.insert(out_bytes.end(), mat_bytes, mat_bytes + sizeof(mesh_component.physics_material));
+
+                out_bytes.push_back(mesh_component.use_mesh_material ? std::byte{1} : std::byte{0});
             },
 
             [](entt::registry& entity_registry, entt::entity entity_handle, std::span<const std::byte> in_bytes) {
@@ -147,6 +154,16 @@ namespace GLT::world::world_ecs_entt {
                     mesh_component.material_overrides.emplace_back(read_asset_handle(asset_registry, in_bytes, offset));
 
                 mesh_component.visible = (in_bytes.size() > offset) ? (in_bytes[offset] != std::byte{0}) : true;
+
+                if (in_bytes.size() > offset)
+                    mesh_component.motion = static_cast<physics::motion_type>(static_cast<u8>(in_bytes[offset++]));
+
+                if (in_bytes.size() >= offset + sizeof(physics::physics_material)) {
+                    std::memcpy(&mesh_component.physics_material, in_bytes.data() + offset, sizeof(physics::physics_material));
+                    offset += sizeof(physics::physics_material);
+                }
+
+                mesh_component.use_mesh_material = (in_bytes.size() > offset) ? (in_bytes[offset] != std::byte{0}) : true;
 
                 // Defence in depth: if the asset is already resident, verify the count.
                 // (If it isn't loaded yet we can't validate here — do it on first submit.)

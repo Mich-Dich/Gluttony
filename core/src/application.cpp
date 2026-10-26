@@ -1,4 +1,3 @@
-
 #include "util/pch.h"
 #include "application.h"
 
@@ -9,10 +8,10 @@
 #include "platform/i_window.h"
 #include "plugin_system/i_game_loop_plugin.h"
 #include "plugin_system/i_audio_plugin.h"
+#include "physics/i_physics_plugin.h"
 #include "config/imgui_config.h"
 #include "asset/i_asset_registry.h"
 #include "world/i_world.h"
-#include "physics/i_physics_plugin.h"
 #include "game/game_layer.h"
 #include "game/game_session.h"
 
@@ -75,11 +74,7 @@ namespace GLT {
             (void)create_scene_renderer(desc);
         }
 
-        if (auto* p_physics = GLT::physics::get_ptr()) {
-            auto result = p_physics->init();
-            VALIDATE(result, , "Physics backend: {}", (p_physics->backend_name()),
-                "Failed to init physics plugin: error {}", (static_cast<int>(result.error())))
-        }
+        VALIDATE(GLT::physics::get_ptr(), , "", "No physics plugin bound")
 
         plugin_manager::enter_phase(plugin_manager::phase::application_ready);
 
@@ -89,12 +84,10 @@ namespace GLT {
 
     application::~application() {
 
-        // world is owned by game_layer -> primary_session -> i_world. Dropping layer-stack releases the world (and its
-        // region handles) before plugins unload
+        // world and physics are owned by game_layer -> sessions -> i_world / i_physics. Dropping the layer stack releases
+        // both, with the world being destroyed before its physics instance (declaration order in game_session makes this
+        // automatic). Plugins unload afterwards and find no live sessions
         m_layer_stack.clear();
-
-        if (auto* physics = GLT::physics::get_ptr())
-            physics->shutdown();
 
         plugin_manager::enter_phase(plugin_manager::phase::pre_application_shutdown);
 

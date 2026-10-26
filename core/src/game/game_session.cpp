@@ -1,4 +1,3 @@
-
 #include "util/pch.h"
 #include "game_session.h"
 
@@ -7,6 +6,8 @@
 #include "world/i_world_scene.h"
 #include "world/controller.h"
 #include "render/i_scene_renderer.h"
+#include "physics/i_physics.h"
+#include "physics/i_physics_plugin.h"
 
 
 
@@ -36,7 +37,21 @@ namespace GLT::game {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    game_session::game_session(session_id id) : m_id(id) { }
+    game_session::game_session(session_id id) : m_id(id) {
+
+        // Physics is eager. If the plugin is loaded, every session gets its own simulation from the get-go — gameplay code
+        // can call session->get_physics() unconditionally and never worry about lazy-init races. If the plugin isn't loaded,
+        // the session simply runs without physics; gameplay code is expected to check get_physics() for null
+        if (auto* phys = physics::get_ptr()) {
+
+            auto result = phys->instantiate();
+            if (result)
+                m_physics = std::move(*result);
+            else
+                LOG(error, "Failed to instantiate physics for session[{}]: {}",
+                    (id.index), (static_cast<int>(result.error())))
+        }
+    }
 
 
     game_session::~game_session() { m_renderers.clear(); }
@@ -70,6 +85,7 @@ namespace GLT::game {
             return std::unexpected(result.error());
 
         m_world = std::move(*result);
+        m_world->set_physics(m_physics.get());
         reset_per_frame_state();
         return {};
     }
@@ -86,6 +102,7 @@ namespace GLT::game {
             return std::unexpected(result.error());
 
         m_world = std::move(*result);
+        m_world->set_physics(m_physics.get());
         reset_per_frame_state();
         return {};
     }
@@ -93,7 +110,16 @@ namespace GLT::game {
 
     void game_session::unload_world() {
 
-        m_world.reset();
+        m_world.reset();                                // destroys bodies while m_physics is still live
+
+        if (m_physics) {
+            if (auto* phys = physics::get_ptr()) {
+                if (auto result = phys->instantiate())
+                    m_physics = std::move(*result);
+                else
+                    LOG(error, "Failed to rebuild physics after world unload: {}", (static_cast<int>(result.error())))
+            }
+        }
         reset_per_frame_state();
     }
 
@@ -172,8 +198,13 @@ namespace GLT::game {
         if (m_paused)
             return;
 
+        // Controller runs first so any input-driven intent lands in the world/ECS state before physics reads it. Physics
+        // runs before world->update so the world's gather step sees this frame's post-physics transforms
         if (m_controller)
             m_controller->update(dt);
+
+        if (m_physics)
+            m_physics->step(dt);
 
         if (!m_world)
             return;

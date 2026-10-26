@@ -11,6 +11,8 @@
 #include <asset/mesh.h>
 #include <world/i_world_plugin.h>
 #include <world/i_world_scene.h>
+#include <game/game_layer.h>
+#include <game/game_session.h>
 
 #include "ecs_world.h"
 
@@ -87,29 +89,32 @@ namespace GLT::world::world_ecs_entt::component {
 
                 auto& mr = world.registry().get<component::mesh>(world.entt_of(id));
 
-                ImGui::PushID("mesh");
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
 
+                const GLT::asset::handle old_mesh_handle = mr.mesh.get();
                 GLT::UI::table_row_asset_picker("Mesh", mr.mesh, GLT::asset::core_types::static_mesh);
+                const bool mesh_changed = mr.mesh.get() != old_mesh_handle;
 
-                // Submesh count only known once the mesh asset is resident
-                u32 submesh_count = 0;
+                // One asset lookup gives us both the submesh count (for material overrides) and whether
+                // the mesh carries authored colliders (which gates the physics section)
+                u32  submesh_count = 0;
+                bool has_colliders = false;
                 if (auto registry = GLT::asset::registry::get_ref(); registry && mr.mesh != INVALID_HANDLE) {
-                    if (const auto* asset = registry->data_as<GLT::asset::mesh::mesh_asset>(mr.mesh))
+                    if (const auto* asset = registry->data_as<GLT::asset::mesh::mesh_asset>(mr.mesh)) {
                         submesh_count = asset->submesh_count();
+                        has_colliders = !asset->colliders.empty();
+                    }
                 }
+
+                // material overrides ----------------------------------------------------------------------------------
 
                 if (submesh_count > 0) {
 
-                    // The codec + begin_override() both keep this invariant; if a hand-edited file slipped through, clear rather
-                    // than rendering with a mismatched vector
                     if (!mr.material_overrides.empty() && !mr.overrides_match(submesh_count))
                         mr.material_overrides.clear();
 
                     if (mr.material_overrides.empty()) {
 
-                        // Zero-override state: one picker that, when set, fills every slot with the same handle. Leaving it at
-                        // INVALID_HANDLE keeps the asset defaults
                         GLT::asset::asset_ref uniform{};
                         if (GLT::UI::table_row_asset_picker("Material Override", uniform, GLT::asset::core_types::material)) {
                             mr.begin_override(submesh_count);
@@ -123,8 +128,7 @@ namespace GLT::world::world_ecs_entt::component {
                             ImGui::PushID(static_cast<int>(i));
                             char label[24];
                             std::snprintf(label, sizeof(label), "Material [%u]", i);
-                            GLT::UI::table_row_asset_picker(label, mr.material_overrides[i],
-                                GLT::asset::core_types::material);
+                            GLT::UI::table_row_asset_picker(label, mr.material_overrides[i], GLT::asset::core_types::material);
                             ImGui::PopID();
                         }
 
@@ -134,8 +138,6 @@ namespace GLT::world::world_ecs_entt::component {
 
                 } else if (!mr.material_overrides.empty()) {
 
-                    // Handle is set but asset isn't resident (or it has zero submeshes) - keep the user's
-                    // overrides and let them clear if they want
                     ImGui::TextDisabled("(%zu pending override slot(s) - mesh asset not loaded)",
                         mr.material_overrides.size());
                     if (GLT::UI::gray_button("Clear material overrides"))
@@ -143,17 +145,65 @@ namespace GLT::world::world_ecs_entt::component {
                 }
 
                 GLT::UI::table_row("visible", mr.visible);
+
+                // ---- physics ----------------------------------------------------------------------------------------
+
+                // Gated on the mesh actually carrying authored colliders. Without colliders there is no body to
+                // configure, and showing inert controls would just confuse the user. Once colliders exist (either
+                // authored up-front or added later), the rows appear automatically on the next draw
+                if (has_colliders) {
+
+                    // Snapshot before edits. The table_row return-value contract isn't uniform across value
+                    // types, so a straight field comparison is the reliable "did it change" test
+                    const physics::motion_type old_motion = mr.motion;
+                    const physics::physics_material old_material = mr.physics_material;
+                    const bool old_use_mesh = mr.use_mesh_material;
+
+                    GLT::UI::table_row("mobility", mr.motion, GLT::util::enum_values<physics::motion_type>);
+                    GLT::UI::table_row("use mesh material", mr.use_mesh_material);
+
+                    if (!mr.use_mesh_material) {
+
+                        // Ranges match the defaults baked into physics_material. Density has a min of 1 because a dynamic body with
+                        // mass 0 is rejected by create_body() — better to clamp at the UI than silently fail inside the body builder
+                        GLT::UI::table_row("friction", mr.physics_material.friction, 0.01f, 0.f, 10.f);
+                        GLT::UI::table_row("restitution", mr.physics_material.restitution, 0.01f, 0.f, 1.f);
+                        GLT::UI::table_row("density", mr.physics_material.density, 1.f, 1.f, 100000.f);
+                    }
+
+                    const bool motion_changed   = mr.motion != old_motion;
+                    const bool material_changed = mr.use_mesh_material != old_use_mesh ||
+                        mr.physics_material.friction != old_material.friction ||
+                        mr.physics_material.restitution != old_material.restitution ||
+                        mr.physics_material.density != old_material.density;
+
+                    // Any change to shape or motion means the Jolt body must be rebuilt (motion type and material are
+                    // baked into a Jolt body at create time). Guarded on world.get_physics() so editing fields on a
+                    // world that never got a physics instance stays a pure data edit — the settings persist through
+                    // save/reload and apply the next time physics is present
+                    if ((mesh_changed || motion_changed || material_changed) && world.get_physics())
+                        world.rebuild_physics_body(id);
+                }
+
                 GLT::UI::end_table();
-                ImGui::PopID();
             },
 
             [](ecs_world& world, entity_id id) {      // outliner summary
 
                 const auto& mr = world.registry().get<component::mesh>(world.entt_of(id));
-                if (mr.material_overrides.empty())
-                    return std::string{};
-                char buf[32];
-                std::snprintf(buf, sizeof(buf), "(%zu overrides)", mr.material_overrides.size());
+
+                const char* motion_tag = nullptr;
+                if (mr.motion == physics::motion_type::dynamic_body)        motion_tag = "dyn";
+                else if (mr.motion == physics::motion_type::kinematic_body) motion_tag = "kin";
+
+                char buf[64] = {};
+                if (motion_tag && !mr.material_overrides.empty())
+                    std::snprintf(buf, sizeof(buf), "[%s] (%zu overrides)", motion_tag, mr.material_overrides.size());
+                else if (motion_tag)
+                    std::snprintf(buf, sizeof(buf), "[%s]", motion_tag);
+                else if (!mr.material_overrides.empty())
+                    std::snprintf(buf, sizeof(buf), "(%zu overrides)", mr.material_overrides.size());
+
                 return std::string(buf);
             },
 
@@ -246,26 +296,24 @@ namespace GLT::world::world_ecs_entt::component {
 
                 auto& cam = world.registry().get<component::camera>(world.entt_of(id));
 
-                ImGui::PushID("camera");
+                // ImGui::PushID("camera");
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
+
                 GLT::UI::table_row("fov", cam.fov, 0.5f, 1.f, 179.f);
                 GLT::UI::table_row("near plane", cam.near_plane, 0.01f, 0.001f, 100.f);
                 GLT::UI::table_row("far plane", cam.far_plane, 1.f, 0.01f, 100000.f);
 
-                auto* plugin = GLT::world::manager::get_ptr();
-                VALIDATE(plugin, return, "", "world plugin not available")
-                if (auto* scene = plugin->as<GLT::world::i_world_scene>()) {
+                // Null-safe: skip the row if the scene interface isn't available, but DON'T early-return —
+                // end_table() and PopID() below must always run to keep the ImGui stack balanced
 
-                    bool is_active = (scene->get_active_camera() == id);
-                    if (GLT::UI::table_row("active camera", is_active))
-                        scene->set_active_camera(is_active ? id : INVALID_ENTITY);
-                }
+                auto* primary_session = GLT::application::get().get_game_layer_ptr()->get_primary_session();
+                bool is_active = (primary_session->get_editor_camera() == id);
+                if (GLT::UI::table_row("active camera", is_active))
+                    primary_session->set_editor_camera(is_active ? id : INVALID_ENTITY);
 
                 GLT::UI::end_table();
-                ImGui::PopID();
+                // ImGui::PopID();
 
-                // Keep the near/far invariant consistent regardless of which row the user dragged. Same pattern as the audio descriptor's
-                // min/max-distance clamp.
                 cam.near_plane = GLT::math::clamp(cam.near_plane, 0.001f, cam.far_plane);
             },
 
@@ -277,8 +325,7 @@ namespace GLT::world::world_ecs_entt::component {
                 return std::string(buf);
             },
 
-            // A camera is meaningless without a transform to position it —
-            // identical reasoning to mesh_renderer's required list.
+            // A camera is meaningless without a transform to position it, identical reasoning to mesh_renderer's required list
             { component_name_hash("transform") });
     }
 

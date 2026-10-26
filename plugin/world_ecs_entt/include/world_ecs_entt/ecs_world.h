@@ -41,7 +41,7 @@ namespace GLT::world::world_ecs_entt {
         // handles, sets up streaming state. Failures abort instantiation.
         [[nodiscard]] std::expected<void, asset::load_error> init();
 
-        // ---- i_world --------------------------------------------------------
+        // i_world -----------------------------------------------------------------------------------------------------
         [[nodiscard]] const asset::asset_ref& asset() const noexcept override { return m_asset; }
         [[nodiscard]] asset::handle asset_handle() const noexcept override     { return m_asset.get(); }
 
@@ -84,7 +84,7 @@ namespace GLT::world::world_ecs_entt {
         void set_parent(entity_id child, entity_id parent) override;
         [[nodiscard]] entity_id parent_of(entity_id id) const noexcept override;
 
-        // ---- extension API (entity_builder, component_registry) -------------
+        // extension API (entity_builder, component_registry) ----------------------------------------------------------
         [[nodiscard]] entt::registry& registry() noexcept             { return m_registry; }
         [[nodiscard]] const entt::registry& registry() const noexcept { return m_registry; }
 
@@ -94,14 +94,21 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] entt::entity entt_of(entity_id id) const noexcept;
         [[nodiscard]] entity_id id_of(entt::entity e) const noexcept;
 
-        // ---- i_world_inspector ----------------------------------------------
+        // physics -----------------------------------------------------------------------------------------------------
+        void set_physics(physics::i_physics* physics);
+        [[nodiscard]] physics::i_physics* get_physics() const noexcept { return m_physics; }
+        void create_physics_body_for(entity_id id);
+        void rebuild_physics_body(entity_id id);                                // destroy + create (motion change, mesh swap)
+        void sync_physics_to_transforms();                                      // post-step: body_state → component::transform
+
+        // i_world_inspector -------------------------------------------------------------------------------------------
         [[nodiscard]] std::span<const component_descriptor> descriptors() const noexcept override;
         [[nodiscard]] std::vector<const component_descriptor*> components_on(entity_id id) const override;
         bool add_component(entity_id id, u64 hash) override;
         bool remove_component(entity_id id, u64 hash) override;
         void copy_components(entity_id from, entity_id to) override;
 
-        // ---- i_world_scene --------------------------------------------------
+        // i_world_scene -----------------------------------------------------------------------------------------------
         void gather_scene(std::vector<asset::mesh::instance>& out) const override;
         void gather_lights(std::vector<light_snapshot>& out) const override;
         void gather_entity_positions(std::vector<entity_position>& out) const override;
@@ -157,11 +164,14 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] UUID ensure_region_for_cell(const glm::ivec3& cell);
         void assign_entity_to_cell(entity_id id);
 
-        // ---- state ----------------------------------------------------------
+        // observers ---------------------------------------------------------------------------------------------------
+        void on_mesh_construct(entt::registry& reg, entt::entity entity);
+        void on_physics_body_destroyed(entt::registry& reg, entt::entity entity);
+
+
         ecs_world_plugin&                               m_plugin;
         const entity_codec&                             m_codec;            // borrowed from plugin (stateless)
         component_registry                              m_components;       // per-instance, descriptors capture this
-
         asset::asset_ref                                m_asset;            // owns one ref to the .glt_world
         entt::registry                                  m_registry;
         std::vector<asset::region::region>              m_regions;
@@ -172,7 +182,10 @@ namespace GLT::world::world_ecs_entt {
         f32                                             m_streaming_radius{ 1024.f };
         entity_id                                       m_active_camera{ INVALID_ENTITY };
         glm::vec3                                       m_region_cell_size{ 256.f, 256.f, 256.f };
+        physics::i_physics*                             m_physics = nullptr;
+
     };
+
 }
 
 #include "entity_builder.inl"

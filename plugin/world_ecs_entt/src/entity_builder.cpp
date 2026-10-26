@@ -94,6 +94,47 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
+    entity_builder& entity_builder::set_motion(physics::motion_type motion) {
+
+        const auto e = m_world->entt_of(m_id);
+
+        // Persist the intent on the mesh component, so a save/reload keeps dynamic bodies dynamic. The
+        // runtime physics_body mirrors this — see ecs_world::create_physics_body_for()
+        if (auto* mesh_comp = m_world->registry().try_get<component::mesh>(e))
+            mesh_comp->motion = motion;
+
+        if (auto* pb = m_world->registry().try_get<component::physics_body>(e)) {
+
+            if (!pb->body.is_valid())                   // Fast path: field change only, body doesn't exist yet
+                pb->motion = motion;
+            else if (pb->motion != motion)              // Slow path: rebuild the body (motion type is fixed per body in Jolt)
+                m_world->rebuild_physics_body(m_id);
+        }
+
+        return *this;
+    }
+
+
+    entity_builder& entity_builder::set_physics_material(const physics::physics_material& mat, bool use_mesh_material) {
+
+        const auto e = m_world->entt_of(m_id);
+
+        if (auto* mesh_comp = m_world->registry().try_get<component::mesh>(e)) {
+            mesh_comp->physics_material = mat;
+            mesh_comp->use_mesh_material = use_mesh_material;
+        }
+
+        if (auto* pb = m_world->registry().try_get<component::physics_body>(e)) {
+            pb->material = mat;
+            pb->use_mesh_material = use_mesh_material;
+            if (pb->body.is_valid())
+                m_world->rebuild_physics_body(m_id);                    // material is baked into the shape
+        }
+
+        return *this;
+    }
+
+
     entity_builder& entity_builder::parent(entity_id p) {
 
         m_world->set_parent(m_id, p);

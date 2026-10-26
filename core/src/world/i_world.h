@@ -1,17 +1,12 @@
 #pragma once
 
-#include <expected>
-#include <filesystem>
-#include <span>
-#include <string_view>
-#include <vector>
-
 #include <glm/glm.hpp>
 
 #include "asset/type.h"
 #include "asset/asset_ref.h"
 #include "asset/region.h"
 #include "world/entity.h"
+#include "physics/i_physics.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -49,14 +44,22 @@ namespace GLT::world {
     public:
         virtual ~i_world() = default;
 
-        // ---- identity -------------------------------------------------------
+        // identity ----------------------------------------------------------------------------------------------------
 
         // Underlying .glt_world asset. Invalid for a world created via create_empty()
         // until save_as() mints an asset for it
         [[nodiscard]] virtual const asset::asset_ref& asset() const noexcept = 0;
         [[nodiscard]] virtual asset::handle asset_handle() const noexcept = 0;
 
-        // ---- persistence ----------------------------------------------------
+        // physics -----------------------------------------------------------------------------------------------------
+
+        // Give this world a physics simulation to drive. Passing nullptr detaches. Sessions call this once per world,
+        // after the world has been instantiated and its regions resolved. The world walks any entities already carrying
+        // mesh components and creates matching rigid bodies; from then on every newly added mesh with colliders gets
+        // a body automatically. Worlds that don't care about physics just keep the default no-op
+        virtual void set_physics(GLT::physics::i_physics* /*physics*/) {}
+    
+        // persistence -------------------------------------------------------------------------------------------------
 
         // Persist back to the world's canonical path. Fails with not_found when no asset is bound
         [[nodiscard]] virtual std::expected<void, asset::load_error> save() = 0;
@@ -65,12 +68,12 @@ namespace GLT::world {
         // (this is Save-As on a never-saved world). If one is already bound elsewhere, migrates
         [[nodiscard]] virtual std::expected<void, asset::load_error> save_as(const std::filesystem::path& path) = 0;
 
-        // ---- entity lifecycle ----------------------------------------------
+        // entity lifecycle -------------------------------------------------------------------------------------------
         [[nodiscard]] virtual entity_id spawn() = 0;
         virtual void despawn(entity_id id) noexcept = 0;
         [[nodiscard]] virtual bool alive(entity_id id) const noexcept = 0;
 
-        // ---- transform ------------------------------------------------------
+        // transform ---------------------------------------------------------------------------------------------------
         [[nodiscard]] virtual glm::vec3 get_local_position(entity_id id) const = 0;
         [[nodiscard]] virtual glm::vec3 get_local_rotation(entity_id id) const = 0;
         virtual void translate_local(entity_id id, const glm::vec3& local_delta) = 0;
@@ -80,27 +83,27 @@ namespace GLT::world {
         [[nodiscard]] virtual glm::vec3 get_local_scale(entity_id id) const = 0;
         virtual void set_local_scale(entity_id id, const glm::vec3& scale) = 0;
 
-        // ---- region queries -------------------------------------------------
+        // region queries ----------------------------------------------------------------------------------------------
         [[nodiscard]] virtual std::span<const asset::region::region> regions() const noexcept = 0;
         [[nodiscard]] virtual const asset::region::region* region_at(const glm::vec3& point) const noexcept = 0;
         [[nodiscard]] virtual bool is_region_active(UUID id) const noexcept = 0;
         virtual void set_region_active(UUID id, bool active) = 0;
 
-        // ---- streaming ------------------------------------------------------
+        // streaming ---------------------------------------------------------------------------------------------------
         virtual void set_streaming_anchor(const glm::vec3& position) = 0;
         [[nodiscard]] virtual glm::vec3 get_streaming_anchor() const noexcept = 0;
         virtual void set_streaming_radius(f32 radius) = 0;
         [[nodiscard]] virtual f32 get_streaming_radius() const noexcept = 0;
 
-        // ---- per-frame ------------------------------------------------------
+        // per-frame ---------------------------------------------------------------------------------------------------
         virtual void update(f32 delta_time) = 0;
 
-        // ---- region grid ----------------------------------------------------
+        // region grid -------------------------------------------------------------------------------------------------
         [[nodiscard]] virtual glm::vec3 get_region_cell_size() const noexcept = 0;
         virtual void set_region_cell_size(const glm::vec3& size) = 0;
         virtual void reassign_all_entities() = 0;
 
-        // ---- hierarchy (defaults cover flat worlds) -------------------------
+        // hierarchy (defaults cover flat worlds) ----------------------------------------------------------------------
         [[nodiscard]] virtual std::vector<entity_id> root_entities() const { return {}; }
         [[nodiscard]] virtual std::vector<entity_id> children_of(entity_id /*id*/) const { return {}; }
         [[nodiscard]] virtual std::string_view entity_name(entity_id /*id*/) const { return {}; }
@@ -108,7 +111,7 @@ namespace GLT::world {
         virtual void set_parent(entity_id /*child*/, entity_id /*parent*/) {}
         [[nodiscard]] virtual entity_id parent_of(entity_id /*id*/) const noexcept { return INVALID_ENTITY; }
 
-        // ---- capability access ----------------------------------------------
+        // capability access -------------------------------------------------------------------------------------------
         // Concrete worlds opt into extra interfaces (i_world_scene, i_world_inspector) by
         // inheriting them. Callers reach them via `world.as<...>()`
         template<typename T> [[nodiscard]] T* as() noexcept { return dynamic_cast<T*>(this); }

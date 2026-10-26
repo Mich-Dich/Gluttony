@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "asset/type.h"
@@ -12,6 +11,10 @@
 
 
 // FORWARD DECLARATIONS ================================================================================================
+
+namespace GLT::physics {
+    class i_physics;
+}
 
 namespace GLT::world  {
     class i_world;
@@ -39,9 +42,9 @@ namespace GLT::game {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // One isolated instance of the game. Owns everything that must not bleed across instances (world, controller, scratch buffers, sim clock)
-    // Does NOT own renderers, those are attached by whoever created them (application / editor viewport / sim-window spawner) and destroyed
-    // by the same party
+    // One isolated instance of the game. Owns everything that must not bleed across instances (world, physics, controller,
+    // scratch buffers, sim clock). Does NOT own renderers — those are attached by whoever created them (application / editor
+    // viewport / sim-window spawner) and destroyed by the same party
     class game_session final {
     public:
 
@@ -50,9 +53,16 @@ namespace GLT::game {
 
         // Fallback camera + streaming-anchor source. If INVALID, falls back to scene->get_active_camera() at resolve time
         DEFAULT_GETTER_SETTER(world::entity_id,                 primary_camera)
+        DEFAULT_GETTER_SETTER(world::entity_id,                 editor_camera)
 
         // identity ----------------------------------------------------------------------------------------------------
         [[nodiscard]] session_id get_id() const noexcept { return m_id; }
+
+        // physics -----------------------------------------------------------------------------------------------------
+        // Null when the physics plugin isn't loaded. Physics instances are eagerly created in the ctor and destroyed with
+        // the session — their lifetime mirrors the session exactly. Eager construction means gameplay code can assume
+        // physics is available the moment a session exists
+        [[nodiscard]] physics::i_physics* get_physics() const noexcept { return m_physics.get(); }
 
         // world -------------------------------------------------------------------------------------------------------
         [[nodiscard]] world::i_world* get_world() const noexcept { return m_world.get(); }
@@ -108,10 +118,17 @@ namespace GLT::game {
 
 
         session_id                                              m_id{};
+
+        // IMPORTANT: declaration order. Reverse-declaration destruction order means m_world dies BEFORE m_physics. That's
+        // intentional — once the world↔physics bridge lands (Phase 4), the world will own body handles and must destroy
+        // them while its i_physics instance is still alive
+        unique_ref<physics::i_physics>                          m_physics{};
         unique_ref<world::i_world>                              m_world{};
+
         ref<world::controller>                                  m_controller{};
         std::vector<renderer_slot>                              m_renderers{};
         GLT::world::entity_id                                   m_primary_camera{};
+        GLT::world::entity_id                                   m_editor_camera{};
         f32                                                     m_sim_time = 0.f;
         f32                                                     m_sim_delta = 0.f;
         bool                                                    m_paused = false;
