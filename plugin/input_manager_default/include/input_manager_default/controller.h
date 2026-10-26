@@ -4,6 +4,8 @@
 #include <event/event_bus.h>
 #include <event/input_event.h>
 #include <world/controller.h>
+#include <world/entity.h>
+#include <game/game_session.h>
 
 #include "type.h"
 
@@ -54,7 +56,6 @@ namespace GLT::input::input_manager_default {
         bool                                            mouse_entered = false;
     };
 
-
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -66,28 +67,28 @@ namespace GLT::input::input_manager_default {
     class controller : public GLT::world::controller {
     public:
 
-        controller();
+        controller(GLT::game::game_session* session);
         virtual ~controller();
 
         DELETE_COPY_CONSTRUCTOR(controller)
 
-        // -- configuration ------------------------------------------------------
+        // configuration -----------------------------------------------------------------------------------------------
 
-        // Register a new action. Returns a stable handle for querying / removal. `action::name` is retained for debug UI and serialization only.
+        // Register a new action. Returns a stable handle for querying / removal. `action::name` is retained for debug UI and serialization only
         [[nodiscard]] handle add_action(action action);
 
-        // Remove an action. All outstanding handles for that action become invalid.
+        // Remove an action. All outstanding handles for that action become invalid
         void remove_action(handle handle);
 
         void clear_actions();
 
-        // -- per-frame step -----------------------------------------------------
+        // per-frame step ----------------------------------------------------------------------------------------------
 
         // Evaluate all actions from the raw input snapshot. Derived controllers that override this MUST call controller::update(dt) 
-        // somewhere in their own implementation to keep action state in sync.
+        // somewhere in their own implementation to keep action state in sync
         virtual void update(f32 dt);
 
-        // -- read-only query surface for scripts --------------------------------
+        // read-only query surface for scripts -------------------------------------------------------------------------
 
         [[nodiscard]] bool is_active(::handle handle) const;
 
@@ -103,11 +104,15 @@ namespace GLT::input::input_manager_default {
 
         [[nodiscard]] f32 get_held_time(::handle handle) const;
 
-        // -- raw access (rare) --------------------------------------------------
+        // raw access (rare) -------------------------------------------------------------------------------------------
 
         [[nodiscard]] bool is_key_down(GLT::key_code code) const;
 
         [[nodiscard]] bool is_mouse_down(GLT::key_code code) const;
+
+    protected:
+
+        GLT::game::game_session*                        m_session{};
 
     private:
 
@@ -138,7 +143,7 @@ namespace GLT::input::input_manager_default {
         [[nodiscard]] action_slot* find(::handle handle);
 
         // Event handlers - never mark events as handled; other subscribers
-        // (debug overlays, replay recorders, …) may still want them.
+        // (debug overlays, replay recorders, …) may still want them
         void on_key_event(GLT::key_event& event);
 
         void on_mouse_event(GLT::mouse_event& event);

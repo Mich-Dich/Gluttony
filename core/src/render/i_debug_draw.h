@@ -2,8 +2,7 @@
 #pragma once
 
 #include "util/pch.h"
-#include "plugin_system/i_plugin.h"
-#include "render/i_renderer.h"
+#include "asset/type.h"
 #include "world/entity.h"
 
 
@@ -117,19 +116,19 @@ namespace GLT::render {
 
         // Draws a wireframe sphere as three great circles in the XY, XZ and YZ planes
         void sphere(const glm::vec3& center, const f32 radius, const glm::vec4& color = { 1.f, 1.f, 1.f, 1.f },
-            const f32 lifetime = 0.f, const bool depth_test = true, const u32 segments = 16);
+            const f32 lifetime = 0.f, const bool depth_test = true, const u32 segments = 32);
 
 
         // Draws a wireframe capsule: two end circles, N side lines, and quarter-circle arcs on each hemispherical cap
         void capsule(const glm::vec3& a, const glm::vec3& b, const f32 radius, const glm::vec4& color = { 1.f, 1.f, 1.f, 1.f },
-            const f32 lifetime = 0.f, const bool depth_test = true, const u32 segments = 12);
+            const f32 lifetime = 0.f, const bool depth_test = true, const u32 segments = 32);
 
 
         // Draws a wireframe cone. Apex at [origin], axis along [direction] (may be unnormalised)
         // [angle] is the half-angle in radians; [distance] is apex-to-base distance
         void cone(const glm::vec3& origin, const glm::vec3& direction, const f32 angle, const f32 distance,
             const glm::vec4& color = { 1.f, 1.f, 1.f, 1.f }, const f32 lifetime = 0.f, const bool depth_test = true,
-            const u32 segments = 16);
+            const u32 segments = 32);
 
         // lifecycle ---------------------------------------------------------------------------------------------------
 

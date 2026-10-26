@@ -1126,7 +1126,7 @@ namespace GLT::editor {
                 if (registry) {
                     const auto target = m_pending_rename_path.parent_path() / m_rename_buffer;
                     if (auto res = registry->move(m_pending_rename_path, target); !res) {
-                        LOG(warn, "content_browser: rename [{}] -> [{}] failed (error {})",
+                        LOG(warn, "rename [{}] -> [{}] failed (error {})",
                             m_pending_rename_path.generic_string(), target.generic_string(), GLT::util::enum_to_string(res.error()));
                     }
                 }
@@ -1314,7 +1314,7 @@ namespace GLT::editor {
 
             // Ask the registry which factories can handle this file.
             auto bindings = registry->candidate_imports(src);
-            VALIDATE(!bindings.empty(), continue, "", "content_browser: no factory for [{}]", (src.generic_string()))
+            VALIDATE(!bindings.empty(), continue, "", "no factory for [{}]", (src.generic_string()))
 
             // Pick a target type. If multiple candidates, prompt (deferred to a
             // modal - for now take the first one).
@@ -1369,7 +1369,7 @@ namespace GLT::editor {
             candidate = m_current_dir / ("New Folder " + std::to_string(suffix));
 
         GLT::vfs::create_directory(candidate, error);
-        VALIDATE(!error, return, "", "content_browser: failed to create folder [{}]", (candidate.generic_string()))
+        VALIDATE(!error, return, "", "failed to create folder [{}]", (candidate.generic_string()))
 
         m_entries_dirty = true;
 
@@ -1385,8 +1385,8 @@ namespace GLT::editor {
 
     void content_browser_window::create_material() {
 
-        auto registry = GLT::asset::registry::get_ref();
-        VALIDATE(registry, return, "", "content_browser: no asset registry")
+        auto* registry = GLT::asset::registry::get_ptr();
+        VALIDATE(registry, return, "", "no asset registry")
 
         // The picker speaks project-relative paths; m_current_dir is absolute. extract_path_from_project_content_dir gives us the registry's dialect
         const std::string stem = "New Material";
@@ -1405,7 +1405,7 @@ namespace GLT::editor {
         }
 
         VALIDATE(!relative_target.empty(), return, "",
-            "content_browser: could not find a free filename for a new material in [{}]", (m_current_dir.generic_string()))
+            "could not find a free filename for a new material in [{}]", (m_current_dir.generic_string()))
 
         // ---- build in-memory material ---------------------------------------
         auto asset = GLT::create_unique_ref<GLT::asset::material::material_asset>();
@@ -1414,24 +1414,20 @@ namespace GLT::editor {
         asset->name = relative_target.stem().string();
 
         // ---- register + persist -------------------------------------------------
+
         auto registered = registry->register_runtime(std::move(asset), relative_target, relative_target.stem().string());
-
         VALIDATE(registered.has_value(), return, 
-            "", "content_browser: register_runtime failed for [{}]", (relative_target.generic_string()))
+            "", "register_runtime failed for [{}]", (relative_target.generic_string()))
 
-        auto save_result = registry->save(*registered);
-        if (!save_result) {
+        if (auto save_result = registry->save(*registered); !save_result) {
 
-            LOG(error, "content_browser: failed to write new material [{}] (error {})",
+            LOG(error, "failed to write new material [{}] (error {})",
                 relative_target.generic_string(), static_cast<int>(save_result.error()));
-
-            // The slot exists only in memory; drop it so a retry doesn't collide
-            registry->unload(*registered);
+            // `registered` is an asset_ref, its destructor releases the slot
             return;
         }
 
-        LOG(info, "content_browser: created new material [{}]", relative_target.generic_string());
-
+        LOG(info, "created new material [{}]", relative_target.generic_string());
         m_entries_dirty = true;
 
         // Open the editor. Same event the double-click path uses, so the registry lookup, docking, and editor dispatch all stay consistent
@@ -1451,7 +1447,7 @@ namespace GLT::editor {
             return;
 
         auto registry = GLT::asset::registry::get_ref();
-        VALIDATE(registry, return, "", "content_browser: no asset registry");
+        VALIDATE(registry, return, "", "no asset registry");
 
         bool any_moved = false;
 
@@ -1485,12 +1481,12 @@ namespace GLT::editor {
             }
 
             if (auto res = registry->move(src, dst); !res) {
-                LOG(warn, "content_browser: failed to move [{}] -> [{}] (error {})", src.generic_string(), dst.generic_string(), 
+                LOG(warn, "failed to move [{}] -> [{}] (error {})", src.generic_string(), dst.generic_string(), 
                     static_cast<int>(res.error()));
                 continue;
             }
 
-            LOG(info, "content_browser: moved [{}] -> [{}]", src.generic_string(), dst.generic_string());
+            LOG(info, "moved [{}] -> [{}]", src.generic_string(), dst.generic_string());
             any_moved = true;
         }
 

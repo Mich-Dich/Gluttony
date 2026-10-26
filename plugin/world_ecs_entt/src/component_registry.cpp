@@ -1,33 +1,8 @@
-
 #include "util/pch.h"
 #include "component_registry.h"
-
-#include "world.h"
-
-
-
-// FORWARD DECLARATIONS ================================================================================================
+#include "ecs_world.h"
 
 namespace GLT::world::world_ecs_entt {
-
-    // CONSTANTS =======================================================================================================
-
-    // MACROS ==========================================================================================================
-
-    // TYPES ===========================================================================================================
-
-    // STATIC VARIABLES ================================================================================================
-
-    // INTERNAL TEMPLATE DECLARATION ===================================================================================
-
-    // INTERNAL FUNCTION DECLARATION ===================================================================================
-
-    // Adds every component in [required] that the entity doesn't already have, existing instances are left alone
-    void ensure_required(const std::vector<GLT::world::component_descriptor>& descriptors, const std::vector<u64>& required, entity_id id);
-
-    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
-
-    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
     void ensure_required(const std::vector<GLT::world::component_descriptor>& descriptors, const std::vector<u64>& required, entity_id id) {
 
@@ -35,94 +10,65 @@ namespace GLT::world::world_ecs_entt {
 
             const GLT::world::component_descriptor* req = nullptr;
             for (const auto& d : descriptors)
-                if (d.hash == req_hash) {
-                    req = &d;
-                    break;
-                }
+                if (d.hash == req_hash) { req = &d; break; }
 
-            if (!req || !req->add || !req->has)
-                continue;
-
-            if (!req->has(id))
-                req->add(id);
+            if (!req || !req->add || !req->has) continue;
+            if (!req->has(id)) req->add(id);
         }
     }
 
-    // TEMPLATE IMPLEMENTATION =========================================================================================
 
-    // FUNCTION IMPLEMENTATION =========================================================================================
+    component_registry::component_registry(ecs_world& world) noexcept
+        : m_world(world) { }
 
-    // CLASS IMPLEMENTATION ============================================================================================
 
-    component_registry::component_registry(ecs_world_plugin& plugin) noexcept
-        : m_plugin(plugin) { }
-
-    // CLASS PUBLIC ====================================================================================================
-
-    std::span<const GLT::world::component_descriptor> component_registry::all() const noexcept { return m_descriptors; }
+    std::span<const GLT::world::component_descriptor> component_registry::all() const noexcept {
+        return m_descriptors;
+    }
 
 
     const GLT::world::component_descriptor* component_registry::find(u64 hash) const noexcept {
-
         for (const auto& d : m_descriptors)
-            if (d.hash == hash)
-                return &d;
+            if (d.hash == hash) return &d;
         return nullptr;
     }
 
 
     std::vector<const GLT::world::component_descriptor*> component_registry::on(entity_id id) const {
-
         std::vector<const GLT::world::component_descriptor*> out;
         out.reserve(m_descriptors.size());
         for (const auto& d : m_descriptors)
-            if (d.has && d.has(id))
-                out.push_back(&d);
+            if (d.has && d.has(id)) out.push_back(&d);
         return out;
     }
 
 
     bool component_registry::add(entity_id id, u64 hash) {
-
         const auto* d = find(hash);
-        if (!d || !d->add || !m_plugin.alive(id))
-            return false;
-        if (d->has(id))
-            return false;                          // already present
+        if (!d || !d->add || !m_world.alive(id)) return false;
+        if (d->has(id)) return false;
 
         ensure_required(m_descriptors, d->required, id);
-
         d->add(id);
         return true;
     }
 
 
     bool component_registry::remove(entity_id id, u64 hash) {
-
         const auto* d = find(hash);
-        if (!d || !d->remove || !m_plugin.alive(id))
-            return false;
-        if (d->can_remove && !d->can_remove(id))
-            return false;
+        if (!d || !d->remove || !m_world.alive(id)) return false;
+        if (d->can_remove && !d->can_remove(id)) return false;
         d->remove(id);
         return true;
     }
 
 
     void component_registry::copy(entity_id from, entity_id to) {
-
         for (const auto* d : on(from)) {
-
-            if (!d->add || d->has(to))
-                continue;
-
+            if (!d->add || d->has(to)) continue;
             ensure_required(m_descriptors, d->required, to);
             d->add(to);
         }
     }
-
-    // CLASS PROTECTED =================================================================================================
-
-    // CLASS PRIVATE ===================================================================================================
 
 }

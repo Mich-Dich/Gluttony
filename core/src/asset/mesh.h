@@ -66,6 +66,7 @@ namespace GLT::asset::mesh {
     struct instance {
 
         GLT::asset::handle                              mesh{ INVALID_HANDLE };
+        u32                                             procedural_mesh = 0;
         glm::mat4                                       transform{ 1.0f };
         u32                                             flags{ 0 };                     // reserved (frustum-cull bits, etc.)
         std::vector<GLT::asset::handle>                 material_overrides{};

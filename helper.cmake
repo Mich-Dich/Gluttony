@@ -231,7 +231,7 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
         $<$<COMPILE_LANGUAGE:CXX>:-freflection>
         $<$<COMPILE_LANGUAGE:CXX>:-ftemplate-depth=512>
         $<$<COMPILE_LANGUAGE:CXX>:-fdiagnostics-color=always>
-        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g1>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g3>
     )
 endfunction()
 

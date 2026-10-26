@@ -120,10 +120,10 @@ namespace GLT::render {
         // A renderer plugin registers concrete factories for each constructor
         // overload on load, so create_unique_ref<image>(...) transparently
         // produces the active backend's derived type instead of this placeholder
-        using default_factory_fn = std::unique_ptr<image>(*)();
-        using size_factory_fn = std::unique_ptr<image>(*)(const glm::uvec3&);
-        using data_factory_fn = std::unique_ptr<image>(*)(const void*, const u32, const u32, const bool);
-        using path_factory_fn = std::unique_ptr<image>(*)(const std::filesystem::path&, bool);
+        using default_factory_fn = GLT::unique_ref<image>(*)();
+        using size_factory_fn = GLT::unique_ref<image>(*)(const glm::uvec3&);
+        using data_factory_fn = GLT::unique_ref<image>(*)(const void*, const u32, const u32, const bool);
+        using path_factory_fn = GLT::unique_ref<image>(*)(const std::filesystem::path&, bool);
 
 
         // @brief Set of function pointers the active backend installs to
@@ -149,13 +149,13 @@ namespace GLT::render {
 
         // @brief Constructs a default (uninitialized) image
         // @return Owning pointer to the newly-constructed image
-        [[nodiscard]] static std::unique_ptr<image> create_instance();
+        [[nodiscard]] static GLT::unique_ref<image> create_instance();
 
 
         // @brief Constructs an image with the given dimensions
         // @param size  Initial size in pixels
         // @return Owning pointer to the newly-constructed image
-        [[nodiscard]] static std::unique_ptr<image> create_instance(const glm::uvec3& size);
+        [[nodiscard]] static GLT::unique_ref<image> create_instance(const glm::uvec3& size);
 
 
         // @brief Constructs an image from a raw pixel buffer
@@ -164,14 +164,14 @@ namespace GLT::render {
         // @param height     Image height, in pixels
         // @param mipmapped  Whether the image should allocate a mip chain
         // @return Owning pointer to the newly-constructed image
-        [[nodiscard]] static std::unique_ptr<image> create_instance(const void* data, const u32 width, const u32 height, const bool mipmapped = false);
+        [[nodiscard]] static GLT::unique_ref<image> create_instance(const void* data, const u32 width, const u32 height, const bool mipmapped = false);
 
 
         // @brief Constructs an image by loading it from disk
         // @param path       Image file to load
         // @param mipmapped  Whether the image should allocate a mip chain
         // @return Owning pointer to the newly-constructed image
-        [[nodiscard]] static std::unique_ptr<image> create_instance(const std::filesystem::path& path, bool mipmapped = false);
+        [[nodiscard]] static GLT::unique_ref<image> create_instance(const std::filesystem::path& path, bool mipmapped = false);
 
 
         #if defined(DEBUG)

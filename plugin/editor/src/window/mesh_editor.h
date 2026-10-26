@@ -1,13 +1,15 @@
-
 #pragma once
 
 #include <imgui.h>
+#include <ImGuizmo.h>
 
 #include <asset/type.h>
+#include <asset/asset_ref.h>
 #include <asset/mesh.h>
 #include <render/i_renderer.h>
 #include <render/i_debug_draw.h>
-#include <render/i_preview.h>
+#include <physics/material.h>
+#include <physics/shape.h>
 
 #include "window/base/asset_editor.h"
 
@@ -16,28 +18,69 @@
 // FORWARD DECLARATIONS ================================================================================================
 
 namespace GLT::render {
-    class i_preview;
+    class i_scene_renderer;
     class i_debug_draw;
 }
 
 namespace GLT::editor {
 
+    // CONSTANTS =======================================================================================================
+
+    // MACROS ==========================================================================================================
+
+    // TYPES ===========================================================================================================
+
+    enum class collider_shape_kind : u8 {
+
+        box = 0,
+        sphere,
+        capsule,
+        cylinder,
+        convex_hull,
+        triangle_mesh,
+    };
+
+
+    // Editor-side description of a single collider entry
+    //
+    // This is NOT the runtime physics object. It is a flat, trivially-iterable representation the UI can iterate without a
+    // std::visit per row. Fields not relevant to [kind] are simply ignored
+    struct collider_editor_item {
+
+        u64                                     id{ 0 };
+        std::string                             name{};
+        collider_shape_kind                     kind = collider_shape_kind::box;
+        bool                                    visible = true;
+        glm::vec4                               color{ 0.20f, 0.90f, 0.40f, 1.00f };
+        glm::vec3                               position{ 0.0f };
+        glm::quat                               rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+        glm::vec3                               box_half_extents{ 0.5f };
+        f32                                     sphere_radius = 0.5f;
+        f32                                     capsule_radius = 0.25f;
+        f32                                     capsule_half_height = 0.5f;
+        f32                                     cylinder_radius = 0.25f;
+        f32                                     cylinder_half_height = 0.5f;
+        GLT::physics::physics_material          material{};
+    };
+
+    // STATIC VARIABLES ================================================================================================
+
+    // FUNCTION DECLARATION ============================================================================================
+
+    [[nodiscard]] const char* collider_shape_kind_name(collider_shape_kind k) noexcept;
+
+    // TEMPLATE DECLARATION ============================================================================================
+
     // CLASS DECLARATION ===============================================================================================
 
-    // Dockable editor window for a mesh asset.
+    // Dockable editor window for a mesh asset + its collider set
     //
-    // Read-only over the geometry itself (meshes are static — the handler doesn't override [serialize()]), but the editor
-    // still lets the user:
-    //   - preview the mesh through the renderer's [i_preview] path,
-    //   - inspect every submesh (index range, material, computed per-submesh AABB),
-    //   - swap submesh materials in-memory (a preview-only convenience),
-    //   - highlight a submesh inside the preview by hovering its row,
-    //   - drive the preview camera (orbit / distance / FOV / fit),
-    //   - switch render mode, grid, origin, background,
-    //   - toggle auto-rotation for presentations.
+    // Three-panel layout:
+    //   - Outliner: mesh hierarchy / submeshes / collider list
+    //   - Preview : 3D viewport with camera controls and collider wireframes
+    //   - Inspector: properties for the currently selected item
     //
-    // All preview interactions route through [i_preview] obtained via [renderer->as<i_preview>()]. Debug overlays use
-    // the same opt-in pattern ([renderer->as<i_debug_draw>()]) when available.
+    // Both side panels are resizable via a 6px splitter handle between panels
     class mesh_editor_window : public asset_editor {
     public:
 
@@ -54,22 +97,24 @@ namespace GLT::editor {
 
         void open(const std::filesystem::path& path);
 
-
         void close_mesh();
-
 
         void window(const f32 delta_time) override;
 
-
         void update(const f32 delta_time) override;
-
 
         bool serialize(const std::filesystem::path& project_file, GLT::serializer::option option) override;
 
-
-        bool save();            // attempts [registry::save()]; meshes currently return [no_handler]
+        bool save();
 
     private:
+
+        enum class inspector_target : u8 {
+
+            mesh = 0,
+            submesh,
+            collider,
+        };
 
         struct submesh_bounds {
 
@@ -77,54 +122,86 @@ namespace GLT::editor {
             glm::vec3                                   max{ 0.0f };
         };
 
-        // panels -----------------------------------------------------------------------------------------------------
+        struct preview_camera_state {
+            glm::vec3                                   target{ 0.0f };
+            f32                                         distance = 3.0f;
+            f32                                         yaw_rad = 0.7f;
+            f32                                         pitch_rad = 0.35f;
+            f32                                         fov_deg = 45.0f;
+        };
 
-        void draw_details_panel();
+        struct preview_lighting_state {
+            f32                                         key_intensity = 0.3f;
+            f32                                         fill_intensity = 0.1f;
+            f32                                         rim_intensity = 0.15f;
+            bool                                        headlight = false;
+        };
 
+        // top level panels --------------------------------------------------------------------------------------------
+
+        void draw_toolbar();
+        void draw_body();
+        void draw_outliner_panel();
         void draw_preview_panel();
+        void draw_inspector_panel();
 
-        // sections ---------------------------------------------------------------------------------------------------
+        // inspector sections ------------------------------------------------------------------------------------------
 
-        void draw_summary_section();
+        void draw_inspector_mesh();
+        void draw_inspector_submesh();
+        void draw_inspector_collider();
 
-        void draw_bounds_section();
-
-        void draw_submesh_section();
-
+        void draw_mesh_summary_section();
+        void draw_mesh_bounds_section();
         void draw_preview_settings_section();
-
+        void draw_lighting_section();
         void draw_camera_section();
 
-        // preview plumbing -------------------------------------------------------------------------------------------
+        // outliner helpers --------------------------------------------------------------------------------------------
+
+        void draw_collider_row(i32 index);
+        void draw_add_collider_popup();
+
+        // collider state ----------------------------------------------------------------------------------------------
+
+        void add_collider(collider_shape_kind kind);
+        void remove_collider(i32 index);
+        void reset_collider_state();
+
+        void select_mesh();
+        void select_submesh(i32 index);
+        void select_collider(i32 index);
+
+        // preview plumbing --------------------------------------------------------------------------------------------
 
         void ensure_preview();
-
         void destroy_preview();
 
-        void push_preview_state();
-
-        void update_highlight();
-
+        [[nodiscard]] GLT::world::camera_snapshot build_camera_snapshot() const;
         void reset_camera_to_fit();
 
-        // Submits the whole-mesh AABB (always) and hovered-submesh AABB (only while a row is hovered) through the preview's scoped
-        // [i_debug_draw]. Called every frame from update() — primitives are lifetime == 0 (single-frame), so the editor is the one
-        // re-submitting them each tick
         void submit_debug_draws();
+        void submit_collider_debug_draws();
+        void submit_preview_lights();
 
-        // helpers ----------------------------------------------------------------------------------------------------
+        // collider <-> asset sync -------------------------------------------------------------------------------------
+        void load_colliders_from_mesh(const GLT::asset::mesh::mesh_asset& mesh);
+        bool sync_colliders_to_mesh();
+
+        // collider gizmo ----------------------------------------------------------------------------------------------
+        void draw_collider_gizmo_toolbar();
+        void render_collider_gizmo(const ImVec2& image_min, const ImVec2& image_size);
+
+        // helpers -----------------------------------------------------------------------------------------------------
 
         void compute_mesh_bounds(const GLT::asset::mesh::mesh_asset& mesh, glm::vec3& out_min, glm::vec3& out_max) const;
-
         void rebuild_submesh_bounds_cache(const GLT::asset::mesh::mesh_asset& mesh);
-
         bool load_from_handle(GLT::asset::handle h);
-
         void handle_drag_drop();
 
 
         std::filesystem::path                                   m_mesh_path{};
-        GLT::asset::handle                                      m_asset_handle = INVALID_HANDLE;
+        GLT::asset::asset_ref                                   m_asset_handle = INVALID_HANDLE;
         std::string                                             m_mesh_name{};
 
         bool                                                    m_has_mesh = false;
@@ -133,20 +210,43 @@ namespace GLT::editor {
 
         std::vector<submesh_bounds>                             m_submesh_bounds_cache{};
 
-        // ---- preview -----------------------------------------------------------------------------------------------
+        // collider editor state ---------------------------------------------------------------------------------------
 
-        GLT::render::preview_id                                 m_preview_id = 0;
-        GLT::render::preview_settings                           m_preview_settings{};
-        GLT::render::preview_camera                             m_preview_camera{};
+        std::vector<collider_editor_item>                       m_colliders{};
+        inspector_target                                        m_inspector_target = inspector_target::mesh;
+
+        i32                                                     m_selected_submesh = -1;
+        i32                                                     m_hovered_submesh = -1;
+        i32                                                     m_selected_collider = -1;
+        i32                                                     m_hovered_collider = -1;
+        i32                                                     m_pending_delete_collider = -1;
+
+        u64                                                     m_next_collider_id = 1;
+        bool                                                    m_show_colliders_in_preview = true;
+
+        // panel layout ------------------------------------------------------------------------------------------------
+
+        // Widths of the two side panels. The splitter handles between panels edit these directly, so they persist across frames
+        f32                                                     m_outliner_width = 240.0f;
+        f32                                                     m_inspector_width = 340.0f;
+
+        // preview state -----------------------------------------------------------------------------------------------
+
+        GLT::render::i_scene_renderer*                          m_preview_scene = nullptr;
+        preview_camera_state                                    m_preview_camera{};
+        preview_lighting_state                                  m_preview_lighting{};
+        u32                                                     m_current_mode_id = 0;
+        glm::vec4                                               m_background_color{ 0.09f, 0.09f, 0.09f, 1.0f };
+        bool                                                    m_show_grid = true;
+        bool                                                    m_show_origin = true;
         bool                                                    m_auto_rotate = false;
         f32                                                     m_auto_rotate_speed = 0.5f;
-        bool                                                    m_preview_dirty = false;
-        glm::uvec2                                              m_last_preview_size{ 0, 0 };
-
-        // Hover / selection highlight state. Only one id is pushed to the preview, hovered winning over selected.
-        i32                                                     m_hovered_submesh = -1;
-        i32                                                     m_selected_submesh = -1;
         bool                                                    m_preview_image_drawn = false;
+        glm::uvec2                                              m_last_preview_size{ 0, 0 };
+        ImGuizmo::OPERATION                                     m_collider_gizmo_operation = ImGuizmo::TRANSLATE;
+        ImGuizmo::MODE                                          m_collider_gizmo_mode = ImGuizmo::LOCAL;
+        glm::vec3                                               m_gizmo_last_scale{ 1.0f };
+
     };
 
 }

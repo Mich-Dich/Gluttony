@@ -1,6 +1,7 @@
 
 #include "util/pch.h"
 
+#include <application.h>
 #include <util/timing/stopwatch.h>
 #include <event/event_bus.h>
 #include <event/application_event.h>
@@ -75,7 +76,7 @@ namespace GLT::game_loop {
             
             refresh_if_stale();
             if (m_window)
-                m_window->show(true);
+                m_window->show(GLT::application::get().get_main_window(), true);
         }
 
 
@@ -90,31 +91,50 @@ namespace GLT::game_loop {
         void run(context& ctx) override {
 
             util::stopwatch cpu_timer(&ctx.stats.cpu_time_ms, GLT::time_unit::milliseconds);
+            u64 frame = 0;
 
             while (!is_stop_requested()) {
 
                 cpu_timer.restart();
 
-                if (m_editor != nullptr)        // user can only change plugins in editor, else plugins are stable over runtime
+                if (m_editor != nullptr)                                        // user can only change plugins with the editor
                     refresh_if_stale();
 
-                // update ----------------------------------------------------------------------------------------------
-                m_window->poll_events();                                                        // update internal state
-                thread_pool::pump_main_thread();                                                // run deferred UI updates
+                // update --------------------------------------------------------------------------------------------------
+                m_window->poll_events();
+                thread_pool::pump_main_thread();
                 for (auto layer = ctx.layers.end(); layer != ctx.layers.begin(); )
-                    (*--layer)->update(ctx.delta_time);
-                GLT::event_bus::post<update_event>(ctx.delta_time);                             // all systems can subscribe to this (eg: plugins)
+                    (*--layer)->update(ctx.delta_time);                         // world_layer submits to scene renderers
+                GLT::event_bus::post<update_event>(ctx.delta_time);
                 m_audio->update_3d_audio();
 
-                // draw ------------------------------------------------------------------------------------------------
-                m_renderer->begin_frame();                                                      // start frame + start imgui frame
+                // draw ----------------------------------------------------------------------------------------------------
+                m_renderer->begin_frame(frame);                                 // tick shared resource manager
+
+                auto& scenes = GLT::application::get().get_scene_renderers_ref();
+
+                for (auto& scene : scenes)
+                    scene->update(ctx.delta_time);
+
                 for (auto layer = ctx.layers.begin(); layer != ctx.layers.end(); )
                     (*layer++)->render_imgui(ctx.delta_time);
-                m_renderer->draw_frame();                                                       // finish imgui stuff and render world
 
-                cpu_timer.stop();                                                               // Measure CPU work
+                for (auto& scene : scenes) {
+                    auto result = scene->render(frame);
+                    if (!result) {
+                        if (result.error().kind == GLT::render::render_error::code::target_out_of_date && !scene->is_offscreen()) {
+                            const auto fb = m_window->get_framebuffer_size(GLT::application::get().get_main_window());
+                            scene->resize({ static_cast<u32>(fb.x), static_cast<u32>(fb.y) });
+                        } else {
+                            LOG(error, "scene_renderer::render failed: {}", result.error().message)
+                        }
+                    }
+                }
 
-                // stats -----------------------------------------------------------------------------------------------
+                cpu_timer.stop();
+                frame++;
+
+                // stats ---------------------------------------------------------------------------------------------------
                 ctx.delta_time = ctx.fps_controller.limit();
                 ctx.total_time += ctx.delta_time;
                 ctx.stats.frame_time_ms = ctx.delta_time;
@@ -133,9 +153,9 @@ namespace GLT::game_loop {
             if (gen == m_gen)
                 return;
 
-            m_window = GLT::plugin_manager::get_plugin_raw<platform::i_window_plugin>(plugin_manager::interface::window);
-            m_renderer = GLT::plugin_manager::get_plugin_raw<render::i_renderer_plugin>(plugin_manager::interface::renderer);
-            m_audio = GLT::plugin_manager::get_plugin_raw<audio::i_audio_plugin>(plugin_manager::interface::audio);
+            m_window = GLT::platform::window::get_ptr();
+            m_renderer = GLT::render::renderer::get_ptr();
+            m_audio = GLT::audio::manager::get_ptr();
             m_editor = GLT::plugin_manager::get_plugin_raw<plugin_manager::i_plugin>(plugin_manager::interface::editor_core);
             m_gen = gen;
         }

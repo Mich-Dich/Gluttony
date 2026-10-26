@@ -29,9 +29,10 @@ namespace GLT::input::input_manager_default {
     // FUNCTION IMPLEMENTATION =========================================================================================
 
     // CLASS IMPLEMENTATION ============================================================================================
-
-    controller::controller()
-        : m_key_sub(event_bus::subscribe_scoped<GLT::key_event>([this](GLT::key_event& e){ on_key_event(e); }))
+    
+    controller::controller(GLT::game::game_session* session)
+        : m_session(session)
+        , m_key_sub(event_bus::subscribe_scoped<GLT::key_event>([this](GLT::key_event& e){ on_key_event(e); }))
         , m_mouse_sub(event_bus::subscribe_scoped<GLT::mouse_event>([this](GLT::mouse_event& e){ on_mouse_event(e); })) { }
 
 
@@ -108,7 +109,6 @@ namespace GLT::input::input_manager_default {
         }
     }
 
-
     // per-frame step --------------------------------------------------------------------------------------------------
 
     void controller::update(f32 delta_time) {
@@ -121,6 +121,14 @@ namespace GLT::input::input_manager_default {
             auto& action_runtime = action_slot.runtime;
             action_runtime.prev_value = action_runtime.value;
             action_runtime.prev_active = action_runtime.active;
+
+            // Disabled: freeze everything at zero
+            if (!get_input_enabled()) {
+                action_runtime.value = glm::vec3{ 0.0f };
+                action_runtime.active = false;
+                action_runtime.held_time = 0.0f;
+                continue;
+            }
 
             glm::vec3 accumulated_value{0.0f};
             bool any_binding_active = false;

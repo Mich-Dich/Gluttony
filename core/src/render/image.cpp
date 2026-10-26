@@ -122,35 +122,35 @@ namespace GLT::render {
     void image::register_factory(const factory_table& table) { s_factory = table; }
 
 
-    std::unique_ptr<image> image::create_instance() {
+    GLT::unique_ref<image> image::create_instance() {
 
         if (s_factory.default_fn)
             return s_factory.default_fn();
-        return std::unique_ptr<image>(new image());
+        return GLT::unique_ref<image>(new image());
     }
 
 
-    std::unique_ptr<image> image::create_instance(const glm::uvec3& size) {
+    GLT::unique_ref<image> image::create_instance(const glm::uvec3& size) {
         
         if (s_factory.size_fn)
             return s_factory.size_fn(size);
-        return std::unique_ptr<image>(new image(size));
+        return GLT::unique_ref<image>(new image(size));
     }
 
 
-    std::unique_ptr<image> image::create_instance(const void* data, const u32 width, const u32 height, const bool mipmapped) {
+    GLT::unique_ref<image> image::create_instance(const void* data, const u32 width, const u32 height, const bool mipmapped) {
         
         if (s_factory.data_fn)
             return s_factory.data_fn(data, width, height, mipmapped);
-        return std::unique_ptr<image>(new image(data, width, height, mipmapped));
+        return GLT::unique_ref<image>(new image(data, width, height, mipmapped));
     }
 
 
-    std::unique_ptr<image> image::create_instance(const std::filesystem::path& path, bool mipmapped) {
+    GLT::unique_ref<image> image::create_instance(const std::filesystem::path& path, bool mipmapped) {
         
         if (s_factory.path_fn)
             return s_factory.path_fn(path, mipmapped);
-        return std::unique_ptr<image>(new image(path, mipmapped));
+        return GLT::unique_ref<image>(new image(path, mipmapped));
     }
 
 

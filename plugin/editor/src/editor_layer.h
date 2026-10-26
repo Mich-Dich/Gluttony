@@ -6,6 +6,7 @@
 #include <layer/layer.h>
 #include <event/input_event.h>
 #include <event/application_event.h>
+#include <platform/i_window.h>
 
 #include "window/base/base_window.h"
 #include "util/event/asset_event.h"
@@ -17,10 +18,15 @@
 namespace GLT::render {
     class i_renderer_plugin;
     class image;
+    class i_scene_renderer; 
 }
 
 namespace GLT::editor {
     class content_browser_window;
+}
+
+namespace GLT::game {
+    class game_session;
 }
 
 namespace GLT::editor {
@@ -46,6 +52,12 @@ namespace GLT::editor {
         ~editor_layer();
 
 
+        void on_attach() override;
+
+
+        void on_detach() override;
+
+
         void update(const f32 delta_time);
 
 
@@ -69,10 +81,48 @@ namespace GLT::editor {
         };
 
 
+        enum class simulation_mode : u8 {
+
+            current_viewport = 0,                       // reuse the existing world-viewport window
+            new_window,                                 // 1-4 standalone windows
+        };
+
+
+        struct sim_window_config {
+
+            ImVec2                                      position { 100.f, 100.f };
+            ImVec2                                      size { 1280.f, 720.f };
+            bool                                        maximized = false;
+            bool                                        vsync = true;
+        };
+
+
+        // One layout = the arrangement used when there are `N` windows. Only the first `N` entries are meaningful
+        // the rest stay at defaults and are ignored by the UI
+        struct sim_layout {
+
+            std::array<sim_window_config, 4>            windows{};
+        };
+
+
+        struct simulation_instance {
+
+            GLT::platform::window_handle                handle{};
+            GLT::render::i_scene_renderer*              scene_renderer{};   // non-owning; app owns
+            GLT::game::game_session*                    session{};
+            bool                                        cursor_captured = false;
+        };
+
+
 	    base_window* find_window_by_name(const std::string& name);
 
 
         void render_toolbar();
+
+
+        // Draws the play/pause/step/stop + settings controls on the right side of the toolbar. Call this from render_toolbar()
+        // while the toolbar window is still open
+        void render_simulation_controls();
 
 
         void render_dockspace();
@@ -99,6 +149,9 @@ namespace GLT::editor {
         void on_save_event(const GLT::save_event& event);
 
 
+        void on_window_close_event(const GLT::window_close_event& event);
+
+
         void on_notification_event(const notification_event& event);
 
 
@@ -116,6 +169,37 @@ namespace GLT::editor {
 
 
         void on_asset_create_request_event(const asset_create_request_event& event);
+
+
+        // Persists all 4 layouts to <project_dir>/editor_simulation.yaml.
+        // Called from on_save_event (which is also triggered from ~editor_layer).
+        void save_simulation_settings();
+
+
+        // Reads the same file if it exists. Called from the constructor after
+        // application::get().get_project_path() is valid.
+        void load_simulation_settings();
+
+
+        // Creates every simulation window described by m_simulation_mode / m_sim_window_count / m_sim_layouts.
+        // No-op for simulation_mode::current_viewport (the existing viewport is reused).
+        void spawn_simulation_windows();
+
+
+        // Destroys every handle collected in m_sim_window_handles and clears the list.
+        void destroy_simulation_windows();
+
+
+        editor_layer::simulation_instance* find_sim_instance(GLT::platform::window_handle handle);
+
+
+        void on_window_focus_event(const GLT::window_focus_event& event);
+
+
+        void capture_sim_window(simulation_instance& instance);
+
+
+        void release_sim_cursor();
 
 
 
@@ -144,6 +228,13 @@ namespace GLT::editor {
         u32                                             m_next_notification_id{ 0 };
         std::vector<notification>                       m_notifications{};
         std::vector<notification_event>                 m_notification_event_buffer{};   // buffered - event may fire mid-draw
+        GLT::system_state                               m_simulation_state = GLT::system_state::idle;   // editor specific sim
+        simulation_mode                                 m_simulation_mode{ simulation_mode::current_viewport };
+        u32                                             m_sim_window_count{ 1 };
+        std::array<sim_layout, 4>                       m_sim_layouts{}; // m_sim_layouts[N - 1] = layout for N windows. All 4 are always saved
+        std::vector<simulation_instance>                m_simulation_instances{};
+        handle                                          m_window_close_sub{};
+
     };
 
 }

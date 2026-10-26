@@ -30,9 +30,6 @@ namespace GLT::renderer::vk_rasterizer::util {
 
     // FUNCTION DECLARATION ============================================================================================
 
-    vk::SurfaceKHR create_surface(vk::Instance instance);
-
-
     VkBool32 vulkan_debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT message_severity, VkDebugUtilsMessageTypeFlagsEXT message_type,
         const VkDebugUtilsMessengerCallbackDataEXT* p_callback_data, void* p_user_data);
 

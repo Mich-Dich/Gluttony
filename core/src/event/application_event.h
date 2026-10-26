@@ -1,7 +1,7 @@
-
 #pragma once
 
 #include "event.h"
+#include "platform/type.h"
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -141,16 +141,23 @@ namespace GLT {
     // @brief The windowing system reports a new client-area size
     class window_resize_event : public event {
     public:
+        // @param window  Window whose client area changed size
         // @param width   New client-area width in pixels
         // @param height  New client-area height in pixels
-        window_resize_event(u32 width, u32 height) : m_width(width), m_height(height) {}
+        window_resize_event(GLT::platform::window_handle window, u32 width, u32 height)
+            : m_window(window), m_width(width), m_height(height) {}
 
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
         DEFAULT_GETTER_C(u32, width);
         DEFAULT_GETTER_C(u32, height);
 
-        FORCE_INLINE_R std::string to_string() const override { return std::format("window resize event [{}, {}]", m_width, m_height); }
+        FORCE_INLINE_R std::string to_string() const override {
+            return std::format("window resize event [{}, {}] [{}, {}]",
+                m_window.index, m_window.generation, m_width, m_height);
+        }
 
     private:
+        GLT::platform::window_handle                                m_window;
         u32                                                         m_width, m_height;
     };
 
@@ -161,18 +168,23 @@ namespace GLT {
     // (e.g. DPI changes on macOS)
     class window_framebuffer_resize_event : public event {
     public:
+        // @param window  Window whose framebuffer changed size
         // @param width   New framebuffer width in pixels
         // @param height  New framebuffer height in pixels
-        window_framebuffer_resize_event(u32 width, u32 height) : m_width(width), m_height(height) {}
+        window_framebuffer_resize_event(GLT::platform::window_handle window, u32 width, u32 height)
+            : m_window(window), m_width(width), m_height(height) {}
 
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
         DEFAULT_GETTER_C(u32, width);
         DEFAULT_GETTER_C(u32, height);
 
         FORCE_INLINE_R std::string to_string() const override {
-            return std::format("window framebuffer resize event [{}, {}]", m_width, m_height);
+            return std::format("window framebuffer resize event [{}, {}] [{}, {}]",
+                m_window.index, m_window.generation, m_width, m_height);
         }
 
     private:
+        GLT::platform::window_handle                                m_window;
         u32                                                         m_width, m_height;
     };
 
@@ -180,16 +192,21 @@ namespace GLT {
     // @brief The window gained or lost input focus
     class window_focus_event : public event {
     public:
+        // @param window   Window whose focus changed
         // @param focused  true if the window is now focused
-        window_focus_event(bool focused) : m_focused(focused) {}
+        window_focus_event(GLT::platform::window_handle window, bool focused)
+            : m_window(window), m_focused(focused) {}
 
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
         DEFAULT_GETTER_C(bool, focused);
 
         FORCE_INLINE_R std::string to_string() const override {
-            return std::format("window focus event [{}]", m_focused ? "focused" : "unfocused");
+            return std::format("window focus event [{}, {}] [{}]",
+                m_window.index, m_window.generation, m_focused ? "focused" : "unfocused");
         }
 
     private:
+        GLT::platform::window_handle                                m_window;
         bool                                                        m_focused;
     };
 
@@ -197,61 +214,79 @@ namespace GLT {
     // @brief The window was moved to a new screen position
     class window_move_event : public event {
     public:
-        // @param x  New left edge in screen pixels
-        // @param y  New top edge in screen pixels
-        window_move_event(i32 x, i32 y) : m_x(x), m_y(y) {}
+        // @param window  Window that moved
+        // @param x       New left edge in screen pixels
+        // @param y       New top edge in screen pixels
+        window_move_event(GLT::platform::window_handle window, i32 x, i32 y)
+            : m_window(window), m_x(x), m_y(y) {}
 
-        DEFAULT_GETTER_C(i32, x)
-        DEFAULT_GETTER_C(i32, y)
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
+        DEFAULT_GETTER_C(i32, x);
+        DEFAULT_GETTER_C(i32, y);
 
         FORCE_INLINE_R std::string to_string() const override {
-            return std::format("window moved to [{}, {}]", m_x, m_y);
+            return std::format("window [{}, {}] moved to [{}, {}]",
+                m_window.index, m_window.generation, m_x, m_y);
         }
 
     private:
+        GLT::platform::window_handle                                m_window;
         i32                                                         m_x, m_y;
     };
 
-    
+
     // @brief The windowing system asks for a repaint of the client area
     class window_refresh_event : public event {
     public:
-        window_refresh_event() {}
+        // @param window  Window that needs a repaint
+        explicit window_refresh_event(GLT::platform::window_handle window) : m_window(window) {}
+
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
 
         FORCE_INLINE_R std::string to_string() const override {
-            return std::format("window refreshing");
+            return std::format("window [{}, {}] refreshing", m_window.index, m_window.generation);
         }
 
     private:
+        GLT::platform::window_handle                                m_window;
     };
 
-    
+
     // @brief The window is about to close
     class window_close_event : public event {
     public:
-        window_close_event() {}
+        // @param window  Window that is closing
+        explicit window_close_event(GLT::platform::window_handle window) : m_window(window) {}
+
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
 
         FORCE_INLINE_R std::string to_string() const override {
-            return std::format("window closing");
+            return std::format("window [{}, {}] closing", m_window.index, m_window.generation);
         }
 
     private:
+        GLT::platform::window_handle                                m_window;
     };
 
 
     // @brief The window was minimized or restored from a minimized state
     class window_iconify_event : public event {
     public:
+        // @param window     Window whose iconify state changed
         // @param iconified  true if the window is now minimized
-        window_iconify_event(bool iconified) : m_iconified(iconified) {}
+        window_iconify_event(GLT::platform::window_handle window, bool iconified)
+            : m_window(window), m_iconified(iconified) {}
 
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
         DEFAULT_GETTER_C(bool, iconified);
 
         FORCE_INLINE_R std::string to_string() const override {
-            return std::format("window iconify event [{}]", m_iconified ? "iconified" : "restored");
+            return std::format("window iconify event [{}, {}] [{}]",
+                m_window.index, m_window.generation, m_iconified ? "iconified" : "restored");
         }
 
     private:
+        GLT::platform::window_handle                                m_window;
         bool                                                        m_iconified;
     };
 
@@ -259,16 +294,21 @@ namespace GLT {
     // @brief The window was maximized or restored from a maximized state
     class window_maximize_event : public event {
     public:
+        // @param window     Window whose maximize state changed
         // @param maximized  true if the window is now maximized
-        window_maximize_event(bool maximized) : m_maximized(maximized) {}
+        window_maximize_event(GLT::platform::window_handle window, bool maximized)
+            : m_window(window), m_maximized(maximized) {}
 
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
         DEFAULT_GETTER_C(bool, maximized);
 
         FORCE_INLINE_R std::string to_string() const override {
-            return std::format("window maximize event [{}]", m_maximized ? "maximized" : "restored");
+            return std::format("window maximize event [{}, {}] [{}]",
+                m_window.index, m_window.generation, m_maximized ? "maximized" : "restored");
         }
 
     private:
+        GLT::platform::window_handle                                m_window;
         bool                                                        m_maximized;
     };
 
@@ -279,18 +319,23 @@ namespace GLT {
     // UI code should rescale its hard-coded pixel sizes accordingly
     class window_content_scale_event : public event {
     public:
+        // @param window   Window whose content scale changed
         // @param x_scale  Horizontal content scale factor (1.0 = 100%)
         // @param y_scale  Vertical content scale factor (1.0 = 100%)
-        window_content_scale_event(f32 x_scale, f32 y_scale) : m_x_scale(x_scale), m_y_scale(y_scale) {}
+        window_content_scale_event(GLT::platform::window_handle window, f32 x_scale, f32 y_scale)
+            : m_window(window), m_x_scale(x_scale), m_y_scale(y_scale) {}
 
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
         DEFAULT_GETTER_C(f32, x_scale);
         DEFAULT_GETTER_C(f32, y_scale);
 
         FORCE_INLINE_R std::string to_string() const override {
-            return std::format("window content scale event [{:.2f}, {:.2f}]", m_x_scale, m_y_scale);
+            return std::format("window content scale event [{}, {}] [{:.2f}, {:.2f}]",
+                m_window.index, m_window.generation, m_x_scale, m_y_scale);
         }
 
     private:
+        GLT::platform::window_handle                                m_window;
         f32                                                         m_x_scale, m_y_scale;
     };
 
@@ -298,13 +343,16 @@ namespace GLT {
     // @brief Files or folders were dropped onto the window
     class window_drop_event : public event {
     public:
-        // @param paths  Absolute paths of the dropped items
-        window_drop_event(const std::vector<std::string>& paths) : m_paths(paths) {}
+        // @param window  Window that received the drop
+        // @param paths   Absolute paths of the dropped items
+        window_drop_event(GLT::platform::window_handle window, const std::vector<std::string>& paths)
+            : m_window(window), m_paths(paths) {}
 
+        DEFAULT_GETTER_C(GLT::platform::window_handle, window);
         DEFAULT_GETTER_C(std::vector<std::string>, paths);
 
         FORCE_INLINE_R std::string to_string() const override {
-            std::string result = "window drop event [";
+            std::string result = std::format("window [{}, {}] drop event [", m_window.index, m_window.generation);
             for (size_t index = 0; index < m_paths.size(); index++) {
                 result += m_paths[index];
                 if (index < m_paths.size() - 1) result += ", ";
@@ -314,6 +362,7 @@ namespace GLT {
         }
 
     private:
+        GLT::platform::window_handle                                m_window;
         std::vector<std::string>                                    m_paths;
     };
 

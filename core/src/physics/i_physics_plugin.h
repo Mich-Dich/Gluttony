@@ -28,9 +28,19 @@ namespace GLT::physics {
 
     // FUNCTION DECLARATION ============================================================================================
 
-    // convenience accessor
+    // @brief Hot-path accessor: cached raw pointer, thread-safe, no refcount traffic. Cache the result and compare
+    // `plugin_manager::get_generation()` for invalidation
+    // @return nullptr if the audio plugin is not loaded
+    FORCE_INLINE_R i_physics_plugin* get_ptr() noexcept {
+
+        return GLT::plugin_manager::get_plugin_raw<i_physics_plugin>(GLT::plugin_manager::interface::physics);
+    }
+
+
+    // @brief Owning reference for cases where you need to keep the plugin alive across unload phases
     FORCE_INLINE_R ref<i_physics_plugin> get_ref() {
-        return plugin_manager::get_plugin_ref<i_physics_plugin>(plugin_manager::interface::physics);
+
+        return GLT::plugin_manager::get_plugin_ref_unsafe<i_physics_plugin>(GLT::plugin_manager::interface::physics);
     }
 
     // TEMPLATE DECLARATION ============================================================================================

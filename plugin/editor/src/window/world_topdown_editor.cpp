@@ -5,16 +5,14 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
-#include <algorithm>
-#include <cmath>
-#include <cstdio>
-
 #include <config/imgui_config.h>
 #include <asset/i_asset_registry.h>
 #include <asset/mesh.h>
 #include <plugin_system/plugin_manager.h>
 #include <world/i_world.h>
 #include <world/i_world_scene.h>
+#include <game/game_layer.h>
+#include <game/game_session.h>
 
 #include "util/ui/pannel_collection.h"
 #include "resource_manager/icon_manager.h"
@@ -182,12 +180,17 @@ namespace GLT::editor {
         if (m_load_failed || !m_world.valid())
             return;
 
-        auto world = GLT::world::manager::get_ref();
+        auto* game_layer = GLT::application::get().get_game_layer_ptr();
+        if (!game_layer)
+            return;
+
+        auto* session = game_layer->get_primary_session();
+        auto* world = session ? session->get_world() : nullptr;
         if (!world)
             return;
 
-        // Only show markers when the active world is the one this editor owns. Otherwise we'd display a completely different world's contents
-        if (world->world_handle() != m_world.get())
+        // Only show markers when the primary session's world is the one this editor owns.
+        if (world->asset() != m_world)
             return;
 
         auto* scene = world->as<GLT::world::i_world_scene>();
@@ -199,7 +202,8 @@ namespace GLT::editor {
 
         m_entities.reserve(positions.size());
         for (const auto& p : positions)
-            m_entities.push_back(editor_entity{ { p.world_position.x, p.world_position.z }, p.id.index, p.id.generation });
+            m_entities.push_back(editor_entity{
+                { p.world_position.x, p.world_position.z }, p.id.index, p.id.generation });
     }
 
     // CLASS PROTECTED =================================================================================================
@@ -233,9 +237,12 @@ namespace GLT::editor {
     void world_topdown_editor::draw_sidebar() {
 
         // --- fetch current world state once after open / after apply ----------------------
-        auto world = GLT::world::manager::get_ref();
-
-        if (m_sync_sliders_pending && world && world->world_handle() == m_world.get()) {
+        auto* game_layer = GLT::application::get().get_game_layer_ptr();
+        auto* session = game_layer ? game_layer->get_primary_session() : nullptr;
+        auto* world = session ? session->get_world() : nullptr;
+        const bool is_our_world = world && world->asset() == m_world;
+    
+        if (m_sync_sliders_pending && is_our_world) {
             const glm::vec3 sz = world->get_region_cell_size();
             m_cell_x = static_cast<int>(std::round(sz.x));
             m_cell_y = static_cast<int>(std::round(sz.y));
@@ -267,11 +274,13 @@ namespace GLT::editor {
 
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
-        ImGui::BeginDisabled(!world || world->world_handle() != m_world.get());
+        ImGui::BeginDisabled(!is_our_world);
 
         if (ImGui::Button("Apply to world", ImVec2(-1.0f, 0.0f)) && dirty) {
-
-            world->set_region_cell_size(glm::vec3{static_cast<f32>(m_cell_x), static_cast<f32>(m_cell_y), static_cast<f32>(m_cell_z) });
+            world->set_region_cell_size(glm::vec3{
+                static_cast<f32>(m_cell_x),
+                static_cast<f32>(m_cell_y),
+                static_cast<f32>(m_cell_z) });
             m_cell_size_from_world = glm::vec3{ m_cell_x, m_cell_y, m_cell_z };
             m_last_action = "applied cell size";
         }
@@ -282,7 +291,7 @@ namespace GLT::editor {
         }
 
         if (ImGui::Button("Save world", ImVec2(-1.0f, 0.0f))) {
-            if (auto r = world->save_world(); !r)
+            if (auto r = world->save(); !r)      // was: world->save_world()
                 m_last_action = "save failed";
             else
                 m_last_action = "saved";
@@ -440,12 +449,14 @@ namespace GLT::editor {
         // otherwise we'd render some other world's anchor.
         if (m_show_streaming_radius && !m_load_failed && m_world.valid()) {
 
-            auto world = GLT::world::manager::get_ref();
-            if (world && world->world_handle() == m_world.get()) {
+            auto* game_layer = GLT::application::get().get_game_layer_ptr();
+            auto* session = game_layer ? game_layer->get_primary_session() : nullptr;
+            auto* world = session ? session->get_world() : nullptr;
+
+            if (world && world->asset() == m_world) {
 
                 const glm::vec3 anchor = world->get_streaming_anchor();
                 const f32 streaming_radius = world->get_streaming_radius();
-
                 const ImVec2 anchor_screen = w2s({ anchor.x, anchor.z });
 
                 if (streaming_radius > 0.0f) {

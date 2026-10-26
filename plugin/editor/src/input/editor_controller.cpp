@@ -4,10 +4,7 @@
 
 #include <layer/layer_stack.h>
 #include <application.h>
-#include <world/world_layer.h>
 #include <world/i_world_scene.h>
-
-#include "util/context.h"
 
 
 
@@ -37,12 +34,10 @@ namespace GLT::editor::input {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    editor_controller::editor_controller() {
+    editor_controller::editor_controller(GLT::game::game_session* session)
+        : controller(session) {
 
         using namespace GLT::input::input_manager_default;
-
-        m_world = GLT::world::manager::get_ref();
-        ASSERT(m_world, "", "editor_controller: world plugin not available")
 
         action move{
             .name = "move",                       // debug only now
@@ -114,26 +109,34 @@ namespace GLT::editor::input {
     }
 
 
-    editor_controller::~editor_controller() { }
+    editor_controller::~editor_controller() = default;
 
     // CLASS PUBLIC ====================================================================================================
 
     void editor_controller::update(const f32 delta_time) {
         controller::update(delta_time);
 
-        if (!GLT::editor::context::get().get_viewport_interacted())
+        if (!get_input_enabled())
             return;
 
-        if (!m_world)
+        if (!m_session)
             return;
 
-        auto* scene = m_world->as<GLT::world::i_world_scene>();                 // Resolve the active camera
+        auto* world = m_session->get_world();
+        if (!world)
+            return;
+
+        auto* scene = world->as<GLT::world::i_world_scene>();
         if (!scene)
             return;
 
-        const GLT::world::entity_id camera_entity = scene->get_active_camera();
-        if (!camera_entity.is_valid())
+        // The editor controller follows whatever the scene currently marks as
+        // active camera. Set it once per frame so get_target() is meaningful to
+        // anyone reading it (gizmo, HUD, inspector…)
+        const auto target = scene->get_active_camera();
+        if (!target.is_valid())
             return;
+        set_target(target);
 
         const f32 scroll = get_axis(m_scroll_action_handle);
         if (scroll != 0.0f) {
@@ -146,7 +149,7 @@ namespace GLT::editor::input {
         if (glm::length(move) > 0.f) {
 
             const glm::vec3 local_delta{move.y * m_move_speed, move.z * m_move_speed, -move.x * m_move_speed};
-            m_world->translate_local(camera_entity, local_delta);
+            world->translate_local(target, local_delta);
         }
 
         const glm::vec2 look = get_axis2d(m_look_action_handle);
@@ -157,7 +160,7 @@ namespace GLT::editor::input {
                 glm::radians(look.x * m_look_sensitivity),  // yaw around +Y
                 0.f
             };
-            m_world->rotate_local(camera_entity, euler_delta);
+            world->rotate_local(target, euler_delta);
         }
     }
 

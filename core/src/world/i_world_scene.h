@@ -19,8 +19,8 @@ namespace GLT::world {
     // TYPES ===========================================================================================================
 
     struct entity_position {
-        entity_id   id{};
-        glm::vec3   world_position{ 0.f };
+        entity_id                                           id{};
+        glm::vec3                                           world_position{ 0.f };
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -31,10 +31,10 @@ namespace GLT::world {
 
     // CLASS DECLARATION ===============================================================================================
 
-    // Optional side-interface a world plugin can implement so the engine can pull a renderable snapshot out of it without knowing about ECS
+    // Optional side-interface a world plugin can implement so the engine can pull a renderable snapshot out of it without
+    // knowing about ECS
     //
-    // Same discovery pattern as i_world_inspector:
-    //     if (auto* scene = world->as<i_world_scene>()) { ... }
+    // Same discovery pattern as i_world_inspector:         if (auto* scene = world->as<i_world_scene>()) { ... }
     //
     // Contract:
     //   - Called once per frame during the update phase, from the update thread
@@ -61,6 +61,7 @@ namespace GLT::world {
         // Fill [out] from the active camera. Returns false if there is no active camera (the renderer keeps whatever view it last had)
         [[nodiscard]] virtual bool get_camera_view(camera_snapshot& out) const = 0;
 
+        [[nodiscard]] virtual bool get_camera_view(world::entity_id camera, world::camera_snapshot& out) = 0;
 
         // Select which entity drives the view. INVALID_ENTITY disables camera tracking (the renderer freezes)
         virtual void set_active_camera(entity_id id) = 0;

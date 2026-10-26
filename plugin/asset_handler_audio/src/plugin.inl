@@ -60,7 +60,7 @@ namespace GLT::asset::handler::audio {
     }
 
 
-    FORCE_INLINE_R std::expected<std::unique_ptr<GLT::asset::i_runtime_asset>, GLT::asset::load_error> plugin::deserialize(
+    FORCE_INLINE_R std::expected<GLT::unique_ref<GLT::asset::i_runtime_asset>, GLT::asset::load_error> plugin::deserialize(
         const GLT::asset::info& info, GLT::asset::chunk_reader& reader) {
 
 
@@ -85,7 +85,7 @@ namespace GLT::asset::handler::audio {
 
         // ---- build the runtime asset ------------------------------------------
 
-        auto asset = std::make_unique<GLT::asset::audio::audio_asset>();
+        auto asset = GLT::create_unique_ref<GLT::asset::audio::audio_asset>();
         asset->asset_type = info.asset_type;
         asset->format = fmt;
         asset->samples.assign(pcm.begin(), pcm.end());      // Copy - the chunk_reader's backing buffer dies when the registry's load function returns. Do not keep the span.
@@ -106,7 +106,7 @@ namespace GLT::asset::handler::audio {
         LOG(trace, "loaded [{}] - {} frames, {} ch, {} Hz",
             info.name, asset->format.frame_count, asset->format.channels, asset->format.sample_rate);
 
-        return std::unique_ptr<GLT::asset::i_runtime_asset>(std::move(asset));
+        return GLT::unique_ref<GLT::asset::i_runtime_asset>(std::move(asset));
     }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================

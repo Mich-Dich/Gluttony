@@ -7,8 +7,12 @@
 #include <util/ui/pannel_collection.h>
 #include <util/ui/asset_picker.h>
 #include <asset/audio.h>
+#include <asset/i_asset_registry.h>
+#include <asset/mesh.h>
+#include <world/i_world_plugin.h>
+#include <world/i_world_scene.h>
 
-#include "world.h"
+#include "ecs_world.h"
 
 
 
@@ -50,36 +54,26 @@ namespace GLT::world::world_ecs_entt::component {
 
     void register_transform_descriptor(component_registry& reg) {
 
-        reg.register_component<GLT::world::world_ecs_entt::component::transform>("transform", "Core",
+        reg.register_component<component::transform>("transform", "Core",
 
-            [](entity_id id) {
+            [](ecs_world& world, entity_id id) {
 
-                // The registry handles entt<->entity_id translation in the wrapper, but the draw lambda needs the plugin
-                // Grab it once via a context accessor
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return;
-
-                auto& transform = plugin->registry().get<GLT::world::world_ecs_entt::component::transform>(plugin->entt_of(id));
+                auto& transform = world.registry().get<component::transform>(world.entt_of(id));
 
                 ImGui::PushID("transform");
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
                 GLT::UI::table_row("position", transform.position);
                 GLT::UI::table_row("rotation", transform.rotation);
-                GLT::UI::table_row("scale", transform.scale);
+                GLT::UI::table_row("scale",    transform.scale);
                 GLT::UI::end_table();
                 ImGui::PopID();
             },
 
-            [](entity_id id) {
-                // Optional one-line preview
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return std::string{};
-
-                const auto& transform = plugin->registry().get<GLT::world::world_ecs_entt::component::transform>(plugin->entt_of(id));
+            [](ecs_world& world, entity_id id) {
+                const auto& transform = world.registry().get<component::transform>(world.entt_of(id));
                 char buf[64];
-                std::snprintf(buf, sizeof(buf), "(%.1f, %.1f, %.1f)", transform.position.x, transform.position.y, transform.position.z);
+                std::snprintf(buf, sizeof(buf), "(%.1f, %.1f, %.1f)",
+                    transform.position.x, transform.position.y, transform.position.z);
                 return std::string(buf);
             });
     }
@@ -89,13 +83,9 @@ namespace GLT::world::world_ecs_entt::component {
 
         reg.register_component<component::mesh>("mesh", "Rendering",
 
-            [](entity_id id) {
+            [](ecs_world& world, entity_id id) {
 
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return;
-
-                auto& mr = plugin->registry().get<component::mesh>(plugin->entt_of(id));
+                auto& mr = world.registry().get<component::mesh>(world.entt_of(id));
 
                 ImGui::PushID("mesh");
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
@@ -111,20 +101,20 @@ namespace GLT::world::world_ecs_entt::component {
 
                 if (submesh_count > 0) {
 
-                    // The codec + begin_override() both keep this invariant; if a hand-edited file slipped
-                    // through, clear rather than rendering with a mismatched vector
+                    // The codec + begin_override() both keep this invariant; if a hand-edited file slipped through, clear rather
+                    // than rendering with a mismatched vector
                     if (!mr.material_overrides.empty() && !mr.overrides_match(submesh_count))
                         mr.material_overrides.clear();
 
                     if (mr.material_overrides.empty()) {
 
-                        // Zero-override state: one picker that, when set, fills every slot with the same
-                        // handle. Leaving it at INVALID_HANDLE keeps the asset defaults.
-                        GLT::asset::handle uniform = INVALID_HANDLE;
+                        // Zero-override state: one picker that, when set, fills every slot with the same handle. Leaving it at
+                        // INVALID_HANDLE keeps the asset defaults
+                        GLT::asset::asset_ref uniform{};
                         if (GLT::UI::table_row_asset_picker("Material Override", uniform, GLT::asset::core_types::material)) {
                             mr.begin_override(submesh_count);
                             for (auto& slot : mr.material_overrides)
-                                slot = GLT::asset::asset_ref{ uniform };
+                                slot = uniform;
                         }
 
                     } else {
@@ -157,11 +147,9 @@ namespace GLT::world::world_ecs_entt::component {
                 ImGui::PopID();
             },
 
-            [](entity_id id) {      // outliner summary
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return std::string{};
-                const auto& mr = plugin->registry().get<component::mesh>(plugin->entt_of(id));
+            [](ecs_world& world, entity_id id) {      // outliner summary
+
+                const auto& mr = world.registry().get<component::mesh>(world.entt_of(id));
                 if (mr.material_overrides.empty())
                     return std::string{};
                 char buf[32];
@@ -177,13 +165,9 @@ namespace GLT::world::world_ecs_entt::component {
 
         reg.register_component<component::name>("name", "Core",
 
-            [](entity_id id) {
+            [](ecs_world& world, entity_id id) {
 
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return;
-
-                auto& name_comp = plugin->registry().get<component::name>(plugin->entt_of(id));
+                auto& name_comp = world.registry().get<component::name>(world.entt_of(id));
                 static bool enable_input = false;
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
                 GLT::UI::table_row("name", name_comp.name, enable_input);
@@ -199,7 +183,7 @@ namespace GLT::world::world_ecs_entt::component {
 
         // reg.register_component<hierarchy>("hierarchy", "Core",
 
-        //     [](entity_id id) {
+        //     [](ecs_world& world, entity_id id) {
 
         //         // Read-only view. The outliner is the editing surface for hierarchy; showing it here would be redundant
         //         // and invite the user to corrupt the tree
@@ -224,13 +208,9 @@ namespace GLT::world::world_ecs_entt::component {
 
         reg.register_component<component::audio_source>("audio source", "Audio",
 
-            [](entity_id id) {
+            [](ecs_world& world, entity_id id) {
 
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return;
-
-                auto& audio = plugin->registry().get<component::audio_source>(plugin->entt_of(id));
+                auto& audio = world.registry().get<component::audio_source>(world.entt_of(id));
 
                 ImGui::PushID("audio_source");
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
@@ -262,13 +242,9 @@ namespace GLT::world::world_ecs_entt::component {
 
         reg.register_component<component::camera>("camera", "Rendering",
 
-            [](entity_id id) {
+            [](ecs_world& world, entity_id id) {
 
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return;
-
-                auto& cam = plugin->registry().get<component::camera>(plugin->entt_of(id));
+                auto& cam = world.registry().get<component::camera>(world.entt_of(id));
 
                 ImGui::PushID("camera");
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
@@ -276,9 +252,8 @@ namespace GLT::world::world_ecs_entt::component {
                 GLT::UI::table_row("near plane", cam.near_plane, 0.01f, 0.001f, 100.f);
                 GLT::UI::table_row("far plane", cam.far_plane, 1.f, 0.01f, 100000.f);
 
-                // "Active camera" is a selection on the world, not a stored flag on the component. Expose it as a checkbox that
-                // routes through i_world_scene. Shows only if the concrete plugin implements the scene interface (it always does today,
-                // but keep the guard so headless / stripped world plugins don't crash the editor).
+                auto* plugin = GLT::world::manager::get_ptr();
+                VALIDATE(plugin, return, "", "world plugin not available")
                 if (auto* scene = plugin->as<GLT::world::i_world_scene>()) {
 
                     bool is_active = (scene->get_active_camera() == id);
@@ -294,14 +269,9 @@ namespace GLT::world::world_ecs_entt::component {
                 cam.near_plane = GLT::math::clamp(cam.near_plane, 0.001f, cam.far_plane);
             },
 
-            [](entity_id id) {
+            [](ecs_world& world, entity_id id) {
 
-                // One-line preview for the outliner. Short is the point.
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return std::string{};
-
-                const auto& cam = plugin->registry().get<component::camera>(plugin->entt_of(id));
+                const auto& cam = world.registry().get<component::camera>(world.entt_of(id));
                 char buf[32];
                 std::snprintf(buf, sizeof(buf), "fov %.0f", cam.fov);
                 return std::string(buf);
@@ -317,13 +287,9 @@ namespace GLT::world::world_ecs_entt::component {
 
         reg.register_component<component::light>("light", "Rendering",
 
-            [](entity_id id) {
+            [](ecs_world& world, entity_id id) {
 
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return;
-
-                auto& light = plugin->registry().get<component::light>(plugin->entt_of(id));
+                auto& light = world.registry().get<component::light>(world.entt_of(id));
 
                 ImGui::PushID("light");
                 GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
@@ -349,13 +315,9 @@ namespace GLT::world::world_ecs_entt::component {
                 ImGui::PopID();
             },
 
-            [](entity_id id) {
+            [](ecs_world& world, entity_id id) {
 
-                auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-                if (!plugin)
-                    return std::string{};
-
-                const auto& light = plugin->registry().get<component::light>(plugin->entt_of(id));
+                const auto& light = world.registry().get<component::light>(world.entt_of(id));
 
                 const char* tag = "?";
                 switch (light.type) {

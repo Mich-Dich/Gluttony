@@ -187,15 +187,17 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
             m_load_failed = true; m_has_material = false; m_show_window = true; return, 
             "", "path is a directory [{}]", (path.generic_string()))
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto* registry = GLT::asset::registry::get_ptr();
         VALIDATE(registry, m_load_failed = true; m_show_window = true; return, "", "no asset registry")
 
         auto loaded = registry->load(path);
         VALIDATE(loaded, m_load_failed = true; m_show_window = true; return, "", "failed to load material [{}]", (path.generic_string()))
 
-        if (!load_from_handle(*loaded)) {
-            registry->unload(*loaded);
+        if (!load_from_handle(std::move(*loaded))) {
+
             m_load_failed = true;
+            m_show_window = true;
+            return;
         }
 
         m_show_window = true;
@@ -204,25 +206,17 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
     void material_viewer_window::close_material() {
 
-        if (m_asset_handle != INVALID_HANDLE) {
-            if (auto registry = GLT::asset::registry::get_ref())
-                registry->unload(m_asset_handle);
-            m_asset_handle = INVALID_HANDLE;
-        }
-
+        m_asset_handle.reset();
         m_has_material = false;
         m_dirty = false;
-
         m_edit_slang.clear();
         m_baseline_slang.clear();
         m_edit_params.clear();
         m_baseline_params.clear();
         m_edit_blend = GLT::asset::material::blend_mode::opaque;
         m_baseline_blend = GLT::asset::material::blend_mode::opaque;
-
         m_edit_textures.fill(INVALID_HANDLE);
         m_baseline_textures.fill(INVALID_HANDLE);
-
         m_reflection_blob.clear();
         m_bytecode_blob.clear();
         m_compiler_hash = 0;
@@ -266,16 +260,16 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         if (!m_has_material)
             return false;
 
-        if (m_asset_handle == INVALID_HANDLE) {
+        if (!m_asset_handle.valid()) {
             LOG(warn, "no destination path for [{}] - cannot save", m_material_name);
             return false;
         }
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto* registry = GLT::asset::registry::get_ptr();
         if (!registry)
             return false;
 
-        auto* asset = registry->data_as<GLT::asset::material::material_asset>(m_asset_handle);
+        auto* asset = registry->data_as<GLT::asset::material::material_asset>(m_asset_handle.get());
         if (!asset) {
             LOG(error, "asset for [{}] disappeared before save", m_material_name);
             return false;
@@ -350,7 +344,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
         m_compile_error_message.clear();
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto* registry = GLT::asset::registry::get_ptr();
         VALIDATE(registry, return false, "", "asset registry unavailable")
 
         auto* asset = registry->data_as<GLT::asset::material::material_asset>(m_asset_handle);
@@ -915,7 +909,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         if (m_asset_handle == INVALID_HANDLE)
             return;     // new, unsaved material - there is no live asset yet
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto* registry = GLT::asset::registry::get_ptr();
         if (!registry)
             return;
 
@@ -965,7 +959,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
     bool material_viewer_window::load_from_handle(GLT::asset::handle h) {
 
-        auto registry = GLT::asset::registry::get_ref();
+        auto* registry = GLT::asset::registry::get_ptr();
         if (!registry)
             return false;
 

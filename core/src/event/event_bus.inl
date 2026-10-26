@@ -32,7 +32,7 @@ namespace GLT::event_bus {
     namespace detail {
 
         // Reentrancy-safe snapshot pool. One buffer per dispatch depth.
-        inline thread_local std::vector<std::unique_ptr<std::vector<subscription_entry_ptr>>>   s_snapshot_pool{};
+        inline thread_local std::vector<GLT::unique_ref<std::vector<subscription_entry_ptr>>>   s_snapshot_pool{};
 
         inline thread_local size_t                                                              s_snapshot_depth = 0;
 
@@ -122,7 +122,7 @@ namespace GLT::event_bus {
 
         // Get a reentrancy-safe snapshot buffer for this depth.
         if (detail::s_snapshot_depth == detail::s_snapshot_pool.size())
-            detail::s_snapshot_pool.push_back(std::make_unique<std::vector<subscription_entry_ptr>>());
+            detail::s_snapshot_pool.push_back(GLT::create_unique_ref<std::vector<subscription_entry_ptr>>());
 
         const size_t depth = detail::s_snapshot_depth++;
 
