@@ -80,6 +80,8 @@ namespace GLT::editor {
 
         void render_details();
 
+        void render_add_component_popup(GLT::world::entity_id id, const ImVec2& btn_max);
+
         void render_outliner();
 
         void set_cursor_captured(const bool captured);

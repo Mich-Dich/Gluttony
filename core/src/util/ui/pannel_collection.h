@@ -135,6 +135,9 @@ namespace GLT::UI {
 	bool gray_button(const char* label, const ImVec2& size = { 0, 0 });
 
 
+	bool transparent_button(const char* label, const ImVec2& size = { 0, 0 });
+
+
 	// @brief Creates a toggle button that changes its appearance based on a boolean variable.
 	// @param [bool_var] The boolean variable that controls the button's state.
 	// @return True if the button is clicked, false otherwise.

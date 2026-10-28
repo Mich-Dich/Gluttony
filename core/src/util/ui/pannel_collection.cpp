@@ -550,6 +550,19 @@ namespace GLT::UI {
 	}
 
 
+	bool transparent_button(const char* label, const ImVec2& size) {
+
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{1.f, 1.f, 1.f, 0.f});
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{1.f, 1.f, 1.f, .05f});
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{1.f, 1.f, 1.f, .1f});
+
+		const bool result = ImGui::Button(label, size);
+
+		ImGui::PopStyleColor(3);
+		return result;
+	}
+
+
 	bool toggle_button(const bool bool_var) {
 
 		// show weaker color if toggle_bool is false

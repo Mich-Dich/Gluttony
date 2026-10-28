@@ -349,7 +349,8 @@ namespace GLT::editor {
 
     void world_viewport_window::render_details() {
 
-        if (!ImGui::Begin("Details")) {
+        // NoScrollbar: header + toolbar stay pinned, only the component list scrolls.
+        if (!ImGui::Begin("Details", nullptr, ImGuiWindowFlags_NoScrollbar)) {
             ImGui::End();
             return;
         }
@@ -367,44 +368,73 @@ namespace GLT::editor {
             return;
         }
 
-        // ---- header: name + entity id ----
+        const auto& components = m_inspector->components_on(id);
+        const auto cursor_pos = ImGui::GetCursorPosX();
+        const float avail = ImGui::GetContentRegionAvail().x;
         {
             const auto name = m_world->entity_name(id);
-            ImGui::Text("Entity [%u]", id.index);
+            ImGui::Text("Entity:");
             if (!name.empty()) {
                 ImGui::SameLine();
-                ImGui::TextDisabled("— %.*s", static_cast<int>(name.size()), name.data());
+                ImGui::TextDisabled("%.*s", static_cast<int>(name.size()), name.data());
             }
+            u32 comp_count = 0;
+            for (const auto* c : components) { (void)c; ++comp_count; }
+        
+            const char* add_label = "+ Add Component";
+            const float btn_w = ImGui::CalcTextSize(add_label).x + ImGui::GetStyle().FramePadding.x * 2.f;
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%u component%s", comp_count, comp_count == 1 ? "" : "s");
+
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(cursor_pos + avail - btn_w);
+
+            if (ImGui::Button(add_label))
+                ImGui::OpenPopup("##add_comp");
+
         }
+
+        const ImVec2 add_btn_max = ImGui::GetItemRectMax();   // screen-space, bottom-right
+        render_add_component_popup(id, add_btn_max);
+
         ImGui::Separator();
 
-        // ---- component list ----
-        for (const auto* comp : m_inspector->components_on(id)) {
+        // scrollable component list
+        ImGui::BeginChild("##comp_list", ImVec2(0, 0));
+        for (const auto* comp : components) {
 
-            // One collapsing header per component. Default-open
+            ImGui::PushID(static_cast<int>(comp->hash));
+
+            if (!comp->has || !comp->has(id)) {
+                ImGui::PopID();
+                continue;
+            }
+
             const bool open = ImGui::CollapsingHeader(comp->name.data(),
                 ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
 
-            // "..." button on the header row
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20.f);
-            if (ImGui::SmallButton("..."))
+            if (UI::transparent_button("..."))
                 ImGui::OpenPopup("##comp_ctx");
 
+            const ImVec2 ctx_btn_max = ImGui::GetItemRectMax();
+            ImGui::SetNextWindowPos(ImVec2(ctx_btn_max.x, ctx_btn_max.y + 3.f), ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
+
+            bool removed = false;
             if (ImGui::BeginPopup("##comp_ctx")) {
 
-                if (ImGui::MenuItem("Remove", nullptr, false, !comp->can_remove || comp->can_remove(id)))
+                if (ImGui::MenuItem("Remove", nullptr, false, !comp->can_remove || comp->can_remove(id))) {
                     m_inspector->remove_component(id, comp->hash);
+                    removed = true;                       // don't touch this component any further this frame
+                }
 
                 if (ImGui::MenuItem("Copy"))
-                    // Stash the descriptor hash; paste applies on the target
                     m_clipboard_component = comp->hash;
 
                 ImGui::EndPopup();
             }
 
-            ImGui::PushID(static_cast<int>(comp->hash));
-            if (open) {
-
+            if (!removed && open) {
                 ImGui::Indent(8.f);
                 if (comp->draw)
                     comp->draw(id);
@@ -413,67 +443,84 @@ namespace GLT::editor {
                 ImGui::Unindent(8.f);
                 ImGui::Spacing();
             }
+
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+
+        ImGui::End();
+    }
+
+
+    void world_viewport_window::render_add_component_popup(GLT::world::entity_id id, const ImVec2& btn_max) {
+
+        ImGui::SetNextWindowPos(ImVec2(btn_max.x, btn_max.y + 3.f), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        const float vp_bottom = vp->WorkPos.y + vp->WorkSize.y;
+        const float vp_left   = vp->WorkPos.x;
+        const float space_below = vp_bottom - (btn_max.y + 3.f);
+        const float space_left  = btn_max.x - vp_left;
+        const float max_h = std::max(1.f, std::min(400.f, space_below));
+        const float max_w = std::max(1.f, std::min(520.f, space_left));
+
+        ImGui::SetNextWindowSizeConstraints(ImVec2(160.f, 0.f), ImVec2(max_w, max_h));
+        if (!ImGui::BeginPopup("##add_comp", ImGuiWindowFlags_AlwaysAutoResize))
+            return;
+
+        static char filter[64] = "";
+        if (ImGui::IsWindowAppearing())
+            filter[0] = '\0';
+
+        ImGui::SetNextItemWidth(-1.f);
+        ImGui::InputTextWithHint("##filter", "Search...", filter, sizeof(filter));
+        ImGui::Separator();
+
+        // scrollable list
+        ImGui::BeginChild("##comp_scroll", ImVec2(0.f, 0.f), ImGuiChildFlags_AutoResizeY);
+
+        const std::string_view needle = filter;
+        auto matches = [needle](const GLT::world::component_descriptor& d) {
+            return needle.empty() || d.name.find(needle) != std::string_view::npos;
+        };
+
+        bool any = false;
+        for (const auto& d : m_inspector->descriptors()) {
+
+            if (!matches(d) || d.has(id))
+                continue;
+                
+            any = true;
+            ImGui::PushID(static_cast<int>(d.hash));
+            if (ImGui::Selectable(d.name.data())) {
+                m_inspector->add_component(id, d.hash);
+                ImGui::CloseCurrentPopup();
+            }
+            if (!d.category.empty() && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%.*s", static_cast<int>(d.category.size()), d.category.data());
             ImGui::PopID();
         }
 
-        // ---- Add Component (bottom of panel) ----
-        ImGui::Separator();
-        if (ImGui::Button("Add Component", ImVec2(-1, 0)))
-            ImGui::OpenPopup("##add_comp");
+        if (!any)
+            ImGui::TextDisabled(needle.empty() ? "All components already added" : "No matching components");
 
-        if (ImGui::BeginPopup("##add_comp")) {
+        // paste row (bottom of the scroll region)
+        if (m_clipboard_component != 0) {
+            const GLT::world::component_descriptor* pasted = nullptr;
+            for (const auto& e : m_inspector->descriptors())
+                if (e.hash == m_clipboard_component) { pasted = &e; break; }
 
-            // Optional filter box - the popup gets long fast
-            static char filter[64] = "";
-            ImGui::InputTextWithHint("##filter", "Search...", filter, sizeof(filter));
-            ImGui::Separator();
-
-            const std::string_view needle = filter;
-            auto matches = [needle](const GLT::world::component_descriptor& d) {
-                return needle.empty() || d.name.find(needle) != std::string_view::npos;
-            };
-
-            for (const auto& d : m_inspector->descriptors()) {
-
-                if (!matches(d))
-                    continue;
-
-                if (d.has(id))
-                    continue;                       // already present
-
-                if (ImGui::Selectable(d.name.data())) {
-                    m_inspector->add_component(id, d.hash);
+            if (pasted && !pasted->has(id)) {
+                ImGui::Separator();
+                if (ImGui::Selectable(std::string("Paste: " + std::string(pasted->name)).c_str())) {
+                    m_inspector->add_component(id, m_clipboard_component);
                     ImGui::CloseCurrentPopup();
                 }
-                if (ImGui::IsItemHovered() && !d.category.empty()) {
-                    ImGui::BeginTooltip();
-                    ImGui::TextDisabled("%.*s", static_cast<int>(d.category.size()), d.category.data());
-                    ImGui::EndTooltip();
-                }
             }
-
-            // Paste row, if the clipboard holds a component
-            if (m_clipboard_component != 0) {
-                ImGui::Separator();
-                const auto* d = m_inspector->descriptors().empty()
-                    ? nullptr
-                    : [&]() -> const GLT::world::component_descriptor* {
-                        for (const auto& e : m_inspector->descriptors())
-                            if (e.hash == m_clipboard_component)
-                                return &e;
-                        return nullptr;
-                    }();
-
-                if (d && !d->has(id))
-                    if (ImGui::Selectable(std::string("Paste: " + std::string(d->name)).c_str())) {
-                        m_inspector->add_component(id, m_clipboard_component);
-                        ImGui::CloseCurrentPopup();
-                    }
-            }
-
-            ImGui::EndPopup();
         }
-        ImGui::End();
+
+        ImGui::EndChild();
+        ImGui::EndPopup();
     }
 
 
@@ -494,7 +541,7 @@ namespace GLT::editor {
         if (!m_inspector)
             m_inspector = m_world->as<GLT::world::i_world_inspector>();
 
-        // ---- toolbar ----
+        // toolbar
         if (ImGui::Button("+ Entity"))
             ImGui::OpenPopup("+ Entity Preset Popup");
 
@@ -545,11 +592,11 @@ namespace GLT::editor {
 
         ImGui::Separator();
 
-        // ---- tree ----
+        // tree
         for (auto root : m_world->root_entities())
             render_outliner_node(root);
 
-        // ---- blank-click deselect ----
+        // blank-click deselect
         if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)
             && !ImGui::IsAnyItemHovered()
             && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
@@ -580,11 +627,11 @@ namespace GLT::editor {
 
         const bool open = ImGui::TreeNodeEx("##node", flags, "%s", label);
 
-        // ---- selection ----
+        // selection
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
             m_selected_entity = id;
 
-        // ---- drag & drop (reparent) ----
+        // drag & drop (reparent)
         if (ImGui::BeginDragDropSource()) {
             ImGui::SetDragDropPayload("GLT_ENTITY", &id, sizeof(id));
             ImGui::TextUnformatted(label);
@@ -598,7 +645,7 @@ namespace GLT::editor {
             ImGui::EndDragDropTarget();
         }
 
-        // ---- context menu ----
+        // context menu
         if (ImGui::BeginPopupContextItem("##ctx")) {
 
             m_selected_entity = id;                            // right-click selects
@@ -628,7 +675,7 @@ namespace GLT::editor {
                 return;                                        // don't touch `id` after despawn
             }
 
-            // ---- Add Component submenu ----
+            // Add Component submenu
             if (m_inspector && ImGui::BeginMenu("Add Component")) {
 
                 // Group descriptors by category
@@ -657,7 +704,7 @@ namespace GLT::editor {
             ImGui::EndPopup();
         }
 
-        // ---- recurse ----
+        // recurse
         if (open && has_kids) {
             for (auto c : m_world->children_of(id))
                 render_outliner_node(c);
@@ -774,12 +821,12 @@ namespace GLT::editor {
             ImGui::Separator();
             ImGui::Spacing();
 
-            // ---- directory ----
+            // directory
             ImGui::TextUnformatted("Directory");
             ImGui::SameLine(100.f);
             GLT::UI::draw_directory_picker("##save_as_dir_picker", pending.directory, PROJECT_CONTENT_DIR);
 
-            // ---- filename ----
+            // filename
             ImGui::TextUnformatted("Filename");
             ImGui::SameLine(100.f);
             const std::string ext_hint = "." + pending.req.extension;
@@ -791,7 +838,7 @@ namespace GLT::editor {
 
             ImGui::Spacing();
 
-            // ---- preview + validation ----
+            // preview + validation
             std::filesystem::path full = pending.directory / pending.filename;
             if (full.extension() != std::filesystem::path(ext_hint))
                 full += ext_hint;
@@ -815,7 +862,7 @@ namespace GLT::editor {
             ImGui::Separator();
             ImGui::Spacing();
 
-            // ---- buttons ----
+            // buttons
             const bool can_confirm = pending.error_message.empty();
 
             ImGui::BeginDisabled(!can_confirm);
