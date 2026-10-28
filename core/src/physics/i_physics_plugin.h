@@ -72,10 +72,10 @@ namespace GLT::physics {
         // The returned instance owns its own PhysicsSystem, body/shape/contact caches, and gravity.
         // Destroying the unique_ref performs the entire shutdown — no explicit teardown call is needed
         //
-        // @param gravity  Initial gravity vector (default: Earth)
+        // @param gravity Initial gravity vector (default: Earth)
         // @return Owning reference to the new instance, or a physics_error
-        [[nodiscard]] virtual std::expected<unique_ref<i_physics>, physics_error>
-            instantiate(const glm::vec3& gravity = { 0.f, -9.81f, 0.f }) = 0;
+        [[nodiscard]] virtual std::expected<unique_ref<i_physics>, physics_error> instantiate(
+            const glm::vec3& gravity = { 0.f, -0.000981f, 0.f }) = 0;
     };
 
 }

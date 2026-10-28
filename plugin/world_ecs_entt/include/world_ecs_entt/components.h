@@ -64,6 +64,11 @@ namespace GLT::world::world_ecs_entt::component {
         std::vector<GLT::asset::asset_ref>          material_overrides{};
         bool                                        visible{ true };
 
+// Editor-only scratch: bound to the "Material Override" picker while
+// material_overrides is empty. Not serialised. Cleared the moment
+// the user picks something (see below).
+GLT::asset::asset_ref                       pending_override{};
+
         // NEW — persisted with the mesh codec. Defaults are static + use-mesh-material, which matches
         // the old behaviour when this field didn't exist (all meshes were effectively static)
         physics::motion_type                        motion = physics::motion_type::static_body;

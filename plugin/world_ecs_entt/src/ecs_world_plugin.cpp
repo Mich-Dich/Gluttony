@@ -33,6 +33,9 @@ namespace GLT::world::world_ecs_entt {
     static asset::asset_ref read_asset_handle(const ref<asset::i_asset_registry_plugin>& asset_registry, std::span<const std::byte> in_bytes,
         size_t& offset);
 
+
+    static void register_core_preset_factories(ecs_world_plugin& plugin);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
@@ -84,8 +87,85 @@ namespace GLT::world::world_ecs_entt {
         if (auto loaded = asset_registry->load(asset_path); loaded)
             return std::move(*loaded);
 
-        LOG(warn, "failed to resolve asset [{}] while loading a component", asset_path.generic_string());
+        LOG(warn, "failed to resolve asset [{}] while loading audio_comp component", asset_path.generic_string());
         return {};
+    }
+
+
+    static void register_core_preset_factories(ecs_world_plugin& plugin) {
+
+        plugin.register_preset_component("light", [](entity_builder& builder, const GLT::world::component_spec& spec) {
+
+                component::light light_comp;
+
+                if (const auto* value = spec.get("type"); value && std::holds_alternative<std::string>(*value)) {
+                    const auto& s = std::get<std::string>(*value);
+                    if (s == "directional")
+                        light_comp.type = GLT::world::light_type::directional;
+                    else if (s == "point")
+                        light_comp.type = GLT::world::light_type::point;
+                    else if (s == "spot")
+                        light_comp.type = GLT::world::light_type::spot;
+                }
+                if (const auto* value = spec.get("color"); value && std::holds_alternative<glm::vec3>(*value))
+                    light_comp.color = std::get<glm::vec3>(*value);
+                if (const auto* value = spec.get("intensity"); value && std::holds_alternative<f64>(*value))
+                    light_comp.intensity = static_cast<f32>(std::get<f64>(*value));
+                if (const auto* value = spec.get("radius"); value && std::holds_alternative<f64>(*value))
+                    light_comp.radius = static_cast<f32>(std::get<f64>(*value));
+                if (const auto* value = spec.get("inner_cone_angle"); value && std::holds_alternative<f64>(*value))
+                    light_comp.inner_cone_angle = static_cast<f32>(std::get<f64>(*value));
+                if (const auto* value = spec.get("outer_cone_angle"); value && std::holds_alternative<f64>(*value))
+                    light_comp.outer_cone_angle = static_cast<f32>(std::get<f64>(*value));
+
+                builder.add_or_replace(std::move(light_comp));
+            });
+
+        plugin.register_preset_component("camera", [](entity_builder& builder, const GLT::world::component_spec& spec) {
+
+                component::camera camera_comp;
+                if (const auto* value = spec.get("fov"); value && std::holds_alternative<f64>(*value))
+                    camera_comp.fov = static_cast<f32>(std::get<f64>(*value));
+                if (const auto* value = spec.get("near_plane"); value && std::holds_alternative<f64>(*value))
+                    camera_comp.near_plane = static_cast<f32>(std::get<f64>(*value));
+                if (const auto* value = spec.get("far_plane"); value && std::holds_alternative<f64>(*value))
+                    camera_comp.far_plane  = static_cast<f32>(std::get<f64>(*value));
+
+                builder.add_or_replace(std::move(camera_comp));
+            });
+
+        plugin.register_preset_component("mesh", [](entity_builder& builder, const GLT::world::component_spec& spec) {
+
+                // The factory owns the property → component translation. Right now the only knob is [visible]; a future
+                // version could accept a "mesh_path" and go through asset::registry::load() to obtain a real handle. That
+                // extension stays inside this factory - the preset schema doesn't need to change
+                component::mesh mesh_comp{};
+
+                if (const auto* value = spec.get("visible"); value && std::holds_alternative<bool>(*value))
+                    mesh_comp.visible = std::get<bool>(*value);
+
+                if (const auto* value = spec.get("mesh_path"); value && std::holds_alternative<std::string>(*value)) {
+                    // Reserved for a future extension. Currently a no-op: content-dir paths are project-specific and
+                    // don't belong in a core preset
+                }
+                builder.add_or_replace(std::move(mesh_comp));
+            });
+
+        plugin.register_preset_component("audio_source", [](entity_builder& builder, const GLT::world::component_spec& spec) {
+
+                component::audio_source audio_comp{};
+
+                if (const auto* value = spec.get("autoplay"); value && std::holds_alternative<bool>(*value))
+                    audio_comp.autoplay = std::get<bool>(*value);
+                if (const auto* value = spec.get("is_3d"); value && std::holds_alternative<bool>(*value))
+                    audio_comp.config.is_3d = std::get<bool>(*value);
+                if (const auto* value = spec.get("volume"); value && std::holds_alternative<f64>(*value))
+                    audio_comp.config.volume = static_cast<f32>(std::get<f64>(*value));
+                if (const auto* value = spec.get("loop"); value && std::holds_alternative<bool>(*value))
+                    audio_comp.config.loop = std::get<bool>(*value);
+
+                builder.add_or_replace(std::move(audio_comp));
+            });
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -153,8 +233,7 @@ namespace GLT::world::world_ecs_entt {
                 for (u32 i = 0; i < count; ++i)
                     mesh_component.material_overrides.emplace_back(read_asset_handle(asset_registry, in_bytes, offset));
 
-                mesh_component.visible = (in_bytes.size() > offset) ? (in_bytes[offset] != std::byte{0}) : true;
-
+                mesh_component.visible = (in_bytes.size() > offset) ? (in_bytes[offset++] != std::byte{0}) : true;
                 if (in_bytes.size() > offset)
                     mesh_component.motion = static_cast<physics::motion_type>(static_cast<u8>(in_bytes[offset++]));
 
@@ -206,7 +285,7 @@ namespace GLT::world::world_ecs_entt {
                 size_t offset = 0;
                 audio_component.clip = read_asset_handle(asset_registry, in_bytes, offset);
 
-                // Config was written in full at save time. If it's missing or truncated the blob came from a different
+                // Config was written in full at save time. If it's missing or truncated the blob came from audio_comp different
                 // (or hand-edited) writer - leave the config at its default-constructed values rather than risk reading past the buffer.
                 if (in_bytes.size() < offset + sizeof(audio_component.config))
                     return;
@@ -262,13 +341,38 @@ namespace GLT::world::world_ecs_entt {
                 std::memcpy(&h.parent, data.data(), sizeof(entity_id));
             });
 
+        GLT::world::register_core_presets();
+        register_core_preset_factories(*this);
+
         LOG_LOADED
     }
 
 
     void ecs_world_plugin::on_unload() {
+        
+        m_preset_factories.clear();
         m_asset_handler.on_unload();
         LOG_UNLOADED
+    }
+
+    // preset factory registry -----------------------------------------------------------------------------------------
+
+    void ecs_world_plugin::register_preset_component(std::string_view name, preset_factory_fn fn) {
+
+        m_preset_factories[std::string(name)] = std::move(fn);
+    }
+
+
+    void ecs_world_plugin::unregister_preset_component(std::string_view name) noexcept {
+
+        m_preset_factories.erase(std::string(name));
+    }
+
+
+    const ecs_world_plugin::preset_factory_fn* ecs_world_plugin::find_preset_component(std::string_view name) const noexcept {
+
+        const auto it = m_preset_factories.find(std::string(name));
+        return it == m_preset_factories.end() ? nullptr : &it->second;
     }
 
 

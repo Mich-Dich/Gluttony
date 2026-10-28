@@ -270,13 +270,23 @@ namespace GLT::UI {
         const ImGuiStyle& style = ImGui::GetStyle();
         const f32 frame_h = ImGui::GetFrameHeight();
         const f32 clear_w = (opts.allow_clear && current != INVALID_HANDLE) ? (frame_h + style.ItemSpacing.x) : 0.f;
-        const f32 field_w = available_width - clear_w - frame_h - style.ItemSpacing.x;
+        const f32 field_w = available_width - clear_w - style.ItemSpacing.x;
 
         char display_buf[256];
         std::snprintf(display_buf, sizeof(display_buf), "%s", display.c_str());
 
-        ImGui::SetNextItemWidth(field_w);
-        ImGui::InputText("##value", display_buf, sizeof(display_buf), ImGuiInputTextFlags_ReadOnly);
+        const bool is_empty = (current == INVALID_HANDLE);
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.f, 0.5f));
+        if (is_empty)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+
+        // "###value": only the part after ### is hashed, so the ID stays stable when the name changes
+        const std::string field_label = display + "###value";
+        const bool field_clicked = ImGui::Button(field_label.c_str(), ImVec2(field_w, 0.f));
+
+        if (is_empty)
+            ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
 
         // While a compatible drag is over the field, tint the border so the user gets an unambiguous "this is the drop target" signal
         // ImGui's default drop feedback is easy to miss on a read-only input
@@ -333,11 +343,7 @@ namespace GLT::UI {
         const ImVec2 field_max = ImGui::GetItemRectMax();
         const f32 field_screen_w = field_max.x - field_min.x;
 
-        if (ImGui::IsItemClicked())
-            ImGui::OpenPopup("##picker_popup");
-
-        ImGui::SameLine();
-        if (ImGui::Button("...", ImVec2(frame_h, 0)))
+        if (field_clicked)
             ImGui::OpenPopup("##picker_popup");
 
         if (opts.allow_clear && current != INVALID_HANDLE) {
@@ -351,9 +357,9 @@ namespace GLT::UI {
         if (ImGui::IsPopupOpen("##picker_popup")) {
             ImGui::SetNextWindowPos(ImVec2(field_min.x, field_max.y), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(field_screen_w, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(720, 560));
         }
 
-        ImGui::SetNextWindowSizeConstraints(ImVec2(420, 320), ImVec2(720, 560));
         if (ImGui::BeginPopup("##picker_popup")) {
 
             static char search_buf[128] = "";
@@ -509,7 +515,6 @@ namespace GLT::UI {
         ImGui::TableSetColumnIndex(1);
 
         ImGui::PushID(label.data());
-        ImGui::PushID(&in_out);
 
         asset_picker_options opts{};
         opts.label = label;
@@ -517,7 +522,6 @@ namespace GLT::UI {
         opts.allow_clear = allow_clear;
         const bool changed = asset_picker_widget(opts, in_out, ImGui::GetContentRegionAvail().x);
 
-        ImGui::PopID();
         ImGui::PopID();
 
         return changed;
@@ -543,7 +547,6 @@ namespace GLT::UI {
         ImGui::TableSetColumnIndex(1);
 
         ImGui::PushID(label.data());
-        ImGui::PushID(&in_out);
 
         asset_picker_options opts{};
         opts.label = label;
@@ -551,7 +554,6 @@ namespace GLT::UI {
         opts.allow_clear = allow_clear;
         const bool changed = asset_picker_widget(opts, in_out, ImGui::GetContentRegionAvail().x);
 
-        ImGui::PopID();
         ImGui::PopID();
 
         return changed;

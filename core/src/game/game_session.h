@@ -64,6 +64,14 @@ namespace GLT::game {
         // physics is available the moment a session exists
         [[nodiscard]] physics::i_physics* get_physics() const noexcept { return m_physics.get(); }
 
+        // Detach physics from the world, then destroy the instance. Safe to call with no world loaded.
+        // Call this for editor-only sessions so gizmo edits don't get clobbered by the next physics step.
+        void remove_physics();
+
+        // Recreate a physics instance and attach it to the current world. No-op if one already exists.
+        // Returns false only when the physics plugin isn't loaded or instantiation failed.
+        bool create_physics();
+
         // world -------------------------------------------------------------------------------------------------------
         [[nodiscard]] world::i_world* get_world() const noexcept { return m_world.get(); }
 

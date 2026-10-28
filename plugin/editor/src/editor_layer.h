@@ -181,6 +181,9 @@ namespace GLT::editor {
         void load_simulation_settings();
 
 
+        void start_simulation();
+
+
         // Creates every simulation window described by m_simulation_mode / m_sim_window_count / m_sim_layouts.
         // No-op for simulation_mode::current_viewport (the existing viewport is reused).
         void spawn_simulation_windows();
@@ -228,6 +231,7 @@ namespace GLT::editor {
         u32                                             m_next_notification_id{ 0 };
         std::vector<notification>                       m_notifications{};
         std::vector<notification_event>                 m_notification_event_buffer{};   // buffered - event may fire mid-draw
+
         GLT::system_state                               m_simulation_state = GLT::system_state::idle;   // editor specific sim
         simulation_mode                                 m_simulation_mode{ simulation_mode::current_viewport };
         u32                                             m_sim_window_count{ 1 };

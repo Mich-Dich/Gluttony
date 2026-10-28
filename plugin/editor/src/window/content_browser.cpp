@@ -64,7 +64,7 @@ namespace GLT::editor {
     bool paths_equal(const std::filesystem::path& a, const std::filesystem::path& b);
 
     // Maps a file extension to the icon that should represent it in the browser.
-    icon_manager::icon extension_to_icon(const std::string& ext);
+    icon_manager::icon_type extension_to_icon(const std::string& ext);
 
     // Resolve the .glt_* extension on a browser entry to a live asset type.
     // Goes through the registry first so plugin-registered types resolve too;
@@ -108,7 +108,7 @@ namespace GLT::editor {
     }
 
 
-    icon_manager::icon extension_to_icon(const std::string& ext) {
+    icon_manager::icon_type extension_to_icon(const std::string& ext) {
 
         // Fast path: this is a ".glt_*" asset file.
         const GLT::asset::type t = resolve_entry_type(ext);

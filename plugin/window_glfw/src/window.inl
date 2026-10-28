@@ -495,6 +495,14 @@ namespace GLT::platform::glfw_backend {
             auto* slot = slot_from_window(w);
             if (!slot)
                 return;
+
+            if (slot->imgui_context) {
+                ImGuiContext* prev = ImGui::GetCurrentContext();
+                ImGui::SetCurrentContext(slot->imgui_context);
+                ImGui_ImplGlfw_WindowFocusCallback(w, focused);
+                ImGui::SetCurrentContext(prev);
+            }
+
             GLT::window_focus_event event(slot->handle, focused == GLFW_TRUE);
             GLT::event_bus::post(event);
         });
@@ -630,6 +638,15 @@ namespace GLT::platform::glfw_backend {
             if (!slot)
                 return;
 
+            const bool captured = (glfwGetInputMode(w, GLFW_CURSOR) == GLFW_CURSOR_DISABLED);
+            if (slot->imgui_context && !captured) {
+                ImGuiContext* prev = ImGui::GetCurrentContext();
+                ImGui::SetCurrentContext(slot->imgui_context);
+                ImGui_ImplGlfw_CursorPosCallback(w, x, y);
+                ImGui::SetCurrentContext(prev);
+            }
+
+            // ---- delta still runs for the game ----
             const glm::vec2 pos{ static_cast<f32>(x), static_cast<f32>(y) };
             if (slot->cursor_first_sample) {
                 slot->last_cursor_pos = pos;
@@ -649,8 +666,16 @@ namespace GLT::platform::glfw_backend {
             auto* slot = slot_from_window(w);
             if (!slot)
                 return;
+
+            if (slot->imgui_context) {
+                ImGuiContext* prev = ImGui::GetCurrentContext();
+                ImGui::SetCurrentContext(slot->imgui_context);
+                ImGui_ImplGlfw_CursorEnterCallback(w, entered);
+                ImGui::SetCurrentContext(prev);
+            }
+
             if (!entered)
-                slot->cursor_first_sample = true;   // suppress the next jump when the cursor re-enters
+                slot->cursor_first_sample = true;
             GLT::mouse_event event(slot->handle, entered == GLFW_TRUE);
             GLT::event_bus::post(event);
         });

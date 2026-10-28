@@ -1327,7 +1327,6 @@ namespace GLT::UI {
 
         ImGui::TableNextRow();
 
-        // ---- column 0: label + optional help marker ----
         ImGui::TableSetColumnIndex(0);
         ImGui::Text("%s", label.data());
 
@@ -1337,18 +1336,8 @@ namespace GLT::UI {
             help_marker(desc);
         }
 
-        // ---- column 1: the picker ----
         ImGui::TableSetColumnIndex(1);
-
-        ImGui::PushID(label.data());
-        ImGui::PushID(&in_out);
-
-        const bool changed = draw_directory_picker("##dir", in_out, root);
-
-        ImGui::PopID();
-        ImGui::PopID();
-
-        return changed;
+        return draw_directory_picker("##dir", in_out, root);
     }
 
 

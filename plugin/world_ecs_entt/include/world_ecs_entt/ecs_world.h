@@ -8,6 +8,7 @@
 #include <world/i_world.h>
 #include <world/i_world_scene.h>
 #include <world/i_world_inspector.h>
+#include <world/entity_preset.h>
 
 #include "components.h"
 #include "entity_builder.h"
@@ -30,8 +31,8 @@ namespace GLT::world::world_ecs_entt {
     // world asset ref, per-instance component_registry.
     // Borrows: entity_codec and asset handler (via ecs_world_plugin).
     class ecs_world final : public i_world,
-                            public i_world_inspector,
-                            public i_world_scene {
+        public i_world_inspector,
+        public i_world_scene {
     public:
 
         ecs_world(ecs_world_plugin& plugin, asset::asset_ref asset);
@@ -51,6 +52,8 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] entity_id spawn() override;
         void despawn(entity_id id) noexcept override;
         [[nodiscard]] bool alive(entity_id id) const noexcept override;
+
+        entity_id spawn_preset(std::string_view preset_name, entity_id parent = INVALID_ENTITY) override;
 
         [[nodiscard]] glm::vec3 get_local_position(entity_id id) const override;
         [[nodiscard]] glm::vec3 get_local_rotation(entity_id id) const override;
@@ -167,6 +170,9 @@ namespace GLT::world::world_ecs_entt {
         // observers ---------------------------------------------------------------------------------------------------
         void on_mesh_construct(entt::registry& reg, entt::entity entity);
         void on_physics_body_destroyed(entt::registry& reg, entt::entity entity);
+
+        // preset helpers ---------------------------------------------------------------------------------------------
+        entity_id instantiate_preset_recursive(const GLT::world::entity_preset& preset, entity_id parent);
 
 
         ecs_world_plugin&                               m_plugin;

@@ -51,6 +51,19 @@ namespace GLT::world {
         [[nodiscard]] virtual const asset::asset_ref& asset() const noexcept = 0;
         [[nodiscard]] virtual asset::handle asset_handle() const noexcept = 0;
 
+        // presets ----------------------------------------------------------------------------------------------------
+
+        // @brief Spawns a fresh entity (possibly a small hierarchy) from a registered entity preset
+        //
+        // Looks up [preset_name] in GLT::world::preset_registry. The concrete world interprets the preset's component specs into
+        // its own component types. Unknown components are logged and skipped, so a preset referencing a plugin's custom component
+        // will still partially instantiate on a world that doesn't know about it
+        //
+        // @param preset_name  Registered preset name (see GLT::world::preset_registry)
+        // @param parent        Optional parent for the root entity. INVALID_ENTITY leaves it unparented
+        // @return The new root entity_id, or INVALID_ENTITY on failure
+        virtual entity_id spawn_preset(std::string_view /*preset_name*/, entity_id /*parent*/ = INVALID_ENTITY) { return INVALID_ENTITY; }
+
         // physics -----------------------------------------------------------------------------------------------------
 
         // Give this world a physics simulation to drive. Passing nullptr detaches. Sessions call this once per world,

@@ -172,6 +172,9 @@ namespace GLT::world::world_ecs_entt {
             asset->active_camera_generation = cam[1];
         }
 
+        if (const auto pos = reader.get_as<glm::vec3>(GLT::asset::world::CHUNK_WORLD_ACTIVE_CAMERA_POSITION); pos.size() == 1)
+            asset->active_camera_position = pos[0];
+
         if (const auto cell = reader.get_as<glm::vec3>(GLT::asset::world::CHUNK_WORLD_REGION_CELL_SIZE); cell.size() == 1)
             asset->region_cell_size = cell[0];
 
@@ -275,6 +278,7 @@ namespace GLT::world::world_ecs_entt {
             write_chunk_as(out, GLT::asset::world::CHUNK_WORLD_ACTIVE_CAMERA, cam);
         }
 
+        write_chunk_as(out, GLT::asset::world::CHUNK_WORLD_ACTIVE_CAMERA_POSITION, asset.active_camera_position);
         write_chunk_as(out, GLT::asset::world::CHUNK_WORLD_REGION_CELL_SIZE, asset.region_cell_size);
         write_chunk_as(out, GLT::asset::world::CHUNK_WORLD_STREAMING_RADIUS, asset.streaming_radius);
 

@@ -219,12 +219,24 @@ namespace GLT::physics::jolt {
         if (desc.motion == motion_type::dynamic_body) {
 
             JPH::MassProperties mp = s->shape->GetMassProperties();
-            mp.ScaleToMass(mp.mMass * (s->material.density / 1000.f));
-            if (desc.mass_override > 0.f)
+
+            if (!(mp.mMass > 0.0f) || !std::isfinite(mp.mMass)) {
+                const JPH::AABox bounds = s->shape->GetLocalBounds();
+                const JPH::Vec3 half = JPH::Vec3::sMax(bounds.GetExtent() / 2.f, JPH::Vec3::sReplicate(0.01f));
+                mp = JPH::MassProperties();
+                mp.SetMassAndInertiaOfSolidBox(half * 2.0f, 1.0f);      // density 1 → mass ≈ volume
+            }
+
+            const f32 density = (s->material.density > 0.0001f) ? s->material.density : 1000.0f;
+            mp.ScaleToMass(mp.mMass * (density / 1000.0f));
+
+            if (desc.mass_override > 0.0f)
                 mp.ScaleToMass(desc.mass_override);
 
-            resolved_mass = mp.mMass;
+            if (mp.mMass <= 0.0f || !std::isfinite(mp.mMass))
+                return std::unexpected(physics_error::invalid_argument);
 
+            resolved_mass = mp.mMass;
             settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
             settings.mMassPropertiesOverride = mp;
         }
@@ -248,7 +260,10 @@ namespace GLT::physics::jolt {
 
         body->SetUserData(pack_body_handle(handle));
 
-        bi.AddBody(body_id, JPH::EActivation::DontActivate);
+        const JPH::EActivation activation = (desc.motion == motion_type::dynamic_body)
+            ? JPH::EActivation::Activate
+            : JPH::EActivation::DontActivate;
+        bi.AddBody(body_id, activation);
 
         m_shapes.add_ref(desc.shape);   // debug-only bookkeeping
 

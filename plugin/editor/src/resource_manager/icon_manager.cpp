@@ -33,122 +33,122 @@ namespace GLT::editor::icon_manager {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr u32                                           PADDING = 0;                    // transparent border around each icon
+    constexpr u32                                               PADDING = 0;                    // transparent border around each icon
 
-    constexpr u32                                           THUMBNAIL_CELL_SIZE = 128;      // px, largest side of a thumbnail
+    constexpr u32                                               THUMBNAIL_CELL_SIZE = 128;      // px, largest side of a thumbnail
 
-    constexpr u32                                           THUMBNAIL_PAGE_COLS = 8;
+    constexpr u32                                               THUMBNAIL_PAGE_COLS = 8;
 
-    constexpr u32                                           THUMBNAIL_PAGE_ROWS = 8;
+    constexpr u32                                               THUMBNAIL_PAGE_ROWS = 8;
 
-    constexpr u32                                           THUMBNAIL_PAGE_SLOTS = THUMBNAIL_PAGE_COLS * THUMBNAIL_PAGE_ROWS;
+    constexpr u32                                               THUMBNAIL_PAGE_SLOTS = THUMBNAIL_PAGE_COLS * THUMBNAIL_PAGE_ROWS;
 
-    constexpr u32                                           THUMBNAIL_PAGE_WIDTH = THUMBNAIL_PAGE_COLS * THUMBNAIL_CELL_SIZE;   // 1024
+    constexpr u32                                               THUMBNAIL_PAGE_WIDTH = THUMBNAIL_PAGE_COLS * THUMBNAIL_CELL_SIZE;   // 1024
 
-    constexpr u32                                           THUMBNAIL_PAGE_HEIGHT = THUMBNAIL_PAGE_ROWS * THUMBNAIL_CELL_SIZE;   // 1024
+    constexpr u32                                               THUMBNAIL_PAGE_HEIGHT = THUMBNAIL_PAGE_ROWS * THUMBNAIL_CELL_SIZE;   // 1024
 
     // MACROS ==========================================================================================================
 
-    #define OUTPUT_CPU_SIDE_THUMBNAIL_BUFFER                0
+    #define OUTPUT_CPU_SIDE_THUMBNAIL_BUFFER                    0
 
     // TYPES ===========================================================================================================
 
     struct grid_dimensions {
 
-        u32                                                 cols = 0;
-        u32                                                 rows = 0;
+        u32                                                     cols = 0;
+        u32                                                     rows = 0;
 
-        u32 cell_count() const noexcept                     { return cols * rows; }
+        u32 cell_count() const noexcept                         { return cols * rows; }
 
-        auto operator<=>(const grid_dimensions&) const = default;   // gives ==, <, etc.
+        auto operator<=>(const grid_dimensions&) const = default;   // gives ==, <, etc
 
     };
 
 
     struct atlas_layout {
 
-        u32                                                 texture_width = 0;
-        u32                                                 texture_height = 0;
-        grid_dimensions                                     grid{};
-        u32                                                 cell_size = 0;   // icon + padding
-        u32                                                 icon_padding = 0;
+        u32                                                     texture_width = 0;
+        u32                                                     texture_height = 0;
+        grid_dimensions                                         grid{};
+        u32                                                     cell_size = 0;   // icon + padding
+        u32                                                     icon_padding = 0;
     };
 
 
     struct icon_source {
 
-        icon                                                id{};
-        std::filesystem::path                               path{};
+        icon_type                                               id{};
+        std::filesystem::path                                   path{};
     };
 
     // thumbnail -------------------------------------------------------------------------------------------------------
 
     struct dirty_rect {
 
-        u32                                                 x = 0;
-        u32                                                 y = 0;
-        u32                                                 width = 0;
-        u32                                                 height = 0;
+        u32                                                     x = 0;
+        u32                                                     y = 0;
+        u32                                                     width = 0;
+        u32                                                     height = 0;
     };
 
 
     struct thumbnail_page {
 
-        GLT::unique_ref<GLT::render::image>                 image{};        // GPU texture
-        ImTextureRef                                        tex_ref{};      // cached descriptor
-        std::vector<u8>                                     cpu_pixels{};   // RGBA8, PAGE_WIDTH * PAGE_HEIGHT * 4
-        std::vector<dirty_rect>                             dirty_rects{};  // regions written since last GPU upload
-        u32                                                 used_slots = 0;
+        GLT::unique_ref<GLT::render::image>                     image{};        // GPU texture
+        ImTextureRef                                            tex_ref{};      // cached descriptor
+        std::vector<u8>                                         cpu_pixels{};   // RGBA8, PAGE_WIDTH * PAGE_HEIGHT * 4
+        std::vector<dirty_rect>                                 dirty_rects{};  // regions written since last GPU upload
+        u32                                                     used_slots = 0;
     };
 
 
     struct thumbnail_slot {
 
-        thumbnail_state                                     state = thumbnail_state::pending;
-        u32                                                 page = 0;
-        u32                                                 cell = 0;
-        ImVec2                                              image_size{};
-        ImVec2                                              uv0{};
-        ImVec2                                              uv1{};
+        thumbnail_state                                         state = thumbnail_state::pending;
+        u32                                                     page = 0;
+        u32                                                     cell = 0;
+        ImVec2                                                  image_size{};
+        ImVec2                                                  uv0{};
+        ImVec2                                                  uv1{};
     };
 
 
     struct thumbnail_job {
 
-        thumbnail_handle                                    handle{};
-        std::filesystem::path                               path{};
+        thumbnail_handle                                        handle{};
+        std::filesystem::path                                   path{};
     };
 
 
     struct thumbnail_result {
 
-        thumbnail_handle                                    handle = invalid_thumbnail_handle;
-        bool                                                success = false;
-        u32                                                 width = 0;
-        u32                                                 height = 0;
-        std::vector<u8>                                     pixels{};     // RGBA8, width*height*4
+        thumbnail_handle                                        handle = invalid_thumbnail_handle;
+        bool                                                    success = false;
+        u32                                                     width = 0;
+        u32                                                     height = 0;
+        std::vector<u8>                                         pixels{};     // RGBA8, width*height*4
     };
 
 
     struct thumbnail_manager {
 
         // main thread only
-        std::vector<thumbnail_page>                         pages{};
-        std::vector<thumbnail_slot>                         slots{};          // index = handle - 1
-        std::unordered_map<std::string, thumbnail_handle>   path_to_handle{};
+        std::vector<thumbnail_page>                             pages{};
+        std::vector<thumbnail_slot>                             slots{};          // index = handle - 1
+        std::unordered_map<std::string, thumbnail_handle>       path_to_handle{};
 
         // worker -> main handoff
-        std::mutex                                          result_mutex{};
-        std::vector<thumbnail_result>                       results{};
+        std::mutex                                              result_mutex{};
+        std::vector<thumbnail_result>                           results{};
 
         // main -> worker queue
-        std::mutex                                          job_mutex{};
-        std::condition_variable                             job_cv{};
-        std::queue<thumbnail_job>                           jobs{};
+        std::mutex                                              job_mutex{};
+        std::condition_variable                                 job_cv{};
+        std::queue<thumbnail_job>                               jobs{};
 
         // worker thread
-        std::thread                                         worker{};
-        std::atomic<bool>                                   worker_stop{false};
+        std::thread                                             worker{};
+        std::atomic<bool>                                       worker_stop{false};
     };
 
 
@@ -158,19 +158,42 @@ namespace GLT::editor::icon_manager {
         return instance;
     }
 
+    // icon registry ---------------------------------------------------------------------------------------------------
+
+    // @brief Runtime registry of every icon the editor knows about, core or plugin
+    //
+    // Core icons are seeded from `s_core_icons` (reflected over the `icon` namespace) during init(); plugin icons come in via
+    // register_icon()
+    struct icon_registry {
+
+        std::unordered_map<u32, std::string>                    value_to_name{};
+        std::unordered_map<std::string, u32>                    name_to_value{};
+        u32                                                     next_custom = ICON_TYPE_CUSTOM_BEGIN;
+    };
+
+
+    // Compile-time enumeration of every variable inside `namespace icon` whose type is icon_type. This is the analogue of
+    // `asset::type_entries` — it lets core icons stay listed as `inline constexpr` values (no central "register all the things"
+    // boilerplate) while remaining enumerable at runtime
+    struct core_icon_entry {
+
+        icon_type                                               type;
+        const char*                                             name;
+    };
+
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
-    // Chooses the grid layout for `icon_count` equal-sized icons.
+    // Chooses the grid layout for `icon_count` equal-sized icons
     //
     // Strategy:
-    //   1. Minimize max(cols, rows)    -> keeps the texture "size class" small.
-    //   2. Minimize cols * rows        -> among equal size classes, waste less.
+    //   1. Minimize max(cols, rows)    -> keeps the texture "size class" small
+    //   2. Minimize cols * rows        -> among equal size classes, waste less
     //
     // Both objectives matter for a GPU texture: (1) keeps the texture small
     // in the dimension that determines VRAM cost and cache footprint,
-    // (2) avoids wasting cells when a tighter packing exists in the same class.
+    // (2) avoids wasting cells when a tighter packing exists in the same class
     FORCE_INLINE_R grid_dimensions compute_icon_grid(u32 icon_count);
 
     // Box-filter an RGBA8 image down so its longest side is <= max_side
@@ -188,11 +211,39 @@ namespace GLT::editor::icon_manager {
 
     void reupload_thumbnail_page(u32 page_idx);
 
+    icon_registry& icon_reg();
+
+    consteval auto make_core_icon_entries() {
+
+        std::vector<core_icon_entry> result;
+        for (auto m : std::meta::members_of(^^icon, std::meta::access_context::unchecked())) {
+
+            if (std::meta::is_variable(m) && std::meta::remove_cv(std::meta::type_of(m)) == ^^icon_type) {
+                result.push_back({
+                    std::meta::extract<icon_type>(m),
+                    std::define_static_string(std::meta::identifier_of(m))
+                });
+            }
+        }
+
+        return std::define_static_array(result);
+    }
+
+    // Returns the core icon_type for [name], or std::nullopt if [name] is not a built-in
+    std::optional<icon_type> find_core_icon(std::string_view name);
+
+    // Builds one atlas per native icon size from every icon currently in the registry
+    //
+    // Splitting this out of init() lets reload() rebuild the atlases without touching the thumbnail worker
+    void build_icon_atlases();
+
     // STATIC VARIABLES ================================================================================================
 
-    static std::unordered_map<icon, icon_data>                  s_icons{};
+    static std::unordered_map<icon_type, icon_data>             s_icons{};
 
     static std::vector<GLT::unique_ref<GLT::render::image>>     s_atlases{};
+
+    inline constexpr auto                                       s_core_icons = make_core_icon_entries();
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
@@ -318,7 +369,7 @@ namespace GLT::editor::icon_manager {
 
             // Try the asset's baked CHUNK_THUMBNAIL ------------------------------------------------
             // The registry reads only header + chunk table
-            // The payload is (thumbnail_header | RGBA8 bytes) and may be up to THUMBNAIL_MAX_SIDE, which can exceed our atlas cell - so we downsample to fit.
+            // The payload is (thumbnail_header | RGBA8 bytes) and may be up to THUMBNAIL_MAX_SIDE, which can exceed our atlas cell - so we downsample to fit
             if (auto registry = GLT::asset::registry::get_ref()) {
 
                 auto chunk = registry->read_chunk(job.path, GLT::asset::CHUNK_THUMBNAIL);
@@ -390,7 +441,7 @@ namespace GLT::editor::icon_manager {
 
         auto& state = tm();
 
-        // Look for a page with a free slot.
+        // Look for a page with a free slot
         for (u32 page_idx = 0; page_idx < (u32)state.pages.size(); page_idx++) {
 
             if (state.pages[page_idx].used_slots < THUMBNAIL_PAGE_SLOTS) {
@@ -402,7 +453,7 @@ namespace GLT::editor::icon_manager {
             }
         }
 
-        // No room anywhere - create a new page.
+        // No room anywhere - create a new page
         thumbnail_page page{};
         page.cpu_pixels.assign((size_t)THUMBNAIL_PAGE_WIDTH * THUMBNAIL_PAGE_HEIGHT * 4, 0);
         page.image = GLT::create_unique_ref<GLT::render::image>(page.cpu_pixels.data(), THUMBNAIL_PAGE_WIDTH, THUMBNAIL_PAGE_HEIGHT, false);
@@ -426,7 +477,7 @@ namespace GLT::editor::icon_manager {
 
         // update_region() expects tightly-packed rows, but cpu_pixels has
         // THUMBNAIL_PAGE_WIDTH*4 bytes per row. Copy each dirty rect into a
-        // small scratch buffer before uploading.
+        // small scratch buffer before uploading
         for (const auto& r : page.dirty_rects) {
 
             std::vector<u8> scratch((size_t)r.width * r.height * 4);
@@ -443,34 +494,50 @@ namespace GLT::editor::icon_manager {
         page.dirty_rects.clear();
     }
 
-    // TEMPLATE IMPLEMENTATION =========================================================================================
 
-    // FUNCTION IMPLEMENTATION =========================================================================================
+    icon_registry& icon_reg() {
 
-    void init() { 
+        static icon_registry instance;
+        return instance;
+    }
+
+
+    std::optional<icon_type> find_core_icon(std::string_view name) {
+
+        for (const auto& [type, n] : s_core_icons) {
+            if (name == n)
+                return type;
+        }
+        return std::nullopt;
+    }
+
+
+    void build_icon_atlases() {
+
+        const auto& reg = icon_reg();
 
         std::error_code error{};
         const auto base_path = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "image";
         std::map<grid_dimensions, std::vector<icon_source>> icons_sorted_by_atlas{};
 
-        for (icon i : GLT::util::enum_values<icon>) {
+        // Pass 1: discover native sizes -----------------------------------------------------------
+        for (const auto& [value, name] : reg.value_to_name) {
 
-            const auto file_name = std::string(GLT::util::enum_to_string(i)) + ".png";
-            const auto image_path = base_path / file_name;
+            const auto image_path = base_path / (name + ".png");
             const bool image_exists = GLT::vfs::exists(image_path, error);
-            VALIDATE(!error && image_exists, continue, 
-                "", "Image [{}] was not at expected location [{}]", (GLT::util::enum_to_string(i), image_path.generic_string()))
+            VALIDATE(!error && image_exists, continue,
+                "", "Image [{}] was not at expected location [{}]", (name, image_path.generic_string()))
 
             int channels = 0, width = 0, height = 0;
             u8* data = stbi_load(image_path.string().c_str(), &width, &height, &channels, 4);
             VALIDATE(data, continue, "", "stbi_load failed for [{}]", (image_path.generic_string()))
             stbi_image_free(data);
 
-            icons_sorted_by_atlas[{ (u32)width, (u32)height }].push_back({ i, image_path });
+            icons_sorted_by_atlas[{ (u32)width, (u32)height }].push_back({ icon_type{ value }, image_path });
         }
-        
-        // build one atlas per size group
-        LOG(trace, "Number of atlas to create [{}]", icons_sorted_by_atlas.size())
+
+        // Pass 2: build one atlas per size group --------------------------------------------------
+        LOG(trace, "Number of icon atlases to create [{}]", icons_sorted_by_atlas.size())
         for (const auto& [size, sources] : icons_sorted_by_atlas) {
 
             const u32 icon_w = size.cols;
@@ -487,7 +554,7 @@ namespace GLT::editor::icon_manager {
 
                 int w = 0, h = 0, channels = 0;
                 u8* pixels = stbi_load(sources[idx].path.string().c_str(), &w, &h, &channels, 4);
-                
+
                 VALIDATE(pixels, continue, "", "Failed to load icon [{}] for atlas", (sources[idx].path.generic_string()))
                 ASSERT((u32)w == icon_w && (u32)h == icon_h, "", "Icon [{}] changed size between passes", (sources[idx].path.generic_string()))
 
@@ -496,8 +563,6 @@ namespace GLT::editor::icon_manager {
                 const u32 dst_x = cx * layout.cell_size + layout.icon_padding;
                 const u32 dst_y = cy * layout.cell_size + layout.icon_padding;
 
-                // Row-by-row copy: source rows are tight (w*4 bytes), destination
-                // rows are texture_width*4 bytes apart.
                 for (u32 y = 0; y < icon_h; ++y) {
 
                     u8* dst_row = buffer.data() + ((size_t)(dst_y + y) * layout.texture_width + dst_x) * 4;
@@ -541,6 +606,23 @@ namespace GLT::editor::icon_manager {
 
             s_atlases.push_back(std::move(atlas));
         }
+    }
+
+    // TEMPLATE IMPLEMENTATION =========================================================================================
+
+    // FUNCTION IMPLEMENTATION =========================================================================================
+
+    void init() {
+
+        // Seed the registry with every core icon. Plugin icons that were registered before
+        // init() are already in the registry and survive untouched (their values are >= 1024).
+        auto& reg = icon_reg();
+        for (const auto& [type, name] : s_core_icons) {
+            reg.name_to_value.emplace(name, type.value);
+            reg.value_to_name.emplace(type.value, name);
+        }
+
+        build_icon_atlases();
 
         // Start the thumbnail worker thread.
         auto& state = tm();
@@ -549,13 +631,24 @@ namespace GLT::editor::icon_manager {
     }
 
 
-    icon_data get(const icon type) {
+    void reload() {
+
+        // Invalidate every previously returned icon_data before rebuilding.
+        // Callers that cached icon_data must re-fetch via get().
+        s_icons.clear();
+        s_atlases.clear();      // destroys the old GPU images
+
+        build_icon_atlases();
+    }
+
+
+    icon_data get(const icon_type type) {
 
         const auto it = s_icons.find(type);
         if (it != s_icons.end())
             return it->second;
 
-        LOG(error, "Icon [{}] not found in any atlas", GLT::util::enum_to_string(type));
+        LOG(error, "Icon [{}] not found in any atlas", icon_to_string(type));
         return icon_data{};     // empty - callers should check tex_ref before drawing
     }
 
@@ -589,6 +682,53 @@ namespace GLT::editor::icon_manager {
 
         s_icons.clear();
         s_atlases.clear();      // destroys the GPU images
+
+        // Clear the icon registry so a subsequent init() starts clean.
+        // Plugins must re-register their icons before calling init() again.
+        auto& reg = icon_reg();
+        reg.value_to_name.clear();
+        reg.name_to_value.clear();
+        reg.next_custom = ICON_TYPE_CUSTOM_BEGIN;
+    }
+
+    // icon registry ---------------------------------------------------------------------------------------------------
+
+    icon_type register_icon(std::string_view name) {
+
+        // Core icons win — plugins cannot shadow built-ins
+        if (const auto core = find_core_icon(name))
+            return *core;
+
+        auto& reg = icon_reg();
+
+        const std::string key(name);
+        if (const auto it = reg.name_to_value.find(key); it != reg.name_to_value.end())
+            return icon_type{ it->second };
+
+        const u32 value = reg.next_custom++;
+        reg.name_to_value.emplace(key, value);
+        reg.value_to_name.emplace(value, key);
+
+        LOG(trace, "Registered icon [{}] as [{}]", name, value);
+        return icon_type{ value };
+    }
+
+
+    std::string_view icon_to_string(icon_type type) {
+
+        const auto& reg = icon_reg();
+        if (const auto it = reg.value_to_name.find(type.value); it != reg.value_to_name.end())
+            return it->second;
+        return "<unnamed>";
+    }
+
+
+    std::optional<icon_type> string_to_icon(std::string_view name) {
+
+        const auto& reg = icon_reg();
+        if (const auto it = reg.name_to_value.find(std::string(name)); it != reg.name_to_value.end())
+            return icon_type{ it->second };
+        return std::nullopt;
     }
 
     // thumbnail -------------------------------------------------------------------------------------------------------

@@ -619,7 +619,7 @@ namespace GLT::editor {
         f32 cursor_x = canvas_max.x - FLOATING_BUTTON_EDGE_PAD - strip_width;
         const f32 cursor_y = canvas_min.y + FLOATING_BUTTON_EDGE_PAD;
 
-        auto place_icon_button = [&](const char* id, const icon_manager::icon icon_type) -> bool {
+        auto place_icon_button = [&](const char* id, const icon_manager::icon_type icon_type) -> bool {
 
             const icon_manager::icon_data icon = icon_manager::get(icon_type);
             if (icon.image_size.x <= 0.0f) {

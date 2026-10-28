@@ -37,21 +37,7 @@ namespace GLT::game {
 
     // CLASS IMPLEMENTATION ============================================================================================
 
-    game_session::game_session(session_id id) : m_id(id) {
-
-        // Physics is eager. If the plugin is loaded, every session gets its own simulation from the get-go — gameplay code
-        // can call session->get_physics() unconditionally and never worry about lazy-init races. If the plugin isn't loaded,
-        // the session simply runs without physics; gameplay code is expected to check get_physics() for null
-        if (auto* phys = physics::get_ptr()) {
-
-            auto result = phys->instantiate();
-            if (result)
-                m_physics = std::move(*result);
-            else
-                LOG(error, "Failed to instantiate physics for session[{}]: {}",
-                    (id.index), (static_cast<int>(result.error())))
-        }
-    }
+    game_session::game_session(session_id id) : m_id(id) { create_physics(); }
 
 
     game_session::~game_session() { m_renderers.clear(); }
@@ -61,6 +47,39 @@ namespace GLT::game {
     // CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
+
+    // physics ---------------------------------------------------------------------------------------------------------
+
+    void game_session::remove_physics() {
+
+        if (m_world)
+            m_world->set_physics(nullptr);      // detach before destroying: the world must not hold a dangling pointer
+        m_physics.reset();
+    }
+
+
+    bool game_session::create_physics() {
+
+        if (m_physics)
+            return true;                        // already have one
+
+        auto* phys = physics::get_ptr();
+        if (!phys)
+            return false;
+
+        auto result = phys->instantiate();
+        if (!result) {
+            LOG(error, "Failed to instantiate physics for session[{}]: {}", m_id.index, (static_cast<int>(result.error())))
+            return false;
+        }
+
+        m_physics = std::move(*result);
+
+        if (m_world)
+            m_world->set_physics(m_physics.get());   // world iterates all entities and (re)creates bodies
+
+        return true;
+    }
 
     // world -----------------------------------------------------------------------------------------------------------
 
@@ -213,7 +232,7 @@ namespace GLT::game {
 
         // ---- streaming anchor tracks the primary camera ---------------------
         if (scene) {
-            const auto primary = resolve_camera(scene, m_primary_camera);
+            const auto primary = resolve_camera(scene, m_editor_camera);
             world::camera_snapshot cam{};
             if (scene->get_camera_view(primary, cam))                 // entity overload
                 m_world->set_streaming_anchor(cam.position);
@@ -250,8 +269,11 @@ namespace GLT::game {
         if (override_id.is_valid())
             return override_id;
 
-        if (m_primary_camera.is_valid())
-            return m_primary_camera;
+        if (m_editor_camera.is_valid()) {
+
+            scene->set_active_camera(m_editor_camera);
+            return m_editor_camera;
+        }
 
         return scene->get_active_camera();
     }

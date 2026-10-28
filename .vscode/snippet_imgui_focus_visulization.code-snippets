@@ -1,0 +1,30 @@
+{
+    "C++ Header Template": {
+        "prefix": "snippet_imgui_focus_visulization",
+        "scope": "cpp",
+        "body": [
+            "",
+            "{",
+            "    ImGuiContext& g = *ImGui::GetCurrentContext();",
+            "",
+            "    static ImGuiID last_active = 0;",
+            "    if (g.ActiveId != 0) last_active = g.ActiveId;",
+            "",
+            "    ImGui::Separator();",
+            "    ImGui::Text(\"Active: 0x%08X (last non-zero: 0x%08X)\", g.ActiveId, last_active);",
+            "    ImGui::Text(\"Hovered: 0x%08X  HoveredWindow: %s\", g.HoveredId, g.HoveredWindow ? g.HoveredWindow->Name : \"-\");",
+            "    ImGui::Text(\"NavId: 0x%08X  NavWindow: %s\", g.NavId, g.NavWindow ? g.NavWindow->Name : \"-\");",
+            "    ImGui::Text(\"NavDisableMouseHover: %d\", (int)g.NavHighlightItemUnderNav);",
+            "    ImGui::Text(\"MovingWindow: %s\", g.MovingWindow ? g.MovingWindow->Name : \"-\");",
+            "    ImGui::Text(\"MousePos: %.0f, %.0f   delta: %.1f, %.1f\", g.IO.MousePos.x, g.IO.MousePos.y, g.IO.MouseDelta.x, g.IO.MouseDelta.y);",
+            "    ImGui::Text(\"Popups: %d  Modal: %s\", g.OpenPopupStack.Size, g.NavWindowingTarget ? g.NavWindowingTarget->Name : \"-\");",
+            "",
+            "    // Draws a red box around whichever item owns this ID",
+            "    ImGui::DebugLocateItem(last_active);",
+            "    ImGui::DebugLocateItem(g.NavId);",
+            "}",
+            ""
+        ],
+        "description": "C++ header template"
+    }
+}

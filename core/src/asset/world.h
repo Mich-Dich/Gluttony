@@ -19,6 +19,8 @@ namespace GLT::asset::world {
 
     inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_ACTIVE_CAMERA = 0x0302;
 
+    inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_ACTIVE_CAMERA_POSITION = 0x0306;
+
     inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_METADATA = 0x0303;          // utf-8 "key\0value\0"
 
     inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_REGION_CELL_SIZE = 0x0304;
@@ -56,11 +58,12 @@ namespace GLT::asset::world {
         glm::vec3                                       region_cell_size{ 256.f, 256.f, 256.f };
 
         f32                                             streaming_radius = 512.f;
-
+        
         // Chosen entity that drives the renderer's view. 0xFFFFFFFF == "no active camera"
         // Stored as raw index/generation so asset/world.h doesn't have to know about world/entity.h's entity_id layout
         u32                                             active_camera_index{ 0xFFFFFFFFu };
         u32                                             active_camera_generation{ 0u };
+        glm::vec3                                       active_camera_position{};
 
 
         // @brief Returns the asset-type tag used by the registry

@@ -62,20 +62,21 @@ namespace GLT::world::world_ecs_entt::component {
 
                 auto& transform = world.registry().get<component::transform>(world.entt_of(id));
 
-                ImGui::PushID("transform");
-                GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
-                GLT::UI::table_row("position", transform.position);
-                GLT::UI::table_row("rotation", transform.rotation);
-                GLT::UI::table_row("scale",    transform.scale);
-                GLT::UI::end_table();
+                ImGui::PushID("transform_component");
+                if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
+
+                    GLT::UI::table_row("position", transform.position);
+                    GLT::UI::table_row("rotation", transform.rotation);
+                    GLT::UI::table_row("scale", transform.scale);
+                    GLT::UI::end_table();
+                }
                 ImGui::PopID();
             },
 
             [](ecs_world& world, entity_id id) {
                 const auto& transform = world.registry().get<component::transform>(world.entt_of(id));
                 char buf[64];
-                std::snprintf(buf, sizeof(buf), "(%.1f, %.1f, %.1f)",
-                    transform.position.x, transform.position.y, transform.position.z);
+                std::snprintf(buf, sizeof(buf), "(%.1f, %.1f, %.1f)", transform.position.x, transform.position.y, transform.position.z);
                 return std::string(buf);
             });
     }
@@ -89,14 +90,17 @@ namespace GLT::world::world_ecs_entt::component {
 
                 auto& mr = world.registry().get<component::mesh>(world.entt_of(id));
 
-                GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
+                ImGui::PushID("mesh_component");
+                if (!GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
+                
+                    ImGui::PopID();
+                    return;
+                }
 
                 const GLT::asset::handle old_mesh_handle = mr.mesh.get();
                 GLT::UI::table_row_asset_picker("Mesh", mr.mesh, GLT::asset::core_types::static_mesh);
                 const bool mesh_changed = mr.mesh.get() != old_mesh_handle;
 
-                // One asset lookup gives us both the submesh count (for material overrides) and whether
-                // the mesh carries authored colliders (which gates the physics section)
                 u32  submesh_count = 0;
                 bool has_colliders = false;
                 if (auto registry = GLT::asset::registry::get_ref(); registry && mr.mesh != INVALID_HANDLE) {
@@ -105,6 +109,8 @@ namespace GLT::world::world_ecs_entt::component {
                         has_colliders = !asset->colliders.empty();
                     }
                 }
+
+                GLT::UI::table_row("visible", mr.visible);
 
                 // material overrides ----------------------------------------------------------------------------------
 
@@ -115,11 +121,11 @@ namespace GLT::world::world_ecs_entt::component {
 
                     if (mr.material_overrides.empty()) {
 
-                        GLT::asset::asset_ref uniform{};
-                        if (GLT::UI::table_row_asset_picker("Material Override", uniform, GLT::asset::core_types::material)) {
+                        if (GLT::UI::table_row_asset_picker("Material Override", mr.pending_override, GLT::asset::core_types::material)) {
                             mr.begin_override(submesh_count);
                             for (auto& slot : mr.material_overrides)
-                                slot = uniform;
+                                slot = mr.pending_override;
+                            mr.pending_override = GLT::asset::asset_ref{};   // clear so the empty-state picker starts blank next time
                         }
 
                     } else {
@@ -138,23 +144,15 @@ namespace GLT::world::world_ecs_entt::component {
 
                 } else if (!mr.material_overrides.empty()) {
 
-                    ImGui::TextDisabled("(%zu pending override slot(s) - mesh asset not loaded)",
-                        mr.material_overrides.size());
+                    ImGui::TextDisabled("(%zu pending override slot(s) - mesh asset not loaded)", mr.material_overrides.size());
                     if (GLT::UI::gray_button("Clear material overrides"))
                         mr.material_overrides.clear();
                 }
 
-                GLT::UI::table_row("visible", mr.visible);
-
                 // ---- physics ----------------------------------------------------------------------------------------
 
-                // Gated on the mesh actually carrying authored colliders. Without colliders there is no body to
-                // configure, and showing inert controls would just confuse the user. Once colliders exist (either
-                // authored up-front or added later), the rows appear automatically on the next draw
                 if (has_colliders) {
 
-                    // Snapshot before edits. The table_row return-value contract isn't uniform across value
-                    // types, so a straight field comparison is the reliable "did it change" test
                     const physics::motion_type old_motion = mr.motion;
                     const physics::physics_material old_material = mr.physics_material;
                     const bool old_use_mesh = mr.use_mesh_material;
@@ -164,28 +162,23 @@ namespace GLT::world::world_ecs_entt::component {
 
                     if (!mr.use_mesh_material) {
 
-                        // Ranges match the defaults baked into physics_material. Density has a min of 1 because a dynamic body with
-                        // mass 0 is rejected by create_body() — better to clamp at the UI than silently fail inside the body builder
                         GLT::UI::table_row("friction", mr.physics_material.friction, 0.01f, 0.f, 10.f);
                         GLT::UI::table_row("restitution", mr.physics_material.restitution, 0.01f, 0.f, 1.f);
                         GLT::UI::table_row("density", mr.physics_material.density, 1.f, 1.f, 100000.f);
                     }
 
-                    const bool motion_changed   = mr.motion != old_motion;
+                    const bool motion_changed = mr.motion != old_motion;
                     const bool material_changed = mr.use_mesh_material != old_use_mesh ||
                         mr.physics_material.friction != old_material.friction ||
                         mr.physics_material.restitution != old_material.restitution ||
                         mr.physics_material.density != old_material.density;
 
-                    // Any change to shape or motion means the Jolt body must be rebuilt (motion type and material are
-                    // baked into a Jolt body at create time). Guarded on world.get_physics() so editing fields on a
-                    // world that never got a physics instance stays a pure data edit — the settings persist through
-                    // save/reload and apply the next time physics is present
                     if ((mesh_changed || motion_changed || material_changed) && world.get_physics())
                         world.rebuild_physics_body(id);
                 }
 
                 GLT::UI::end_table();
+                ImGui::PopID();
             },
 
             [](ecs_world& world, entity_id id) {      // outliner summary
@@ -193,8 +186,10 @@ namespace GLT::world::world_ecs_entt::component {
                 const auto& mr = world.registry().get<component::mesh>(world.entt_of(id));
 
                 const char* motion_tag = nullptr;
-                if (mr.motion == physics::motion_type::dynamic_body)        motion_tag = "dyn";
-                else if (mr.motion == physics::motion_type::kinematic_body) motion_tag = "kin";
+                if (mr.motion == physics::motion_type::dynamic_body)
+                    motion_tag = "dyn";
+                else if (mr.motion == physics::motion_type::kinematic_body)
+                    motion_tag = "kin";
 
                 char buf[64] = {};
                 if (motion_tag && !mr.material_overrides.empty())
@@ -207,7 +202,7 @@ namespace GLT::world::world_ecs_entt::component {
                 return std::string(buf);
             },
 
-            { component_name_hash("transform") });
+            { component_name_hash("transform"), component_name_hash("name") });
     }
 
 
@@ -219,9 +214,11 @@ namespace GLT::world::world_ecs_entt::component {
 
                 auto& name_comp = world.registry().get<component::name>(world.entt_of(id));
                 static bool enable_input = false;
-                GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
-                GLT::UI::table_row("name", name_comp.name, enable_input);
-                GLT::UI::end_table();
+                if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
+
+                    GLT::UI::table_row("name", name_comp.name, enable_input);
+                    GLT::UI::end_table();
+                }
             });
 
         // [name] is structural - the outliner uses it. Prevent removal from the UI (It can still be removed programmatically.)
@@ -229,28 +226,23 @@ namespace GLT::world::world_ecs_entt::component {
     }
 
 
-    void register_hierarchy_descriptor(component_registry& /*reg*/) {
+    void register_hierarchy_descriptor(component_registry& reg) {
 
-        // reg.register_component<hierarchy>("hierarchy", "Core",
+        reg.register_component<component::hierarchy>("hierarchy", "Core",
 
-        //     [](ecs_world& world, entity_id id) {
+            [](ecs_world& world, entity_id id) {
 
-        //         // Read-only view. The outliner is the editing surface for hierarchy; showing it here would be redundant
-        //         // and invite the user to corrupt the tree
-        //         auto* plugin = GLT::world::manager::get_ref()->as<ecs_world_plugin>();
-        //         if (!plugin)
-        //             return;
-
-        //         const auto parent = plugin->parent_of(id);
-        //         const auto kids = plugin->children_of(id);
-
-        //         const auto start_pos = ImGui::GetCursorPosX();
-        //         const float avail = ImGui::GetContentRegionAvail().x;
-        //         ImGui::TextDisabled("Parent: %s", parent.is_valid() ? "(set)" : "(none)");
-        //         ImGui::SameLine();
-        //         ImGui::SetCursorPosX(start_pos + avail/2);
-        //         ImGui::TextDisabled("Children: %zu", kids.size());
-        //     });
+                // Read-only view. The outliner is the editing surface for hierarchy; showing it here would be redundant
+                // and invite the user to corrupt the tree
+                const auto parent = world.parent_of(id);
+                const auto kids = world.children_of(id);
+                const auto start_pos = ImGui::GetCursorPosX();
+                const float avail = ImGui::GetContentRegionAvail().x;
+                ImGui::TextDisabled("Parent: %s", parent.is_valid() ? "(set)" : "(none)");
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(start_pos + avail/2);
+                ImGui::TextDisabled("Children: %zu", kids.size());
+            });
     }
 
 
@@ -263,21 +255,23 @@ namespace GLT::world::world_ecs_entt::component {
                 auto& audio = world.registry().get<component::audio_source>(world.entt_of(id));
 
                 ImGui::PushID("audio_source");
-                GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
-                GLT::UI::table_row_asset_picker("clip", audio.clip, GLT::asset::core_types::audio);
-                GLT::UI::table_row("autop play", audio.autoplay);
-                GLT::UI::table_row("volume", audio.config.volume);
-                GLT::UI::table_row("pan", audio.config.pan, 0.01f, -1.f, 1.f);
-                GLT::UI::table_row("loop", audio.config.loop);
-                GLT::UI::table_row("play speed", audio.config.play_speed);
-                GLT::UI::table_row("is 3d", audio.config.is_3d);
-                GLT::UI::table_row_slider("position", audio.config.position);
-                GLT::UI::table_row_slider("velocity", audio.config.velocity);
-                GLT::UI::table_row("min distance", audio.config.min_distance, .01f, 0.f, 1000.f);
-                GLT::UI::table_row("max distance", audio.config.max_distance, .01f, 0.f, 1000.f);
-                GLT::UI::table_row("rolloff factor", audio.config.rolloff_factor, .01f, 0.f, 1000.f);
-                GLT::UI::table_row("attenuation factor", audio.config.attenuation, GLT::util::enum_values<GLT::asset::audio::attenuation_model>);
-                GLT::UI::end_table();
+                if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
+
+                    GLT::UI::table_row_asset_picker("clip", audio.clip, GLT::asset::core_types::audio);
+                    GLT::UI::table_row("autop play", audio.autoplay);
+                    GLT::UI::table_row("volume", audio.config.volume);
+                    GLT::UI::table_row("pan", audio.config.pan, 0.01f, -1.f, 1.f);
+                    GLT::UI::table_row("loop", audio.config.loop);
+                    GLT::UI::table_row("play speed", audio.config.play_speed);
+                    GLT::UI::table_row("is 3d", audio.config.is_3d);
+                    GLT::UI::table_row_slider("position", audio.config.position);
+                    GLT::UI::table_row_slider("velocity", audio.config.velocity);
+                    GLT::UI::table_row("min distance", audio.config.min_distance, .01f, 0.f, 1000.f);
+                    GLT::UI::table_row("max distance", audio.config.max_distance, .01f, 0.f, 1000.f);
+                    GLT::UI::table_row("rolloff factor", audio.config.rolloff_factor, .01f, 0.f, 1000.f);
+                    GLT::UI::table_row("attenuation factor", audio.config.attenuation, GLT::util::enum_values<GLT::asset::audio::attenuation_model>);
+                    GLT::UI::end_table();
+                }
                 ImGui::PopID();
 
                 audio.config.min_distance = GLT::math::clamp(audio.config.min_distance, 0.f, audio.config.max_distance);               
@@ -296,23 +290,21 @@ namespace GLT::world::world_ecs_entt::component {
 
                 auto& cam = world.registry().get<component::camera>(world.entt_of(id));
 
-                // ImGui::PushID("camera");
-                GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
+                ImGui::PushID("camera_component");
+                if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
 
-                GLT::UI::table_row("fov", cam.fov, 0.5f, 1.f, 179.f);
-                GLT::UI::table_row("near plane", cam.near_plane, 0.01f, 0.001f, 100.f);
-                GLT::UI::table_row("far plane", cam.far_plane, 1.f, 0.01f, 100000.f);
+                    GLT::UI::table_row("fov", cam.fov, 0.5f, 1.f, 179.f);
+                    GLT::UI::table_row("near plane", cam.near_plane, 0.01f, 0.001f, 100.f);
+                    GLT::UI::table_row("far plane", cam.far_plane, 1.f, 0.01f, 100000.f);
 
-                // Null-safe: skip the row if the scene interface isn't available, but DON'T early-return —
-                // end_table() and PopID() below must always run to keep the ImGui stack balanced
+                    auto* primary_session = GLT::application::get().get_game_layer_ptr()->get_primary_session();
+                    bool is_active = (primary_session->get_editor_camera() == id);
+                    if (GLT::UI::table_row("active camera", is_active))
+                        primary_session->set_editor_camera(is_active ? id : INVALID_ENTITY);
 
-                auto* primary_session = GLT::application::get().get_game_layer_ptr()->get_primary_session();
-                bool is_active = (primary_session->get_editor_camera() == id);
-                if (GLT::UI::table_row("active camera", is_active))
-                    primary_session->set_editor_camera(is_active ? id : INVALID_ENTITY);
-
-                GLT::UI::end_table();
-                // ImGui::PopID();
+                    GLT::UI::end_table();
+                }
+                ImGui::PopID();
 
                 cam.near_plane = GLT::math::clamp(cam.near_plane, 0.001f, cam.far_plane);
             },
@@ -338,27 +330,29 @@ namespace GLT::world::world_ecs_entt::component {
 
                 auto& light = world.registry().get<component::light>(world.entt_of(id));
 
-                ImGui::PushID("light");
-                GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false);
+                ImGui::PushID("light_component");
+                if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
 
-                GLT::UI::table_row("type", light.type, GLT::util::enum_values<GLT::world::light_type>);
-                GLT::UI::table_row("color", light.color);
-                GLT::UI::table_row("intensity", light.intensity, 0.01f, 0.f, 1000.f);
-
-                if (light.type != GLT::world::light_type::directional)
+                    
+                    GLT::UI::table_row("type", light.type, GLT::util::enum_values<GLT::world::light_type>);
+                    GLT::UI::table_row("color", light.color);
+                    GLT::UI::table_row("intensity", light.intensity, 0.01f, 0.f, 1000.f);
+                    
+                    if (light.type != GLT::world::light_type::directional)
                     GLT::UI::table_row("radius", light.radius, 0.1f, 0.01f, 100000.f);
-
-                if (light.type == GLT::world::light_type::spot) {
-
-                    GLT::UI::table_row("inner cone", light.inner_cone_angle, 0.005f, 0.f, glm::pi<f32>());
-                    GLT::UI::table_row("outer cone", light.outer_cone_angle, 0.005f, 0.f, glm::pi<f32>());
-
-                    // Same invariant pattern as the audio descriptor's min/max distance: whichever row the user dragged,
-                    // restore the ordering at the end of the frame
-                    light.inner_cone_angle = GLT::math::clamp(light.inner_cone_angle, 0.f, light.outer_cone_angle);
+                    
+                    if (light.type == GLT::world::light_type::spot) {
+                        
+                        GLT::UI::table_row("inner cone", light.inner_cone_angle, 0.005f, 0.f, glm::pi<f32>());
+                        GLT::UI::table_row("outer cone", light.outer_cone_angle, 0.005f, 0.f, glm::pi<f32>());
+                        
+                        // Same invariant pattern as the audio descriptor's min/max distance: whichever row the user dragged,
+                        // restore the ordering at the end of the frame
+                        light.inner_cone_angle = GLT::math::clamp(light.inner_cone_angle, 0.f, light.outer_cone_angle);
+                    }
+                    
+                    GLT::UI::end_table();
                 }
-
-                GLT::UI::end_table();
                 ImGui::PopID();
             },
 

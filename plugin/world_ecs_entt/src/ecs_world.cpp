@@ -8,6 +8,7 @@
 #include <application.h>
 #include <asset/world.h>
 #include <asset/i_asset_registry.h>
+#include <world/entity_preset.h> 
 
 
 
@@ -138,8 +139,11 @@ namespace GLT::world::world_ecs_entt {
 
         m_streaming_radius = world_asset->streaming_radius;
         VALIDATE(m_streaming_radius >= 0.f, m_streaming_radius = 512.f, "", "corrupt file has invalid streaming radius");
+        m_streaming_anchor = world_asset->active_camera_position;
 
         m_regions = world_asset->region_index;
+        for (auto& region : m_regions)
+            region.is_active = false;
         m_region_states.clear();
         for (const auto& r : m_regions)
             m_region_states.try_emplace(r.id);
@@ -289,6 +293,17 @@ namespace GLT::world::world_ecs_entt {
         return slot.generation == id.generation
             && slot.handle != entt::null
             && m_registry.valid(slot.handle);
+    }
+
+
+    entity_id ecs_world::spawn_preset(std::string_view preset_name, entity_id parent) {
+
+        const auto* preset = GLT::world::preset_registry::get().find(preset_name);
+        if (!preset) {
+            LOG(warn, "spawn_preset: preset '{}' is not registered", preset_name);
+            return INVALID_ENTITY;
+        }
+        return instantiate_preset_recursive(*preset, parent);
     }
 
     // transform -------------------------------------------------------------------------------------------------------
@@ -676,8 +691,7 @@ namespace GLT::world::world_ecs_entt {
             return;
 
         // Already has a live body? Nothing to do
-        if (const auto* existing = m_registry.try_get<component::physics_body>(ent);
-            existing && existing->body.is_valid())
+        if (const auto* existing = m_registry.try_get<component::physics_body>(ent); existing && existing->body.is_valid())
             return;
 
         const auto* mesh_comp = m_registry.try_get<component::mesh>(ent);
@@ -778,11 +792,8 @@ namespace GLT::world::world_ecs_entt {
         desc.entity = id;
 
         auto body_result = m_physics->create_body(desc);
-        if (!body_result) {
-            m_physics->release_shape(pb.shape);
-            pb.shape = {};
-            return;
-        }
+        VALIDATE(body_result, m_physics->release_shape(pb.shape); pb.shape = {}; return,
+            "", "Failed to create physics body [{}]", (GLT::util::enum_to_string(body_result.error())))
         pb.body = *body_result;
     }
 
@@ -1128,9 +1139,8 @@ namespace GLT::world::world_ecs_entt {
 
         if (region_asset->entity_codec == CODEC_ENTT_V1 && !region_asset->entity_data.empty()) {
 
-            state.entities = m_codec.load(
-                m_registry,
-                std::span<const std::byte>(region_asset->entity_data), [this](entity_id saved) { return allocate_for_load(saved); });
+            state.entities = m_codec.load(m_registry, std::span<const std::byte>(region_asset->entity_data),
+                [this](entity_id saved) { return allocate_for_load(saved); });
 
             if (m_physics) {
                 for (const entity_id id : state.entities)
@@ -1339,10 +1349,17 @@ namespace GLT::world::world_ecs_entt {
             return;
 
         world_asset->region_index = m_regions;
+        for (auto& region : world_asset->region_index)
+            region.is_active = false;
         world_asset->region_cell_size = m_region_cell_size;
         world_asset->streaming_radius = m_streaming_radius;
         world_asset->active_camera_index = m_active_camera.index;
         world_asset->active_camera_generation = m_active_camera.generation;
+        if (m_active_camera.is_valid()) {
+            camera_snapshot snap{};
+            if (get_camera_view(m_active_camera, snap))
+                world_asset->active_camera_position = snap.position;
+        }
     }
 
 
@@ -1555,6 +1572,47 @@ namespace GLT::world::world_ecs_entt {
 
         if (pb->shape.is_valid())
             m_physics->release_shape(pb->shape);
+    }
+
+    // preset helpers ---------------------------------------------------------------------------------------------
+
+    entity_id ecs_world::instantiate_preset_recursive(const GLT::world::entity_preset& preset, entity_id parent) {
+
+        const std::string& name = preset.entity_name.empty() ? preset.name : preset.entity_name;
+        auto builder = make_entity(name);
+
+        if (parent.is_valid())
+            builder.parent(parent);
+
+        // Set the transform first so world-space cell assignment is correct
+        component::transform tf;
+        tf.position = preset.position;
+        tf.rotation = preset.rotation;
+        tf.scale = preset.scale;
+        builder.set_transform(tf);
+
+        // set_transform does NOT re-bin the entity by world position - fix that up now, before children look at our transform
+        assign_entity_to_cell(builder.id());
+
+        // Apply component specs. `transform` and `name` are handled implicitly from the preset's own fields - skip them
+        // so a preset with an explicit transform spec doesn't clobber what we just set
+        for (const auto& spec : preset.components) {
+
+            if (spec.name == "transform" || spec.name == "name")
+                continue;
+
+            if (const auto* fn = m_plugin.find_preset_component(spec.name))
+                (*fn)(builder, spec);
+            else
+                LOG(warn, "preset '{}' requests unknown component '{}' - skipping", preset.name, spec.name);
+        }
+
+        // Children. Instantiating them *after* the parent is fully set up ensures each child's world-transform (and
+        // therefore its cell assignment) reflects the parent's transform
+        for (const auto& child : preset.children)
+            (void)instantiate_preset_recursive(child, builder.id());
+
+        return builder.id();
     }
 
 }

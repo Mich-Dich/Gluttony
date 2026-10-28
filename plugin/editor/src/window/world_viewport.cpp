@@ -16,6 +16,7 @@
 #include <world/i_world.h>
 #include <world/i_world_scene.h>
 #include <world/controller.h>
+#include <world/entity_preset.h>
 #include <game/game_layer.h>
 #include <game/game_session.h>
 #include <render/i_scene_renderer.h>
@@ -98,7 +99,7 @@ namespace GLT::editor {
 
         // A regular, dockable window. Its body hosts a nested dockspace for
         // the Viewport / Details / Tools sub-panels. The outer world_viewport_window
-        // docks this window by its full ImGui ID (m_window_id).
+        // docks this window by its full ImGui ID (m_window_id)
         ImGui::SetNextWindowSizeConstraints(ImVec2(600, 400), ImVec2(std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max()));
         ImGui::Begin(m_window_id.c_str(), &m_show_window);
         {
@@ -107,7 +108,7 @@ namespace GLT::editor {
         ImGui::End();
 
         // Sub-panels are top-level windows. DockBuilder assigns them to the
-        // inner dockspace's nodes the first time the inner layout is built.
+        // inner dockspace's nodes the first time the inner layout is built
         render_viewport();
         render_details();
         render_outliner();
@@ -139,7 +140,7 @@ namespace GLT::editor {
         }
         update_selection_debug_draw();
 
-        // Move any events that arrived during the previous frame into the queue.
+        // Move any events that arrived during the previous frame into the queue
         for (auto& ev : m_save_as_event_buffer) {
 
             pending_save_request pending{};
@@ -191,7 +192,7 @@ namespace GLT::editor {
         ImGuiID dock_right_b = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.65f, nullptr, &dock_right);
         ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.30f, nullptr, &dock_main);
 
-        // Names must match exactly what the sub-windows pass to ImGui::Begin().
+        // Names must match exactly what the sub-windows pass to ImGui::Begin()
         ImGui::DockBuilderDockWindow("Viewport", dock_main);
         ImGui::DockBuilderDockWindow("Outliner", dock_right);
         ImGui::DockBuilderDockWindow("Details",  dock_right_b);
@@ -238,8 +239,7 @@ namespace GLT::editor {
             auto* session = game_layer ? game_layer->get_primary_session() : nullptr;
             auto* ctrl = session ? session->get_controller() : nullptr;
 
-            if (!m_cursor_captured && image_hovered && !overlay_active &&
-                ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            if (!m_cursor_captured && image_hovered && !overlay_active && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                 set_cursor_captured(true);
                 if (ctrl)
                     ctrl->set_input_enabled(true);
@@ -315,7 +315,7 @@ namespace GLT::editor {
             const char* last_category = nullptr;
             for (const auto& m : modes) {
 
-                // Category separator when it changes.
+                // Category separator when it changes
                 if (m.has_category() && (last_category == nullptr || std::strcmp(last_category, m.category) != 0)) {
 
                     last_category = m.category;
@@ -381,13 +381,11 @@ namespace GLT::editor {
         // ---- component list ----
         for (const auto* comp : m_inspector->components_on(id)) {
 
-            ImGui::PushID(static_cast<int>(comp->hash));
-
-            // One collapsing header per component. Default-open.
+            // One collapsing header per component. Default-open
             const bool open = ImGui::CollapsingHeader(comp->name.data(),
                 ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
 
-            // "..." button on the header row.
+            // "..." button on the header row
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20.f);
             if (ImGui::SmallButton("..."))
                 ImGui::OpenPopup("##comp_ctx");
@@ -398,12 +396,13 @@ namespace GLT::editor {
                     m_inspector->remove_component(id, comp->hash);
 
                 if (ImGui::MenuItem("Copy"))
-                    // Stash the descriptor hash; paste applies on the target.
+                    // Stash the descriptor hash; paste applies on the target
                     m_clipboard_component = comp->hash;
 
                 ImGui::EndPopup();
             }
 
+            ImGui::PushID(static_cast<int>(comp->hash));
             if (open) {
 
                 ImGui::Indent(8.f);
@@ -414,7 +413,6 @@ namespace GLT::editor {
                 ImGui::Unindent(8.f);
                 ImGui::Spacing();
             }
-
             ImGui::PopID();
         }
 
@@ -425,7 +423,7 @@ namespace GLT::editor {
 
         if (ImGui::BeginPopup("##add_comp")) {
 
-            // Optional filter box - the popup gets long fast.
+            // Optional filter box - the popup gets long fast
             static char filter[64] = "";
             ImGui::InputTextWithHint("##filter", "Search...", filter, sizeof(filter));
             ImGui::Separator();
@@ -449,13 +447,12 @@ namespace GLT::editor {
                 }
                 if (ImGui::IsItemHovered() && !d.category.empty()) {
                     ImGui::BeginTooltip();
-                    ImGui::TextDisabled("%.*s",
-                        static_cast<int>(d.category.size()), d.category.data());
+                    ImGui::TextDisabled("%.*s", static_cast<int>(d.category.size()), d.category.data());
                     ImGui::EndTooltip();
                 }
             }
 
-            // Paste row, if the clipboard holds a component.
+            // Paste row, if the clipboard holds a component
             if (m_clipboard_component != 0) {
                 ImGui::Separator();
                 const auto* d = m_inspector->descriptors().empty()
@@ -476,7 +473,6 @@ namespace GLT::editor {
 
             ImGui::EndPopup();
         }
-
         ImGui::End();
     }
 
@@ -494,19 +490,53 @@ namespace GLT::editor {
             return;
         }
 
-        // Bind the inspector once. If the world plugin doesn't offer one, add/remove/edit menus still work but show no component UI.
+        // Bind the inspector once. If the world plugin doesn't offer one, add/remove/edit menus still work but show no component UI
         if (!m_inspector)
             m_inspector = m_world->as<GLT::world::i_world_inspector>();
 
         // ---- toolbar ----
         if (ImGui::Button("+ Entity"))
-            ImGui::OpenPopup("add_entity_root");
+            ImGui::OpenPopup("+ Entity Preset Popup");
 
-        if (ImGui::BeginPopup("add_entity_root")) {
-            if (ImGui::MenuItem("Empty Entity")) {
-                const auto id = m_world->spawn();
-                m_selected_entity = id;
+        if (ImGui::BeginPopup("+ Entity Preset Popup")) {
+
+            if (m_world) {
+
+                std::string last_category{};
+                for (const auto& preset : GLT::world::preset_registry::get().all()) {
+
+                    // Category separator
+                    if (preset.category != last_category) {
+                        if (!last_category.empty())
+                            ImGui::Separator();
+                        if (!preset.category.empty())
+                            ImGui::TextDisabled("%s", preset.category.c_str());
+                        last_category = preset.category;
+                    }
+
+                    ImGui::PushID(preset.name.c_str());
+
+                    const auto icon = GLT::editor::icon_manager::string_to_icon(preset.icon.c_str());
+                    if (icon.has_value()) {
+                        const auto icon_data = icon_manager::get((*icon));
+                        ImGui::Image(icon_data.tex_ref, ImVec2(16.f, 16.f), icon_data.uv0, icon_data.uv1);
+                        ImGui::SameLine();
+                    }
+
+                    if (ImGui::Selectable(preset.name.c_str())) {
+
+                        const auto id = m_world->spawn_preset(preset.name);
+                        m_selected_entity = id;
+                    }
+
+                    // Optional hover tooltip
+                    if (!preset.tooltip.empty() && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", preset.tooltip.c_str());
+
+                    ImGui::PopID();
+                }
             }
+
             ImGui::EndPopup();
         }
 
@@ -587,7 +617,7 @@ namespace GLT::editor {
             }
 
             if (ImGui::MenuItem("Delete", "Del")) {
-                // If the current selection is this entity, drop it.
+                // If the current selection is this entity, drop it
                 if (m_selected_entity == id)
                     m_selected_entity = GLT::world::INVALID_ENTITY;
                 m_world->despawn(id);
@@ -601,7 +631,7 @@ namespace GLT::editor {
             // ---- Add Component submenu ----
             if (m_inspector && ImGui::BeginMenu("Add Component")) {
 
-                // Group descriptors by category.
+                // Group descriptors by category
                 std::map<std::string_view, std::vector<const GLT::world::component_descriptor*>> by_cat;
                 for (const auto& d : m_inspector->descriptors())
                     by_cat[d.category].push_back(&d);
@@ -647,7 +677,7 @@ namespace GLT::editor {
             return;
 
         window->set_cursor_mode(GLT::application::get().get_main_window(), captured
-            ? GLT::platform::cursor_mode::cursor_disabled   // hidden + relative motion, frozen visually
+            ? GLT::platform::cursor_mode::cursor_captured
             : GLT::platform::cursor_mode::cursor_normal);
     }
 
@@ -732,7 +762,7 @@ namespace GLT::editor {
 
         auto& pending = m_save_as_queue.front();
 
-        // Always centered in the main viewport - no ImGuiCond_Appearing.
+        // Always centered in the main viewport - no ImGuiCond_Appearing
         const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSizeConstraints(ImVec2(560, 0), ImVec2(FLT_MAX, FLT_MAX));
@@ -995,7 +1025,7 @@ namespace GLT::editor {
         ImGuizmo::SetRect(image_min.x, image_min.y, image_size.x, image_size.y);
 
         // --- view / projection -------------------------------------------------
-        // camera_snapshot::view is already world -> view (inverse of camera world).
+        // camera_snapshot::view is already world -> view (inverse of camera world)
         const glm::mat4& view = cam.view;
 
         const f32 aspect = image_size.x / image_size.y;
@@ -1014,9 +1044,15 @@ namespace GLT::editor {
         float* snap_ptr = nullptr;
         if (m_gizmo_snap) {
             switch (m_gizmo_operation) {
-                case ImGuizmo::TRANSLATE: snap_ptr = m_gizmo_snap_translate; break;
-                case ImGuizmo::ROTATE:    snap_ptr = &m_gizmo_snap_rotate; break;
-                case ImGuizmo::SCALE:     snap_ptr = &m_gizmo_snap_scale; break;
+                case ImGuizmo::TRANSLATE:
+                    snap_ptr = m_gizmo_snap_translate;
+                    break;
+                case ImGuizmo::ROTATE:
+                    snap_ptr = &m_gizmo_snap_rotate;
+                    break;
+                case ImGuizmo::SCALE:
+                    snap_ptr = &m_gizmo_snap_scale;
+                    break;
                 default: break;
             }
         }
@@ -1042,18 +1078,18 @@ namespace GLT::editor {
             glm::length(glm::vec3(model[1])),
             glm::length(glm::vec3(model[2])));
 
-        // Position: translate_local expects a *local* delta.
+        // Position: translate_local expects a *local* delta
         const glm::vec3 world_delta = new_pos - position;
         if (glm::length(world_delta) > 1e-6f) {
             const glm::vec3 local_delta = glm::inverse(rotation) * world_delta;
             m_world->translate_local(m_selected_entity, local_delta);
         }
 
-        // Rotation: absolute set.
+        // Rotation: absolute set
         if (glm::abs(glm::dot(rotation, new_rot)) < 0.9999f)
             m_world->set_local_rotation_q(m_selected_entity, new_rot);
 
-        // Scale: absolute set.
+        // Scale: absolute set
         if (glm::distance(scale, new_scale) > 1e-6f)
             m_world->set_local_scale(m_selected_entity, new_scale);
     }
@@ -1158,7 +1194,7 @@ namespace GLT::editor {
         // ===== ROW 2 (snap settings) ============================================
         if (m_gizmo_snap) {
 
-            // Anchor below row1, still right-aligned to the viewport's right edge.
+            // Anchor below row1, still right-aligned to the viewport's right edge
             const ImVec2 anchor = ImVec2(right_x, row1_pos.y + row1_size.y + ROW_GAP);
             ImGui::SetNextWindowPos(anchor, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
 
@@ -1210,7 +1246,7 @@ namespace GLT::editor {
 
 
     bool world_viewport_window::gizmo_toggle_button(const char* label, bool active, const ImVec2& size, const bool use_icon, 
-        icon_manager::icon icon) {
+        icon_manager::icon_type icon) {
 
 
         const ImVec4& c_weak = ImVec4(0.10f, 0.10f, 0.10f, 0.55f);
@@ -1218,7 +1254,7 @@ namespace GLT::editor {
         const ImVec4& c_hover = GLT::imgui_config::get_action_color00_hover_ref();
         const ImVec4& c_active = GLT::imgui_config::get_action_color00_active_ref();
 
-        // Same intensity ladder either way; just shifted one step up when active.
+        // Same intensity ladder either way; just shifted one step up when active
         const ImVec4& bg = active ? c_default : c_weak;
         const ImVec4& hov = active ? c_hover   : c_default;
         const ImVec4& act = active ? c_active  : c_hover;
@@ -1227,7 +1263,7 @@ namespace GLT::editor {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hov);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, act);
 
-        // Match render_settings_overlay()'s button metrics.
+        // Match render_settings_overlay()'s button metrics
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.f, 2.f));
 

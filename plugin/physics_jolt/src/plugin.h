@@ -47,8 +47,7 @@ namespace GLT::physics::jolt {
         [[nodiscard]] std::string_view backend_name() const noexcept override;
 
         // factory -----------------------------------------------------------------------------------------------------
-        [[nodiscard]] std::expected<unique_ref<i_physics>, physics_error>
-            instantiate(const glm::vec3& gravity) override;
+        [[nodiscard]] std::expected<unique_ref<i_physics>, physics_error> instantiate(const glm::vec3& gravity) override;
 
     private:
 

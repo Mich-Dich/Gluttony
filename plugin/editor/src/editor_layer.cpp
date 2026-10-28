@@ -157,10 +157,12 @@ namespace GLT::editor {
         m_window_close_sub = GLT::event_bus::subscribe<GLT::window_close_event>(std::bind_front(&editor_layer::on_window_close_event, this));
 
         if (auto* game_layer = GLT::application::get().get_game_layer_ptr()) {
+            if (auto* session = game_layer->get_primary_session()) {
 
-            if (auto* session = game_layer->get_primary_session())
+                // primary session is editor's working world, physics must not step on it
+                session->remove_physics();
                 session->set_controller(GLT::create_ref<GLT::editor::input::editor_controller>(session));
-
+            }
         }
 
         load_simulation_settings();
@@ -239,6 +241,7 @@ namespace GLT::editor {
 
         // ImGuizmo must see exactly one BeginFrame per ImGui frame
         ImGuizmo::BeginFrame();
+        // ImGui::ShowIDStackToolWindow();
 
         render_toolbar();
         render_dockspace();
@@ -482,7 +485,7 @@ namespace GLT::editor {
         ImVec2 settings_btn_max{};
         bool settings_btn_drawn = false;
 
-        auto tinted_icon_button = [&](icon icon_id, const char* tooltip) -> bool {
+        auto tinted_icon_button = [&](icon_manager::icon_type icon_id, const char* tooltip) -> bool {
 
             if (any_drawn)
                 ImGui::SameLine(0, BTN_SPACING);
@@ -515,7 +518,7 @@ namespace GLT::editor {
         };
 
         // Gray-backed image button - the settings gear keeps its visible frame so it reads as a distinct affordance from the transport row
-        auto gray_icon_button = [&](icon icon_id, const char* tooltip) -> bool {
+        auto gray_icon_button = [&](icon_manager::icon_type icon_id, const char* tooltip) -> bool {
 
             if (any_drawn)
                 ImGui::SameLine(0, BTN_SPACING);
@@ -546,7 +549,7 @@ namespace GLT::editor {
         if (idle || paused)
             if (tinted_icon_button(icon::play, idle ? "Play" : "Resume")) {
                 if (idle)
-                    spawn_simulation_windows();     // first play from idle spawns the windows
+                    start_simulation();
                 m_simulation_state = GLT::system_state::running;
             }
 
@@ -737,12 +740,6 @@ namespace GLT::editor {
         if (alt_pressed && event.is(GLT::key_code::key_F4, GLT::key_state::press))
             GLT::event_bus::post(GLT::window_close_event(GLT::application::get().get_main_window()));
 
-        if (event.is(GLT::key_code::key_F5, GLT::key_state::press)) {
-
-            // GLT::event_bus::post(GLT::application_refresh_event());
-            // GLT::event_bus::post(GLT::notification_event("Refreshed", GLT::Logger::severity::info));
-        }
-
         if (event.is(GLT::key_code::key_F8, GLT::key_state::press))
             release_sim_cursor();
 
@@ -753,6 +750,10 @@ namespace GLT::editor {
             if (sim && !sim->cursor_captured)
                 capture_sim_window(*sim);
         }
+
+        if (event.is(GLT::key_code::key_F5, GLT::key_state::press))
+            start_simulation();
+
     }
 
 
@@ -1133,6 +1134,14 @@ namespace GLT::editor {
     }
 
 
+    void editor_layer::start_simulation() {
+        
+        GLT::event_bus::post(GLT::save_event());
+        spawn_simulation_windows(); 
+        m_simulation_state = GLT::system_state::running;
+    }
+
+
     void editor_layer::spawn_simulation_windows() {
 
         if (m_simulation_mode == simulation_mode::current_viewport)
@@ -1173,7 +1182,9 @@ namespace GLT::editor {
             VALIDATE(handle.is_valid(), continue, "",
                 "Failed to create simulation window {} of {}", (index + 1, count))
 
-            GLT::render::surface_target_desc surface{ .window = handle };
+            GLT::render::surface_target_desc surface{
+                .window = handle
+            };
             GLT::render::scene_renderer_desc desc{
                 .target = surface,
                 .clear_color = glm::vec4(0.09f, 0.09f, 0.09f, 1.f),

@@ -112,7 +112,7 @@ namespace GLT::editor {
 
         // Draws a styled toggle button matching the render-mode overlay look.
         static bool gizmo_toggle_button(const char* label, bool active, const ImVec2& size = ImVec2(0, 0), const bool use_icon = false,
-            icon_manager::icon icon = icon_manager::icon::transfrom_rotation);
+            icon_manager::icon_type icon = icon_manager::icon::transfrom_rotation);
 
         void update_selection_debug_draw();
 
