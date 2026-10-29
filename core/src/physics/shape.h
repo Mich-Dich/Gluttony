@@ -9,6 +9,7 @@
 
 namespace GLT::physics {
     struct compound;
+    struct scaled;
 }
 
 namespace GLT::physics {
@@ -82,10 +83,16 @@ namespace GLT::physics {
 
     // compound --------------------------------------------------------------------------------------------------------
 
-    using shape_data = std::variant<sphere, box, capsule, cylinder, plane, convex_hull, triangle_mesh, height_field, 
-        GLT::ref<const compound>     // recursive, ref-counted
-    >;
-    
+    using shape_data = std::variant<sphere, box, capsule, cylinder, plane, convex_hull, triangle_mesh, height_field,
+        ref<const compound> /* recursive, ref-counted*/, ref<const scaled>>;
+
+
+    struct scaled {
+
+        ref<const shape_data>                           inner;
+        glm::vec3                                       scale{ 1.f };
+    };
+
 
     struct compound {
     

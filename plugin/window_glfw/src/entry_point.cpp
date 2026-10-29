@@ -41,6 +41,12 @@ namespace GLT::platform::glfw_backend {
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
         .name                                                   = GLT_MODULE_NAME,
+        .display_name                                           = "GLFW Windows",
+        .description                                            = "GLFW based Windowing library",
+        .category                                               = "Core|Platform",
+        .author                                                 = "Mich-Dich",
+        .plugin_version                                         = {1, 0, 0},
+        .api_version                                            = {1, 0, 0},
         .load_phase                                             = GLT::plugin_manager::phase::pre_application,
         .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
         .target                                                 = GLT::plugin_manager::interface::window,

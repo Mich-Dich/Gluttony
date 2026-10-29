@@ -180,6 +180,28 @@ namespace GLT::physics::jolt {
                 if (result.HasError())
                     return std::unexpected(physics_error::invalid_argument);
                 return result.Get();
+
+            } else if constexpr (std::is_same_v<T, GLT::ref<const scaled>>) {
+
+                if (!v)
+                    return std::unexpected(physics_error::invalid_argument);
+
+                // Jolt's ScaledShape rejects zero/tiny scale (degenerate transforms crash narrowphase)
+                const glm::vec3 abs_scale = glm::abs(v->scale);
+                if (glm::any(glm::lessThanEqual(abs_scale, glm::vec3(1e-4f))))
+                    return std::unexpected(physics_error::invalid_argument);
+
+                auto inner = build_data(*v->inner, depth + 1);
+                if (!inner)
+                    return inner;
+
+                JPH::ScaledShapeSettings settings;
+                settings.mInnerShapePtr = inner->GetPtr();
+                settings.mScale = to_jolt(v->scale);
+                auto result = settings.Create();
+                if (result.HasError())
+                    return std::unexpected(physics_error::invalid_argument);
+                return result.Get();
             
             } else if constexpr (std::is_same_v<T, GLT::ref<const compound>>) {
 
@@ -200,20 +222,25 @@ namespace GLT::physics::jolt {
             using T = std::decay_t<decltype(v)>;
 
             if constexpr (std::is_same_v<T, sphere>
-                        || std::is_same_v<T, box>
-                        || std::is_same_v<T, capsule>
-                        || std::is_same_v<T, cylinder>
-                        || std::is_same_v<T, convex_hull>)
+                || std::is_same_v<T, box>
+                || std::is_same_v<T, capsule>
+                || std::is_same_v<T, cylinder>
+                || std::is_same_v<T, convex_hull>)
                 return MASK_ALL;
 
             else if constexpr (std::is_same_v<T, plane>)
                 return MASK_STATIC_KINEMATIC;
 
             else if constexpr (std::is_same_v<T, triangle_mesh>
-                            || std::is_same_v<T, height_field>)
+                || std::is_same_v<T, height_field>)
                 return MASK_STATIC_ONLY;
 
-            else if constexpr (std::is_same_v<T, GLT::ref<const compound>>) {
+            else if constexpr (std::is_same_v<T, GLT::ref<const scaled>>) {
+                if (!v)
+                    return 0;
+                return compute_motion_mask(*v->inner);
+            
+            } else if constexpr (std::is_same_v<T, GLT::ref<const compound>>) {
 
                 if (!v || v->children.empty())
                     return 0;

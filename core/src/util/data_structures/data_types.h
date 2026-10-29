@@ -158,8 +158,8 @@ namespace GLT {
 	// @brief Semantic versioning structure
 	struct version {
 
-		version() {}
-		version(u16 major, u16 minor, u16 patch)
+		constexpr version() = default;
+		constexpr version(u16 major, u16 minor, u16 patch)
 			: major(major), minor(minor), patch(patch) {}
 
 		u16 			major{}; 		// Major version number (incompatible API changes)

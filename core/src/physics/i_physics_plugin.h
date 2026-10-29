@@ -75,7 +75,7 @@ namespace GLT::physics {
         // @param gravity Initial gravity vector (default: Earth)
         // @return Owning reference to the new instance, or a physics_error
         [[nodiscard]] virtual std::expected<unique_ref<i_physics>, physics_error> instantiate(
-            const glm::vec3& gravity = { 0.f, -0.000981f, 0.f }) = 0;
+            const glm::vec3& gravity = { 0.f, -0.00048f, 0.f }) = 0;
     };
 
 }

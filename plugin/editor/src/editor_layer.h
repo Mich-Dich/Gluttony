@@ -210,6 +210,7 @@ namespace GLT::editor {
         std::vector<GLT::unique_ref<base_window>>       m_windows{};
 
         bool                                            m_show_stats_window = false;
+        bool                                            m_show_plugin_manager_window = false;
         bool                                            m_show_demo = false;
         bool                                            m_show_style = false;
         bool                                            m_reset_layout = true;
@@ -232,6 +233,7 @@ namespace GLT::editor {
         std::vector<notification>                       m_notifications{};
         std::vector<notification_event>                 m_notification_event_buffer{};   // buffered - event may fire mid-draw
 
+        bool                                            m_start_sims = false;
         GLT::system_state                               m_simulation_state = GLT::system_state::idle;   // editor specific sim
         simulation_mode                                 m_simulation_mode{ simulation_mode::current_viewport };
         u32                                             m_sim_window_count{ 1 };

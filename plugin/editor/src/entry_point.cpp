@@ -33,6 +33,12 @@ namespace GLT::editor {
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
         .name                                                   = GLT_MODULE_NAME,
+        .display_name                                           = "Gluttony Editor - ImGui",
+        .description                                            = "The main Gluttony editor, handles most task needed for game creation",
+        .category                                               = "Core|UI|Editor",
+        .author                                                 = "Mich-Dich",
+        .plugin_version                                         = {1, 0, 0},
+        .api_version                                            = {1, 0, 0},
         .load_phase                                             = GLT::plugin_manager::phase::application_ready,
         .unload_phase                                           = GLT::plugin_manager::phase::pre_application_shutdown,
         .target                                                 = GLT::plugin_manager::interface::editor_core,

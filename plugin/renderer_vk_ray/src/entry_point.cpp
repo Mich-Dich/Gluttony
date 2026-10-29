@@ -598,14 +598,20 @@ namespace GLT::renderer::vk_ray {
 
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
-        .name = GLT_MODULE_NAME,
-        .load_phase = GLT::plugin_manager::phase::pre_application,
-        .unload_phase = GLT::plugin_manager::phase::post_application_shutdown,
-        .target = GLT::plugin_manager::interface::renderer,
-        .dependency_names_count = ARRAY_SIZE(dependencies_names),
-        .dependency_names = dependencies_names,
-        .dependency_interface_count = ARRAY_SIZE(dependencies_interfaces),
-        .dependency_interfaces = dependencies_interfaces,
+        .name                                                   = GLT_MODULE_NAME,
+        .display_name                                           = "Vulkan HA-Ray-tracer",
+        .description                                            = "Vulkan based Hardware accelerated ray-tracer",
+        .category                                               = "Core|Rendering",
+        .author                                                 = "Mich-Dich",
+        .plugin_version                                         = {1, 0, 0},
+        .api_version                                            = {1, 0, 0},
+        .load_phase                                             = GLT::plugin_manager::phase::pre_application,
+        .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
+        .target                                                 = GLT::plugin_manager::interface::renderer,
+        .dependency_names_count                                 = ARRAY_SIZE(dependencies_names),
+        .dependency_names                                       = dependencies_names,
+        .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
+        .dependency_interfaces                                  = dependencies_interfaces,
     };
 
     // FUNCTION IMPLEMENTATION =========================================================================================

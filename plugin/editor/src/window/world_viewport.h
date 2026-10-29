@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include <imgui.h>
@@ -68,58 +67,58 @@ namespace GLT::editor {
             std::string                                 error_message;                  // empty = ok
         };
 
+        // ---- rendering ----
         void render_inner_dockspace();
-
         void build_default_layout(ImGuiID dockspace_id, const ImVec2& size);
-
         void render_viewport();
-
-        // Renders the floating mode selector in the top-left of the viewport image. Returns true while its combo popup is open,
-        // so the caller can suppress viewport input
         bool render_mode_selector_overlay(const ImVec2& image_min);
-
         void render_details();
-
         void render_add_component_popup(GLT::world::entity_id id, const ImVec2& btn_max);
-
         void render_outliner();
-
         void set_cursor_captured(const bool captured);
 
-        void render_outliner_node(GLT::world::entity_id id);
+        // ---- outliner ----
+        void render_outliner_row(GLT::world::entity_id id, int depth, int& row_index,
+                                 const std::vector<GLT::world::entity_id>& visible_order, bool flat);
+        void render_entity_tooltip(GLT::world::entity_id id);
+        void render_entity_context_menu(GLT::world::entity_id id, bool visible);
 
+        // ---- outliner helpers ----
+        void handle_outliner_click(GLT::world::entity_id id, const std::vector<GLT::world::entity_id>& visible_order);
+        void clear_selection();
+        [[nodiscard]] bool is_selected(GLT::world::entity_id id) const;
+        [[nodiscard]] GLT::world::entity_id primary_selection() const;
+        void prune_dead_selection();
+
+        void collect_visible_tree_order(GLT::world::entity_id id, std::vector<GLT::world::entity_id>& out) const;
+        [[nodiscard]] bool is_tree_node_open(GLT::world::entity_id id) const;
+
+        [[nodiscard]] std::string entity_display_name(GLT::world::entity_id id) const;
+        [[nodiscard]] std::vector<icon_manager::icon_type> entity_component_icons(GLT::world::entity_id id) const;
+
+        // ---- saving ----
         void on_save_event(const GLT::save_event& event);
-
-        // Buffered so we don't mutate the queue while someone else is iterating - update() drains this into m_save_as_queue
         void on_save_as_request_event(const GLT::save_as_request_event& event);
-
-        // Reads the head of the queue and opens the modal. No-op if a request is already being shown
         void open_next_save_request();
-
-        // Renders the modal if one is active. Call at the end of window, after every other window - modals must layer on top
         void render_save_as_popup();
-
-        // Confirms or discards the current request and dequeues it. Pops the next request off the queue if one is waiting
         void resolve_save_as_request(bool confirmed);
 
+        // ---- render settings ----
         bool render_settings_overlay();
-
-        void render_settings_popup_body();  // popup content, called by render_settings_overlay
-
+        void render_settings_popup_body();
         bool draw_reflected_setting(const GLT::reflect::member_descriptor& md, void* ptr);
 
+        // ---- gizmo ----
         void render_gizmo(const ImVec2& image_min, const ImVec2& image_size);
-
         void render_gizmo_toolbar(const ImVec2& image_min, const ImVec2& image_size);
-
-        // Draws a styled toggle button matching the render-mode overlay look.
-        static bool gizmo_toggle_button(const char* label, bool active, const ImVec2& size = ImVec2(0, 0), const bool use_icon = false,
-            icon_manager::icon_type icon = icon_manager::icon::transfrom_rotation);
+        static bool gizmo_toggle_button(const char* label, bool active, const ImVec2& size = ImVec2(0, 0),
+                                        const bool use_icon = false,
+                                        icon_manager::icon_type icon = icon_manager::icon::transfrom_rotation);
 
         void update_selection_debug_draw();
 
-
-        GLT::render::i_scene_renderer*                  m_scene = nullptr;    // primary scene renderer, owned by application
+        // ---- data ----
+        GLT::render::i_scene_renderer*                  m_scene = nullptr;
         bool                                            m_viewport_image_drawn = false;
         std::vector<content_browser_window>             m_content_browsers{};
         GLT::ref<GLT::render::i_renderer_plugin>        m_renderer{};
@@ -128,9 +127,13 @@ namespace GLT::editor {
         bool                                            m_cursor_captured = false;
 
         GLT::world::i_world*                            m_world{};
-        GLT::world::entity_id                           m_selected_entity{ GLT::world::INVALID_ENTITY };
         GLT::world::i_world_inspector*                  m_inspector{ nullptr };
         u64                                             m_clipboard_component{ 0 };
+
+        // outliner state
+        std::vector<GLT::world::entity_id>              m_selected_entities{};
+        GLT::world::entity_id                           m_selection_anchor{ GLT::world::INVALID_ENTITY };
+        char                                            m_outliner_filter[128]{};
 
         handle                                          m_save_as_sub_handle{};
         handle                                          m_save_sub_handle{};

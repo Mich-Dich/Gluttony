@@ -18,6 +18,11 @@ namespace GLT::world::world_ecs_entt {
 
     // CONSTANTS =======================================================================================================
 
+    // Minimum scale magnitude any shape component can reach. Chosen safely above Jolt's internal
+    // IsValidScale epsilon (which is typically 1.0e-4 or 1.0e-6 depending on the build). Going below
+    // this in a ScaledShape leads to asserts in SphereShape / CapsuleShape / CylinderShape
+    static constexpr f32                            MIN_SCALE = 1.0e-3f;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -37,11 +42,42 @@ namespace GLT::world::world_ecs_entt {
 
     static glm::vec3 euler_yxz_from_quat(const glm::quat& q);
 
+
+    bool is_identity_scale(const glm::vec3& s);
+
+
+    bool is_uniform_scale(const glm::vec3& s);
+
+    // --- convex-hull approximations for curved primitives under non-uniform scale -------------------------------------
+
+    // Jolt's SphereShape / CapsuleShape / CylinderShape reject non-uniform scale in IsValidScale, and
+    // ScaledShape forwards the scale straight through to the inner shape's GetWorldSpaceBounds. So
+    // ScaledShape{SphereShape} under (2,1,1) asserts at body creation, every time, no matter how the
+    // scale is normalised. The only way to get anisotropic geometry from a curved primitive is to
+    // replace it with a convex hull sampled from the transformed surface
+
+    static void append_ellipsoid_points(std::vector<glm::vec3>& out, f32 radius, const glm::vec3& scale);
+
+    // Capsule is aligned along Y in Jolt: cylinder from -half_height to +half_height, with hemispherical caps
+    static void append_capsule_points(std::vector<glm::vec3>& out, f32 radius, f32 half_height, const glm::vec3& scale);
+
+    // Cylinder is aligned along Y in Jolt
+    static void append_cylinder_points(std::vector<glm::vec3>& out, f32 radius, f32 half_height, const glm::vec3& scale);
+
+    // --- top-level per-collider scale application ------------------------------------------------------
+
+    // Called once per collider from create_physics_body_for. Curved primitives under non-uniform scale
+    // become convex hulls; everything else bakes or wraps as appropriate. `hull_points` is an out-param
+    // the caller must keep alive until physics->create_shape() returns — that's where the shape_data's
+    // span<const vec3> points into
+    GLT::physics::shape_data apply_collider_scale(GLT::physics::shape_data d, const glm::vec3& s, 
+        std::vector<glm::vec3>& hull_points);
+
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
-    // position/rotation(euler,rad)/scale -> mat4. YXZ order.
+    // position/rotation(euler,rad)/scale -> mat4. YXZ order
     static glm::mat4 compose_transform(const component::transform& t) {
         glm::mat4 m = glm::translate(glm::mat4(1.0f), t.position);
         m = glm::rotate(m, t.rotation.y, glm::vec3(0, 1, 0));
@@ -81,13 +117,223 @@ namespace GLT::world::world_ecs_entt {
         euler.x = std::asin(glm::clamp(-m[2][1], -1.f, 1.f));
         const f32 cx = std::cos(euler.x);
         if (std::abs(cx) > 1e-6f) {
-            euler.y = std::atan2(m[0][2], m[2][2]);
+            euler.y = std::atan2(m[2][0], m[2][2]);
             euler.z = std::atan2(m[0][1], m[1][1]);
         } else {
-            euler.y = std::atan2(-m[0][2], m[0][0]);
+            euler.y = std::atan2(-m[0][2], m[0][0]);  // gimbal-lock branch is correct
             euler.z = 0.f;
         }
         return euler;
+    }
+
+
+    // --- scale predicates -------------------------------------------------------------------------------------------
+
+    bool is_identity_scale(const glm::vec3& s) {
+        
+        return glm::all(glm::lessThanEqual(glm::abs(s - glm::vec3(1.f)), glm::vec3(1e-4f)));
+    }
+
+
+    bool is_uniform_scale(const glm::vec3& s) { return std::abs(s.x - s.y) < 1e-4f && std::abs(s.y - s.z) < 1e-4f; }
+
+    // --- convex-hull approximations for curved primitives under non-uniform scale -------------------------------------
+
+    static void append_ellipsoid_points(std::vector<glm::vec3>& out, f32 radius, const glm::vec3& scale) {
+
+        constexpr u32 kSectors = 24;
+        constexpr u32 kRings = 12;
+        constexpr f32 kPi = 3.14159265358979323846f;
+
+        out.reserve(out.size() + kSectors * (kRings - 1) + 6);
+
+        for (u32 i = 1; i < kRings; ++i) {
+            const f32 theta = kPi * static_cast<f32>(i) / kRings;
+            const f32 st = std::sin(theta);
+            const f32 ct = std::cos(theta);
+            for (u32 j = 0; j < kSectors; ++j) {
+                const f32 phi = 2.f * kPi * static_cast<f32>(j) / kSectors;
+                out.push_back({
+                    radius * scale.x * st * std::cos(phi),
+                    radius * scale.y * st * std::sin(phi),
+                    radius * scale.z * ct
+                });
+            }
+        }
+        // Extreme points on each axis so the hull touches all six semi-axes exactly
+        out.push_back({  radius * scale.x, 0.f, 0.f });
+        out.push_back({ -radius * scale.x, 0.f, 0.f });
+        out.push_back({ 0.f,  radius * scale.y, 0.f });
+        out.push_back({ 0.f, -radius * scale.y, 0.f });
+        out.push_back({ 0.f, 0.f,  radius * scale.z });
+        out.push_back({ 0.f, 0.f, -radius * scale.z });
+    }
+
+
+    static void append_capsule_points(std::vector<glm::vec3>& out, f32 radius, f32 half_height, const glm::vec3& scale) {
+
+        constexpr u32 kSectors = 20;
+        constexpr u32 kSideRings = 6;
+        constexpr u32 kCapSegments = 6;
+        constexpr f32 kPi = 3.14159265358979323846f;
+
+        // Side
+        for (u32 i = 0; i <= kSideRings; ++i) {
+            const f32 t = static_cast<f32>(i) / kSideRings;
+            const f32 y = -half_height + 2.f * half_height * t;
+            for (u32 j = 0; j < kSectors; ++j) {
+                const f32 phi = 2.f * kPi * static_cast<f32>(j) / kSectors;
+                out.push_back({ radius * std::cos(phi), y, radius * std::sin(phi) });
+            }
+        }
+        // Top cap
+        for (u32 i = 1; i <= kCapSegments; ++i) {
+            const f32 theta = 0.5f * kPi * static_cast<f32>(i) / kCapSegments;
+            const f32 st = std::sin(theta);
+            const f32 ct = std::cos(theta);
+            for (u32 j = 0; j < kSectors; ++j) {
+                const f32 phi = 2.f * kPi * static_cast<f32>(j) / kSectors;
+                out.push_back({
+                    radius * ct * std::cos(phi),
+                    half_height + radius * st,
+                    radius * ct * std::sin(phi)
+                });
+            }
+        }
+        // Bottom cap
+        for (u32 i = 1; i <= kCapSegments; ++i) {
+            const f32 theta = 0.5f * kPi * static_cast<f32>(i) / kCapSegments;
+            const f32 st = std::sin(theta);
+            const f32 ct = std::cos(theta);
+            for (u32 j = 0; j < kSectors; ++j) {
+                const f32 phi = 2.f * kPi * static_cast<f32>(j) / kSectors;
+                out.push_back({
+                    radius * ct * std::cos(phi),
+                    -half_height - radius * st,
+                    radius * ct * std::sin(phi)
+                });
+            }
+        }
+
+        for (auto& p : out) p *= scale;
+    }
+
+
+    static void append_cylinder_points(std::vector<glm::vec3>& out, f32 radius, f32 half_height, const glm::vec3& scale) {
+
+        constexpr u32 kSectors = 24;
+        constexpr f32 kPi = 3.14159265358979323846f;
+
+        // Two rims + the flat caps' centres (so the hull includes the top/bottom faces)
+        for (u32 j = 0; j < kSectors; ++j) {
+            const f32 phi = 2.f * kPi * static_cast<f32>(j) / kSectors;
+            const f32 x = radius * std::cos(phi);
+            const f32 z = radius * std::sin(phi);
+            out.push_back({ x,  half_height, z });
+            out.push_back({ x, -half_height, z });
+        }
+        out.push_back({ 0.f,  half_height, 0.f });
+        out.push_back({ 0.f, -half_height, 0.f });
+
+        for (auto& p : out) p *= scale;
+    }
+
+    // --- top-level per-collider scale application ------------------------------------------------------
+
+    GLT::physics::shape_data apply_collider_scale(GLT::physics::shape_data d, const glm::vec3& s, 
+        std::vector<glm::vec3>& hull_points) {
+
+        if (is_identity_scale(s))
+            return d;
+
+        const glm::vec3 clamped = glm::max(glm::abs(s), glm::vec3(MIN_SCALE));
+        const bool uniform = is_uniform_scale(clamped);
+
+        return std::visit([&](auto&& v) -> GLT::physics::shape_data {
+            using T = std::decay_t<decltype(v)>;
+
+            if constexpr (std::is_same_v<T, physics::sphere>) {
+                if (uniform) {
+                    auto r = v;
+                    r.radius *= clamped.x;
+                    return r;
+                }
+                hull_points.clear();
+                append_ellipsoid_points(hull_points, v.radius, clamped);
+                return physics::convex_hull{ .points = hull_points };
+            }
+
+            else if constexpr (std::is_same_v<T, physics::capsule>) {
+                // Only y-axis differs → still a valid Jolt capsule (taller/shorter), bake it
+                if (std::abs(clamped.x - clamped.z) < 1e-4f) {
+                    auto r = v;
+                    r.radius *= clamped.x;
+                    r.half_height *= clamped.y;
+                    return r;
+                }
+                hull_points.clear();
+                append_capsule_points(hull_points, v.radius, v.half_height, clamped);
+                return physics::convex_hull{ .points = hull_points };
+            }
+
+            else if constexpr (std::is_same_v<T, physics::cylinder>) {
+                if (std::abs(clamped.x - clamped.z) < 1e-4f) {
+                    auto r = v;
+                    r.radius *= clamped.x;
+                    r.half_height *= clamped.y;
+                    return r;
+                }
+                hull_points.clear();
+                append_cylinder_points(hull_points, v.radius, v.half_height, clamped);
+                return physics::convex_hull{ .points = hull_points };
+            }
+
+            else if constexpr (std::is_same_v<T, physics::box>) {
+                auto r = v;
+                r.half_extents *= clamped;
+                return r;
+            }
+
+            else if constexpr (std::is_same_v<T, physics::plane>) {
+                if (uniform) {
+                    auto r = v;
+                    r.distance *= clamped.x;
+                    return r;
+                }
+                // Non-uniform plane scale is meaningless; keep it as-is
+                return v;
+            }
+
+            else if constexpr (std::is_same_v<T, physics::height_field>) {
+                auto r = v;
+                r.scale *= clamped;
+                return r;
+            }
+
+            else if constexpr (std::is_same_v<T, physics::convex_hull>) {
+                // ConvexHullShape supports non-uniform scale via ScaledShape natively
+                auto out = std::make_shared<physics::scaled>();
+                out->inner = std::make_shared<GLT::physics::shape_data>(std::move(v));
+                out->scale = clamped;
+                return GLT::physics::shape_data{ out };
+            }
+
+            else if constexpr (std::is_same_v<T, physics::triangle_mesh>) {
+                // MeshShape also supports non-uniform scale via ScaledShape
+                auto out = std::make_shared<physics::scaled>();
+                out->inner = std::make_shared<GLT::physics::shape_data>(std::move(v));
+                out->scale = clamped;
+                return GLT::physics::shape_data{ out };
+            }
+
+            else if constexpr (std::is_same_v<T, GLT::ref<const physics::compound>> ||
+                            std::is_same_v<T, GLT::ref<const physics::scaled>>) {
+                // Should never reach here — compounds and nested scaled are handled at the call site
+                // Fail closed so a mis-routed call is loud instead of silently wrong
+                ASSERT(false, "", "apply_collider_scale: compound / scaled must be handled by the caller")
+                return std::move(d);
+            }
+        }, std::move(d));
     }
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
@@ -112,13 +358,13 @@ namespace GLT::world::world_ecs_entt {
 
     ecs_world::~ecs_world() {
 
-        // Same release loop as old unload_world().
+        // Same release loop as old unload_world()
         if (auto registry = asset::registry::get_ref()) {
             for (const auto& region : m_regions)
                 if (region.asset != INVALID_HANDLE)
                     registry->release(region.asset);
         }
-        // m_registry / m_slots / etc. unwind via their own destructors.
+        // m_registry / m_slots / etc. unwind via their own destructors
     }
 
     // CLASS PUBLIC ====================================================================================================
@@ -135,10 +381,10 @@ namespace GLT::world::world_ecs_entt {
 
         m_region_cell_size = world_asset->region_cell_size;
         VALIDATE(m_region_cell_size.x > 0.f && m_region_cell_size.y > 0.f && m_region_cell_size.z > 0.f,
-            m_region_cell_size = glm::vec3(256.f), "", "Corrupt file holds invalid region cell size");
+            m_region_cell_size = glm::vec3(256.f), "", "Corrupt file holds invalid region cell size")
 
         m_streaming_radius = world_asset->streaming_radius;
-        VALIDATE(m_streaming_radius >= 0.f, m_streaming_radius = 512.f, "", "corrupt file has invalid streaming radius");
+        VALIDATE(m_streaming_radius >= 0.f, m_streaming_radius = 512.f, "", "corrupt file has invalid streaming radius")
         m_streaming_anchor = world_asset->active_camera_position;
 
         m_regions = world_asset->region_index;
@@ -182,7 +428,7 @@ namespace GLT::world::world_ecs_entt {
 
             // Path-based recovery: file exists on disk, or mint a fresh one. resolve_region_handle already retains on success
             const GLT::asset::handle h = resolve_region_handle(cell, region.id);
-            VALIDATE(h != INVALID_HANDLE, continue, "", "region for cell ({},{},{}) unresolvable - skipping", (cell.x, cell.y, cell.z));
+            VALIDATE(h != INVALID_HANDLE, continue, "", "region for cell ({},{},{}) unresolvable - skipping", (cell.x, cell.y, cell.z))
 
             region.asset = h;
 
@@ -237,7 +483,7 @@ namespace GLT::world::world_ecs_entt {
 
         if (!m_asset.valid()) {
 
-            // Mint a fresh world asset at `path`.
+            // Mint a fresh world asset at `path`
             auto world_asset = create_unique_ref<asset::world::world_asset>();
             world_asset->asset_type = asset::core_types::world;
             world_asset->region_cell_size = m_region_cell_size;
@@ -274,7 +520,7 @@ namespace GLT::world::world_ecs_entt {
         const entity_id id = alloc_slot();
 
         // Give the entity a transform up front so its position is well-defined for cell assignment
-        // Safe: emplace is idempotent if a descriptor already added one.
+        // Safe: emplace is idempotent if a descriptor already added one
         m_registry.emplace_or_replace<component::transform>(entt_of(id));
         assign_entity_to_cell(id);
 
@@ -401,10 +647,15 @@ namespace GLT::world::world_ecs_entt {
         if (!alive(id))
             return;
 
-        auto& transform = m_registry.get_or_emplace<component::transform>(entt_of(id));
-        transform.scale = scale;
+        auto& t = m_registry.get_or_emplace<component::transform>(entt_of(id));
+        const glm::vec3 old = t.scale;
+        t.scale = scale;
 
-        // Scale doesn't move the pivot - no re-bin needed
+        if (m_physics && old != scale) {
+            const entt::entity e = entt_of(id);
+            if (const auto* pb = m_registry.try_get<component::physics_body>(e); pb && pb->body.is_valid())
+                rebuild_physics_body(id);
+        }
     }
 
     // region queries --------------------------------------------------------------------------------------------------
@@ -491,7 +742,7 @@ namespace GLT::world::world_ecs_entt {
     void ecs_world::reassign_all_entities() {
 
         // Regions that are currently inactive have an empty state list already
-        // (deactivate() clears them), so this only affects what's resident right now.
+        // (deactivate() clears them), so this only affects what's resident right now
         for (auto& [rid, state] : m_region_states)
             state.entities.clear();
 
@@ -690,8 +941,8 @@ namespace GLT::world::world_ecs_entt {
         if (ent == entt::null)
             return;
 
-        // Already has a live body? Nothing to do
-        if (const auto* existing = m_registry.try_get<component::physics_body>(ent); existing && existing->body.is_valid())
+        if (const auto* existing = m_registry.try_get<component::physics_body>(ent);
+            existing && existing->body.is_valid())
             return;
 
         const auto* mesh_comp = m_registry.try_get<component::mesh>(ent);
@@ -703,41 +954,46 @@ namespace GLT::world::world_ecs_entt {
         if (!mesh_asset || mesh_asset->colliders.empty())
             return;
 
-        // Auto-attach the runtime component. Motion/material mirror the mesh's persisted settings, so a reload
-        // brings the dynamic/static intent back without touching the codec for physics_body itself
         auto& pb = m_registry.get_or_emplace<component::physics_body>(ent);
         pb.motion = mesh_comp->motion;
         pb.material = mesh_comp->physics_material;
         pb.use_mesh_material = mesh_comp->use_mesh_material;
 
-        // --- build the shape -----------------------------------------------------------------------------------------
+        // Entity scale, clamped away from zero. Applies to every collider below
+        const glm::vec3 entity_scale = glm::max(glm::abs(get_local_scale(id)), glm::vec3(MIN_SCALE));
 
-        // Compound children need to keep their span-backing storage alive through create_shape(); stash it on the stack
+        // ---------------------------------------------------------------------------------------------------------------
+        // Per-collider storage. Each alternative of physics::shape_data may hold spans into one of these vectors; they
+        // must all remain alive until m_physics->create_shape() returns (which copies the geometry into Jolt)
+        // ---------------------------------------------------------------------------------------------------------------
+
         struct owned_child {
             physics::shape_data                 data;
-            std::vector<glm::vec3>              positions;                 // only populated for triangle_mesh
+            std::vector<glm::vec3>              positions;      // triangle_mesh vertices
+            std::vector<glm::vec3>              hull_points;    // convex_hull points (sphere→ellipsoid etc.)
         };
         std::vector<owned_child> owned;
         owned.reserve(mesh_asset->colliders.size());
 
-        for (const auto& c : mesh_asset->colliders) {
+        for (const auto& collider : mesh_asset->colliders) {
 
             owned_child child;
-            switch (c.shape) {
+            switch (collider.shape) {
+
                 case asset::mesh::collider_shape::sphere:
-                    child.data = c.sphere;
+                    child.data = collider.sphere;
                     break;
 
                 case asset::mesh::collider_shape::box:
-                    child.data = c.box;
+                    child.data = collider.box;
                     break;
 
                 case asset::mesh::collider_shape::capsule:
-                    child.data = c.capsule;
+                    child.data = collider.capsule;
                     break;
 
                 case asset::mesh::collider_shape::cylinder:
-                    child.data = c.cylinder;
+                    child.data = collider.cylinder;
                     break;
 
                 case asset::mesh::collider_shape::triangle_mesh:
@@ -750,43 +1006,79 @@ namespace GLT::world::world_ecs_entt {
                     };
                     break;
             }
+
+            // Apply the entity scale to this collider. For sphere / capsule / cylinder under non-uniform
+            // scale this returns a convex_hull whose `points` span is backed by child.hull_points —
+            // which the `owned` vector keeps alive through create_shape()
+            child.data = apply_collider_scale(std::move(child.data), entity_scale, child.hull_points);
+
             owned.push_back(std::move(child));
         }
 
-        const physics::physics_material material = pb.use_mesh_material ? mesh_asset->colliders[0].material : pb.material;
-
-        std::expected<physics::shape_handle, physics::physics_error> shape_result = std::unexpected(
-            physics::physics_error::internal_error);
-
+        // Pack into one shape_data: the sole collider, or a compound of all of them
+        //
+        // The compound's child-local translations from the mesh asset need the entity scale applied
+        // along the translation column too, so a compound authored at half-offsets lines up with the
+        // scaled visual mesh. Rotations stay untouched (they were authored as pure rotations; build_compound
+        // rejects non-unit scale in the local matrix)
+        physics::shape_data base_data;
         if (owned.size() == 1) {
-            shape_result = m_physics->create_shape({ .data = std::move(owned[0].data), .material = material });
+            base_data = std::move(owned[0].data);
         } else {
             auto compound = std::make_shared<physics::compound>();
             compound->children.reserve(owned.size());
             for (size_t i = 0; i < owned.size(); ++i) {
+                glm::mat4 local = mesh_asset->colliders[i].local_transform;
+                local[3][0] *= entity_scale.x;
+                local[3][1] *= entity_scale.y;
+                local[3][2] *= entity_scale.z;
                 compound->children.push_back({
                     std::make_shared<physics::shape_data>(std::move(owned[i].data)),
-                    mesh_asset->colliders[i].local_transform
+                    local
                 });
             }
-            physics::shape_data compound_data = compound;
-            shape_result = m_physics->create_shape({ .data = compound_data, .material = material });
+            base_data = physics::shape_data{ compound };
         }
 
-        if (!shape_result)
+        // --- compile to a physics shape -------------------------------------------------------------------------
+        //
+        // `owned` and everything reachable through it stay alive until here. create_shape() copies all
+        // geometry (spans, hull points, mesh vertices) into Jolt-owned memory
+
+        const physics::physics_material material = pb.use_mesh_material
+            ? mesh_asset->colliders[0].material
+            : pb.material;
+
+        auto shape_result = m_physics->create_shape({
+            .data = std::move(base_data),
+            .material = material
+        });
+
+        if (!shape_result) {
+            LOG(error, "Failed to create physics shape for entity [{}]: {}",
+                id.index, GLT::util::enum_to_string(shape_result.error()));
             return;
+        }
 
         pb.shape = *shape_result;
 
-        // --- build the body at the entity's current world transform -------------------------------------------------
+        // --- build the body at the entity's current world transform ---------------------------------------------
+        //
+        // Position AND rotation come from the world matrix. Column-normalizing strips scale — already
+        // baked into the geometry by apply_collider_scale(), so the body's rigid transform must not
+        // reapply it
 
         const glm::mat4 world = world_transform_of(id);
+        const glm::quat world_rot = glm::quat_cast(glm::mat3(
+            glm::normalize(glm::vec3(world[0])),
+            glm::normalize(glm::vec3(world[1])),
+            glm::normalize(glm::vec3(world[2]))));
 
         physics::body_desc desc{};
         desc.motion = pb.motion;
         desc.shape = pb.shape;
         desc.position = glm::vec3(world[3]);
-        desc.rotation = get_local_rotation_q(id);              // parents are rare on physics entities; refine later
+        desc.rotation = world_rot;
         desc.linear_damping = 0.02f;
         desc.angular_damping = 0.05f;
         desc.entity = id;
@@ -959,7 +1251,7 @@ namespace GLT::world::world_ecs_entt {
             return false;
 
         // The camera's world transform is inherited through the hierarchy just like any other entity
-        // a camera parented to a moving platform moves with it.
+        // a camera parented to a moving platform moves with it
         const glm::mat4 world = world_transform_of(m_active_camera);
 
         // // scale on a camera is meaningless, normalize it
@@ -990,7 +1282,7 @@ namespace GLT::world::world_ecs_entt {
             return false;
 
         // The camera's world transform is inherited through the hierarchy just like any other entity
-        // a camera parented to a moving platform moves with it.
+        // a camera parented to a moving platform moves with it
         const glm::mat4 world = world_transform_of(camera);
 
         // // scale on a camera is meaningless, normalize it
@@ -1392,7 +1684,7 @@ namespace GLT::world::world_ecs_entt {
         //     ref_count entering hand_off:  N   (asset_ref's own +1)
         //     retain(h):                    N+1 (caller's +1)
         //     ref destructs at end of fn:   N
-        // Net: exactly +1 for the caller, regardless of N.
+        // Net: exactly +1 for the caller, regardless of N
         auto hand_off = [registry](GLT::asset::asset_ref ref) -> GLT::asset::handle {
             if (!ref.valid())
                 return INVALID_HANDLE;

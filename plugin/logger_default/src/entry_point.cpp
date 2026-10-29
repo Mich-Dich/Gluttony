@@ -47,6 +47,12 @@ namespace GLT::logger_default {
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
         
         .name                                                   = GLT_MODULE_NAME,
+        .display_name                                           = "Logger",
+        .description                                            = "Multi threaded logger",
+        .category                                               = "Core|IO",
+        .author                                                 = "Mich-Dich",
+        .plugin_version                                         = {1, 0, 0},
+        .api_version                                            = {1, 0, 0},
         .load_phase                                             = GLT::plugin_manager::phase::post_config_init,
         .unload_phase                                           = GLT::plugin_manager::phase::final_cleanup,
         .target                                                 = plugin_manager::interface::logger,

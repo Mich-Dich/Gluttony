@@ -33,6 +33,7 @@
 #include "window/material_viewer.h"
 #include "window/mesh_editor.h"
 #include "window/world_topdown_editor.h"
+#include "window/plugin_manager.h"
 #include "util/asset_editor_registry.h"
 #include "util/file_watcher.h"
 #include "input/editor_controller.h"
@@ -239,9 +240,13 @@ namespace GLT::editor {
 
     void editor_layer::render_imgui(const f32 delta_time) {
 
-        // ImGuizmo must see exactly one BeginFrame per ImGui frame
         ImGuizmo::BeginFrame();
         // ImGui::ShowIDStackToolWindow();
+
+        if (m_start_sims) {
+            start_simulation();
+            m_start_sims = false;
+        }
 
         render_toolbar();
         render_dockspace();
@@ -344,7 +349,15 @@ namespace GLT::editor {
                 if (ImGui::MenuItem("New Plugin Wizard"))
                     add_window<plugin_wizard_window>();
 
-                if (ImGui::MenuItem("Debug Statistics", "", m_show_stats_window)) {
+                if (ImGui::MenuItem("Plugin Manager", "", &m_show_plugin_manager_window)) {
+
+                    if (auto* window = find_window_by_name("Plugin Manager"))
+                        window->close_window();
+                    else
+                        add_window<plugin_manager_window>();
+                }
+
+                if (ImGui::MenuItem("Debug Statistics", "", &m_show_stats_window)) {
 
                     if (auto* window = find_window_by_name("Debug Statistics"))
                         window->close_window();
@@ -752,8 +765,7 @@ namespace GLT::editor {
         }
 
         if (event.is(GLT::key_code::key_F5, GLT::key_state::press))
-            start_simulation();
-
+            m_start_sims = true;
     }
 
 

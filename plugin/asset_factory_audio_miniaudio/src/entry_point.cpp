@@ -32,6 +32,12 @@ namespace GLT::asset::factory::audio_miniaudio {
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
         .name                                                   = GLT_MODULE_NAME,
+        .display_name                                           = "Asset Factory - Audio - MiniAudio",
+        .description                                            = "Import external file formats to internal audio assets with MiniAudio",
+        .category                                               = "Core|Asset|Factory",
+        .author                                                 = "Mich-Dich",
+        .plugin_version                                         = {1, 0, 0},
+        .api_version                                            = {1, 0, 0},
         .load_phase                                             = GLT::plugin_manager::phase::pre_application,
         .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
         .target                                                 = GLT::plugin_manager::interface::custom,
@@ -39,6 +45,7 @@ namespace GLT::asset::factory::audio_miniaudio {
         .dependency_names                                       = dependencies_names,
         .dependency_interface_count                             = ARRAY_SIZE(dependencies_interfaces),
         .dependency_interfaces                                  = dependencies_interfaces,
+
     };
 
     // INTERNAL TEMPLATE DECLARATION ===================================================================================

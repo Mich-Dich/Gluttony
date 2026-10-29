@@ -174,14 +174,27 @@ namespace GLT::plugin_manager {
     // automatically during the load phase
     struct plugin_descriptor {
 
-        const char*                     name{};                         // Human‑readable plugin name, must be unique
-        phase                           load_phase{};                   // When this plugin should be loaded
-        phase                           unload_phase{};                 // When this plugin should be loaded
-        interface                       target{};                       // Which core interface this plugin implements
-        int                             dependency_names_count{};       // Number of plugins this plugin depends on (by name)
-        const char* const*              dependency_names{};             // Array of plugin names this plugin requires
-        int                             dependency_interface_count{};   // Number of interface dependencies
-        const interface*                dependency_interfaces{};        // Array of interfaces this plugin depends on
+        // identity
+        const char*                     name{};                         // unique key (GLT_MODULE_NAME)
+        const char*                     display_name{};                 // optional; falls back to name
+        const char*                     description{};                  // one-liner for the editor
+        const char*                     category{};                     // optional but helps with organization in UI
+        const char*                     author{};                       // optional
+
+        // versioning
+        GLT::version                    plugin_version{};               // this plugin's own semver
+        GLT::version                    api_version{};                  // engine API it was built against
+
+        // lifecycle
+        phase                           load_phase{};
+        phase                           unload_phase{};
+        interface                       target{};
+
+        // dependencies
+        int                             dependency_names_count{};
+        const char* const*              dependency_names{};
+        int                             dependency_interface_count{};
+        const interface*                dependency_interfaces{};
     };
 
     // STATIC VARIABLES ================================================================================================

@@ -17,7 +17,39 @@ namespace GLT::plugin_manager {
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
-    
+
+    struct plugin_info {
+
+        std::filesystem::path                   library_path{};
+        std::filesystem::path                   logo_path{};            // empty → no logo
+        std::string                             name{};
+        std::string                             display_name{};
+        std::string                             description{};
+        std::string                             category{};
+        std::string                             author{};
+        GLT::version                            plugin_version{};
+        GLT::version                            api_version{};
+        interface                               target = interface::none;
+        phase                                   load_phase = phase::earliest_possible;
+        phase                                   unload_phase = phase::earliest_possible;
+        std::vector<std::string>                dependencies_names{};
+        std::vector<interface>                  dependencies_interfaces{};
+        bool                                    is_enabled{};
+        bool                                    is_loaded{};
+    };
+
+
+    struct dependency_status {
+
+        std::string                             requirement;            // "jolt_physics" or "interface:world"
+        bool                                    via_interface = false;
+        bool                                    satisfied = false;      // will be met on next load
+        bool                                    currently_loaded = false;   // met right now
+        std::string                             provider_name;
+        std::string                             provider_display;
+        interface                               provider_iface = interface::none;
+    };
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -59,6 +91,12 @@ namespace GLT::plugin_manager {
     void shutdown();
 
 
+    [[nodiscard]] const std::vector<plugin_info>& get_all_plugins();
+
+
+    [[nodiscard]] const plugin_info get_plugin_info(std::string_view name);
+
+
     // CAUTION, this will create an owning ref, only use when you know what you are doing Returns a shared (owning) reference
     // to the loaded plugin instance with the given [name]. If no such plugin is loaded, returns an empty [ref<i_plugin>]
     [[nodiscard]] ref<i_plugin> get_plugin_base(const std::string& name);
@@ -87,6 +125,22 @@ namespace GLT::plugin_manager {
 
     [[nodiscard]] ref<i_plugin> get_plugin_base(const interface targeted);
 
+
+    // Detailed dependency report for the UI. `satisfied` = "will be met on next restart";
+    // `currently_loaded` = "met by a plugin that is loaded right now".
+    [[nodiscard]] std::vector<dependency_status> get_dependency_status(const plugin_info& info);
+
+
+    // Toggle a plugin. Custom plugins are independent; non-custom plugins auto-disable
+    // any other enabled plugin for the same interface. Does NOT load/unload — restart required.
+    // Returns true if the state actually changed.
+    bool set_plugin_enabled(std::string_view name, bool enabled);
+
+
+    // True if any set_plugin_enabled() call has happened since startup.
+    [[nodiscard]] bool is_config_dirty();
+
+    // TEMPLATE DECLARATION ============================================================================================
 
     template<typename T = i_plugin>
     FORCE_INLINE_R ref<T> get_plugin_ref(const std::string& name);
@@ -130,8 +184,6 @@ namespace GLT::plugin_manager {
         FORCE_INLINE_R i_plugin* get_cached_interface_ptr(interface targeted) noexcept;
 
     }
-
-    // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================
 

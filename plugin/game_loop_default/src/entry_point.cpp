@@ -40,6 +40,12 @@ namespace GLT::game_loop {
     static constexpr GLT::plugin_manager::plugin_descriptor     descriptor = {
 
         .name                                                   = GLT_MODULE_NAME,
+        .display_name                                           = "Default Game Loop",
+        .description                                            = "A simple, straightforward game-loop",
+        .category                                               = "Core|Logic",
+        .author                                                 = "Mich-Dich",
+        .plugin_version                                         = {1, 0, 0},
+        .api_version                                            = {1, 0, 0},
         .load_phase                                             = GLT::plugin_manager::phase::application_ready,
         .unload_phase                                           = GLT::plugin_manager::phase::post_application_shutdown,
         .target                                                 = GLT::plugin_manager::interface::game_loop,
