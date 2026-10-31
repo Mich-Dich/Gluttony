@@ -12,7 +12,7 @@ namespace GLT::plugin_manager {
 
     // Number of slots in the interface→plugin cache. `interface::custom` is the last slot; it is
     // intentionally left unpopulated because multiple plugins can share `interface::custom`.
-    inline constexpr size_t                     INTERFACE_CACHE_SIZE = static_cast<size_t>(interface::custom) + 1;
+    inline constexpr size_t                                                 INTERFACE_CACHE_SIZE = static_cast<size_t>(interface::custom) + 1;
 
     // MACROS ==========================================================================================================
 
@@ -20,37 +20,45 @@ namespace GLT::plugin_manager {
 
     struct plugin_info {
 
-        std::filesystem::path                   library_path{};
-        std::filesystem::path                   logo_path{};            // empty → no logo
-        std::string                             name{};
-        std::string                             display_name{};
-        std::string                             description{};
-        std::string                             category{};
-        std::string                             author{};
-        GLT::version                            plugin_version{};
-        GLT::version                            api_version{};
-        interface                               target = interface::none;
-        phase                                   load_phase = phase::earliest_possible;
-        phase                                   unload_phase = phase::earliest_possible;
-        std::vector<std::string>                dependencies_names{};
-        std::vector<interface>                  dependencies_interfaces{};
-        bool                                    is_enabled{};
-        bool                                    is_loaded{};
+        std::filesystem::path                                               library_path{};
+        std::filesystem::path                                               logo_path{};            // empty → no logo
+        std::string                                                         name{};
+        std::string                                                         display_name{};
+        std::string                                                         description{};
+        std::string                                                         category{};
+        std::string                                                         author{};
+        GLT::version                                                        plugin_version{};
+        GLT::version                                                        api_version{};
+        interface                                                           target = interface::none;
+        phase                                                               load_phase = phase::earliest_possible;
+        phase                                                               unload_phase = phase::earliest_possible;
+        std::vector<std::string>                                            dependencies_names{};
+        std::vector<interface>                                              dependencies_interfaces{};
+        bool                                                                is_enabled{};
+        bool                                                                is_loaded{};
     };
 
 
     struct dependency_status {
 
-        std::string                             requirement;            // "jolt_physics" or "interface:world"
-        bool                                    via_interface = false;
-        bool                                    satisfied = false;      // will be met on next load
-        bool                                    currently_loaded = false;   // met right now
-        std::string                             provider_name;
-        std::string                             provider_display;
-        interface                               provider_iface = interface::none;
+        std::string                                                         requirement;            // "jolt_physics" or "interface:world"
+        bool                                                                via_interface = false;
+        bool                                                                satisfied = false;      // will be met on next load
+        bool                                                                currently_loaded = false;   // met right now
+        std::string                                                         provider_name;
+        std::string                                                         provider_display;
+        interface                                                           provider_iface = interface::none;
     };
 
     // STATIC VARIABLES ================================================================================================
+
+    // EXTERN VARIABLES ================================================================================================
+
+    namespace detail {
+
+        extern std::array<std::atomic<i_plugin*>, INTERFACE_CACHE_SIZE>     g_interface_raw_cache;
+
+    }
 
     // FUNCTION DECLARATION ============================================================================================
 
@@ -83,6 +91,50 @@ namespace GLT::plugin_manager {
     //
     // @param current_phase  The phase to unload
     void unload_plugins(const phase current_phase);
+
+
+    // @brief Loads a single plugin by name, on demand.
+    //
+    // Unlike [load_plugins()], which loads every plugin belonging to a phase, this loads exactly one
+    // plugin right now — provided it was discovered, is enabled, is not already loaded, and its
+    // dependencies (by name and by interface) are satisfied. Nothing changes on failure.
+    //
+    // Must be called from the same thread that calls [load_plugins()] / [unload_plugins()].
+    //
+    // @return true on success, false if the plugin could not be loaded (reason logged)
+    [[nodiscard]] bool load_plugin(std::string_view name);
+
+
+    // @brief Loads the plugin configured for the given interface, on demand.
+    //
+    // Equivalent to [load_plugin(s_plugin_names_per_target_interface[targeted])] after validating
+    // that a plugin is configured for the interface. Fails for [interface::custom] (no 1:1 mapping —
+    // use the name overload) and for interfaces explicitly disabled (EXPLICITLY_NONE).
+    [[nodiscard]] bool load_plugin(interface targeted);
+
+
+    // @brief Unloads a single plugin by name, on demand.
+    //
+    // Fails if the plugin is not currently loaded, or if any other loaded plugin depends on it
+    // (by name or by interface). On success, [on_unload()] runs, the interface cache slot is
+    // cleared, and the shared-library handle is released.
+    [[nodiscard]] bool unload_plugin(std::string_view name);
+
+
+    // @brief Unloads the plugin configured for the given interface, on demand.
+    //        Fails for [interface::custom] and for interfaces not currently backed by a loaded plugin.
+    [[nodiscard]] bool unload_plugin(interface targeted);
+
+
+    // @brief Convenience: unload + load, by name. Returns false if either step fails.
+    //
+    // If the unload succeeds but the load fails, the plugin ends up unloaded — the caller
+    // is responsible for deciding whether to retry. Useful for hot-reload workflows.
+    [[nodiscard]] bool reload_plugin(std::string_view name);
+
+
+    // @brief Convenience: unload + load the plugin configured for the given interface.
+    [[nodiscard]] bool reload_plugin(interface targeted);
 
 
     // Gracefully unloads all loaded plugins in reverse dependency order. Calls on_unload() on each plugin, then releases
@@ -175,11 +227,7 @@ namespace GLT::plugin_manager {
     FORCE_INLINE_R T* get_plugin_raw(interface targeted) noexcept;
 
 
-    // Inline fast-path (single acquire load, no function-call overhead when this header is included in the TU that also
-    // links plugin_manager.cpp)
     namespace detail {
-
-        extern std::array<std::atomic<i_plugin*>, INTERFACE_CACHE_SIZE> g_interface_raw_cache;
 
         FORCE_INLINE_R i_plugin* get_cached_interface_ptr(interface targeted) noexcept;
 

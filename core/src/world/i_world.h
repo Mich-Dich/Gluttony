@@ -6,6 +6,7 @@
 #include "asset/asset_ref.h"
 #include "asset/region.h"
 #include "world/entity.h"
+#include "world/component.h"
 #include "physics/i_physics.h"
 
 
@@ -42,6 +43,7 @@ namespace GLT::world {
     // region assets, and streaming state all unwind in the destructor
     class i_world {
     public:
+
         virtual ~i_world() = default;
 
         // identity ----------------------------------------------------------------------------------------------------
@@ -86,6 +88,15 @@ namespace GLT::world {
         virtual void despawn(entity_id id) noexcept = 0;
         [[nodiscard]] virtual bool alive(entity_id id) const noexcept = 0;
 
+        // visibility --------------------------------------------------------------------------------------------------
+        // Per-entity render visibility. Backed by the mesh component's [visible] flag on implementations
+        // that have a renderable mesh. Entities with no mesh have nothing to hide and report [true].
+        //
+        // This is a leaf-level flag: it does NOT propagate down the hierarchy. Callers that want to hide
+        // an entire subtree must walk it themselves (children_of / parent_of are already on this interface)
+        [[nodiscard]] virtual bool is_visible(entity_id /*id*/) const { return true; }
+        virtual void set_visible(entity_id /*id*/, bool /*visible*/) {}
+
         // transform ---------------------------------------------------------------------------------------------------
         [[nodiscard]] virtual glm::vec3 get_local_position(entity_id id) const = 0;
         [[nodiscard]] virtual glm::vec3 get_local_rotation(entity_id id) const = 0;
@@ -123,6 +134,10 @@ namespace GLT::world {
         [[nodiscard]] virtual bool has_children(entity_id /*id*/) const noexcept { return false; }
         virtual void set_parent(entity_id /*child*/, entity_id /*parent*/) {}
         [[nodiscard]] virtual entity_id parent_of(entity_id /*id*/) const noexcept { return INVALID_ENTITY; }
+
+        // Type-erased access. Returns the storage for `hash` in *this world,
+        // creating it lazily on first call. Null if no such type is registered.
+        [[nodiscard]] virtual component::i_storage* storage_for(u64 hash) = 0;
 
         // capability access -------------------------------------------------------------------------------------------
         // Concrete worlds opt into extra interfaces (i_world_scene, i_world_inspector) by

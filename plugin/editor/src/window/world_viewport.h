@@ -111,9 +111,8 @@ namespace GLT::editor {
         // ---- gizmo ----
         void render_gizmo(const ImVec2& image_min, const ImVec2& image_size);
         void render_gizmo_toolbar(const ImVec2& image_min, const ImVec2& image_size);
-        static bool gizmo_toggle_button(const char* label, bool active, const ImVec2& size = ImVec2(0, 0),
-                                        const bool use_icon = false,
-                                        icon_manager::icon_type icon = icon_manager::icon::transfrom_rotation);
+        static bool gizmo_toggle_button(const char* label, bool active, const ImVec2& size = ImVec2(0, 0), const bool use_icon = false,
+            icon_manager::icon_type icon = icon_manager::icon::transfrom_rotation);
 
         void update_selection_debug_draw();
 

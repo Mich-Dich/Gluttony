@@ -13,6 +13,7 @@
 
 namespace GLT::world::world_ecs_entt {
     class entity_builder;
+    class ecs_world;
 }
 
 namespace GLT::world::world_ecs_entt {
@@ -57,15 +58,35 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] std::expected<void, asset::load_error> save_world_as(i_world& world, const std::filesystem::path& path) override;
 
 
+        void register_component_type(const GLT::world::component::type_descriptor& td) override;
+
+
+        bool unregister_component_type(u64 hash) override;
+
+
+        // Live-world tracking — registration after instantiation needs to push into already-created worlds.
+        void register_live_world(ecs_world* world) { m_live_worlds.push_back(world); }
+
+
+        void unregister_live_world(ecs_world* world) { std::erase(m_live_worlds, world); }
+
+        // Template helper used by register.h. Only useful for types the codec can serialize as-is.
+        template<typename T>
+        void register_codec_component(std::string_view name) { m_codec.register_component<T>(name); }
+
+
         // Shared blueprint accessors used by ecs_world
         [[nodiscard]] const entity_codec& codec() const noexcept { return m_codec; }
 
         // preset factories --------------------------------------------------------------------------------------------
 
+
         // Replaces an existing factory of the same name. Typically called from a plugin's on_load
         void register_preset_component(std::string_view name, preset_factory_fn fn);
 
+
         void unregister_preset_component(std::string_view name) noexcept;
+
 
         [[nodiscard]] const preset_factory_fn* find_preset_component(std::string_view name) const noexcept;
 
@@ -73,7 +94,9 @@ namespace GLT::world::world_ecs_entt {
 
         world_asset_handler                                     m_asset_handler;
         entity_codec                                            m_codec;
-        std::unordered_map<std::string, preset_factory_fn>      m_preset_factories;
+        std::unordered_map<std::string, preset_factory_fn>      m_preset_factories{};
+        std::vector<GLT::world::component::type_descriptor>     m_component_types{};
+        std::vector<ecs_world*>                                 m_live_worlds{};
 
     };
 

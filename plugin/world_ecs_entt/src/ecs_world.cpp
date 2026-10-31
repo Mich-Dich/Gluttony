@@ -126,13 +126,9 @@ namespace GLT::world::world_ecs_entt {
         return euler;
     }
 
-
     // --- scale predicates -------------------------------------------------------------------------------------------
 
-    bool is_identity_scale(const glm::vec3& s) {
-        
-        return glm::all(glm::lessThanEqual(glm::abs(s - glm::vec3(1.f)), glm::vec3(1e-4f)));
-    }
+    bool is_identity_scale(const glm::vec3& s) { return glm::all(glm::lessThanEqual(glm::abs(s - glm::vec3(1.f)), glm::vec3(1e-4f))); }
 
 
     bool is_uniform_scale(const glm::vec3& s) { return std::abs(s.x - s.y) < 1e-4f && std::abs(s.y - s.z) < 1e-4f; }
@@ -350,13 +346,14 @@ namespace GLT::world::world_ecs_entt {
         , m_components(*this)
         , m_asset(std::move(asset)) {
 
-        component::register_all_component_descriptors(m_components);
         m_registry.on_construct<component::mesh>().template connect<&ecs_world::on_mesh_construct>(this);
         m_registry.on_destroy<component::physics_body>().template connect<&ecs_world::on_physics_body_destroyed>(this);
     }
 
 
     ecs_world::~ecs_world() {
+
+        m_plugin.unregister_live_world(this);
 
         // Same release loop as old unload_world()
         if (auto registry = asset::registry::get_ref()) {
@@ -550,6 +547,36 @@ namespace GLT::world::world_ecs_entt {
             return INVALID_ENTITY;
         }
         return instantiate_preset_recursive(*preset, parent);
+    }
+
+    // visibility ------------------------------------------------------------------------------------------------------
+
+    bool ecs_world::is_visible(entity_id id) const {
+
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null)
+            return false;
+
+        if (const auto* mesh_comp = m_registry.try_get<component::mesh>(entity))
+            return mesh_comp->visible;
+
+        // No mesh — nothing is being rendered, so there's nothing to hide. Matches the way gather_scene
+        // treats meshless entities: they simply aren't candidates in the first place
+        return true;
+    }
+
+
+    void ecs_world::set_visible(entity_id id, bool visible) {
+
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null)
+            return;
+
+        // No-op for non-rendering entities. Adding a mesh component just to carry the flag would make every
+        // hide-toggle pay for a component install (and fire on_mesh_construct). If you want a visibility
+        // flag on a bare entity, add the mesh component first
+        if (auto* mesh_comp = m_registry.try_get<component::mesh>(entity))
+            mesh_comp->visible = visible;
     }
 
     // transform -------------------------------------------------------------------------------------------------------
@@ -895,6 +922,49 @@ namespace GLT::world::world_ecs_entt {
         return INVALID_ENTITY;
     }
 
+    // component type installation (called by ecs_world_plugin) --------------------------------------------------------
+
+    void ecs_world::install_component_type(const GLT::world::component::type_descriptor& td) {
+
+        if (m_component_storages.contains(td.meta.hash))
+            return;
+
+        auto storage = td.make_storage(*this);
+        auto* const storage_ptr = storage.get();
+        m_component_storages.emplace(td.meta.hash, std::move(storage));
+
+        GLT::world::component::descriptor desc{};
+        desc.hash = td.meta.hash;
+        desc.name = td.meta.name;
+        desc.category = td.meta.category;
+        desc.required = td.meta.required;
+        desc.can_remove = [](entity_id) { return true; };
+        desc.has = [storage_ptr](entity_id id) { return storage_ptr->has(id); };
+        desc.add = [storage_ptr](entity_id id) { storage_ptr->add(id); };
+        desc.remove = [storage_ptr](entity_id id) { storage_ptr->remove(id); };
+
+        if (td.draw)
+            desc.draw = [this, fn = td.draw](entity_id id) { fn(*this, id); };
+        if (td.summary)
+            desc.summary = [this, fn = td.summary](entity_id id) { return fn(*this, id); };
+
+        m_components.register_component(std::move(desc));
+    }
+
+
+    void ecs_world::uninstall_component_type(u64 hash) {
+
+        m_component_storages.erase(hash);
+        m_components.unregister_component(hash);
+    }
+
+
+    GLT::world::component::i_storage* ecs_world::storage_for(u64 hash) {
+
+        const auto it = m_component_storages.find(hash);
+        return it != m_component_storages.end() ? it->second.get() : nullptr;
+    }
+
 
     void ecs_world::set_physics(physics::i_physics* physics) {
 
@@ -1163,10 +1233,10 @@ namespace GLT::world::world_ecs_entt {
 
     // i_world_inspector -----------------------------------------------------------------------------------------------
 
-    std::span<const component_descriptor> ecs_world::descriptors() const noexcept { return m_components.all(); }
+    std::span<const GLT::world::component::descriptor> ecs_world::descriptors() const noexcept { return m_components.all(); }
 
 
-    std::vector<const component_descriptor*> ecs_world::components_on(entity_id id) const { return m_components.on(id); }
+    std::vector<const GLT::world::component::descriptor*> ecs_world::components_on(entity_id id) const { return m_components.on(id); }
 
 
     bool ecs_world::add_component(entity_id id, u64 hash) { return m_components.add(id, hash); }

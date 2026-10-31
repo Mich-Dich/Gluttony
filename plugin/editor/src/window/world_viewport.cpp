@@ -667,7 +667,7 @@ namespace GLT::editor {
         ImGui::BeginChild("##comp_scroll", ImVec2(0.f, 0.f), ImGuiChildFlags_AutoResizeY);
 
         const std::string_view needle = filter;
-        auto matches = [needle](const GLT::world::component_descriptor& d) {
+        auto matches = [needle](const GLT::world::component::descriptor& d) {
             return needle.empty() || d.name.find(needle) != std::string_view::npos;
         };
 
@@ -692,7 +692,7 @@ namespace GLT::editor {
             ImGui::TextDisabled(needle.empty() ? "All components already added" : "No matching components");
 
         if (m_clipboard_component != 0) {
-            const GLT::world::component_descriptor* pasted = nullptr;
+            const GLT::world::component::descriptor* pasted = nullptr;
             for (const auto& e : m_inspector->descriptors())
                 if (e.hash == m_clipboard_component) { pasted = &e; break; }
 
@@ -735,8 +735,7 @@ namespace GLT::editor {
 
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-1.f);
-        ImGui::InputTextWithHint("##outliner_filter", "Filter...",
-                                 m_outliner_filter, sizeof(m_outliner_filter));
+        ImGui::InputTextWithHint("##outliner_filter", "Filter...", m_outliner_filter, sizeof(m_outliner_filter));
 
         // ---- search-bar syntax help ----
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -878,7 +877,7 @@ namespace GLT::editor {
         const std::string name = entity_display_name(id);
         const bool has_kids = m_world->has_children(id);
         const bool is_sel = is_selected(id);
-        const bool visible = true; // m_world->is_visible(id);
+        const bool visible = m_world->is_visible(id);
 
         const float text_h = ImGui::GetTextLineHeight();
         const float row_h = ImGui::GetTextLineHeightWithSpacing();
@@ -909,7 +908,7 @@ namespace GLT::editor {
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.20f));
 
             if (ImGui::ImageButton("##vis", vis_data.tex_ref, ImVec2(ROW_ICON_SIZE, ROW_ICON_SIZE), vis_data.uv0, vis_data.uv1))
-                ; // m_world->set_visible(id, !visible);
+                m_world->set_visible(id, !visible);
 
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
                 ImGui::SetTooltip(visible ? "Hide entity" : "Show entity");
@@ -1031,7 +1030,7 @@ namespace GLT::editor {
         }
 
         if (ImGui::MenuItem(visible ? "Hide" : "Show"))
-            ; // m_world->set_visible(id, !visible);
+            m_world->set_visible(id, !visible);
 
         if (ImGui::MenuItem("Delete", "Del")) {
             const auto victims = m_selected_entities;
@@ -1043,7 +1042,7 @@ namespace GLT::editor {
 
         if (m_inspector && ImGui::BeginMenu("Add Component")) {
 
-            std::map<std::string_view, std::vector<const GLT::world::component_descriptor*>> by_cat;
+            std::map<std::string_view, std::vector<const GLT::world::component::descriptor*>> by_cat;
             for (const auto& d : m_inspector->descriptors())
                 by_cat[d.category].push_back(&d);
 

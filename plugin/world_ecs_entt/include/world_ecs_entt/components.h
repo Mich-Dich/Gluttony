@@ -17,6 +17,10 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
+namespace GLT::world::world_ecs_entt {
+    class ecs_world_plugin;
+}
+
 namespace GLT::world::world_ecs_entt::component {
 
     // CONSTANTS =======================================================================================================
@@ -63,14 +67,6 @@ namespace GLT::world::world_ecs_entt::component {
         GLT::asset::asset_ref                       mesh{};
         std::vector<GLT::asset::asset_ref>          material_overrides{};
         bool                                        visible{ true };
-
-// Editor-only scratch: bound to the "Material Override" picker while
-// material_overrides is empty. Not serialised. Cleared the moment
-// the user picks something (see below).
-GLT::asset::asset_ref                       pending_override{};
-
-        // NEW — persisted with the mesh codec. Defaults are static + use-mesh-material, which matches
-        // the old behaviour when this field didn't exist (all meshes were effectively static)
         physics::motion_type                        motion = physics::motion_type::static_body;
         physics::physics_material                   physics_material{};
         bool                                        use_mesh_material = true;
@@ -78,7 +74,7 @@ GLT::asset::asset_ref                       pending_override{};
 
         // Empty is always valid. Otherwise every slot must have an entry, with INVALID_HANDLE meaning "use the mesh asset's default 
         // for this slot"
-        [[nodiscard]] bool overrides_match(u32 submesh_count) const noexcept { 
+        [[nodiscard]] bool overrides_match(u32 submesh_count) const noexcept {
 
             return material_overrides.empty() || material_overrides.size() == submesh_count;
         }
@@ -163,7 +159,7 @@ GLT::asset::asset_ref                       pending_override{};
 
     // FUNCTION DECLARATION ============================================================================================
 
-    void register_all_component_descriptors(component_registry& reg);
+    void register_all_component_descriptors(ecs_world_plugin& plugin);
 
     // TEMPLATE DECLARATION ============================================================================================
 

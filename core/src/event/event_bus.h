@@ -1,13 +1,13 @@
-
 #pragma once
 
 #include <functional>
 #include <typeindex>
 #include <unordered_map>
-#include <list>
 #include <vector>
 #include <atomic>
 #include <concepts>
+#include <memory>
+#include <algorithm>
 
 #include "event/event.h"
 
@@ -17,92 +17,144 @@ namespace GLT::event_bus {
 
     // CONCEPTS ========================================================================================================
 
-    // @brief Constrains a template parameter to concrete subclasses of GLT::event
+    // MACROS ==========================================================================================================
+
     template<typename T>
     concept event_class = std::derived_from<T, GLT::event>;
 
-    // CONSTANTS =======================================================================================================
-
-    // MACROS ==========================================================================================================
-
-    // FUNCTION DECLARATION ============================================================================================
-
-    // @brief Removes a previously-registered subscription
-    //
-    // Idempotent - passing INVALID_HANDLE, or a handle that was already consumed, is a no-op. The handle is reset to
-    // INVALID_HANDLE on return
-    //
-    // @param id  Handle returned by [subscribe<T>()]. Set to INVALID_HANDLE
-    FORCE_INLINE void unsubscribe(handle& id);
-
     // TYPES ===========================================================================================================
 
-    namespace detail {
-
-        // Stateless, zero-size callable so scoped_resource stays POD-ish
-        struct unsubscribe_fn {
-
-            void operator()(handle& h) const noexcept { unsubscribe(h); }
-        };
-
-    }
-
-
-    // @brief RAII wrapper around a subscription handle
-    //
-    // Calls [unsubscribe()] on destruction, so a subscription can be scoped to a lifetime (a system, a window, a plugin)
-    // without manual teardown
-    using subscription_guard = util::scoped_resource<handle, detail::unsubscribe_fn>;
-
-
-    // @brief The callable a subscriber registers
-    //
-    // Receives a mutable reference to the concrete event, so handlers can set [handled] if they want to stop further dispatch
-    // @tparam T The concrete event type
     template<typename T>
     using event_handler_fn = std::function<void(T&)>;
 
+    class subscription_guard;   // fwd – bus::subscribe_scoped returns it
+
     // STATIC VARIABLES ================================================================================================
+
+    // CLASS DECLARATION ===============================================================================================
+
+    // @brief One event bus. Owns its own subscription tables, handle counter, and reentrancy-safe scratch buffers
+    //
+    // A single process-wide instance is available via [global()]. The namespace-level free functions below forward to it,
+    // so existing code that calls [event_bus::subscribe<T>()] / [event_bus::post()] keeps working unchanged
+    //
+    // Independent instances (e.g. one per game_session) are created with [event_bus::bus my_bus;] and use the same API
+    // as member functions
+    //
+    // Not thread-safe. Intended to be driven from a single thread (typically the main thread that steps systems)
+    class bus {
+    public:
+
+        bus() = default;
+        ~bus() = default;
+
+        DELETE_COPY_AND_MOVE_CONSTRUCTOR(bus)
+
+        // @brief Subscribes to a specific event type
+        //
+        // Higher-priority subscribers run first. Subscribers with equal priority run in registration order. Subscribers
+        // added/removed during a dispatch don't affect the current iteration
+        template<event_class T>
+        handle subscribe(event_handler_fn<T> handler, i32 priority = 0);
+
+
+        // @brief Dispatches an event to every subscriber of its exact type
+        //
+        // Takes the event by value so the bus owns a mutable copy; subscribers can set [handled] to stop the cascade
+        template<event_class T>
+        void post(T event);
+
+
+        // @brief Removes a previously-registered subscription. Idempotent. Resets [id] to INVALID_HANDLE
+        void unsubscribe(handle& id);
+
+
+        // @brief Like subscribe<T>(), but returns an RAII guard that unsubscribes on destruction
+        template<event_class T>
+        subscription_guard subscribe_scoped(event_handler_fn<T> handler, i32 priority = 0);
+
+    private:
+
+        struct subscription_entry {
+            handle                                                                              id{};
+            std::function<void(GLT::event&)>                                                    callback{};
+            i32                                                                                 priority = 0;
+            bool                                                                                active = true;
+        };
+        using subscription_entry_ptr = std::shared_ptr<subscription_entry>;
+
+        template<event_class T>
+        static std::function<void(GLT::event&)> make_wrapper(event_handler_fn<T> handler);
+
+        std::unordered_map<std::type_index, std::vector<subscription_entry_ptr>>                m_subscribers{};
+        std::atomic<handle>                                                                     m_next_handle{1};
+        std::unordered_map<handle, std::type_index>                                             m_handle_to_type{};
+
+        // Reentrancy-safe snapshot pool. One buffer per dispatch depth
+        std::vector<std::unique_ptr<std::vector<subscription_entry_ptr>>>                       m_snapshot_pool{};
+        size_t                                                                                  m_snapshot_depth = 0;
+
+    };
+
+
+    // @brief RAII wrapper around a subscription handle bound to a specific bus
+    //
+    // The guard does NOT keep the bus alive. It must not outlive the bus it was created from (the global bus never dies,
+    // so this only bites per-session buses – tear the guards down before destroying the session)
+    class subscription_guard {
+    public:
+
+        subscription_guard() = default;
+        subscription_guard(bus* b, handle id) noexcept;
+        subscription_guard(subscription_guard&& other) noexcept;
+        subscription_guard(const subscription_guard&) = delete;
+        ~subscription_guard();
+
+
+        subscription_guard& operator=(const subscription_guard&) = delete;
+        
+        
+        subscription_guard& operator=(subscription_guard&& other) noexcept;
+
+
+        void reset() noexcept;
+
+
+        [[nodiscard]] handle get() const noexcept;
+
+
+        [[nodiscard]] bool valid() const noexcept;
+
+    private:
+
+        bus*                                                                                    m_bus = nullptr;
+        handle                                                                                  m_id = INVALID_HANDLE;
+    };
+
+
+    // @brief The process-wide bus. Used by the free-function forwarders below
+    [[nodiscard]] bus& global();
+
+
+    // FUNCTION DECLARATION ============================================================================================
+
+    // Everything below forwards to [global()]. They exist so existing call sites don't have to change. For a local bus,
+    // call the member function on the bus instance instead
+
+    inline void unsubscribe(handle& id);
 
     // TEMPLATE DECLARATION ============================================================================================
 
-    // @brief Subscribes to a specific event type
-    //
-    // Higher-priority subscribers run first. Subscribers with equal priority are invoked in registration order
-    // Subscribers added or removed during a dispatch don't affect the current iteration (the bus takes a snapshot)
-    //
-    // @tparam T         The concrete event type to listen for
-    // @param handler    Callable invoked with a mutable reference to the event
-    // @param priority   Higher values run earlier; equal values keep FIFO order
-    // @return A handle that can be passed to [unsubscribe()]
     template<event_class T>
-    FORCE_INLINE_R handle subscribe(event_handler_fn<T> handler, i32 priority = 0);
+    handle subscribe(event_handler_fn<T> handler, i32 priority = 0);
 
 
-    // @brief Dispatches an event to every subscriber of its exact type
-    //
-    // Takes the event by value so it owns a mutable copy; subscribers can set [handled] to stop the cascade early
-    // Subscribers that are added or removed during dispatch do not affect the current iteration
-    //
-    // @tparam T      The concrete event type; must match the runtime type of [event]
-    // @param event   The event instance to broadcast
     template<event_class T>
-    FORCE_INLINE void post(T event);          // by value, so we own a mutable copy
+    void post(T event);
 
 
-    // @brief Same as [subscribe<T>()], but returns an RAII guard
-    //
-    // The subscription is automatically torn down when the guard goes out of scope, which is the recommended way to bind
-    // a subscription to a system's lifetime
-    //
-    // @tparam T         The concrete event type to listen for
-    // @param handler    Callable invoked with a mutable reference to the event
-    // @param priority   Higher values run earlier; equal values keep FIFO order
-    // @return An RAII guard that unsubscribes on destruction
     template<event_class T>
-    FORCE_INLINE_R subscription_guard subscribe_scoped(event_handler_fn<T> handler, i32 priority = 0);
-
-    // CLASS DECLARATION ===============================================================================================
+    subscription_guard subscribe_scoped(event_handler_fn<T> handler, i32 priority = 0);
 
 }
 

@@ -18,20 +18,22 @@
 
 // FORWARD DECLARATIONS ================================================================================================
 
-
 namespace GLT::plugin_manager {
+
 
     // CONSTANTS =======================================================================================================
 
     #if defined(PLATFORM_LINUX)
 
-        constexpr std::string_view          DYNAMIC_LIB_EXTENTION = ".so";
+        constexpr std::string_view                                      DYNAMIC_LIB_EXTENTION = ".so";
 
     #elif defined(PLATFORM_WINDOWS)
 
-        constexpr std::string_view          DYNAMIC_LIB_EXTENTION = ".dll";
+        constexpr std::string_view                                      DYNAMIC_LIB_EXTENTION = ".dll";
         
     #endif
+
+    static constexpr const char*                                        EXPLICITLY_NONE = "__none__";
 
     // MACROS ==========================================================================================================
 
@@ -110,57 +112,72 @@ namespace GLT::plugin_manager {
 
     static std::unordered_set<std::string>                              s_disabled_custom_plugins{};
 
-    static constexpr const char*                                        EXPLICITLY_NONE = "__none__";
-
-    // Hot-path cache — defined here, declared extern in plugin_manager.h
     namespace detail {
 
-        std::array<std::atomic<i_plugin*>, INTERFACE_CACHE_SIZE> g_interface_raw_cache{};
+        // Hot-path cache — defined here, declared extern in plugin_manager.h
+        std::array<std::atomic<i_plugin*>, INTERFACE_CACHE_SIZE>        g_interface_raw_cache{};
+
     }
 
-    // HELPER FUNCTIONS ===============================================================================================
+    // INTERNAL TEMPLATE DECLARATION ===================================================================================
+
+    // INTERNAL FUNCTION DECLARATION ===================================================================================
+
+    static plugin_load_error load_single(const plugin_info& info);
+
+
+    static bool dependencies_satisfied(const plugin_info& info);
+
+
+    void serialize(const std::filesystem::path& config_path, serializer::option option);
+
+
+    static std::filesystem::path resolve_logo_path(const std::filesystem::path& lib_path, const std::string& plugin_name);
+
+    // Returns true if any *currently loaded* plugin other than `self` declares a dependency on
+    // `dep_name` or on `dep_iface`. Used to block unsafe single-plugin unloads. Direct edges only —
+    // transitive dependents are protected by their own direct edge (A→B→C: unloading B is blocked
+    // because C depends on B directly).
+    static bool has_loaded_dependents(const std::string& self, const std::string& dep_name, interface dep_iface);
+
+    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
+
+    // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
     #if defined(PLATFORM_LINUX)
 
         void* load_library(const char* path, lib_load_mode mode) {
+
             int flags = (mode == lib_load_mode::now) ? RTLD_NOW : RTLD_LAZY;
             return dlopen(path, flags);
         }
 
 
-        void* get_symbol(void* handle, const char* name) {
-            return dlsym(handle, name);
-        }
+        void* get_symbol(void* handle, const char* name) { return dlsym(handle, name); }
 
 
-        void free_library(void* handle) {
-            dlclose(handle);
-        }
+        void free_library(void* handle) { dlclose(handle); }
 
 
         std::string get_dynamic_library_error() {
+
             const char* msg = dlerror();
             return msg ? std::string(msg) : "unknown error";
         }
 
     #elif defined(PLATFORM_WINDOWS)
 
-        void* load_library(const wchar_t* path, lib_load_mode /*mode*/) {
-            return (void*)LoadLibraryW(path);
-        }
+        void* load_library(const wchar_t* path, lib_load_mode /*mode*/) { return (void*)LoadLibraryW(path); }
 
 
-        void* get_symbol(void* handle, const char* name) {
-            return GetProcAddress((HMODULE)handle, name);
-        }
+        void* get_symbol(void* handle, const char* name) { return GetProcAddress((HMODULE)handle, name); }
 
 
-        void free_library(void* handle) {
-            FreeLibrary((HMODULE)handle);
-        }
+        void free_library(void* handle) { FreeLibrary((HMODULE)handle); }
 
 
         std::string get_dynamic_library_error() {
+
             DWORD error = GetLastError();
             char* msg = nullptr;
             FormatMessageA(
@@ -173,7 +190,8 @@ namespace GLT::plugin_manager {
                 nullptr
             );
             std::string result(msg ? msg : "unknown error");
-            if (msg) LocalFree(msg);
+            if (msg)
+                LocalFree(msg);
             return result;
         }
 
@@ -247,7 +265,10 @@ namespace GLT::plugin_manager {
 
         // Reflect the live state back into the discovery list so the editor sees it.
         for (auto& p : s_discovered)
-            if (p.name == info.name) { p.is_loaded = true; break; }
+            if (p.name == info.name) {
+                p.is_loaded = true;
+                break;
+            }
 
         s_generation.fetch_add(1, std::memory_order_acq_rel);
         GLT::logger::flush_buffer();
@@ -329,9 +350,25 @@ namespace GLT::plugin_manager {
         return std::filesystem::exists(candidate, ec) && !ec ? candidate : std::filesystem::path{};
     }
 
-    // CLASS/FUNCTION IMPLEMENTATION ==================================================================================
 
-    // PUBLIC API =====================================================================================================
+    static bool has_loaded_dependents(const std::string& self, const std::string& dep_name, interface dep_iface) {
+
+        for (const auto& other : s_loaded_plugins) {
+            if (other.name == self) continue;
+
+            for (const auto& n : other.dependencies_names)
+                if (n == dep_name) return true;
+
+            if (dep_iface != interface::custom && dep_iface != interface::none)
+                for (auto iface : other.dependencies_interfaces)
+                    if (iface == dep_iface) return true;
+        }
+        return false;
+    }
+
+    // TEMPLATE IMPLEMENTATION =========================================================================================
+
+    // FUNCTION IMPLEMENTATION =========================================================================================
 
     void discover_plugins(const std::filesystem::path& project_dir_path) {
 
@@ -571,6 +608,146 @@ namespace GLT::plugin_manager {
     }
 
 
+    bool load_plugin(std::string_view name) {
+
+        if (s_shutdown.load(std::memory_order_relaxed)) {
+            LOG(warn, "Cannot load plugin [{}]: plugin manager is shut down", name);
+            return false;
+        }
+
+        const plugin_info* info = nullptr;
+        for (const auto& p : s_discovered)
+            if (p.name == name) { info = &p; break; }
+
+        if (!info) {
+            LOG(warn, "Cannot load plugin [{}]: not discovered", name);
+            return false;
+        }
+        if (!info->is_enabled) {
+            LOG(warn, "Cannot load plugin [{}]: disabled in configuration "
+                      "(call set_plugin_enabled() first)", name);
+            return false;
+        }
+        if (s_loaded_by_name.contains(info->name)) {
+            LOG(warn, "Cannot load plugin [{}]: already loaded", name);
+            return false;
+        }
+        if (!dependencies_satisfied(*info)) {
+            LOG(warn, "Cannot load plugin [{}]: dependencies not satisfied", name);
+            return false;
+        }
+
+        const auto err = load_single(*info);
+        if (err != plugin_load_error::none) {
+            LOG(error, "On-demand load failed for plugin [{}]: [{}]", name, static_cast<int>(err));
+            return false;
+        }
+
+        LOG(info, "Plugin [{}] loaded on demand", name);
+        GLT::logger::flush_buffer();
+        return true;
+    }
+
+
+    bool load_plugin(interface targeted) {
+
+        if (targeted == interface::custom) {
+            LOG(warn, "load_plugin(interface::custom) is ambiguous — use the name overload");
+            return false;
+        }
+        if (targeted == interface::none)
+            return false;
+
+        const auto& name = s_plugin_names_per_target_interface[static_cast<size_t>(targeted)];
+        if (name.empty() || name == "unknown" || name == EXPLICITLY_NONE) {
+            LOG(warn, "Cannot load plugin for interface [{}]: no plugin configured",
+                GLT::util::enum_to_string(targeted));
+            return false;
+        }
+        return load_plugin(name);
+    }
+
+
+    bool unload_plugin(std::string_view name) {
+
+        if (s_shutdown.load(std::memory_order_relaxed)) {
+            LOG(warn, "Cannot unload plugin [{}]: plugin manager is shut down", name);
+            return false;
+        }
+
+        auto it = std::find_if(s_loaded_plugins.begin(), s_loaded_plugins.end(),
+            [&](const plugin_handle& h) { return h.name == name; });
+
+        if (it == s_loaded_plugins.end()) {
+            LOG(warn, "Cannot unload plugin [{}]: not loaded", name);
+            return false;
+        }
+        if (has_loaded_dependents(it->name, it->name, it->target)) {
+            LOG(warn, "Cannot unload plugin [{}]: other loaded plugins depend on it", name);
+            return false;
+        }
+
+        // Notify while caches are still valid
+        if (it->instance) it->instance->on_unload();
+
+        // Invalidate the fast-path slot before dropping the owning ref
+        if (it->target != interface::custom)
+            detail::g_interface_raw_cache[static_cast<size_t>(it->target)].store(nullptr, std::memory_order_release);
+
+        s_loaded_by_name.erase(it->name);
+
+        if (it->instance)
+            it->instance.reset();
+        else if (it->module_handle)
+            free_library(it->module_handle);
+
+        for (auto& p : s_discovered)
+            if (p.name == it->name) { p.is_loaded = false; break; }
+
+        s_loaded_plugins.erase(it);
+        s_generation.fetch_add(1, std::memory_order_acq_rel);
+
+        LOG(info, "Plugin [{}] unloaded on demand", name);
+        GLT::logger::flush_buffer();
+        return true;
+    }
+
+
+    bool unload_plugin(interface targeted) {
+
+        if (targeted == interface::custom) {
+            LOG(warn, "unload_plugin(interface::custom) is ambiguous — use the name overload");
+            return false;
+        }
+        if (targeted == interface::none)
+            return false;
+
+        const auto& name = s_plugin_names_per_target_interface[static_cast<size_t>(targeted)];
+        if (name.empty() || name == "unknown" || name == EXPLICITLY_NONE) {
+            LOG(warn, "Cannot unload plugin for interface [{}]: no plugin configured",
+                GLT::util::enum_to_string(targeted));
+            return false;
+        }
+        return unload_plugin(name);
+    }
+
+
+    bool reload_plugin(std::string_view name) {
+
+        if (!unload_plugin(name))
+            return false;
+        return load_plugin(name);
+    }
+
+
+    bool reload_plugin(interface targeted) {
+
+        if (!unload_plugin(targeted))
+            return false;
+        return load_plugin(targeted);
+    }
+
+
     void shutdown() {
 
         serialize(s_config_path, serializer::option::save);
@@ -683,8 +860,7 @@ namespace GLT::plugin_manager {
                 s.satisfied = false;                        // custom has no 1:1 slot
             } else {
                 const auto idx = static_cast<size_t>(iface_dep);
-                s.currently_loaded = (detail::g_interface_raw_cache[idx]
-                    .load(std::memory_order_acquire) != nullptr);
+                s.currently_loaded = (detail::g_interface_raw_cache[idx].load(std::memory_order_acquire) != nullptr);
                 s.satisfied = s.currently_loaded;
                 if (!s.satisfied) {
                     // Fall back to "will be satisfied if an enabled plugin claims this interface"
@@ -759,5 +935,13 @@ namespace GLT::plugin_manager {
 
 
     bool is_config_dirty() { return s_config_dirty.load(std::memory_order_acquire); }
+
+    // CLASS IMPLEMENTATION ============================================================================================
+
+    // CLASS PUBLIC ====================================================================================================
+
+    // CLASS PROTECTED =================================================================================================
+
+    // CLASS PRIVATE ===================================================================================================
 
 }

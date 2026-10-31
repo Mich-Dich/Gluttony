@@ -1,11 +1,9 @@
 #pragma once
 
-#include <expected>
-#include <filesystem>
-
 #include "asset/type.h"
 #include "asset/asset_ref.h"
 #include "plugin_system/plugin_manager.h"
+#include "world/component.h"
 
 
 
@@ -56,9 +54,8 @@ namespace GLT::world {
     // One per application. All entity / region / streaming operations now live on i_world —
     // this interface is deliberately tiny: it only knows how to mint a world
     //
-    // World instances are RAII-owned by their callers. Dropping the unique_ref destroys the
-    // instance and its state. The plugin does not track live instances (game_layer already
-    // enumerates sessions -> worlds, which is the tracker the editor needs)
+    // World instances are RAII-owned by their callers. Dropping the unique_ref destroys the instance and its state
+    // The plugin does not track live instances (game_layer already enumerates sessions -> worlds, which is the tracker the editor needs)
     class i_world_plugin : public GLT::plugin_manager::i_plugin {
     public:
         virtual ~i_world_plugin() = default;
@@ -78,6 +75,13 @@ namespace GLT::world {
 
 
         [[nodiscard]] virtual std::expected<void, asset::load_error> save_world_as(i_world& world, const std::filesystem::path& path) = 0;
+
+
+        // Called by `component_registry::add<T>()`. The plugin stores the descriptor and pushes it into every live world
+        virtual void register_component_type(const component::type_descriptor& td) = 0;
+
+
+        virtual bool unregister_component_type(u64 hash) = 0;
 
     };
 

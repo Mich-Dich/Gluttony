@@ -44,15 +44,11 @@ namespace GLT::editor::icon_manager {
 
     // @brief Core icons shipped with the editor
     //
-    // ATLAS LOCALITY
-    //   For best atlas packing, prefer 24x24 or 128x128 px icon images
-    //   The manager groups icons by native pixel size, and each unique size
-    //   gets its own atlas page. Sticking to a couple of standard sizes keeps
-    //   the texture pool small and cache-friendly when many icons are drawn
-    //   together — mixing many sizes fragments it and wastes VRAM
+    // For best atlas packing, prefer 24x24 or 128x128 px icon images. The manager groups icons by native pixel size, and each unique
+    // size gets its own atlas page. Sticking to a couple of standard sizes keeps the texture pool small and cache-friendly when many
+    // icons are drawn together, mixing many sizes fragments it and wastes VRAM
     //
-    // Icons are grouped by purpose: window controls, connection status, media control,
-    // warning/refresh, and NewTec branding
+    // Icons are grouped by purpose: window controls, connection status, media control, warning/refresh, and NewTec branding
     namespace icon {
 
         inline constexpr icon_type      logo                        {  1 };     // main Gluttony logo

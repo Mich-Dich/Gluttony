@@ -40,7 +40,7 @@ namespace GLT::world::world_ecs_entt {
         static_assert(std::is_default_constructible_v<T>,
             "Registered components must be default-constructible for the \"Add Component\" menu.");
 
-        GLT::world::component_descriptor descriptor{};
+        GLT::world::component::descriptor descriptor{};
         descriptor.hash = component_name_hash(name);
         descriptor.name = name;
         descriptor.category = category;

@@ -16,6 +16,14 @@ namespace GLT::plugin_manager {
 
     // STATIC VARIABLES ================================================================================================
 
+    // EXTERN VARIABLES ================================================================================================
+
+    namespace detail {
+
+        extern std::array<std::atomic<i_plugin*>, INTERFACE_CACHE_SIZE>             g_interface_raw_cache;
+
+    }
+
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
@@ -54,8 +62,6 @@ namespace GLT::plugin_manager {
     FORCE_INLINE T* get_plugin_raw(interface targeted) noexcept { return static_cast<T*>(detail::get_cached_interface_ptr(targeted)); }
 
     namespace detail {
-
-        extern std::array<std::atomic<i_plugin*>, INTERFACE_CACHE_SIZE>             g_interface_raw_cache;
 
         FORCE_INLINE_R i_plugin* get_cached_interface_ptr(interface targeted) noexcept {
 

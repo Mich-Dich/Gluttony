@@ -341,6 +341,7 @@ namespace GLT::world::world_ecs_entt {
                 std::memcpy(&h.parent, data.data(), sizeof(entity_id));
             });
 
+        component::register_all_component_descriptors(*this);
         GLT::world::register_core_presets();
         register_core_preset_factories(*this);
 
@@ -350,6 +351,8 @@ namespace GLT::world::world_ecs_entt {
 
     void ecs_world_plugin::on_unload() {
         
+        m_live_worlds.clear();
+        m_component_types.clear();
         m_preset_factories.clear();
         m_asset_handler.on_unload();
         LOG_UNLOADED
@@ -389,9 +392,14 @@ namespace GLT::world::world_ecs_entt {
             return std::unexpected{ asset::load_error::corrupt_header };
 
         auto world = create_unique_ref<ecs_world>(*this, std::move(asset));
-
         if (auto init = world->init(); !init)
             return std::unexpected{ init.error() };
+
+        auto* const raw_world = world.get();
+        register_live_world(raw_world);
+
+        for (const auto& td : m_component_types)
+            raw_world->install_component_type(td);
 
         return unique_ref<i_world>{ std::move(world) };
     }
@@ -417,6 +425,35 @@ namespace GLT::world::world_ecs_entt {
     std::expected<void, asset::load_error> ecs_world_plugin::save_world_as(i_world& world, const std::filesystem::path& path) {
 
         return world.save_as(path);
+    }
+
+
+    void ecs_world_plugin::register_component_type(const GLT::world::component::type_descriptor& td) {
+
+        bool found = false;
+        for (auto& existing : m_component_types) {
+            if (existing.meta.hash == td.meta.hash) {          // type_descriptor has nested meta
+                existing = td;
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            m_component_types.push_back(td);
+
+        for (auto* world : m_live_worlds)
+            world->install_component_type(td);
+    }
+
+
+    bool ecs_world_plugin::unregister_component_type(u64 hash) {
+
+        const bool present = std::erase_if(m_component_types, [hash](const auto& td) { return td.meta.hash == hash; }) > 0;
+
+        for (auto* world : m_live_worlds)
+            world->uninstall_component_type(hash);
+
+        return present;
     }
 
     // CLASS PROTECTED =================================================================================================

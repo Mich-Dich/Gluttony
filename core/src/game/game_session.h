@@ -7,6 +7,7 @@
 #include "world/light_snapshot.h"
 #include "plugin_system/plugin_manager.h"
 #include "game/session_id.h"
+#include "event/event_bus.h"
 
 
 
@@ -113,6 +114,14 @@ namespace GLT::game {
         // per-frame ---------------------------------------------------------------------------------------------------
         void update(f32 delta_time);
 
+        // event bus ---------------------------------------------------------------------------------------------------
+
+        // Per-session event bus. Use this for anything that should not bleed across sessions (gameplay events,
+        // UI events scoped to a viewport, controller intents). The process-wide bus (GLT::event_bus::post/subscribe)
+        // is still available for engine-wide notifications.
+        [[nodiscard]] GLT::event_bus::bus& events() noexcept { return m_event_bus; }
+        [[nodiscard]] const GLT::event_bus::bus& events() const noexcept { return m_event_bus; }
+
     private:
 
         struct renderer_slot {
@@ -126,10 +135,9 @@ namespace GLT::game {
 
 
         session_id                                              m_id{};
+        GLT::event_bus::bus                                     m_event_bus{};
 
-        // IMPORTANT: declaration order. Reverse-declaration destruction order means m_world dies BEFORE m_physics. That's
-        // intentional — once the world↔physics bridge lands (Phase 4), the world will own body handles and must destroy
-        // them while its i_physics instance is still alive
+        // IMPORTANT: declaration order. Reverse-declaration destruction order means m_world dies BEFORE m_physics
         unique_ref<physics::i_physics>                          m_physics{};
         unique_ref<world::i_world>                              m_world{};
 

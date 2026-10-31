@@ -2,17 +2,18 @@
 
 #include <entt/entt.hpp>
 
-#include <unordered_map>
-#include <vector>
-
 #include <world/i_world.h>
 #include <world/i_world_scene.h>
+#include <world/component.h>
+#include <world/component_registry.h>
 #include <world/i_world_inspector.h>
 #include <world/entity_preset.h>
 
 #include "components.h"
 #include "entity_builder.h"
 #include "component_registry.h"
+
+
 
 // entity_codec and ecs_world_plugin are forward-declared; both are only used
 // behind a reference in this header and are fully defined in ecs_world.cpp.
@@ -52,6 +53,9 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] entity_id spawn() override;
         void despawn(entity_id id) noexcept override;
         [[nodiscard]] bool alive(entity_id id) const noexcept override;
+
+        [[nodiscard]] bool is_visible(entity_id id) const override;
+        void set_visible(entity_id id, bool visible) override;
 
         entity_id spawn_preset(std::string_view preset_name, entity_id parent = INVALID_ENTITY) override;
 
@@ -97,6 +101,14 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] entt::entity entt_of(entity_id id) const noexcept;
         [[nodiscard]] entity_id id_of(entt::entity e) const noexcept;
 
+        // component type installation (called by ecs_world_plugin) ----------------------------------------------------
+
+        void install_component_type(const GLT::world::component::type_descriptor& td);
+        void uninstall_component_type(u64 hash);
+
+        // i_world -----------------------------------------------------------------------------------------------------
+        [[nodiscard]] GLT::world::component::i_storage* storage_for(u64 hash) override;
+
         // physics -----------------------------------------------------------------------------------------------------
         void set_physics(physics::i_physics* physics);
         [[nodiscard]] physics::i_physics* get_physics() const noexcept { return m_physics; }
@@ -105,8 +117,8 @@ namespace GLT::world::world_ecs_entt {
         void sync_physics_to_transforms();                                      // post-step: body_state → component::transform
 
         // i_world_inspector -------------------------------------------------------------------------------------------
-        [[nodiscard]] std::span<const component_descriptor> descriptors() const noexcept override;
-        [[nodiscard]] std::vector<const component_descriptor*> components_on(entity_id id) const override;
+        [[nodiscard]] std::span<const GLT::world::component::descriptor> descriptors() const noexcept override;
+        [[nodiscard]] std::vector<const GLT::world::component::descriptor*> components_on(entity_id id) const override;
         bool add_component(entity_id id, u64 hash) override;
         bool remove_component(entity_id id, u64 hash) override;
         void copy_components(entity_id from, entity_id to) override;
@@ -175,24 +187,25 @@ namespace GLT::world::world_ecs_entt {
         entity_id instantiate_preset_recursive(const GLT::world::entity_preset& preset, entity_id parent);
 
 
-        ecs_world_plugin&                               m_plugin;
-        const entity_codec&                             m_codec;            // borrowed from plugin (stateless)
-        component_registry                              m_components;       // per-instance, descriptors capture this
-        asset::asset_ref                                m_asset;            // owns one ref to the .glt_world
-        entt::registry                                  m_registry;
-        std::vector<asset::region::region>              m_regions;
-        std::unordered_map<UUID, region_state>          m_region_states;
-        std::vector<slot>                               m_slots;
-        std::vector<u32>                                m_free;
-        glm::vec3                                       m_streaming_anchor{ 0.f };
-        f32                                             m_streaming_radius{ 1024.f };
-        entity_id                                       m_active_camera{ INVALID_ENTITY };
-        glm::vec3                                       m_region_cell_size{ 256.f, 256.f, 256.f };
-        physics::i_physics*                             m_physics = nullptr;
+        ecs_world_plugin&                                                               m_plugin;
+        const entity_codec&                                                             m_codec;            // borrowed from plugin (stateless)
+        component_registry                                                              m_components;       // per-instance, descriptors capture this
+        asset::asset_ref                                                                m_asset;            // owns one ref to the .glt_world
+        entt::registry                                                                  m_registry;
+        std::vector<asset::region::region>                                              m_regions;
+        std::unordered_map<UUID, region_state>                                          m_region_states;
+        std::vector<slot>                                                               m_slots;
+        std::vector<u32>                                                                m_free;
+        glm::vec3                                                                       m_streaming_anchor{ 0.f };
+        f32                                                                             m_streaming_radius{ 1024.f };
+        entity_id                                                                       m_active_camera{ INVALID_ENTITY };
+        glm::vec3                                                                       m_region_cell_size{ 256.f, 256.f, 256.f };
+        physics::i_physics*                                                             m_physics = nullptr;
+        std::unordered_map<u64, GLT::unique_ref<GLT::world::component::i_storage>>      m_component_storages;
 
     };
 
 }
 
 #include "entity_builder.inl"
-#include "component_registry.inl"
+// #include "component_registry.inl"
