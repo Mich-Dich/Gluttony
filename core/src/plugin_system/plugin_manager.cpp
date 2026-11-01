@@ -140,6 +140,9 @@ namespace GLT::plugin_manager {
     // because C depends on B directly).
     static bool has_loaded_dependents(const std::string& self, const std::string& dep_name, interface dep_iface);
 
+    static std::optional<plugin_info> info_from_descriptor(const plugin_descriptor* desc, const std::filesystem::path& lib_path,
+        bool is_static, const std::string& fallback_name = {});
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
@@ -205,26 +208,67 @@ namespace GLT::plugin_manager {
         if (it != s_loaded_plugins.end())
             return plugin_load_error::already_loaded;
 
-        void* handle = load_library(info.library_path.c_str(), lib_load_mode::now);
-        if (!handle) {
-            LOG(error, "Plugin load failed [{}]", get_dynamic_library_error());
-            return plugin_load_error::failed_to_load;
-        }
+        // The discovery layer guarantees this, but a hard check makes the contract explicit and catches future regressions
+        #if LINKAGE_STYLE == LINKAGE_STYLE_STATIC
 
-        auto create = reinterpret_cast<create_plugin_func>(get_symbol(handle, "create_plugin"));
-        auto destroy = reinterpret_cast<destroy_plugin_func>(get_symbol(handle, "destroy_plugin"));
-        if (!create || !destroy) {
-            LOG(error, "Plugin {} missing required symbols.", info.name.c_str());
-            free_library(handle);
-            return plugin_load_error::failed_to_find_factory_functions;
+            if (!info.is_static) {
+                LOG(error, "load_single(): plugin [{}] is marked dynamic in a STATIC build — refusing", info.name);
+                return plugin_load_error::failed_to_load;
+            }
+
+        #else
+
+            if (info.is_static) {
+                LOG(error, "load_single(): plugin [{}] is marked static in a DYNAMIC build — refusing", info.name);
+                return plugin_load_error::failed_to_load;
+            }
+        #endif
+
+        create_plugin_func create = nullptr;
+        destroy_plugin_func destroy = nullptr;
+        void* handle = nullptr;
+
+        if (info.is_static) {
+
+            // Static path: look up the registrar entry 
+            const auto& registry = detail::get_static_plugin_registry();
+            auto reg_it = std::find_if(registry.begin(), registry.end(),
+                [&](const detail::static_plugin_entry& e) {
+                    const auto* d = e.descriptor_fn();
+                    return d && d->name && info.name == d->name;
+                });
+
+            if (reg_it == registry.end()) {
+                LOG(error, "Static plugin [{}] not found in registry", info.name);
+                return plugin_load_error::failed_to_load;
+            }
+            create = reg_it->create;
+            destroy = reg_it->destroy;
+
+        } else {
+
+            // Dynamic path: dlopen + dlsym
+            handle = load_library(info.library_path.c_str(), lib_load_mode::now);
+            if (!handle) {
+                LOG(error, "Plugin load failed [{}]", get_dynamic_library_error());
+                return plugin_load_error::failed_to_load;
+            }
+            create = reinterpret_cast<create_plugin_func>(get_symbol(handle, "create_plugin"));
+            destroy = reinterpret_cast<destroy_plugin_func>(get_symbol(handle, "destroy_plugin"));
+            if (!create || !destroy) {
+                LOG(error, "Plugin {} missing required symbols.", info.name.c_str());
+                free_library(handle);
+                return plugin_load_error::failed_to_find_factory_functions;
+            }
         }
 
         i_plugin* raw_instance = create();
         if (!raw_instance) {
-            free_library(handle);
+            if (handle) free_library(handle);
             return plugin_load_error::failed_to_create_instance;
         }
 
+        // Same deleter as before — it already handles `handle == nullptr` gracefully
         struct deleter {
             void operator()(i_plugin* p) const {
                 destroy_function(p);
@@ -232,8 +276,9 @@ namespace GLT::plugin_manager {
                     free_library(handle);
             }
             destroy_plugin_func destroy_function;
-            void* handle;
+            void*               handle;
         };
+
 
         auto instance = std::shared_ptr<i_plugin>(raw_instance, deleter{ destroy, handle });
 
@@ -354,7 +399,8 @@ namespace GLT::plugin_manager {
     static bool has_loaded_dependents(const std::string& self, const std::string& dep_name, interface dep_iface) {
 
         for (const auto& other : s_loaded_plugins) {
-            if (other.name == self) continue;
+            if (other.name == self)
+                continue;
 
             for (const auto& n : other.dependencies_names)
                 if (n == dep_name) return true;
@@ -366,17 +412,57 @@ namespace GLT::plugin_manager {
         return false;
     }
 
+
+    static std::optional<plugin_info> info_from_descriptor(const plugin_descriptor* desc, const std::filesystem::path& lib_path,
+        bool is_static, const std::string& fallback_name) {
+
+        if (!desc)
+            return std::nullopt;
+
+        const interface iface = desc->target;
+        const std::string  plugin_name = desc->name ? std::string(desc->name) : fallback_name;
+        VALIDATE(!plugin_name.empty(), return std::nullopt, "", "Plugin descriptor has no name and no fallback — skipping")
+
+        plugin_info info{
+            .library_path = lib_path,
+            .logo_path = lib_path.empty() ? std::filesystem::path{} : resolve_logo_path(lib_path, plugin_name),
+            .name = plugin_name,
+            .display_name = desc->display_name ? desc->display_name : plugin_name,
+            .description = desc->description  ? desc->description  : "",
+            .category = desc->category ? desc->category : "",
+            .author = desc->author ? desc->author : "",
+            .plugin_version = desc->plugin_version,
+            .api_version = desc->api_version,
+            .target = iface,
+            .load_phase = desc->load_phase,
+            .unload_phase = desc->unload_phase,
+            .is_static = is_static,
+            .is_enabled = false,
+            .is_loaded = false,
+        };
+
+        info.dependencies_names.reserve(desc->dependency_names_count);
+        for (int i = 0; i < desc->dependency_names_count; i++)
+            if (desc->dependency_names && desc->dependency_names[i])
+                info.dependencies_names.emplace_back(desc->dependency_names[i]);
+
+        info.dependencies_interfaces.reserve(desc->dependency_interface_count);
+        for (int i = 0; i < desc->dependency_interface_count; i++)
+            if (desc->dependency_interfaces)
+                info.dependencies_interfaces.push_back(desc->dependency_interfaces[i]);
+
+        return info;
+    }
+
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
     void discover_plugins(const std::filesystem::path& project_dir_path) {
 
-        const auto plugin_dir = GLT::util::get_executable_path() / config::PLUGIN_DIR;
-        std::error_code error{};
-        VALIDATE(GLT::vfs::exists(plugin_dir, error) && !error, return, "", "Plugin dir is invalid [{}]", (plugin_dir))
-
+        // --- config: load BEFORE touching the discovery list -------------------------
         s_config_path = project_dir_path / (GLT::config::PROJECT_NAME + GLT::config::PROJECT_EXTENTION);
+        std::error_code error{};
         if (GLT::vfs::exists(s_config_path, error) && !error)
             serialize(s_config_path, serializer::option::load);
         else
@@ -387,120 +473,122 @@ namespace GLT::plugin_manager {
         std::unordered_set<interface> resolved_interfaces{};
         std::unordered_map<interface, size_t> first_idx_per_interface{};
 
-        GLT::vfs::recursive_directory_iterator iterator(plugin_dir, GLT::vfs::directory_options::skip_permission_denied, error);
-        VALIDATE(!error, return, "", "Fail to create recursive_directory_iterator for [{}]", (plugin_dir.generic_string()))
+        // ---- shared "ingest one plugin descriptor" step (unchanged) -----------------
+        auto process_plugin = [&](plugin_info info) -> void {
 
-        for (const auto& entry : iterator) {
-
-            const bool regular_file = entry.is_regular_file(error);
-            if (!regular_file || error)
-                continue;
-
-            const auto& path = entry.path();
-            if (path.extension() != DYNAMIC_LIB_EXTENTION)
-                continue;
-
-            void* handle = load_library(path.c_str(), lib_load_mode::lazy);
-            VALIDATE(handle, continue, "", "load_library failed: [{}]", (get_dynamic_library_error()))
-
-            auto desc_fn = reinterpret_cast<descriptor_func>(get_symbol(handle, "gluttony_plugin_descriptor"));
-            VALIDATE(desc_fn, free_library(handle); continue, "", "get_symbol failed: [{}]",
-                (get_dynamic_library_error()))
-
-            const plugin_descriptor* desc = desc_fn();
-            VALIDATE(desc, free_library(handle); continue, "", "Failed to load descriptor function")
-
-            const interface iface = desc->target;
-            const std::string plugin_name = desc->name ? std::string(desc->name) : path.stem().string();
-
-            plugin_info info{
-                .library_path = path,
-                .logo_path = resolve_logo_path(path, plugin_name),
-                .name = plugin_name,
-                .display_name = desc->display_name ? desc->display_name : plugin_name,
-                .description = desc->description ? desc->description : "",
-                .category = desc->category ? desc->category : "",
-                .author = desc->author ? desc->author : "",
-                .plugin_version = desc->plugin_version,
-                .api_version = desc->api_version,
-                .target = iface,
-                .load_phase = desc->load_phase,
-                .unload_phase = desc->unload_phase,
-                .is_enabled = false,
-                .is_loaded = false,
-            };
-
-            info.dependencies_names.reserve(desc->dependency_names_count);
-            for (int i = 0; i < desc->dependency_names_count; i++)
-                if (desc->dependency_names && desc->dependency_names[i])
-                    info.dependencies_names.emplace_back(desc->dependency_names[i]);
-
-            info.dependencies_interfaces.reserve(desc->dependency_interface_count);
-            for (int i = 0; i < desc->dependency_interface_count; i++)
-                if (desc->dependency_interfaces)
-                    info.dependencies_interfaces.push_back(desc->dependency_interfaces[i]);
-
-            free_library(handle);
-
-            // ---- dedup ----
-            // The same .so can end up at two paths (leftover build artifact, a stray
-            // copy from a previous layout, a hardlink, a debug+release pair built with
-            // the same GLT_MODULE_NAME, …). Two entries with the same name cause
-            // double cards in the editor AND ImGui ID collisions (both cards push the
-            // same PushID). Skip the duplicate and log both paths so the user can
-            // clean up the offending copy.
-            const auto& existing = std::find_if(s_discovered.begin(), s_discovered.end(),
-                [&](const plugin_info& p) { return p.name == plugin_name; });
+            const auto existing = std::find_if(s_discovered.begin(), s_discovered.end(),
+                [&](const plugin_info& p) { return p.name == info.name; });
             if (existing != s_discovered.end()) {
-                LOG(warn, "Duplicate plugin [{}] discovered at [{}] (already discovered at [{}]) - skipping",
-                    plugin_name, path.generic_string(), existing->library_path.generic_string())
-                continue;
+                LOG(warn, "Duplicate plugin [{}] — skipping (already discovered{})", info.name,
+                    existing->is_static ? " as static" : std::format(" at [{}]", existing->library_path.generic_string()))
+                return;
             }
 
-            if (iface == interface::custom)
-                info.is_enabled = !s_disabled_custom_plugins.contains(plugin_name);
+            if (info.target == interface::custom)
+                info.is_enabled = !s_disabled_custom_plugins.contains(info.name);
 
             else {
-                const auto idx = static_cast<size_t>(iface);
-                const std::string& preferred = s_plugin_names_per_target_interface[idx];
-                const bool explicitly_none = (preferred == EXPLICITLY_NONE);
-                const bool has_preference  = !preferred.empty() && preferred != "unknown" && !explicitly_none;
+                const auto idx = static_cast<size_t>(info.target);
+                const std::string& pref = s_plugin_names_per_target_interface[idx];
+                const bool explicitly_none = (pref == EXPLICITLY_NONE);
+                const bool has_preference = !pref.empty() && pref != "unknown" && !explicitly_none;
 
                 if (explicitly_none) {
+
                     info.is_enabled = false;
-                    resolved_interfaces.insert(iface);              // don't fall back to first found
+                    resolved_interfaces.insert(info.target);
 
                 } else if (has_preference) {
 
-                    if (plugin_name == preferred) {
+                    if (info.name == pref) {
                         info.is_enabled = true;
-                        resolved_interfaces.insert(iface);
+                        resolved_interfaces.insert(info.target);
                     }
 
                 } else {
 
                     LOG(trace, "No preferred plugin for interface [{}], using first found [{}]",
-                        GLT::util::enum_to_string(iface), plugin_name)
-                    s_plugin_names_per_target_interface[idx] = plugin_name;
+                        GLT::util::enum_to_string(info.target), info.name)
+                    s_plugin_names_per_target_interface[idx] = info.name;
                     info.is_enabled = true;
-                    resolved_interfaces.insert(iface);
+                    resolved_interfaces.insert(info.target);
                 }
-
-                first_idx_per_interface.try_emplace(iface, s_discovered.size());
+                first_idx_per_interface.try_emplace(info.target, s_discovered.size());
             }
 
             s_discovered.push_back(std::move(info));
-        }
+        };
 
-        // --- fallback pass: interfaces whose preferred plugin isn't on disk ---
+        // Phase 1: statically linked plugins. Always runs — regardless of whether a plugins/ directory exists
+        #if LINKAGE_STYLE == LINKAGE_STYLE_STATIC
+
+            for (const auto& entry : detail::get_static_plugin_registry()) {
+                if (auto info = info_from_descriptor(entry.descriptor_fn(), {}, /*is_static=*/true))
+                    process_plugin(std::move(*info));
+            }
+
+        #else
+
+            if (!detail::get_static_plugin_registry().empty())
+                LOG(warn, "LINKAGE_STYLE=DYNAMIC: ignoring [{}] static registrar entries, "
+                        "plugins statically linked into this binary will NOT be discovered", detail::get_static_plugin_registry().size());
+
+        #endif
+
+        // Phase 2: dynamically loadable plugins (best-effort)
+        #if LINKAGE_STYLE == LINKAGE_STYLE_STATIC
+
+            LOG(info, "LINKAGE_STYLE=STATIC: skipping dynamic plugin scan (features are baked in)")
+
+        #else
+
+            const auto plugin_dir = GLT::util::get_executable_path() / config::PLUGIN_DIR;
+            if (!GLT::vfs::exists(plugin_dir, error) || error)
+                LOG(info, "Plugin directory does not exist [{}] — static plugins only", plugin_dir.generic_string())
+
+            else {
+                GLT::vfs::recursive_directory_iterator it(plugin_dir, GLT::vfs::directory_options::skip_permission_denied, error);
+                if (error)
+                    LOG(error, "Fail to create recursive_directory_iterator for [{}]: [{}]", plugin_dir.generic_string(), error.message())
+
+                else {
+                    for (const auto& entry : it) {
+
+                        const bool regular = entry.is_regular_file(error);
+                        if (!regular || error)
+                            continue;
+
+                        const auto& path = entry.path();
+                        if (path.extension() != DYNAMIC_LIB_EXTENTION)
+                            continue;
+
+                        void* handle = load_library(path.c_str(), lib_load_mode::lazy);
+                        VALIDATE(handle, continue, "", "load_library failed: [{}]", (get_dynamic_library_error()))
+
+                        auto desc_fn = reinterpret_cast<descriptor_func>(get_symbol(handle, "gluttony_plugin_descriptor"));
+                        VALIDATE(desc_fn, free_library(handle); continue, "", "get_symbol failed: [{}]", (get_dynamic_library_error()))
+
+                        const plugin_descriptor* desc = desc_fn();
+                        VALIDATE(desc, free_library(handle); continue, "", "Failed to load descriptor function")
+
+                        auto info = info_from_descriptor(desc, path, /*is_static=*/false, path.stem().string());
+                        free_library(handle);
+                        if (info)
+                            process_plugin(std::move(*info));
+                    }
+                }
+            }
+
+        #endif
+
+        // Phase 3: fallback for interfaces whose preferred plugin is missing
         for (auto& [iface, first_idx] : first_idx_per_interface) {
-
             if (resolved_interfaces.contains(iface))
                 continue;
 
             const auto iface_idx = static_cast<size_t>(iface);
-            const std::string missing = s_plugin_names_per_target_interface[iface_idx].empty()
-                ? std::string{"<unset>"} : s_plugin_names_per_target_interface[iface_idx];
+            const std::string missing = s_plugin_names_per_target_interface[iface_idx].empty() ? std::string{"<unset>"}
+                : s_plugin_names_per_target_interface[iface_idx];
 
             LOG(warn, "Preferred plugin [{}] for interface [{}] was not found; falling back to [{}]",
                 missing, GLT::util::enum_to_string(iface), s_discovered[first_idx].name)

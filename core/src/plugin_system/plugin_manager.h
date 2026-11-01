@@ -3,8 +3,9 @@
 
 #include "plugin_system/i_plugin.h"
 
-// FORWARD DECLARATIONS ================================================================================================
 
+
+// FORWARD DECLARATIONS ================================================================================================
 
 namespace GLT::plugin_manager {
 
@@ -20,7 +21,7 @@ namespace GLT::plugin_manager {
 
     struct plugin_info {
 
-        std::filesystem::path                                               library_path{};
+        std::filesystem::path                                               library_path{};         // empty for static plugins
         std::filesystem::path                                               logo_path{};            // empty → no logo
         std::string                                                         name{};
         std::string                                                         display_name{};
@@ -34,6 +35,7 @@ namespace GLT::plugin_manager {
         phase                                                               unload_phase = phase::earliest_possible;
         std::vector<std::string>                                            dependencies_names{};
         std::vector<interface>                                              dependencies_interfaces{};
+        bool                                                                is_static{};
         bool                                                                is_enabled{};
         bool                                                                is_loaded{};
     };
@@ -65,6 +67,10 @@ namespace GLT::plugin_manager {
     // Scans the plugin directory (usually [./plugins/] relative to the executable) for shared libraries (*.so, *.dll)
     // Temporarily loads each library to read its [plugin_descriptor], filters plugins according to the configuration file,
     // and populates an internal discovery list. Does NOT load the plugins yet. Must be called once before any load_plugins() invocations
+
+    // Scans the static plugin registry (populated at startup by EXPORT_PLUGIN_CLASS in statically linked plugins) and then
+    // the plugin directory (*.so / *.dll), deduplicating by plugin name (static wins). Must be called once before any
+    // load_plugins() invocations
     void discover_plugins(const std::filesystem::path& project_dir_path);
 
 

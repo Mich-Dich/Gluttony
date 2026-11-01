@@ -1,0 +1,42 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+    "configurePresets": [
+        {
+            "name": "debug",
+            "displayName": "debug (launcher)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/../build/launcher/debug",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER":             "/opt/gcc-16.2/bin/gcc-16.2",
+                "CMAKE_CXX_COMPILER":           "/opt/gcc-16.2/bin/g++-16.2",
+                "CMAKE_CXX_STANDARD": "26",
+                "CMAKE_BUILD_TYPE":             "Debug"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "release (launcher)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/../build/launcher/release",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER":             "/opt/gcc-16.2/bin/gcc-16.2",
+                "CMAKE_CXX_COMPILER":           "/opt/gcc-16.2/bin/g++-16.2",
+                "CMAKE_CXX_STANDARD": "26",
+                "CMAKE_BUILD_TYPE":             "Release"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "environment": { "CMAKE_BUILD_PARALLEL_LEVEL": "16" }
+        },
+        {
+            "name": "release",
+            "configurePreset": "release",
+            "environment": { "CMAKE_BUILD_PARALLEL_LEVEL": "16" }
+        }
+    ]
+}

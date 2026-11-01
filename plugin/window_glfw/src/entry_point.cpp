@@ -70,7 +70,9 @@ namespace GLT::platform::glfw_backend {
         // lifecycle
         void on_load() override;
         void on_unload() override;
-        [[nodiscard]] GLT::platform::window_handle create(const GLT::platform::window_attributes& attrs) override;
+        [[nodiscard]] GLT::platform::window_handle create(const GLT::platform::window_attributes& attrs,
+            GLT::render::backend_api render_backend) override;
+        [[nodiscard]] bool create_render_context(GLT::platform::window_handle handle, GLT::render::backend_api render_backend) override;
         void destroy(GLT::platform::window_handle handle) override;
         void destroy_all() override;
 
@@ -116,6 +118,7 @@ namespace GLT::platform::glfw_backend {
             u32                                             generation = 0;
             bool                                            alive = false;
             ImGuiContext*                                   imgui_context = nullptr;
+            GLT::render::backend_api                        render_backend{};
 
             // per-window mouse delta state (previously a function-local static in the single-window version)
             glm::vec2                                       last_cursor_pos{};

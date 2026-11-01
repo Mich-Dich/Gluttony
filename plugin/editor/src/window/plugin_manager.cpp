@@ -5,7 +5,7 @@
 
 #include <plugin_system/plugin_manager.h>
 #include <config/imgui_config.h>
-#include <util/ui/pannel_collection.h>
+#include <util/ui/panel_collection.h>
 
 
 

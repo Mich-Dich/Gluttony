@@ -12,7 +12,7 @@
 #include <util/system.h>
 #include <util/io/logger.h>
 
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 
 
 

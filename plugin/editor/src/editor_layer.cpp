@@ -17,7 +17,7 @@
 #include <game/game_layer.h>
 #include <game/game_session.h>
 #include <util/ui/asset_picker.h>
-#include <util/ui/pannel_collection.h>
+#include <util/ui/panel_collection.h>
 #include <util/io/serializer_yaml.h>
 
 #include "window/base/asset_editor.h"
@@ -1162,6 +1162,9 @@ namespace GLT::editor {
         auto* p_window = GLT::platform::window::get_ptr();
         VALIDATE(p_window, return, "", "Failed to get window plugin")
 
+        auto* p_renderer = GLT::render::renderer::get_ptr();
+        ASSERT(p_renderer, "", "Failed to load render plugin")
+
         auto* game_layer = GLT::application::get().get_game_layer_ptr();
         VALIDATE(game_layer, return, "", "Failed to get game layer")
 
@@ -1190,7 +1193,7 @@ namespace GLT::editor {
                 ? GLT::platform::window_size_state::fullscreen_windowed
                 : GLT::platform::window_size_state::windowed;
 
-            const auto handle = p_window->create(attrs);
+            const auto handle = p_window->create(attrs, p_renderer->get_backend_api());
             VALIDATE(handle.is_valid(), continue, "",
                 "Failed to create simulation window {} of {}", (index + 1, count))
 

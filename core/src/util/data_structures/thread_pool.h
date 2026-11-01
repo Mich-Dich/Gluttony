@@ -1,4 +1,7 @@
+
 #pragma once
+
+
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -47,8 +50,14 @@ namespace GLT::thread_pool {
     // --- introspection -----------------------------------------------------------------------------------------------
 
     [[nodiscard]] bool is_initialized();
+
+
     [[nodiscard]] u32 get_thread_count();
+
+
     [[nodiscard]] u32 get_pending_count();
+
+
     [[nodiscard]] u32 get_active_count();
 
 	// TEMPLATE DECLARATION ============================================================================================

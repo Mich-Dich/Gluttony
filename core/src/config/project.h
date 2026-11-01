@@ -103,7 +103,8 @@ namespace GLT {
         // @param full_path Path to strip
         // @param current_project Whether to compare against the live project root
         // @return The content-dir-relative remainder, or an empty path if none could be derived
-        static std::filesystem::path extract_path_from_project_content_dir(const std::filesystem::path& full_path, const bool current_project = true);
+        static std::filesystem::path extract_path_from_project_content_dir(const std::filesystem::path& full_path,
+            const bool current_project = true);
 
     };
 

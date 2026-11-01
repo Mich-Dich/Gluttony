@@ -21,14 +21,17 @@ set_property(GLOBAL PROPERTY "${CMAKE_CURRENT_SOURCE_DIR}_SOURCES"      "${PLUGI
 compile_plugin(SHARED                                                   ${PLUGIN_NAME}          glm)
 compile_plugin(STATIC                                                   ${PLUGIN_NAME}_static   glm)
 
+
 # vendor ------------------------------------------------------------------------------------
 set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
 set(VK_STB_IMAGE_DIR                                                    "${VENDOR_DIR}/stb_image")
 git_clone_or_update("git@github.com:franko/stb_image.git"               "${VK_STB_IMAGE_DIR}")
 
+
 # STB ---------------------------------------------------------------------------------------------
 target_include_directories(${PLUGIN_NAME}                               PRIVATE "${VK_STB_IMAGE_DIR}/include")
 target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${VK_STB_IMAGE_DIR}/include")
+
 
 
 

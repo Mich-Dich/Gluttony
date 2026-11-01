@@ -131,8 +131,7 @@ namespace GLT {
             // Purely lexical: full_path must live under <project_path>/<CONTENT_DIR>
             const auto rel = full_path.lexically_relative(expected_prefix);
 
-            // empty -> different root (e.g. absolute vs relative)
-            // ".." lead -> path escapes expected_prefix
+            // empty -> different root (e.g. absolute vs relative) ".." lead -> path escapes expected_prefix
             if (rel.empty() || *rel.begin() == "..")
                 return {};                                  // caller can treat this as "not our project's content"
 

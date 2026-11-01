@@ -19,7 +19,7 @@
 #include <asset/type.h>
 #include <asset/i_asset_registry.h>
 
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 #include "util/ui/asset_picker.h"
 
 

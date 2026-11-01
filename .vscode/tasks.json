@@ -5,7 +5,7 @@
             "label": "CMake build (debug)",
             "type": "shell",
             "command": "clear; cmake --preset debug && cmake --build --preset debug",
-            "group": { "kind": "build", "isDefault": true },
+            "group": "build",
             "problemMatcher": "$gcc",
             "options": { "env": { "CMAKE_BUILD_PARALLEL_LEVEL": "32" } },
             "detail": "Configure (if needed) and build debug using presets"
@@ -27,6 +27,22 @@
             "problemMatcher": "$gcc",
             "options": { "env": { "CMAKE_BUILD_PARALLEL_LEVEL": "32" } },
             "detail": "Configure (if needed) and build release with debug Info using presets"
+        },
+        {
+            "label": "CMake build launcher (debug)",
+            "type": "shell",
+            "command": "clear; cd ${workspaceFolder}/launcher && cmake --preset debug && cmake --build --preset debug",
+            "group": "build",
+            "problemMatcher": "$gcc",
+            "detail": "Configure & build the standalone launcher (debug)"
+        },
+        {
+            "label": "CMake build launcher (release)",
+            "type": "shell",
+            "command": "clear; cd ${workspaceFolder}/launcher && cmake --preset release && cmake --build --preset release",
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": "$gcc",
+            "detail": "Configure & build the standalone launcher (release)"
         }
     ]
 }

@@ -46,8 +46,8 @@ set(IMGUI_DIR                                                           "${VENDO
 set(GLM_DIR                                                             "${VENDOR_DIR}/glm")
 
 # clone libs for core (or ones that are shared across multiple plugins)
-git_clone_or_update("git@github.com:icaven/glm.git"        "${GLM_DIR}"   DEPTH 1)
-git_clone_or_update("https://github.com/ocornut/imgui.git" "${IMGUI_DIR}" DEPTH 1 BRANCH docking)
+git_clone_or_update("git@github.com:icaven/glm.git"                     "${GLM_DIR}" DEPTH 1)
+git_clone_or_update("https://github.com/ocornut/imgui.git"              "${IMGUI_DIR}" DEPTH 1 BRANCH docking)
 
 # ------------- GLM -------------------------------------------------------------------------------
 add_library(glm INTERFACE)
@@ -90,7 +90,7 @@ target_compile_definitions(imgui                                        PRIVATE
 # Ninja job pools cap concurrent link jobs independently of compile jobs
 # Linking is by far the biggest RAM spike (Vulkan + ImGui + SoLoud + Slang)
 # Compile jobs are already capped by CMAKE_BUILD_PARALLEL_LEVEL in the build preset
-set_property(GLOBAL PROPERTY JOB_POOLS link_pool=24)
+set_property(GLOBAL PROPERTY JOB_POOLS                                  link_pool=24)
 
 
 # ====== Core and plugins =========================================================================

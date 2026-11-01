@@ -12,7 +12,7 @@
 #include <render/image.h>
 #include <resource_manager/icon_manager.h>
 
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 
 
 

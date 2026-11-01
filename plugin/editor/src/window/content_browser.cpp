@@ -11,7 +11,7 @@
 #include <asset/material.h>
 
 #include "util/event/asset_event.h"
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 #include "resource_manager/icon_manager.h"
 #include "util/io/file_dialog.h"
 

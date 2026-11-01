@@ -9,7 +9,7 @@
 #include <event/event_bus.h>
 
 #include "util/event/asset_event.h"
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 #include "config/imgui_config.h"
 
 

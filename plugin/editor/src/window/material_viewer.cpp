@@ -11,7 +11,7 @@
 #include <render/i_renderer.h>
 
 #include "material/material_compiler.h"
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 #include "util/ui/asset_picker.h"
 
 

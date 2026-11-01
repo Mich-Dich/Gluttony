@@ -24,7 +24,7 @@
 #include <render/i_scene_renderer.h>
 #include <application.h>
 
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 #include "resource_manager/icon_manager.h"
 #include "window/content_browser.h"
 
@@ -923,15 +923,18 @@ namespace GLT::editor {
         float content_x = 0.f;
 
         if (flat) {
+
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf
                 | ImGuiTreeNodeFlags_NoTreePushOnOpen
                 | ImGuiTreeNodeFlags_SpanAvailWidth;
 
             ImGui::SetCursorScreenPos({ row_start.x + VIS_COL_WIDTH, row_start.y });
-            ImGui::TreeNodeEx("##node", flags, "");
+            ImGui::TreeNodeEx("##node", flags);
             clicked = ImGui::IsItemClicked();
             content_x = ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
+
         } else {
+
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow
                 | ImGuiTreeNodeFlags_NoTreePushOnOpen
                 | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -940,7 +943,7 @@ namespace GLT::editor {
 
             const float indent_spacing = ImGui::GetStyle().IndentSpacing;
             ImGui::SetCursorScreenPos({ row_start.x + VIS_COL_WIDTH + depth * indent_spacing, row_start.y });
-            open = ImGui::TreeNodeEx("##node", flags, "");
+            open = ImGui::TreeNodeEx("##node", flags);
             clicked = ImGui::IsItemClicked();
             content_x = ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
         }

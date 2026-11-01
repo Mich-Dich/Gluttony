@@ -1,6 +1,6 @@
 
 #include "util/pch.h"
-#include "pannel_collection.h"
+#include "panel_collection.h"
 
 #include <emmintrin.h>    // SSE2
 #include <immintrin.h>    // for future‑proofing (AVX)

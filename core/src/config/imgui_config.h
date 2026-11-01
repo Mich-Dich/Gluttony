@@ -62,7 +62,7 @@ namespace GLT::imgui_config {
 	ImGuiContext* get_context_imgui();
 
 
-	void init();
+	void init(const bool enable_multi_viewport = false);
 
 
 	void shutdown();

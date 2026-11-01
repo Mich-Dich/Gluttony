@@ -42,7 +42,7 @@ namespace GLT::UI {
 		none,
 		hovered,						// The mouse cursor is over the item.
 
-		// DONT CHANGE ORDER OF: LEFT / RIGHT / MIDDLE ENTRYS   else change refrence in: util/ui/pannel_collection/set_mouse_interaction_state()
+		// DONT CHANGE ORDER OF: LEFT / RIGHT / MIDDLE ENTRYS   else change refrence in: util/ui/panel_collection/set_mouse_interaction_state()
 		left_clicked,					// The mouse button was pressed and released over the item.
 		left_double_clicked,			// The mouse button was clicked twice in quick succession over the item.
 		left_pressed,					// The mouse button is currently held down over the item.
@@ -400,4 +400,4 @@ namespace GLT::UI {
 
 }
 
-#include "pannel_collection.inl"
+#include "panel_collection.inl"

@@ -4,9 +4,9 @@
     {
       "name": "debug",
       "displayName": "debug",
-      "description": "debug build with no optimisations",
+      "description": "debug build with no optimizations",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/debug",
+      "binaryDir": "${sourceDir}/build/engine/debug",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "/opt/gcc-16.2/bin/gcc-16.2",
         "CMAKE_CXX_COMPILER": "/opt/gcc-16.2/bin/g++-16.2",
@@ -18,9 +18,9 @@
     {
       "name": "release",
       "displayName": "release",
-      "description": "release build with optimisations, no debug info",
+      "description": "release build with optimizations, no debug info",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/release",
+      "binaryDir": "${sourceDir}/build/engine/release",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "/opt/gcc-16.2/bin/gcc-16.2",
         "CMAKE_CXX_COMPILER": "/opt/gcc-16.2/bin/g++-16.2",
@@ -34,7 +34,7 @@
       "displayName": "release with debug Info",
       "description": "Optimised build but with debug symbols",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/release_with_debug_info",
+      "binaryDir": "${sourceDir}/build/engine/release_with_debug_info",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "/opt/gcc-16.2/bin/gcc-16.2",
         "CMAKE_CXX_COMPILER": "/opt/gcc-16.2/bin/g++-16.2",

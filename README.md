@@ -1,215 +1,121 @@
 # Gluttony
 
-**A work-in-progress game engine built around a plugin-based, microkernel architecture.**
+**A work-in-progress game engine built around a plugin-based, microkernel architecture — with a focus on procedural generation.**
 
-Gluttony is the start of an actual game engine. The core stays small and loads most of its functionality as plugins, so subsystems can be developed, swapped, and tested independently. It’s still early: features are landing fast and the API is moving, but the pieces needed to actually build and run a game are coming together.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/wiki/mich-dich/gluttony/images/Screenshot_20261013_100900.png" alt="The Gluttony editor" width="49%">
+  <img src="https://raw.githubusercontent.com/wiki/mich-dich/gluttony/images/Screenshot_20261007_200234.png" alt="Hardware ray-traced scene" width="49%">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/wiki/mich-dich/gluttony/images/Screenshot_20261013_100806.png" alt="World outliner and region streaming" width="49%">
+  <img src="https://raw.githubusercontent.com/wiki/mich-dich/gluttony/images/Screenshot_20261013_104354.png" alt="Debug Stats" width="49%">
+</p>
 
-> **⚠ This is very much a work in progress.**  
-> Expect missing features, occasional jank, and interfaces that don’t do much yet
+Gluttony is an attempt to build a game engine from the ground up, where the core stays small and almost everything else, renderer / audio / physics / world / editor, is a plugin loaded at runtime. Subsystems are developed, swapped, and tested independently, and the engine itself never needs to know which implementation is behind any given interface.
 
----
+It is not a game engine you can ship a game with yet. It is a foundation, the parts that need to be right *before* the parts that are fun
 
-## Quickstart
-
-### Prerequisites
-
-- Linux (primary target; Windows support is partial, macOS is unsupported)
-- CMake ≥ 3.20
-- A C++26 compiler with experimental reflection support
-- Vulkan SDK 1.4.357.x or newer
-- Git with SSH access to GitHub (some vendor dependencies are cloned via SSH)
-
-### Install Vulkan SDK
-
-Download the newest [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) (1.4.357.x) and extract it to `~/vulkan-sdk/`.
-
-Add to your `~/.bashrc`:
-
-```bash
-export VULKAN_SDK=~/vulkan-sdk/1.4.357.1/x86_64
-export PATH=$VULKAN_SDK/bin:$PATH
-export LD_LIBRARY_PATH=$VULKAN_SDK/lib:$LD_LIBRARY_PATH
-export VK_LAYER_PATH=$VULKAN_SDK/etc/vulkan/explicit_layer.d
-```
-
-Then `source ~/.bashrc`.
-
-### Build
-
-
-**Install GCC 16 and G++ 16**
-
-The repo uses C++26's reflection, so g++-16 is needed
-```bash
-sudo add-apt-repository ppa:ubuntu-toolchain-r/test
-sudo apt update
-sudo apt install gcc-16 g++-16
-```
-
-
-**Clone and Build project**
-```bash
-git clone https://github.com/your-username/gluttony.git
-cd gluttony
-
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --parallel
-```
-
-Run:
-
-```bash
-./build/bin/Debug/Gluttony /path/to/project
-```
-
-On startup it discovers plugins, initializes config/logging/crash handling, creates the window, audio, renderer, and editor, and enters the main loop. You should get a window with an ImGui editor and log output.
+> **This is very much a work in progress.**
+> Expect missing features, occasional jank, and interfaces that don't do much yet.
 
 ---
 
-## What exists today
+## The idea
 
-- **Core** – application lifecycle, plugin manager, event bus, layers, config, logging, crash handling, thread pool, argument parser, and utilities.
-- **Plugin system** – phase-based loading, dependency resolution by name or interface, shared and static plugin variants, and a global generation counter for cache invalidation of raw plugin pointers.
-- **Game loop** – dedicated loop plugin that owns tick timing and drives the update/render cycle; the application no longer manages layers directly.
-- **Game sessions** – `game_layer` owns every `game_session`. The *primary* session is created eagerly and never destroyed (the editor's persistent world); *sim* sessions come and go. Each session owns its world, physics instance, controller, and per-session sim clock, and renderers are attached externally (editor viewport, sim windows) rather than owned by the session. Sessions can be paused, and their sim time/delta are reported independently.
-- **Asset registry** – chunked, versioned `.glt_*` file format with string table, dependency graph, path/id indexes, hot-reload watching, async load, and `read_chunk()` for editor peek-without-load.
-  - **`asset_ref`** – RAII smart-handle for owned references. Copy/move-aware, refcounted through the registry, implicitly convertible to `handle`. Pass it anywhere a raw handle was expected.
-  - **Handlers and factories** are separate plugins: handlers decode a type at runtime (from chunks), factories convert external formats into our files. The registry owns the file header, string table, and dependency table; both sides talk chunk layouts only.
-  - **Embedded thumbnails** – importers can write `CHUNK_THUMBNAIL` (RGBA8, ≤256px) that the editor reads through `read_chunk()` without a full load.
-  - Shipped handlers today:
-    - **mesh** – static mesh (vertices, indices, submeshes, bounds, authored colliders).
-    - **texture** – 2D textures (mip chains, format/usage metadata).
-    - **world / region** – world region index and region entity blobs.
-    - **audio** – canonical interleaved f32 PCM, loop points, metadata.
-    - **material / material_instance** – Slang source, compiled bytecode, reflection schema, packed parameters.
-- **Reflection** – C++26 compile-time reflection registry. Type/member descriptors, enum entries, serialization and editor-draw overrides, migrations by version, and annotations (`serialize`, `skip`, `transient`, `asset_ref`, `version`, `display_name`, `tooltip`, `category`, `range`, `color`, `multiline`, `readonly`, `name`).
-- **World manager** – EnTT-backed world plugin. Stable `entity_id ↔ entt::entity` slot table, region streaming driven by an anchor + radius, pluggable `entity_codec` for region blobs, and a per-instance `i_world` (RAII, multiple can coexist). Surfaces for the editor: `i_world_inspector` (component registry + edits) and `i_world_scene` (per-frame renderable/lights/entity-positions snapshot).
-- **Entity presets** – `preset_registry` plus recursive `entity_preset` trees. Presets describe *intent* (components + property bags) so world plugins interpret them; the editor consumes them to build the create menu without knowing ECS.
-- **Window** – GLFW-based, **multi-window capable**. A `window_handle` per OS window; the plugin handles fullscreen modes, vsync, resize, cursor mode, and Vulkan surface creation. ImGui backend binding is per-window/context aware.
-- **Scene renderers** – **multi-viewport rendering**. `i_scene_renderer` owns one render target: either a *surface* (a window) or an *offscreen* texture. `i_renderer_plugin::create_scene_renderer()` mints one per target; each has its own render mode, output image, extent, debug draw, and (optionally) ImGui pass. Procedural meshes (`immutable`, `occasional`, `streaming` classes) can be uploaded per scene renderer.
-- **Renderer** – Vulkan **Forward+ renderer in progress**, exposed through `i_renderer_plugin` with per-renderer settings (reflection-described for the editor) and a per-scene render-mode selector. A Slang-based `i_shader_compiler` produces renderer-native bytecode and material reflection. A separate `i_debug_draw` interface is exposed for immediate-mode debug primitives (lines/triangles/AABBs/arrows/spheres/capsules/cones/polylines), plus entity highlighting and mesh-AABB outlines.
-  - The earlier hardware ray tracer (`renderer_vk_ray`) still exists but is no longer the active target.
-- **Audio** – SoLoud + miniaudio backend. **Voice-handle based**: `play(asset_handle, config)`, per-voice volume/pan/speed/loop, transport (seek/position), streaming, full 3D source (position, velocity, attenuation models) and a global listener, and a global master volume. Loading/caching is the registry's job; the plugin only plays.
-- **Physics** – Jolt-backed `i_physics` instances, one per session. Bodies, shapes, and joints use generation-checked handles. Full state read/write (single and batched), force/impulse/torque, activation, ray casts, sphere/box overlap queries, contact-event draining, and per-instance gravity. Instances are minted by `i_physics_plugin::instantiate()` and destroyed when the owning `unique_ref` drops.
-- **Editor** – large ImGui/ImPlot editor plugin with content browser (thumbnail cache, import panel, drag-drop into scene), image/audio viewers, log viewer, stats, multi-viewport support, world outliner/details, and an icon manager.
-- **VFS** – unified filesystem abstraction using `vfspp`.
-- **Logger** – asynchronous logger with custom format strings, severity levels, and thread labels.
-- **Crash handler** – attach/detach plus `subscribe()`/`unsubscribe()` for callbacks to run at crash time (e.g. log flush).
-- **Argument parser** – spec-driven CLI with typed values (`string`/`int`/`double`/`bool`/`path`/`UUID`), positional and named args, defaults, and `std::error_code` integration.
+Gluttony's focus is **procedural generation**. The idea that a set of rules can produce complex structure (geometry, textures, worlds, gameplay, even behaviour) and that a small, well-defined seed can unfold into a scene nobody has seen before. A generator and a renderer, neither of which knows the other exists, cooperating to produce something neither was written to describe.
+
+Some of the systems planned for the engine:
+
+- **Terrain generators**: continents, biomes, caves, rivers, and road networks derived from noise, erosion, and tectonic rules.
+- **A ship hull creator**: a handful of parameters (length, beam, purpose, style) producing a game-ready hull with ribs, bulkheads, floors, and walkable interior volumes.
+- **A grid-based build system**: *Space Engineers*, but blocks resize freely: a wall grows into a corridor, a corridor into an atrium, and the block adapts.
+- **Dungeon, city, and level generators**: room graphs, road hierarchies, parcel subdivision, facade detail, encounter pacing, lighting, and narrative anchors, all driven by rulesets rather than hand-placement.
+- **Procedural creatures and animations**: skeletal rigs, body segments, and locomotion assembled from a grammar; motion derived from simulation and control systems rather than authored keyframes.
+- **Procedural materials, audio, UI, and gameplay**: node-graph textures generated at import time, synthesized impacts and ambience, layouts and theming derived from a style description, spawn tables and encounters that adapt to context.
+
+Many of these are prime candidates for plugins. A terrain generator doesn't need to know how the renderer works. A ship hull creator doesn't need to know how the asset registry stores meshes. The microkernel architecture means each of these systems can live in its own plugin, evolve at its own pace, and be swapped or replaced without touching the engine core — or each other.
 
 ---
 
-## Planned / missing
+## The name
 
-- Asset handler/factory coverage beyond current types (animation, skeletal mesh, volume, bvh, …)
-- Resource cache and streaming policy on top of the asset registry (refcounted eviction)
-- Scripting
-- Runtime/in-game UI (ImGui is still the debugging surface)
-- Networking / online subsystem
-- Prefab save/load flow (presets exist; the round-trip asset pipeline doesn't)
-- Navigation, terrain/volumes
-- Forward+ completion, render graph, LOD, post-processing, particles/VFX, sky/atmosphere
-- Additional renderers, window backends, and audio backends
-- Better Windows support
-- Memory manager, undo/redo, play-in-editor polish
-- Asset cooking/packaging and standalone game export
-- Tests/CI, plugin ABI/versioning story
+The name is an internal joke about ambition. Gluttony is meant to be an engine that *eats* features — it consumes subsystems, ideas, and experiments. The goal is to keep feeding it: rendering techniques, generation systems, tooling, whatever a future game might need, until the list of things it can do is genuinely absurd. The name is the *aspiration*, not a diagnosis.
+
+It's also a reminder that an engine that swallows everything has to digest it efficiently — that a project can be ambitious *and* fast, as long as the seams are designed with care.
+
+---
+
+## The engine today
+
+The engine is early, but it already renders, plays audio, streams worlds, and provides a workable editor. There is a Vulkan renderer, a Jolt-backed physics plugin, a chunked asset registry with hot-reload, a multi-window editor with a content browser and world outliner, and a full plugin lifecycle with phase-based loading and dependency resolution.
+
+For a full, honest breakdown of what exists today — and what's still in design — see the [What Gluttony is now](https://github.com/mich-dich/gluttony/wiki#what-gluttony-is-now) section of the wiki home page.
+
+---
+
+## The road ahead
+
+The roadmap is long and deliberately ambitious. A high-level teaser:
+
+- **Procedural content**: the generators above: terrain, ships, dungeons, cities, creatures, materials, audio, UI, and gameplay.
+- **Rendering**: Forward+ completion, LOD, post-processing, particles and VFX, sky and atmosphere, and a portable ray tracer alongside the rasterizer.
+- **Gameplay**: scripting, animations, runtime UI, save/load, navigation, prefabs, and networking.
+- **Tooling**: undo/redo, asset cooking and standalone packaging, and an in-game console.
+- **Infrastructure**: a memory manager, an asset migration framework, plugin ABI versioning, and tests/CI.
+
+The full, living list — what's in progress, what's deferred, and what's blocked on what — lives on the [Roadmap](https://github.com/mich-dich/gluttony/wiki/Roadmap) page.
+
+---
+
+## Design principles
+
+Every subsystem in Gluttony follows the same set of rules. They exist because the alternative — subsystems that know about each other — is what kills a plugin architecture.
+
+1. **The plugin owns the implementation. The core owns the handles.** Assets, entities, and bodies are POD handles. Nothing outside a plugin ever sees a backend pointer, a `vk::Buffer`, a `b2Body*`, or an `entt::entity`.
+2. **Data that crosses a boundary is trivially copyable.** No `std::function`, no virtual members, no owning pointers. This is what lets the reflection system serialize it, the profiler inspect it, and the debugger read it without a type registry.
+3. **Per-frame state is pulled, not pushed.** Plugins fill caller-owned vectors and spans. They never write into engine-owned memory, never invoke gameplay callbacks from inside their own update loop, and never have to know which entities care about their results.
+4. **Optional capabilities are side-interfaces.** The base `i_world_plugin` knows nothing about inspectors or scene gathering. Each optional capability is a separate interface discovered via `as<T>()`.
+5. **Fixed internals, variable façades.** The renderer decides its own swapchain policy. The physics plugin decides its own fixed timestep. The engine calls `step(dt)`, `begin_frame()`, `update(dt)` and does not care what happens inside.
+
+A subsystem that violates one of these principles is a subsystem that will be rewritten. The contracts exist to make the principles concrete for each boundary.
+
+---
+
+## Getting started
+
+Prerequisites, toolchain setup, and build instructions live on the wiki:
+
+- **[Building Gluttony](https://github.com/mich-dich/gluttony/wiki/Building)**: Linux primary target, CMake ≥ 3.20, a C++26 compiler with experimental reflection, and Vulkan SDK 1.4.357.x. (Windows is partial; macOS is unsupported.)
+- **[Architecture Overview](https://github.com/mich-dich/gluttony/wiki/Architecture-Overview)**: the microkernel model, plugin lifecycle, phases, and interfaces.
+- **[Plugin Authoring](https://github.com/mich-dich/gluttony/wiki/Plugin-Authoring)**: descriptors, phases, dependency resolution, and how to write a plugin.
 
 ---
 
 ## Documentation
 
-Implementation details, architecture notes, and plugin authoring guides will live in the [GitHub Wiki](https://github.com/mich-dich/gluttony/wiki). This README is intentionally high-level.
+The [GitHub Wiki](https://github.com/mich-dich/gluttony/wiki) is the documentation home for Gluttony: design documents, user guides, the roadmap, showcases, and whatever else accumulates as the engine grows.
+
+- [Showcases](https://github.com/mich-dich/gluttony/wiki/Showcases) — screenshots, demos, and small projects built with Gluttony.
+- [Design documents](https://github.com/mich-dich/gluttony/wiki#design-documents) — contracts and design notes for each subsystem.
+- [Roadmap](https://github.com/mich-dich/gluttony/wiki/Roadmap) — what's planned, in progress, and deferred.
+- [Glossary](https://github.com/mich-dich/gluttony/wiki/Glossary) — engine-specific terms and their meanings.
+- [FAQ](https://github.com/mich-dich/gluttony/wiki/FAQ) — common questions about the engine and its design.
 
 ---
 
-If you find a bug or want to add something, open an issue or a PR. I can’t promise prompt responses, but I’ll be thrilled that someone else looked at the code.
+## Contributing
 
+This is a personal project, and I can't promise prompt responses — but issues and PRs are welcome. If you find a bug, or if you want to add a subsystem, open an issue first: the design documents exist so that changes to a subsystem can be discussed before they are written.
 
+Before submitting a plugin, read the [Plugin Authoring](https://github.com/mich-dich/gluttony/wiki/Plugin-Authoring) page and the design document for the interface you're implementing. Before proposing a change to an existing design document, explain *why* the current design is wrong — the reasoning is often the point.
 
-# Existing features (will likely be polished further)
-Runtime
-- Input system
-- Camera system
-- Audio mixer/streaming/effects
-- Job system / thread pool
-- Game session system (primary + sim sessions)
-- Physics (Jolt)
-- Multi-window / multi-viewport rendering
+---
 
-Content / asset pipeline
-- Import factories (mesh/texture/audio/material)
-- Chunked asset format with embedded thumbnails
-- VFS
-- Reflection-driven serialization
-- Asset hot-reload on dependency change
+## Quick links
 
-World / ECS / scene
-- Component serialization
-- World serialization
-- World streaming (anchor + radius regions)
-- Controller
-- Entity presets (recursive)
-- World inspector (component registry + editor surface)
-
-Platform / OS
-- Filesystem/dialogs
-- Timers
-- Crash handler (with crash-time callbacks)
-- Argument parser
-
-Editor / tooling
-- Content browser (thumbnail cache, import panel, drag-drop into scene, peek-without-load)
-- Material editor
-- World outliner/details
-- Debug draw / immediate-mode primitives
-
-Engine infrastructure
-- Generic serialization
-- C++26 reflection registry (with migrations + overrides)
-
-# Planned features until a real game can be created
-Gameplay / Runtime
-- Scripting (attaching a script to an entity)
-- Animations
-- Runtime UI (currently using ImGui for debugging)
-- Save/load system (game-side, on top of asset registry)
-- Navigation
-- (Physics exists; polish remains)
-
-World
-- Terrain / volumes
-
-Networking
-- Networking / online
-
-Asset Pipeline / Content
-- Asset cooking / packaging
-- Resource cache with eviction
-- Remaining handlers: animation, skeletal mesh, light profiles, BVH, volumes
-
-Build / Export
-- Exporting the game (currently works only with editor)
-- Standalone packaging
-
-Rendering
-- Forward+ renderer completion (rasterizer)
-- Render graph
-- LOD
-- Post-processing
-- Particles / VFX
-- Sky / atmosphere
-
-Editor / Tooling
-- Undo/redo
-- Selection/gizmos
-- Play-in-editor
-
-Engine Infrastructure
-- Memory manager
-- Versioning/migration framework for assets
-- Plugin ABI/versioning
-- Tests/CI
-
-Platform / OS
-- In-game console
+- [GitHub repository](https://github.com/mich-dich/gluttony)
+- [Building the engine](https://github.com/mich-dich/gluttony/wiki/Building)
+- [Architecture overview](https://github.com/mich-dich/gluttony/wiki/Architecture-Overview)
+- [Plugin authoring guide](https://github.com/mich-dich/gluttony/wiki/Plugin-Authoring)
+- [Roadmap](https://github.com/mich-dich/gluttony/wiki/Roadmap)
+- [Glossary](https://github.com/mich-dich/gluttony/wiki/Glossary)

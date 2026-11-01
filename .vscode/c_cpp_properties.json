@@ -3,7 +3,7 @@
     "configurations": [
         {
             "name": "Debug (linux-x86_64)",
-            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "compileCommands": "${workspaceFolder}/build/debug/compile_commands.json",
             "includePath": [
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/vendor/glm/**"
@@ -14,7 +14,25 @@
                 "IMGUI_DEFINE_MATH_OPERATORS",
                 "RENDER_API_VULKAN"
             ],
-            
+            "compilerPath": "/opt/gcc-16.2/bin/gcc-16.2",
+            "cStandard": "c11",
+            "cppStandard": "c++26",
+            "intelliSenseMode": "linux-gcc-x64"
+        },
+        {
+            "name": "Launcher (linux-x86_64)",
+            "compileCommands": "${workspaceFolder}/launcher/build/debug/compile_commands.json",
+            "includePath": [
+                "${workspaceFolder}/launcher/src/**",
+                "${workspaceFolder}/vendor/imgui/**",
+                "${workspaceFolder}/vendor/imgui/backends/**",
+                "${workspaceFolder}/launcher/build/**"
+            ],
+            "defines": [
+                "PLATFORM_LINUX",
+                "DEBUG",
+                "IMGUI_DEFINE_MATH_OPERATORS"
+            ],
             "compilerPath": "/opt/gcc-16.2/bin/gcc-16.2",
             "cStandard": "c11",
             "cppStandard": "c++26",

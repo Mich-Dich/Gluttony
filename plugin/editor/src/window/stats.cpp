@@ -5,7 +5,7 @@
 #include <implot.h>
 
 #include <debug/profiler.h>
-#include <util/ui/pannel_collection.h>
+#include <util/ui/panel_collection.h>
 
 #include <config/imgui_config.h>
 

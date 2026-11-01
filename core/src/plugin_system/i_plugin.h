@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include "plugin_system/linkage.h"
 #include "util/io/logger.h"         // expose logger for all plugins
 
 
@@ -12,6 +13,7 @@ namespace GLT {
 }
 namespace GLT::plugin_manager {
     class i_plugin;
+    struct plugin_descriptor;
 }
 
 namespace GLT::plugin_manager {
@@ -20,18 +22,85 @@ namespace GLT::plugin_manager {
 
     // MACROS ==========================================================================================================
 
-    // @brief Emits the three C-linkage symbols the plugin manager needs to load, instantiate, and destroy a plugin shared library
+    // STATIC PLUGIN REGISTRY ==========================================================================================
+
+    // Statically linked plugins self-register at program startup via EXPORT_PLUGIN_CLASS.
+    // The registry lives in an inline function-local static so that:
+    //   • each module (engine executable / each plugin .so) gets exactly one copy
+    //   • initialization is safe regardless of cross-TU static-init order
     //
-    // Place one EXPORT_PLUGIN_CLASS(...) at file scope in the plugin's entry_point.cpp, after including the plugin's descriptor
+    // Dynamic mode : plugin .so registers into its OWN (never-queried) copy — harmless.
+    // Static  mode : plugin .o is linked into the executable, so its registrar populates
+    //                the ENGINE's copy → discover_plugins() finds them.
+
+    namespace detail {
+
+        using static_plugin_create_func = i_plugin* (*)();
+        using static_plugin_destroy_func = void (*)(i_plugin*);
+        using static_plugin_descriptor_func = const plugin_descriptor* (*)();
+
+
+        struct static_plugin_entry {
+
+            static_plugin_descriptor_func   descriptor_fn{};
+            static_plugin_create_func       create{};
+            static_plugin_destroy_func      destroy{};
+        };
+
+
+        inline std::vector<static_plugin_entry>& get_static_plugin_registry_mut() noexcept {
+
+            static std::vector<static_plugin_entry> registry;
+            return registry;
+        }
+
+
+        inline const std::vector<static_plugin_entry>& get_static_plugin_registry() noexcept { return get_static_plugin_registry_mut(); }
+
+
+        inline void register_static_plugin(static_plugin_descriptor_func descriptor_fn, static_plugin_create_func create,
+            static_plugin_destroy_func destroy) noexcept {
+
+            get_static_plugin_registry_mut().push_back({descriptor_fn, create, destroy});
+        }
+    }
+
+    // MACROS ==========================================================================================================
+
+    #define GLT_PLUGIN_DETAIL_CAT_(a, b)    a##b
+
+
+    #define GLT_PLUGIN_DETAIL_CAT(a, b)     GLT_PLUGIN_DETAIL_CAT_(a, b)
+
+
+    #define GLT_PLUGIN_DETAIL_REGISTRAR(unique_id)                                                                                      \
+        namespace {                                                                                                                     \
+            struct GLT_PLUGIN_DETAIL_CAT(gluttony_static_registrar_, unique_id) {                                                       \
+                GLT_PLUGIN_DETAIL_CAT(gluttony_static_registrar_, unique_id)() noexcept {                                               \
+                    ::GLT::plugin_manager::detail::register_static_plugin(                                                              \
+                        &gluttony_plugin_descriptor,                                                                                    \
+                        &create_plugin,                                                                                                 \
+                        &destroy_plugin);                                                                                               \
+                }                                                                                                                       \
+            };                                                                                                                          \
+            [[maybe_unused]] static GLT_PLUGIN_DETAIL_CAT(gluttony_static_registrar_, unique_id)                                        \
+                GLT_PLUGIN_DETAIL_CAT(gluttony_static_registrar_instance_, unique_id);                                                  \
+        }
+
+
+    // @brief Emits the three C-linkage symbols the plugin manager needs to load, instantiate, and destroy a plugin shared library,
+    // PLUS a file-scope static registrar that registers the plugin into the static registry. Both paths work from the same object
+    // file — the linker / dynamic loader picks whichever is relevant.
     //
     // @param plugin_class     The concrete [i_plugin] subclass to export
     // @param descriptor_var   A [plugin_descriptor] instance describing the plugin
-    #define EXPORT_PLUGIN_CLASS(plugin_class, descriptor_var)                                                           \
-        extern "C" {                                                                                                    \
-            const GLT::plugin_manager::plugin_descriptor* gluttony_plugin_descriptor() { return &descriptor_var; }      \
-            GLT::plugin_manager::i_plugin* create_plugin() { return new plugin_class(); }                               \
-            void destroy_plugin(GLT::plugin_manager::i_plugin* p) { delete p; }                                         \
-        }
+    #define EXPORT_PLUGIN_CLASS(plugin_class, descriptor_var)                                                                           \
+        extern "C" {                                                                                                                    \
+            GLT_PLUGIN_SYMBOL const GLT::plugin_manager::plugin_descriptor* gluttony_plugin_descriptor() { return &descriptor_var; }    \
+            GLT_PLUGIN_SYMBOL GLT::plugin_manager::i_plugin* create_plugin()  { return new plugin_class(); }                            \
+            GLT_PLUGIN_SYMBOL void destroy_plugin(GLT::plugin_manager::i_plugin* p) { delete p; }                                       \
+        }                                                                                                                               \
+        GLT_PLUGIN_DETAIL_REGISTRAR(__COUNTER__)
 
     // TYPES ===========================================================================================================
 
@@ -204,7 +273,7 @@ namespace GLT::plugin_manager {
     // TEMPLATE DECLARATION ============================================================================================
 
     // CLASS DECLARATION ===============================================================================================
-    
+
     // @brief Base interface every plugin implements
     //
     // [on_load()] and [on_unload()] are invoked by the plugin manager at the appropriate moment (see [phase] above).
@@ -241,7 +310,7 @@ namespace GLT::plugin_manager {
         // (e.g. `world.as<ecs_world>()` -> entt::registry&).
         //
         // Rule of thumb:
-        //   - Engine-shipped, perf-sensitive plugins (actors, scripting, netcode) couple directly to the concrete type and 
+        //   - Engine-shipped, perf-sensitive plugins (actors, scripting, netcode) couple directly to the concrete type and
         //     call as<T>() once on init, caching the result. They do NOT call as<T>() per frame.
         //   - Third-party / swappable plugins stay on i_world_plugin only.
         template<typename T>

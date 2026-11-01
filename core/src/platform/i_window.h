@@ -76,15 +76,23 @@ namespace GLT::platform {
 
         // --- lifecycle ---------------------------------------------------------------------------------------------
 
-        // @brief Creates a native window and returns its handle
+        // @brief Creates a native window
         //
-        // The first call lazily initialises the platform library (GLFW). Subsequent calls create additional
-        // windows on the same library instance. On failure, logs the reason and returns [INVALID_WINDOW_HANDLE];
-        // this is not a fatal state — the caller may retry or fall back to a headless path
+        // @param render_backend  Selects the GLFW client-API hint used at creation time (open_gl → GLFW_OPENGL_API,
+        // vulkan → GLFW_NO_API). GLFW cannot attach a rendering context to a window after the fact, so this must be known
+        // up front. Nothing is *activated* here — see create_render_context()
+        [[nodiscard]] virtual window_handle create(const window_attributes& attrs, GLT::render::backend_api render_backend) = 0;
+
+
+        // @brief Activates the render context on this window for the given backend
         //
-        // @param attrs  Initial window attributes (size, position, title, vsync, state)
-        // @return A valid handle, or [INVALID_WINDOW_HANDLE] on failure
-        [[nodiscard]] virtual window_handle create(const window_attributes& attrs) = 0;
+        // OpenGL: calls glfwMakeContextCurrent() so subsequent GL calls operate on this window's context
+        //         Must be called before ImGui_ImplOpenGL3_Init() or any GL call
+        // Vulkan: no-op (Vulkan builds its own swapchain from the native window handle)
+        //
+        // For GLFW the GL context is destroyed together with the window (glfwDestroyWindow), so there
+        // is no matching destroy call
+        [[nodiscard]] virtual bool create_render_context(window_handle handle, GLT::render::backend_api render_backend) = 0;
 
 
         // @brief Destroys the window identified by [handle]
@@ -176,7 +184,7 @@ namespace GLT::platform {
         //
         // The caller MUST create (or own) an ImGui context and make it current before calling. This is
         // the standard ImGui backend init pattern: backends register against the caller's context; they
-        // do not create their own.
+        // do not create their own
         //
         // The plugin records the current context so it can:
         //   - forward GLFW events (char / mouse / scroll) to ImGui from the correct context
@@ -185,18 +193,18 @@ namespace GLT::platform {
         // Note: a single ImGui context can only bind to one native window at a time — the GLFW backend
         // stores one GLFWwindow* per context. For multi-window ImGui, create a context per window and
         // call this once per (window, context) pair. Multi-window 3D rendering (no ImGui on the second
-        // window) works with a single shared context.
+        // window) works with a single shared context
         virtual void imgui_init(window_handle handle, GLT::render::backend_api used_render_api) = 0;
 
 
-        // @brief Shuts the GLFW backend down for this window. Does NOT destroy the ImGui context.
+        // @brief Shuts the GLFW backend down for this window. Does NOT destroy the ImGui context
         virtual void imgui_shutdown(window_handle handle) = 0;
 
 
-        // @brief Makes this window's recorded ImGui context current and begins a new backend frame.
+        // @brief Makes this window's recorded ImGui context current and begins a new backend frame
         //
         // Call once per window per frame. The context remains current after this call so the caller can
-        // immediately call ImGui::NewFrame().
+        // immediately call ImGui::NewFrame()
         virtual void begin_imgui_frame(window_handle handle) = 0;
 
     };

@@ -14,7 +14,7 @@
 #include <game/game_layer.h>
 #include <game/game_session.h>
 
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 #include "resource_manager/icon_manager.h"
 
 

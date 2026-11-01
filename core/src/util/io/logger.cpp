@@ -9,7 +9,7 @@
 namespace GLT::logger {
 
     // CONSTANTS =======================================================================================================
-            
+        
     constexpr const char* sev_names[] = 
     {
         "TRACE",
@@ -48,7 +48,7 @@ namespace GLT::logger {
 
 
     static void default_shutdown() {
-        
+    
         s_use_buffer = true;
     }
 
@@ -70,29 +70,29 @@ namespace GLT::logger {
 
 
     static std::filesystem::path default_get_log_file_location() { return {}; }
-    
-    
+
+
     static void default_set_format(const std::string&) { }
-    
-    
+
+
     static void default_use_previous_format() { }
-    
-    
+
+
     static const std::string default_get_format() { return {}; }
-    
-    
+
+
     static void default_set_buffer_threshold(severity) { }
-    
-    
+
+
     static void default_set_buffer_size(size_t) { }
-    
-    
+
+
     static void default_flush_buffer() { }
 
 
     static void default_register_label(const std::string&, std::thread::id) { }
-    
-    
+
+
     static void default_unregister_label(std::thread::id) { }
 
     // ---------- global pointer table ----------------------------------------------
@@ -111,78 +111,59 @@ namespace GLT::logger {
         default_unregister_label
     };
 
-    
+
     static logger_functions g_logger = default_logger_func;
-    
+
     // INTERNAL FUNCTION ===============================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
 
-    void use_default_logger_functions() {
+    void use_default_logger_functions() { install_logger_functions(default_logger_func); }
 
-        install_logger_functions(default_logger_func);
-    }
-
-    void install_logger_functions(const logger_functions& funcs) {
-        g_logger = funcs;   // safe as long as called before any logging threads run
-    }
+    // safe as long as called before any logging threads run
+    void install_logger_functions(const logger_functions& funcs) { g_logger = funcs; }
 
 
-    bool init(const std::string& format, bool log_to_console, const std::filesystem::path& log_dir, const std::string& main_log_file_name, bool use_append_mode) {
+    bool init(const std::string& format, bool log_to_console, const std::filesystem::path& log_dir, const std::string& main_log_file_name,
+        bool use_append_mode) {
+
         return g_logger.init(format, log_to_console, log_dir, main_log_file_name, use_append_mode);
     }
 
-    
-    void shutdown() {
-        g_logger.shutdown();
-    }
 
-    
-    std::filesystem::path get_log_file_location() {
-        return g_logger.get_log_file_location();
-    }
-
-    
-    void set_format(const std::string& new_format) {
-        g_logger.set_format(new_format);
-    }
-
-    
-    void use_previous_format() {
-        g_logger.use_previous_format();
-    }
-
-    
-    const std::string get_format() {
-        return g_logger.get_format();
-    }
-
-    
-    void set_buffer_threshold(severity new_threshold) {
-        g_logger.set_buffer_threshold(new_threshold);
-    }
-
-    
-    void set_buffer_size(size_t new_size) {
-        g_logger.set_buffer_size(new_size);
-    }
+    void shutdown() { g_logger.shutdown(); }
 
 
-    void flush_buffer() {
-        g_logger.flush_buffer();
-    }
+    std::filesystem::path get_log_file_location() { return g_logger.get_log_file_location(); }
 
-    
+
+    void set_format(const std::string& new_format) { g_logger.set_format(new_format); }
+
+
+    void use_previous_format() { g_logger.use_previous_format(); }
+
+
+    const std::string get_format() { return g_logger.get_format(); }
+
+
+    void set_buffer_threshold(severity new_threshold) { g_logger.set_buffer_threshold(new_threshold); }
+
+
+    void set_buffer_size(size_t new_size) { g_logger.set_buffer_size(new_size); }
+
+
+    void flush_buffer() { g_logger.flush_buffer(); }
+
+
     void register_label_for_thread(const std::string& thread_label, std::thread::id thread_id) {
+
         g_logger.register_label_for_thread(thread_label, thread_id);
     }
 
 
-    void unregister_label_for_thread(std::thread::id thread_id) {
-        g_logger.unregister_label_for_thread(thread_id);
-    }
+    void unregister_label_for_thread(std::thread::id thread_id) { g_logger.unregister_label_for_thread(thread_id); }
 
 
     void log_msg_internal(severity msg_sev, const owned_source_location location, const std::string module_name,
@@ -195,7 +176,6 @@ namespace GLT::logger {
     std::vector<message_data> drain_log_buffer(const bool disable_buffer) {
 
         s_use_buffer = !disable_buffer;
-
         std::lock_guard lock(s_buffer_mutex);
         std::vector<message_data> drained;
         drained.swap(s_log_buffer);

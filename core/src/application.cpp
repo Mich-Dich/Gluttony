@@ -51,18 +51,19 @@ namespace GLT {
 
         auto* p_window = GLT::platform::window::get_ptr();
         ASSERT(p_window, "", "Failed to load window plugin")
-        platform::window_attributes attributes;
-        platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::load);
-        m_main_window = p_window->create(attributes);
 
         auto* p_renderer = GLT::render::renderer::get_ptr();
         ASSERT(p_renderer, "", "Failed to load render plugin")
-        p_renderer->create(m_main_window);
+
+        platform::window_attributes attributes;
+        platform::serialize_window_attributes(m_project.project_path, attributes, serializer::option::load);
+        m_main_window = p_window->create(attributes, p_renderer->get_backend_api());
 
         auto* p_audio = GLT::audio::manager::get_ptr();
         ASSERT(p_audio, "", "Failed to load audio plugin")
         p_audio->create();
 
+        p_renderer->create(m_main_window);
         {
             GLT::render::surface_target_desc surface{
                 .window = m_main_window

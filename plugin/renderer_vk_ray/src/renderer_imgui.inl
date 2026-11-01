@@ -127,7 +127,7 @@ namespace GLT::renderer::vk_ray {
         ImGui::Render();                                                                // Finalize ImGui draw data
 
         // ---- stats ------------------------------------------------------------------------
-        m_frame_draw_calls    += count_imgui_draw_calls(ImGui::GetDrawData());
+        m_frame_draw_calls += count_imgui_draw_calls(ImGui::GetDrawData());
         m_frame_render_passes += 1;     // ImGui uses one render pass
 
         vk::RenderPassBeginInfo rp_info{};                                              // Begin render pass (clears background to dark blue)

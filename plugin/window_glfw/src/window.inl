@@ -98,7 +98,7 @@ namespace GLT::platform::glfw_backend {
     void plugin::on_unload() { LOG_UNLOADED }
 
 
-    GLT::platform::window_handle plugin::create(const GLT::platform::window_attributes& attrs) {
+    GLT::platform::window_handle plugin::create(const GLT::platform::window_attributes& attrs, GLT::render::backend_api render_backend) {
 
         if (!s_GLFWinitialized) {
             glfwSetErrorCallback(glfw_error_callback);
@@ -123,14 +123,26 @@ namespace GLT::platform::glfw_backend {
         slot.data = attrs;
         slot.imgui_context = nullptr;
         slot.cursor_first_sample = true;
+        slot.render_backend = render_backend;
 
-        // Clamp / decorate the requested size
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        // Client-API hint must be set BEFORE glfwCreateWindow — GLFW has no way to add a context later
+        switch (render_backend) {
+            case GLT::render::backend_api::open_gl:
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);   // matches GLSL_VERSION "#version 130"
+                break;
+            case GLT::render::backend_api::vulkan:  [[fallthrough]];
+            default:
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+                break;
+        }
+
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
         glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
         glfwWindowHint(GLFW_MAXIMIZED,
             (slot.data.size_state == GLT::platform::window_size_state::fullscreen ||
-             slot.data.size_state == GLT::platform::window_size_state::fullscreen_windowed)
+            slot.data.size_state == GLT::platform::window_size_state::fullscreen_windowed)
                 ? GLFW_TRUE : GLFW_FALSE);
 
         int max_width = 0, max_height = 0;
@@ -175,6 +187,34 @@ namespace GLT::platform::glfw_backend {
         glfwSetWindowUserPointer(slot.native, &slot);
         bind_event_callbacks(slot);
         return slot.handle;
+    }
+
+
+    bool plugin::create_render_context(GLT::platform::window_handle h, GLT::render::backend_api render_backend) {
+
+        window_slot* slot = lookup(h);
+        VALIDATE(slot, return false, "", "Invalid window handle [{}, {}]", (h.index, h.generation))
+
+        if (render_backend != slot->render_backend) {
+            LOG(error, "create_render_context: backend mismatch (requested {}, window created for {})",
+                static_cast<int>(render_backend), static_cast<int>(slot->render_backend));
+            return false;
+        }
+
+        if (render_backend == GLT::render::backend_api::vulkan)
+            return true;                                   // Vulkan: no window-owned context
+
+        if (render_backend == GLT::render::backend_api::open_gl) {
+            glfwMakeContextCurrent(slot->native);
+            if (glfwGetCurrentContext() != slot->native) {
+                LOG(error, "Failed to make OpenGL context current");
+                return false;
+            }
+            return true;
+        }
+
+        LOG(error, "create_render_context: unsupported backend {}", static_cast<int>(render_backend));
+        return false;
     }
 
 
@@ -407,22 +447,29 @@ namespace GLT::platform::glfw_backend {
         window_slot* slot = lookup(h);
         VALIDATE(slot, return, "", "Invalid window handle [{}, {}]", (h.index, h.generation))
         VALIDATE(!slot->imgui_context, return, "", "ImGui already initialized for this window")
+        VALIDATE(used_render_api == slot->render_backend, return, 
+            "", "imgui_init API ({}) does not match window creation API ({})",
+            (static_cast<int>(used_render_api), static_cast<int>(slot->render_backend)))
 
-        if (used_render_api != GLT::render::backend_api::vulkan) {
-            LOG(warn, "ImGui GLFW initialization for this render API is not implemented");
-            return;
-        }
-
-        // The caller owns the context; we register our GLFW backend against whatever context is
-        // currently active. Record it so callback forwarding and begin_imgui_frame() can re-activate
-        // it from any thread / call site
         slot->imgui_context = ImGui::GetCurrentContext();
         VALIDATE(slot->imgui_context, return, "",
             "imgui_init called with no current ImGui context — caller must create one first")
 
-        // install_callbacks = false: the plugin forwards GLFW callbacks to ImGui from bind_event_callbacks,
-        // so we control which context is current when the backend processes them
-        ImGui_ImplGlfw_InitForVulkan(slot->native, false);
+        LOG(debug, "plugin: ctx={} version={}",
+            static_cast<void*>(ImGui::GetCurrentContext()), ImGui::GetVersion())
+
+        switch (used_render_api) {
+            case GLT::render::backend_api::open_gl:
+                ImGui_ImplGlfw_InitForOpenGL(slot->native, false);
+                break;
+            case GLT::render::backend_api::vulkan:
+                ImGui_ImplGlfw_InitForVulkan(slot->native, false);
+                break;
+            default:
+                LOG(error, "imgui_init: unsupported render API {}", static_cast<int>(used_render_api));
+                slot->imgui_context = nullptr;
+                break;
+        }
     }
 
 

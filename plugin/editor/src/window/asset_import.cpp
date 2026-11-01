@@ -1,7 +1,7 @@
 #include "util/pch.h"
 #include "asset_import.h"
 
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 
 #include <asset/i_asset_registry.h>
 

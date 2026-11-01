@@ -12,7 +12,7 @@
 #include <plugin_system/i_audio_plugin.h>
 #include <resource_manager/icon_manager.h>
 
-#include "util/ui/pannel_collection.h"
+#include "util/ui/panel_collection.h"
 
 
 
