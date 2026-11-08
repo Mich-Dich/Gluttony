@@ -11,10 +11,11 @@
 #   cmake --build .
 # =================================================================================================
 
-include(${CMAKE_SOURCE_DIR}/helper.cmake)
 
 cmake_minimum_required(VERSION                                          3.20)
 project(Gluttony VERSION 0.0                                            LANGUAGES CXX)
+include(GNUInstallDirs)
+include(${CMAKE_SOURCE_DIR}/helper.cmake)
 option(CORE_VERBOSE_INFO                                                "Show detailed file list for Core" OFF)
 set(CORE_VERBOSE_INFO                                                   TRUE)
 set(CMAKE_CXX_STANDARD                                                  26)
@@ -50,12 +51,17 @@ git_clone_or_update("git@github.com:icaven/glm.git"                     "${GLM_D
 git_clone_or_update("https://github.com/ocornut/imgui.git"              "${IMGUI_DIR}" DEPTH 1 BRANCH docking)
 
 # ------------- GLM -------------------------------------------------------------------------------
-add_library(glm INTERFACE)
-target_include_directories(glm INTERFACE
+add_library(glm                                                         INTERFACE)
+target_include_directories(glm                                          INTERFACE
     ${GLM_DIR}
 )
 
 # ------------- ImGui -----------------------------------------------------------------------------
+# NOTE: imgui is intentionally *not* part of the exported `GluttonyTargets` package.
+# Its sources are PRIVATE (must not leak into INTERFACE_SOURCES), its include dirs are
+# BUILD_INTERFACE only, and its lib + headers are installed without an EXPORT.
+# Consumers get imgui headers via Gluttony::GluttonyAPI's include dirs, and resolve
+# imgui symbols at dlopen time against the host's already-loaded libimgui.so.
 add_library(imgui                                                       SHARED)
 set_target_properties(imgui                                             PROPERTIES
     POSITION_INDEPENDENT_CODE                                           ON
@@ -66,17 +72,17 @@ file(GLOB                                                               IMGUI_BA
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
 )
-target_sources(imgui                                                    PUBLIC
+target_sources(imgui                                                    PRIVATE
     ${IMGUI_BACKEND_SOURCES}
 )
 target_include_directories(imgui                                        PUBLIC
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
+    $<BUILD_INTERFACE:${IMGUI_DIR}>
+    $<BUILD_INTERFACE:${IMGUI_DIR}/backends>
 )
 find_package(Vulkan                                                     REQUIRED)
-target_link_libraries(imgui                                             PUBLIC
-    glfw
-    Vulkan::Vulkan
+target_link_libraries(imgui
+    PRIVATE glfw
+    PUBLIC  Vulkan::Vulkan
 )
 target_compile_definitions(imgui                                        PRIVATE
     IMGUI_IMPL_GLFW_DISABLE_X11
@@ -93,6 +99,48 @@ target_compile_definitions(imgui                                        PRIVATE
 set_property(GLOBAL PROPERTY JOB_POOLS                                  link_pool=24)
 
 
-# ====== Core and plugins =========================================================================
+# Core ================================================================================================================
 add_subdirectory(core)
+
+# Package install =====================================================================================================
+# imgui lib (no EXPORT — just places the .so on disk for optional standalone testing)
+install(TARGETS imgui
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+# imgui headers -> <prefix>/include/imgui.h, <prefix>/include/backends/*.h
+install(DIRECTORY ${IMGUI_DIR}/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.h"
+)
+# glm headers -> <prefix>/include/glm/*.hpp
+install(DIRECTORY ${GLM_DIR}/glm/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/glm
+    FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h" PATTERN "*.inl"
+)
+
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    "${CMAKE_SOURCE_DIR}/cmake/GluttonyConfig.cmake.in"
+    "${CMAKE_BINARY_DIR}/GluttonyConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Gluttony
+)
+write_basic_package_version_file(
+    "${CMAKE_BINARY_DIR}/GluttonyConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+install(FILES
+    "${CMAKE_BINARY_DIR}/GluttonyConfig.cmake"
+    "${CMAKE_BINARY_DIR}/GluttonyConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Gluttony
+)
+install(EXPORT GluttonyTargets
+    FILE GluttonyTargets.cmake
+    NAMESPACE Gluttony::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Gluttony
+)
+
+# Plugins - intentionally last, their installs may fail ===============================================================
 add_subdirectory(plugin)

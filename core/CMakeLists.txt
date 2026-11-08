@@ -24,8 +24,8 @@ set_target_properties(${CORE_NAME} PROPERTIES
     JOB_POOL_LINK                                                       link_pool
 )
 
-target_compile_definitions(${CORE_NAME}                                 PRIVATE GLT_MODULE_NAME="${CORE_NAME}")
-target_compile_definitions(${CORE_NAME} PRIVATE
+target_compile_definitions(${CORE_NAME}                                 PRIVATE
+    GLT_MODULE_NAME="${CORE_NAME}"
     $<$<CONFIG:Debug>:DEBUG>
     $<$<CONFIG:Release>:RELEASE>
     $<$<CONFIG:RelWithDebInfo>:RELEASE_WITH_DEBUG_INFO>
@@ -49,6 +49,67 @@ target_link_libraries(${CORE_NAME}                                      PRIVATE
     glm
     imgui
 )
+
+# expose API for gluttony user projects -----------------------------------------------------------
+add_library(${CORE_NAME}API INTERFACE)
+add_library(${CORE_NAME}::API ALIAS ${CORE_NAME}API)
+
+# -------------------------------------------------------------------------------------------------
+# NOTE ON imgui AND glm
+# -------------------------------------------------------------------------------------------------
+# We deliberately do NOT call `target_link_libraries(${CORE_NAME}API INTERFACE imgui)`.
+# Reasons:
+#   1. imgui is a SHARED library loaded by the host executable. At runtime, any plugin
+#      dlopen()'d into the host process can resolve imgui symbols against the host's
+#      already-loaded libimgui.so — no link dependency needed in the plugin.
+#   2. Exporting imgui via install(EXPORT ...) drags in its transitive deps (glfw, Vulkan),
+#      which then all need their own export/install rules. This is fragile and unnecessary
+#      for a plugin model.
+#   3. Bakes absolute source paths into the exported target when `target_sources` is PUBLIC.
+#
+# The consumer still gets imgui headers below (via include dirs) so they can `#include
+# <imgui.h>` and call imgui functions; only the link-time dependency is dropped, and that's
+# fine because MODULE libraries (Linux) allow undefined symbols by default.
+# -------------------------------------------------------------------------------------------------
+
+target_include_directories(${CORE_NAME}API
+    INTERFACE
+        # Core headers
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/Gluttony>
+        # imgui headers (flat layout: <imgui.h>, <backends/imgui_impl_vulkan.h>)
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/vendor/imgui>
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/vendor/imgui/backends>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/backends>
+        # glm headers (so public headers using glm::vec3, glm::mat4 etc. work)
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/vendor/glm>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+
+target_compile_definitions(${CORE_NAME}API INTERFACE
+    $<$<CONFIG:Debug>:DEBUG>
+    $<$<CONFIG:Release>:RELEASE>
+    $<$<CONFIG:RelWithDebInfo>:RELEASE_WITH_DEBUG_INFO>
+    IMGUI_DEFINE_MATH_OPERATORS
+    USE_IMGUI
+)
+
+target_compile_options(${CORE_NAME}API INTERFACE
+    $<$<COMPILE_LANGUAGE:CXX>:-std=c++26>
+    $<$<COMPILE_LANGUAGE:CXX>:-freflection>
+    $<$<COMPILE_LANGUAGE:CXX>:-ftemplate-depth=512>
+    $<$<COMPILE_LANGUAGE:CXX>:-fdiagnostics-color=always>
+    $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g3>
+)
+
+install(TARGETS ${CORE_NAME}API EXPORT GluttonyTargets)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/Gluttony
+    FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp" PATTERN "*.inl"
+)
+
+
 
 # ------------- PCH header ------------------------------------------------------------------------
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/util/pch.h")

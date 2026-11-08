@@ -1,6 +1,8 @@
 
 #pragma once
 
+#include "reflection/annotations.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -13,43 +15,44 @@ namespace GLT::reflect::annotations {
 
     // TYPES ===========================================================================================================
 
-    // ---- serialization ----------------------------------------------------------
+    // serialization ---------------------------------------------------------------------------------------------------
     struct serialize {};                        // default-on for non-static data members
 
 
     struct skip {};                             // never serialize, never show in editor
 
 
-    struct transient {};                        // runtime-only, drop on save
-
-
     struct asset_ref {};                        // serialize as UUID, retain/release on load
 
 
     struct version {                            // overrides the descriptor's default version
-        u16 value;
+        u16                     value;
     };
 
-    // ---- editor hints -----------------------------------------------------------
+    // editor hints ----------------------------------------------------------------------------------------------------
 
     struct display_name {
-        const char* value;
+
+        const char*             value;
     };
 
 
     struct tooltip {
-        const char* value;
+
+        const char*             value;
     };
 
 
     struct category {
-        const char* value;
+
+        const char*             value;
     };
 
 
     struct range {
-        f64 min;
-        f64 max; 
+
+        f64                     min;
+        f64                     max; 
     };
 
 
@@ -61,11 +64,54 @@ namespace GLT::reflect::annotations {
 
     struct readonly {};
 
-    // ---- type-level -------------------------------------------------------------
+    // kind annotations (exactly one per class) ------------------------------------------------------------------------
 
-    // Stable name override. Required for any type you intend to serialize across
-    // compiler / engine versions — display_string_of is implementation-defined.
-    struct name         { const char* value; };
+    struct entity_script {};
+
+
+    struct global_script {};
+
+
+    struct world_generator {};
+
+
+    struct editor_action {
+
+        const char*             label;
+    };
+
+    // field annotations -----------------------------------------------------------------------------------------------
+
+    struct persist {};
+
+
+    struct transient {};                        // runtime-only, drop on save
+
+
+    struct editor {
+
+        const char*             category = "";
+    };
+
+    // class annotations -----------------------------------------------------------------------------------------------
+
+    struct name {
+
+        const char*             value;
+    };
+
+
+    struct priority {
+
+        i32                     value;
+    };
+
+    // function annotations --------------------------------------------------------------------------------------------
+
+    struct editor_callable {
+
+        const char*             label = "";
+    };
 
     // STATIC VARIABLES ================================================================================================
 

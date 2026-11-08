@@ -78,6 +78,12 @@ namespace GLT::reflect {
 
 
     template <typename T>
+    void member_serialization<T>::write(const void* ptr, void* writer) {
+        static_cast<binary_writer*>(writer)->template write<T>(*static_cast<const T*>(ptr));
+    }
+
+
+    template <typename T>
     void binary_writer::write(const T& value) {
 
         using U = std::remove_cvref_t<T>;
@@ -171,7 +177,6 @@ namespace GLT::reflect {
         }
     }
 
-
     // reader ----------------------------------------------------------------------------------------------------------
 
     inline bool binary_reader::read_raw(void* out, std::size_t size) {
@@ -205,6 +210,13 @@ namespace GLT::reflect {
         out = m_data.subspan(m_cursor, len);
         m_cursor += len;
         return true;
+    }
+
+
+    template <typename T>
+    bool member_serialization<T>::read(void* ptr, void* reader) {
+
+        return static_cast<binary_reader*>(reader)->template read<T>(*static_cast<T*>(ptr));
     }
 
 

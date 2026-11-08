@@ -27,6 +27,11 @@ namespace GLT::render {
     class i_scene_renderer;
 }
 
+namespace GLT::script {
+    class i_script_host;
+    struct default_global;
+}
+
 namespace GLT::game {
 
     // CONSTANTS =======================================================================================================
@@ -60,58 +65,92 @@ namespace GLT::game {
         [[nodiscard]] session_id get_id() const noexcept { return m_id; }
 
         // physics -----------------------------------------------------------------------------------------------------
+
         // Null when the physics plugin isn't loaded. Physics instances are eagerly created in the ctor and destroyed with
         // the session — their lifetime mirrors the session exactly. Eager construction means gameplay code can assume
         // physics is available the moment a session exists
         [[nodiscard]] physics::i_physics* get_physics() const noexcept { return m_physics.get(); }
 
+
         // Detach physics from the world, then destroy the instance. Safe to call with no world loaded.
         // Call this for editor-only sessions so gizmo edits don't get clobbered by the next physics step.
         void remove_physics();
+
 
         // Recreate a physics instance and attach it to the current world. No-op if one already exists.
         // Returns false only when the physics plugin isn't loaded or instantiation failed.
         bool create_physics();
 
+        // scripting ---------------------------------------------------------------------------------------------------
+
+        // Null until the scripting plugin is loaded and ensure_script_host() succeeds. The host is a slave to the world's
+        // script_binding_components; bindings live in the world, the host is created lazily
+        [[nodiscard]] script::i_script_host* get_script_host() const noexcept { return m_scripting.get(); }
+
         // world -------------------------------------------------------------------------------------------------------
+
         [[nodiscard]] world::i_world* get_world() const noexcept { return m_world.get(); }
+
 
         // Forwarded from the live world; empty when no world is loaded.
         [[nodiscard]] const asset::asset_ref& world_asset() const noexcept;
 
+
         // Load from an already-resolved world asset_ref (used by the editor when the asset is warm)
         [[nodiscard]] std::expected<void, asset::load_error> load_world(asset::asset_ref asset);
 
+
         // Load by content-dir-relative path. Resolves through the registry, then instantiates.
         [[nodiscard]] std::expected<void, asset::load_error> load_world_from_path(const std::filesystem::path& path);
+
 
         // Forwards to i_world::save / i_world::save_as. RAII teardown: dropping m_world destroys the world and releases
         // its region handles; no explicit unload is needed unless you want to keep the session.
         void unload_world();
 
+
         [[nodiscard]] std::expected<void, asset::load_error> save_world();
+
+
         [[nodiscard]] std::expected<void, asset::load_error> save_world_as(const std::filesystem::path& path);
 
         // controller --------------------------------------------------------------------------------------------------
+
         void set_controller(ref<world::controller> ctrl);
+
+
         [[nodiscard]] world::controller* get_controller() const noexcept { return m_controller.get(); }
 
         // renderers (non-owning; caller owns) -------------------------------------------------------------------------
+
         // camera defaults to INVALID -> the slot follows the session's primary camera
         void add_renderer(render::i_scene_renderer* renderer, world::entity_id camera = {});
+
+
         void remove_renderer(render::i_scene_renderer* renderer);
+
 
         // Rebinding an existing slot (safe if r isn't attached — no-op).
         void set_renderer_camera(render::i_scene_renderer* renderer, world::entity_id camera);
+
+
         [[nodiscard]] world::entity_id get_renderer_camera(render::i_scene_renderer* renderer) const;
 
         // sim state ---------------------------------------------------------------------------------------------------
+
         void set_paused(bool paused) noexcept { m_paused = paused; }
+
+
         [[nodiscard]] bool is_paused() const noexcept { return m_paused; }
+
+
         [[nodiscard]] f32 sim_time() const noexcept { return m_sim_time; }
+
+
         [[nodiscard]] f32 sim_delta() const noexcept { return m_sim_delta; }
 
         // per-frame ---------------------------------------------------------------------------------------------------
+
         void update(f32 delta_time);
 
         // event bus ---------------------------------------------------------------------------------------------------
@@ -120,6 +159,8 @@ namespace GLT::game {
         // UI events scoped to a viewport, controller intents). The process-wide bus (GLT::event_bus::post/subscribe)
         // is still available for engine-wide notifications.
         [[nodiscard]] GLT::event_bus::bus& events() noexcept { return m_event_bus; }
+
+
         [[nodiscard]] const GLT::event_bus::bus& events() const noexcept { return m_event_bus; }
 
     private:
@@ -132,6 +173,12 @@ namespace GLT::game {
         void reset_per_frame_state() noexcept;
 
         world::entity_id resolve_camera(GLT::world::i_world_scene* scene, world::entity_id override_id) const;
+
+        bool ensure_script_host();
+
+        void update_script_host_context();
+
+        void attach_default_globals();
 
 
         session_id                                              m_id{};
@@ -150,6 +197,8 @@ namespace GLT::game {
         bool                                                    m_paused = false;
         std::vector<asset::mesh::instance>                      m_scene_buffer{};
         std::vector<world::light_snapshot>                      m_light_buffer{};
+        unique_ref<script::i_script_host>                       m_scripting{};
+
     };
 
 }

@@ -1,0 +1,10 @@
+
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+
+# No find_dependency needed: the only exported target (Gluttony::GluttonyAPI) has no
+# link-time dependencies. imgui and glm are provided as *headers only*; their symbols
+# are resolved at runtime against the host process.
+
+include("${CMAKE_CURRENT_LIST_DIR}/GluttonyTargets.cmake")
+check_required_components(Gluttony)

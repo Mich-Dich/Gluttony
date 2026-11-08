@@ -10,7 +10,6 @@
 #include "util/builders.h"
 #include "util/device.h"
 #include "shared/shared_resource_manager.h"
-
 #include "settings.h"
 
 

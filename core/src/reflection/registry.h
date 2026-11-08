@@ -9,6 +9,8 @@
 
 namespace GLT::reflect {
     class reflection_registry;
+    class binary_writer;
+    class binary_reader;
 }
 
 namespace GLT::reflect {
@@ -71,18 +73,23 @@ namespace GLT::reflect {
 
         const char*                                     name{};
         u32                                             type_hash{};
-        u32                                             offset{};           // valid for standard-layout
-        u32                                             flags{};            // member_flags
-        const char*                                     display_name{};     // empty = use name
+        u32                                             offset{};
+        u32                                             flags{};
+        const char*                                     display_name{};
         const char*                                     tooltip{};
         const char*                                     category{};
         f64                                             range_min{};
         f64                                             range_max{};
         type_kind                                       kind{ type_kind::unknown };
 
-        // Fallback accessor for non-standard-layout types. Null → use offset
-        // Generated once per member at compile time; see build.inl
         void*                                           (*access)(void*) = nullptr;
+
+        // First argument is a pointer to the member (i.e. `base + offset`). Second argument is `binary_writer*` / `binary_reader*`
+        // cast through void*. Null for [[=transient]] members. Non-null for anything that participates in serialization (persist,
+        // editor, unmarked-serializable)
+        void                                            (*write_fn)(const void*, void*) = nullptr;
+        bool                                            (*read_fn)(void*, void*) = nullptr;
+        // --------------------------------------------
     };
 
 
@@ -119,6 +126,16 @@ namespace GLT::reflect {
     struct editor_draw_override {
 
         bool (*draw)(const member_descriptor&, void* ptr);
+    };
+
+
+    // Function-pointer target for member_descriptor::write_fn / read_fn.
+    // Declared here (with void* archive args) so member_descriptor does not need
+    // binary_writer / binary_reader complete. Definitions live in archive_binary.inl.
+    template <typename T>
+    struct member_serialization {
+        static void write(const void* ptr, void* writer);
+        static bool read(void* ptr, void* reader);
     };
 
     // STATIC VARIABLES ================================================================================================
