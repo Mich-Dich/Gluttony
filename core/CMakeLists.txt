@@ -50,7 +50,11 @@ if(GCC16_RUNTIME_DIR)
 endif()
 
 # For the main executable target (e.g., "Gluttony")
-target_link_options(${CORE_NAME}                                        PRIVATE -rdynamic)
+target_link_options(${CORE_NAME}                                        PRIVATE
+    -rdynamic
+    -static-libstdc++
+    -static-libgcc
+)
 target_link_libraries(${CORE_NAME}                                      PRIVATE
     glm
     imgui

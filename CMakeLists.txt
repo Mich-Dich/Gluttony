@@ -24,6 +24,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED                                         ON)
 set(CMAKE_CXX_EXTENSIONS                                                OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS                                       ON)
 
+# --- GCC 16.2 runtime: apply RUNPATH to every target (exe + plugins) ------------------
+if(GCC16_RUNTIME_DIR)
+    set(CMAKE_BUILD_RPATH                                               "${GCC16_RUNTIME_DIR}")
+    set(CMAKE_INSTALL_RPATH                                             "${GCC16_RUNTIME_DIR}")
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH                                  FALSE)
+    message(STATUS                                                      "[gcc-16.2] Global RPATH -> ${GCC16_RUNTIME_DIR}")
+endif()
+
 if(UNIX AND NOT APPLE)
     add_compile_definitions(PLATFORM_LINUX)
     set(LINUX_SYSTEM_LIBS                                               pthread dl) # set a variable for system libraries
