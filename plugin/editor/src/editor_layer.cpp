@@ -692,6 +692,8 @@ namespace GLT::editor {
         m_dockspace_id = ImGui::GetID("editor_dockspace");
         const ImVec2  dockspace_size(vp->WorkSize.x, vp->WorkSize.y - toolbar_height);
 
+        IM_ASSERT((ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable) && "Docking must be enabled");
+
         // Build the layout on the very first frame, after a manual reset,
         // or if the docking data is missing from the .ini (e.g. deleted file)
         if (m_reset_layout || (ImGui::DockBuilderGetNode(m_dockspace_id) == nullptr)) {

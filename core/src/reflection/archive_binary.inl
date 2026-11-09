@@ -26,32 +26,6 @@ namespace GLT::reflect {
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
-    // Private helper for variant dispatch
-    template <typename Variant, std::size_t... Is>
-    bool read_variant_index(Variant& out, u8 index, std::index_sequence<Is...>) {
-
-        bool matched = false;
-        // Fold expression calls read_variant_one for each index; the matching one stores its value into out
-        (read_variant_one<Variant, Is>(out, index, matched), ...);
-        if (!matched)
-            m_error = true;
-        return matched;
-    }
-
-
-    template <typename Variant, std::size_t I>
-    void read_variant_one(Variant& out, u8 target_index, bool& matched) {
-
-        if (matched || target_index != I)
-            return;
-        using Alt = std::variant_alternative_t<I, Variant>;
-        Alt alt{};
-        if (read(alt)) {
-            out = std::move(alt);
-            matched = true;
-        }
-    }
-
     // FUNCTION IMPLEMENTATION =========================================================================================
 
     // CLASS IMPLEMENTATION ============================================================================================
@@ -79,6 +53,7 @@ namespace GLT::reflect {
 
     template <typename T>
     void member_serialization<T>::write(const void* ptr, void* writer) {
+
         static_cast<binary_writer*>(writer)->template write<T>(*static_cast<const T*>(ptr));
     }
 
@@ -329,5 +304,31 @@ namespace GLT::reflect {
     // CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
+
+    // Private helper for variant dispatch
+    template <typename Variant, std::size_t... Is>
+    bool binary_reader::read_variant_index(Variant& out, u8 index, std::index_sequence<Is...>) {
+
+        bool matched = false;
+        // Fold expression calls read_variant_one for each index; the matching one stores its value into out
+        (read_variant_one<Variant, Is>(out, index, matched), ...);
+        if (!matched)
+            m_error = true;
+        return matched;
+    }
+
+
+    template <typename Variant, std::size_t I>
+    void binary_reader::read_variant_one(Variant& out, u8 target_index, bool& matched) {
+
+        if (matched || target_index != I)
+            return;
+        using Alt = std::variant_alternative_t<I, Variant>;
+        Alt alt{};
+        if (read(alt)) {
+            out = std::move(alt);
+            matched = true;
+        }
+    }
 
 }

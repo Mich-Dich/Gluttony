@@ -72,7 +72,7 @@ namespace GLT::scripting_cpp {
 
     unique_ref<script::i_script_host> plugin::create_host() {
 
-        LOG(warn, "create_host not implemented yet (Phase 2)")
+        // LOG(warn, "create_host not implemented yet")
         return nullptr;
     }
 

@@ -31,8 +31,16 @@ target_compile_definitions(${PLUGIN_NAME}_static                        PRIVATE
 )
 
 find_package(glslang REQUIRED)
-target_link_libraries(${PLUGIN_NAME}                                    PRIVATE glslang)
-target_link_libraries(${PLUGIN_NAME}_static                             PRIVATE glslang)
+
+if(NOT TARGET glslang::glslang)
+    message(FATAL_ERROR
+        "find_package(glslang) succeeded but the 'glslang::glslang' target is missing. "
+        "This shouldn't happen with Findglslang.cmake — check that CMakeLists' "
+        "CMAKE_MODULE_PATH includes ${CMAKE_SOURCE_DIR}/cmake.")
+endif()
+
+target_link_libraries(${PLUGIN_NAME}                                    PRIVATE glslang::glslang)
+target_link_libraries(${PLUGIN_NAME}_static                             PRIVATE glslang::glslang)
 
 # --- ensures thw dependencies are present in vendor/ ---------------------------------------
 set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")

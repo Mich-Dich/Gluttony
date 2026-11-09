@@ -16,6 +16,8 @@ namespace GLT::reflect {
 
     // CONSTANTS =======================================================================================================
 
+    // MACROS ==========================================================================================================
+
     // TYPES ===========================================================================================================
 
     // STATIC VARIABLES ================================================================================================
@@ -106,6 +108,12 @@ namespace GLT::reflect {
 
     private:
 
+        template <typename Variant, std::size_t... Is>
+        bool read_variant_index(Variant& out, u8 index, std::index_sequence<Is...>);
+
+        template <typename Variant, std::size_t I>
+        void read_variant_one(Variant& out, u8 target_index, bool& matched);
+
         template <typename T>
         bool read_aggregate(T& out);
 
@@ -156,31 +164,31 @@ namespace GLT::reflect {
     template <typename A>
     struct is_byte_vector<std::vector<std::byte, A>> : std::true_type {};
 
-    // Internal-only — kept in the header so template specializations are
-    // reachable from [write] / [read] bodies
+    // Internal-only — kept in the header so template specializations are reachable from [write] / [read] bodies.
+    //
+    // Implemented as a trait expression rather than explicit specialisations: on some platforms engine aliases
+    // (e.g. `asset::handle`) collapse to a builtin type (`u64`), and a macro-per-type scheme would emit two
+    // specialisations for the same underlying type — a redefinition error. `std::is_same_v<u64, GLT::asset::handle>`
+    // is `true` when they alias and `false` when they're distinct types, which is exactly what we want
 
     template <typename T>
-    struct is_leaf_serializable : std::false_type {};
+    inline constexpr bool is_leaf_serializable_v =
+        std::is_arithmetic_v<T>                   ||   // bool, u8..u64, i8..i64, f32, f64
+        std::is_enum_v<T>                         ||
+        std::is_same_v<T, std::string>            ||
+        std::is_same_v<T, std::filesystem::path>  ||
+        std::is_same_v<T, GLT::UUID>              ||
+        std::is_same_v<T, GLT::world::entity_id>  ||
+        std::is_same_v<T, GLT::asset::handle>     ||
+        std::is_same_v<T, glm::vec2>              ||
+        std::is_same_v<T, glm::vec3>              ||
+        std::is_same_v<T, glm::vec4>              ||
+        std::is_same_v<T, glm::quat>              ||
+        std::is_same_v<T, glm::mat3>              ||
+        std::is_same_v<T, glm::mat4>;
 
-    // MACROS ==========================================================================================================
-
-    #define GLT_REFLECT_LEAF(TYPE) template <> struct is_leaf_serializable<TYPE> : std::true_type {};
-    GLT_REFLECT_LEAF(bool)
-    GLT_REFLECT_LEAF(u8)  GLT_REFLECT_LEAF(u16) GLT_REFLECT_LEAF(u32) GLT_REFLECT_LEAF(u64)
-    GLT_REFLECT_LEAF(i8)  GLT_REFLECT_LEAF(i16) GLT_REFLECT_LEAF(i32) GLT_REFLECT_LEAF(i64)
-    GLT_REFLECT_LEAF(f32) GLT_REFLECT_LEAF(f64)
-    GLT_REFLECT_LEAF(std::string)
-    GLT_REFLECT_LEAF(std::filesystem::path)
-    GLT_REFLECT_LEAF(GLT::UUID)
-    GLT_REFLECT_LEAF(GLT::world::entity_id)
-    GLT_REFLECT_LEAF(GLT::asset::handle)
-    GLT_REFLECT_LEAF(glm::vec2)
-    GLT_REFLECT_LEAF(glm::vec3)
-    GLT_REFLECT_LEAF(glm::vec4)
-    GLT_REFLECT_LEAF(glm::quat)
-    GLT_REFLECT_LEAF(glm::mat3)
-    GLT_REFLECT_LEAF(glm::mat4)
-    #undef GLT_REFLECT_LEAF
+    template <typename T>
+    struct is_leaf_serializable : std::bool_constant<is_leaf_serializable_v<T>> {};
 
 }
 

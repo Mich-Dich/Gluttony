@@ -7,11 +7,10 @@
             "displayName": "debug (launcher)",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/../build/launcher/debug",
+            "toolchainFile": "${sourceDir}/../cmake/gcc-16.2-toolchain.cmake",
             "cacheVariables": {
-                "CMAKE_C_COMPILER":             "/opt/gcc-16.2/bin/gcc-16.2",
-                "CMAKE_CXX_COMPILER":           "/opt/gcc-16.2/bin/g++-16.2",
                 "CMAKE_CXX_STANDARD": "26",
-                "CMAKE_BUILD_TYPE":             "Debug"
+                "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
@@ -19,11 +18,10 @@
             "displayName": "release (launcher)",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/../build/launcher/release",
+            "toolchainFile": "${sourceDir}/../cmake/gcc-16.2-toolchain.cmake",
             "cacheVariables": {
-                "CMAKE_C_COMPILER":             "/opt/gcc-16.2/bin/gcc-16.2",
-                "CMAKE_CXX_COMPILER":           "/opt/gcc-16.2/bin/g++-16.2",
                 "CMAKE_CXX_STANDARD": "26",
-                "CMAKE_BUILD_TYPE":             "Release"
+                "CMAKE_BUILD_TYPE": "Release"
             }
         }
     ],

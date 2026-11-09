@@ -60,14 +60,7 @@ namespace GLT::renderer::vk_ray {
     void renderer::imgui_init() {
 
         ImGui::SetCurrentContext(imgui_config::get_context_imgui());
-        // ImGuiIO& io = ImGui::GetIO();
-        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
-        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;        // Enable Gamepad Controls
-        // io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
-        // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
-
         mp_window->imgui_init(GLT::render::backend_api::vulkan);
-
         ASSERT(ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_4,
             [](const char* function_name, void* user_data) -> PFN_vkVoidFunction {
 

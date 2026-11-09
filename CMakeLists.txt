@@ -15,6 +15,7 @@
 cmake_minimum_required(VERSION                                          3.20)
 project(Gluttony VERSION 0.0                                            LANGUAGES CXX)
 include(GNUInstallDirs)
+list(PREPEND CMAKE_MODULE_PATH                                          "${CMAKE_SOURCE_DIR}/cmake")
 include(${CMAKE_SOURCE_DIR}/helper.cmake)
 option(CORE_VERBOSE_INFO                                                "Show detailed file list for Core" OFF)
 set(CORE_VERBOSE_INFO                                                   TRUE)
@@ -122,8 +123,8 @@ install(DIRECTORY ${GLM_DIR}/glm/
 
 include(CMakePackageConfigHelpers)
 configure_package_config_file(
-    "${CMAKE_SOURCE_DIR}/cmake/GluttonyConfig.cmake.in"
-    "${CMAKE_BINARY_DIR}/GluttonyConfig.cmake"
+    "${CMAKE_SOURCE_DIR}/cmake/gluttony_config.cmake.in"
+    "${CMAKE_BINARY_DIR}/gluttony_config.cmake"
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Gluttony
 )
 write_basic_package_version_file(
@@ -132,7 +133,7 @@ write_basic_package_version_file(
     COMPATIBILITY SameMajorVersion
 )
 install(FILES
-    "${CMAKE_BINARY_DIR}/GluttonyConfig.cmake"
+    "${CMAKE_BINARY_DIR}/gluttony_config.cmake"
     "${CMAKE_BINARY_DIR}/GluttonyConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Gluttony
 )

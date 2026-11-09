@@ -268,3 +268,4 @@ namespace GLT::reflect {
 
 #include "reflection/build.inl"
 #include "reflection/registry.inl"
+#include "reflection/archive_binary.h" 

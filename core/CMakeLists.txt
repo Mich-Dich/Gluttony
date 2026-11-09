@@ -16,8 +16,6 @@ file(GLOB_RECURSE                                                       CORE_SOU
 )
 add_executable(${CORE_NAME}                                             ${CORE_SOURCES})
 set_target_properties(${CORE_NAME} PROPERTIES
-    BUILD_RPATH                                                         "/opt/gcc-16.2/lib64"
-    INSTALL_RPATH                                                       "/opt/gcc-16.2/lib64"
     RUNTIME_OUTPUT_DIRECTORY                                            "${COMPILE_OUTPUT_DIR}"
     CXX_VISIBILITY_PRESET                                               default
     VISIBILITY_INLINES_HIDDEN                                           OFF
@@ -42,7 +40,15 @@ set_target_properties(${CORE_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY                                            "${COMPILE_OUTPUT_DIR}"
     CXX_VISIBILITY_PRESET                                               default
     VISIBILITY_INLINES_HIDDEN                                           OFF
+    JOB_POOL_LINK                                                       link_pool
 )
+if(GCC16_RUNTIME_DIR)
+    set_target_properties(${CORE_NAME} PROPERTIES
+        BUILD_RPATH                                                     "${GCC16_RUNTIME_DIR}"
+        INSTALL_RPATH                                                   "${GCC16_RUNTIME_DIR}"
+    )
+endif()
+
 # For the main executable target (e.g., "Gluttony")
 target_link_options(${CORE_NAME}                                        PRIVATE -rdynamic)
 target_link_libraries(${CORE_NAME}                                      PRIVATE
