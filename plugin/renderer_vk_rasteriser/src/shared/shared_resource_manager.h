@@ -213,6 +213,7 @@ namespace GLT::renderer::vk_rasterizer {
         void destroy_material_shaders(material_slot& slot);
         bool load_material_shaders(material_slot& slot, const GLT::asset::material::material_asset& asset);
         vk::Pipeline create_material_pipeline(const material_slot& slot, material_pipeline_kind kind);
+        void rebuild_material_pipelines(material_slot& slot);
 
         // shader compiler internal ------------------------------------------------------------------------------------
 

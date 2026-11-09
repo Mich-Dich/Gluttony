@@ -25,45 +25,64 @@ namespace GLT::renderer::vk_rasterizer::settings {
     // Stable name required - two plugins can't both be "renderer.vk_rasterizer.visual"
     struct [[=name{"renderer.vk_rasterizer.visual"}]] visual {
 
-        // ---- Ambient Occlusion --------------------------------------------------
+        // ---- Post Process -------------------------------------------------------
 
-        [[=category{"Ambient Occlusion"}]]
-        [[=display_name{"Samples"}]]
-        [[=tooltip{"AO shadow rays cast per hit"}]]
-        [[=range{1.0, 64.0}]]
-        u32 ao_samples = 4u;
-
-
-        [[=category{"Ambient Occlusion"}]]
-        [[=display_name{"Radius"}]]
-        [[=range{0.0, 500.0}]]
-        f32 ao_radius = 30.0f;
+        [[=category{"Post Process"}]]
+        [[=display_name{"Exposure (EV)"}]]
+        [[=tooltip{"Exposure compensation in stops. Each +1 doubles the brightness before tonemapping"}]]
+        [[=range{-10.0, 10.0}]]
+        f32 exposure_ev = 0.0f;
 
 
-        [[=category{"Ambient Occlusion"}]]
-        [[=display_name{"Ray Bias"}]]
-        [[=range{0.0, 0.1}]]
-        f32 ao_ray_bias = 0.005f;
+        [[=category{"Post Process"}]]
+        [[=display_name{"Tonemapper"}]]
+        [[=tooltip{"0 = ACES (fitted)   1 = AgX   2 = Reinhard   3 = None (clamp)"}]]
+        [[=range{0.0, 3.0}]]
+        u32 tonemapper = 0u;
 
-        // ---- Lighting -----------------------------------------------------------
+        // ---- Ambient ------------------------------------------------------------
 
-        [[=category{"Lighting"}]]
-        [[=display_name{"Indirect Samples"}]]
-        [[=range{1.0, 16.0}]]
-        u32 indirect_samples_base = 3u;
-
-        // ---- Temporal -----------------------------------------------------------
-
-        [[=category{"Temporal"}]]
-        [[=display_name{"Max History"}]]
-        [[=range{1.0, 256.0}]]
-        u32 temporal_max_history = 64u;
+        [[=category{"Ambient"}]]
+        [[=display_name{"Intensity"}]]
+        [[=tooltip{"Scale of the sky/ground ambient light (stand-in for image based lighting until the sky pass exists)"}]]
+        [[=range{0.0, 20.0}]]
+        f32 ambient_intensity = 1.0f;
 
 
-        [[=category{"Temporal"}]]
-        [[=display_name{"Clip K"}]]
-        [[=range{0.0, 10.0}]]
-        f32 temporal_clip_k = 2.0f;
+        [[=category{"Ambient"}]]
+        [[=display_name{"Sky R"}]]
+        [[=range{0.0, 1.0}]]
+        f32 ambient_sky_r = 0.040f;
+
+
+        [[=category{"Ambient"}]]
+        [[=display_name{"Sky G"}]]
+        [[=range{0.0, 1.0}]]
+        f32 ambient_sky_g = 0.045f;
+
+
+        [[=category{"Ambient"}]]
+        [[=display_name{"Sky B"}]]
+        [[=range{0.0, 1.0}]]
+        f32 ambient_sky_b = 0.055f;
+
+
+        [[=category{"Ambient"}]]
+        [[=display_name{"Ground R"}]]
+        [[=range{0.0, 1.0}]]
+        f32 ambient_ground_r = 0.020f;
+
+
+        [[=category{"Ambient"}]]
+        [[=display_name{"Ground G"}]]
+        [[=range{0.0, 1.0}]]
+        f32 ambient_ground_g = 0.018f;
+
+
+        [[=category{"Ambient"}]]
+        [[=display_name{"Ground B"}]]
+        [[=range{0.0, 1.0}]]
+        f32 ambient_ground_b = 0.016f;
     };
 
     // STATIC VARIABLES ================================================================================================

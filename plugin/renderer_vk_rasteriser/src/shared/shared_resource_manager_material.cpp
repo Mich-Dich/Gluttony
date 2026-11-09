@@ -289,6 +289,7 @@ namespace GLT::renderer::vk_rasterizer {
             "", "Material [{}] has no compiled bytecode", (registry->info(handle).name))
 
         entry.blend = asset->blend;
+        entry.flags = asset->flags;
         pack_material(slot);
 
         if (!entry.pipeline) {
@@ -526,6 +527,9 @@ namespace GLT::renderer::vk_rasterizer {
         if (!asset)
             return;
 
+        slot.blend = asset->blend;
+        slot.flags = asset->flags;
+
         if (asset->bytecode_hash != slot.bytecode_hash) {
             destroy_material_shaders(slot);
             bool ok = false;
@@ -533,6 +537,12 @@ namespace GLT::renderer::vk_rasterizer {
                 ok = load_material_shaders(slot, *asset);
             if (ok)
                 slot.bytecode_hash = asset->bytecode_hash;
+
+        } else if (slot.pipeline && (slot.pipeline_blend != slot.blend || slot.pipeline_flags != slot.flags)) {
+
+            // Blend mode / double-sided changed without new bytecode (e.g. toggled in the material editor): same shader
+            // modules, new fixed-function state
+            rebuild_material_pipelines(slot);
         }
 
         for (u32 i = 0; i < MATERIAL_TEXTURE_SLOTS; ++i) {
@@ -645,7 +655,65 @@ namespace GLT::renderer::vk_rasterizer {
         slot.depth_pipeline = create_material_pipeline(slot, material_pipeline_kind::depth);
         if (!slot.pipeline || !slot.depth_pipeline) { destroy_material_shaders(slot); return false; }
         m_live_pipeline_count += 2;
+        slot.pipeline_blend = slot.blend;
+        slot.pipeline_flags = slot.flags;
         return true;
+    }
+
+
+    void shared_resource_manager::rebuild_material_pipelines(material_slot& slot) {
+
+        const vk::Pipeline main = create_material_pipeline(slot, material_pipeline_kind::main);
+        const vk::Pipeline depth = create_material_pipeline(slot, material_pipeline_kind::depth);
+        if (!main || !depth) {
+            if (main)  m_device.destroyPipeline(main);
+            if (depth) m_device.destroyPipeline(depth);
+            LOG(warn, "Failed to rebuild pipelines after a blend/flag change, keeping the previous state")
+            slot.pipeline_blend = slot.blend;           // don't retry every poll
+            slot.pipeline_flags = slot.flags;
+            return;
+        }
+
+        // Old pipelines may still be bound by in-flight frames
+        m_retire.retire([device = m_device, old_main = slot.pipeline, old_depth = slot.depth_pipeline]() {
+            if (old_main)  device.destroyPipeline(old_main);
+            if (old_depth) device.destroyPipeline(old_depth);
+        });
+        slot.pipeline = main;
+        slot.depth_pipeline = depth;
+        slot.pipeline_blend = slot.blend;
+        slot.pipeline_flags = slot.flags;
+    }
+
+
+    // Blend state per translucent mode, targeting the linear HDR scene colour. Alpha accumulates coverage
+    // (scene_hdr is cleared to alpha 0), which the tonemap pass uses to composite translucents over the background
+    static vk::PipelineColorBlendAttachmentState translucent_blend_state(GLT::asset::material::blend_mode blend) {
+
+        using bm = GLT::asset::material::blend_mode;
+        using BF = vk::BlendFactor;
+
+        vk::PipelineColorBlendAttachmentState cb{};
+        cb.blendEnable = VK_TRUE;
+        cb.colorBlendOp = vk::BlendOp::eAdd;
+        cb.alphaBlendOp = vk::BlendOp::eAdd;
+        cb.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                            vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+
+        auto set = [&](BF src_c, BF dst_c, BF src_a, BF dst_a) {
+            cb.srcColorBlendFactor = src_c; cb.dstColorBlendFactor = dst_c;
+            cb.srcAlphaBlendFactor = src_a; cb.dstAlphaBlendFactor = dst_a;
+        };
+
+        switch (blend) {
+            case bm::additive:          set(BF::eSrcAlpha, BF::eOne,                    BF::eZero, BF::eOne);                  break;  // rgb * opacity added
+            case bm::modulate:          set(BF::eDstColor, BF::eZero,                   BF::eZero, BF::eOne);                  break;  // dst * rgb
+            case bm::alpha_composite:   set(BF::eOne,      BF::eOneMinusSrcAlpha,       BF::eOne,  BF::eOneMinusSrcAlpha);     break;  // premultiplied
+            case bm::alpha_holdout:     set(BF::eZero,     BF::eOneMinusSrcAlpha,       BF::eZero, BF::eOneMinusSrcAlpha);     break;  // cut out
+            case bm::translucent:
+            default:                    set(BF::eSrcAlpha, BF::eOneMinusSrcAlpha,       BF::eOne,  BF::eOneMinusSrcAlpha);     break;  // classic "over"
+        }
+        return cb;
     }
 
 
@@ -671,23 +739,32 @@ namespace GLT::renderer::vk_rasterizer {
         vk::PipelineViewportStateCreateInfo vp{};
         vp.viewportCount = 1; vp.scissorCount = 1;
 
+        const bool translucent = slot.is_translucent();
+
         vk::PipelineRasterizationStateCreateInfo rs{};
         rs.polygonMode = vk::PolygonMode::eFill;
-        rs.cullMode = vk::CullModeFlagBits::eBack;
+        rs.cullMode = slot.is_double_sided() ? vk::CullModeFlagBits::eNone : vk::CullModeFlagBits::eBack;
         rs.frontFace = vk::FrontFace::eCounterClockwise;
         rs.lineWidth = 1.0f;
 
         vk::PipelineMultisampleStateCreateInfo ms{};
         ms.rasterizationSamples = vk::SampleCountFlagBits::e1;
 
+        // Opaque / masked main pass: depth equal against the pre-pass. Translucent: not in the pre-pass, so test against
+        // the opaque depth (LESS_OR_EQUAL) without writing it
         vk::PipelineDepthStencilStateCreateInfo ds{};
         ds.depthTestEnable = VK_TRUE;
         ds.depthWriteEnable = (kind == material_pipeline_kind::depth);
-        ds.depthCompareOp = (kind == material_pipeline_kind::main) ? vk::CompareOp::eEqual : vk::CompareOp::eLess;
+        if (kind == material_pipeline_kind::main)
+            ds.depthCompareOp = translucent ? vk::CompareOp::eLessOrEqual : vk::CompareOp::eEqual;
+        else
+            ds.depthCompareOp = vk::CompareOp::eLess;
 
         vk::PipelineColorBlendAttachmentState cb{};
         cb.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                             vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        if (kind == material_pipeline_kind::main && translucent)
+            cb = translucent_blend_state(slot.blend);
         vk::PipelineColorBlendStateCreateInfo cbs{};
         if (kind == material_pipeline_kind::main) { cbs.attachmentCount = 1; cbs.pAttachments = &cb; }
 
@@ -696,7 +773,7 @@ namespace GLT::renderer::vk_rasterizer {
         dyn_state.dynamicStateCount = 2; dyn_state.pDynamicStates = dyn;
 
         vk::PipelineRenderingCreateInfo ri{};
-        const vk::Format color_format = vk::Format::eR8G8B8A8Unorm;
+        const vk::Format color_format = HDR_COLOR_FORMAT;          // linear HDR; the tonemap pass converts to display
         const vk::Format depth_format = vk::Format::eD32Sfloat;
         if (kind == material_pipeline_kind::main) {
             ri.colorAttachmentCount = 1;

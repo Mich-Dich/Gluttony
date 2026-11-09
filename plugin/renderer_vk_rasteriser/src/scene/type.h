@@ -87,8 +87,12 @@ namespace GLT::renderer::vk_rasterizer {
 
         glm::mat4                                       light_view_proj{1.0f};
         glm::vec4                                       shadow_params{0.0f}; // x = world per texel, y = normal bias, z = depth bias, w = 1/res
+
+        // Hemispherical sky ambient (linear HDR radiance). Appended so existing shaders keep their offsets
+        glm::vec4                                       ambient_sky{0.0f};      // rgb = radiance from above, a = unused
+        glm::vec4                                       ambient_ground{0.0f};   // rgb = radiance from below, a = unused
     };
-    static_assert(sizeof(camera_ubo_data) == 496, "camera_ubo_data layout mismatch");
+    static_assert(sizeof(camera_ubo_data) == 528, "camera_ubo_data layout mismatch (RendererCamera in shading_strings.h)");
 
 
     // Per-instance SSBO entry. Layout matches [RendererInstance] in shared/shading_strings.h

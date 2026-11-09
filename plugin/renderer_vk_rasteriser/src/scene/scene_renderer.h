@@ -109,6 +109,17 @@ namespace GLT::renderer::vk_rasterizer {
             // be waiting on it when this slot comes around again
         };
 
+        // One translucent (instance, submesh) draw. Translucents bypass GPU culling: they are frustum-culled and sorted
+        // back-to-front on the CPU and drawn directly in the translucent pass
+        struct translucent_draw {
+            f32                                         sort_depth = 0.f;       // view-space distance along the camera forward
+            u32                                         instance = 0;           // index into the instance SSBO (firstInstance)
+            u32                                         material = 0;           // material slot
+            u32                                         mesh = 0;               // shared_mesh_id, or procedural slot index
+            u32                                         submesh = 0;
+            bool                                        procedural = false;
+        };
+
         struct cluster_grid_params {
             u32                                         grid_x = 0;
             u32                                         grid_y = 0;
@@ -142,6 +153,7 @@ namespace GLT::renderer::vk_rasterizer {
         void update_local_shadows();
         void update_camera_ubo();
         void update_globals();
+        void prepare_translucent_draws();           // frustum cull + back-to-front sort (needs the camera)
         void write_scene_material_descriptors();
 
         // per-frame GPU work (render()) -------------------------------------------------------------------------------
@@ -175,6 +187,8 @@ namespace GLT::renderer::vk_rasterizer {
         void destroy_local_shadow_resources();
         void create_blit_pipeline();
         void destroy_blit_pipeline();
+        void create_tonemap_pipeline();
+        void destroy_tonemap_pipeline();
 
         // passes ------------------------------------------------------------------------------------------------------
 
@@ -184,12 +198,15 @@ namespace GLT::renderer::vk_rasterizer {
         void add_clear_light_grid_pass();
         void add_light_culling_pass();
         void add_scene_pass();
+        void add_translucent_pass();
         void add_blit_to_backbuffer_pass();
+        void add_tonemap_pass();
         void add_reset_shadow_draw_count_pass();
         void add_shadow_cull_pass();
         void add_shadow_pass();
         void add_local_shadow_passes();
         void add_clear_backbuffer_pass();
+        void add_output_to_shader_read_pass();      // offscreen: leave the output image ready for ImGui sampling
 
         // debug draw --------------------------------------------------------------------------------------------------
 
@@ -206,6 +223,7 @@ namespace GLT::renderer::vk_rasterizer {
         void end_imgui_frame();
         void abort_imgui_frame();               // close an opened ImGui frame when render() bails out before recording
         void sync_swapchain_to_window();        // surface only: rebuild the swapchain if the window size changed
+        void seed_resized_output(GLT::renderer::vk_rasterizer::image& from, GLT::renderer::vk_rasterizer::image& to);
         void add_imgui_pass();
         void recreate_imgui_framebuffers();
 
@@ -254,6 +272,8 @@ namespace GLT::renderer::vk_rasterizer {
         std::vector<gpu_instance_data>                                      m_packed_instances{};
         u32                                                                 m_instance_count = 0;
         std::vector<u32>                                                    m_scene_materials{};        // unique material slots drawn this frame
+        std::vector<translucent_draw>                                       m_translucent_candidates{}; // from build_instance_buffer
+        std::vector<translucent_draw>                                       m_translucent_draws{};      // visible, sorted far -> near
 
         // Materials -> draw ranges. Every asset instance owns `submesh_count` consecutive entries in m_material_table
         // (gpu_instance_data::material_index = first entry). Each scene material gets an exact command range sized by the
@@ -334,10 +354,17 @@ namespace GLT::renderer::vk_rasterizer {
         vk::Pipeline                                                        m_blit_pipeline = nullptr;
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_blit_desc_buffers{};
 
+        // Tonemap (HDR -> display, both target kinds)
+        vk::DescriptorSetLayout                                             m_tonemap_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_tonemap_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_tonemap_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_tonemap_desc_buffers{};
+
         // Graph + target handles
         unique_ref<graph::render_graph>                                     m_graph;
         graph::texture_handle                                               m_backbuffer_handle{};
-        graph::texture_handle                                               m_scene_color{};
+        graph::texture_handle                                               m_scene_color{};        // display-referred (LDR) output
+        graph::texture_handle                                               m_scene_hdr{};          // linear HDR, lit passes render here
         graph::texture_handle                                               m_depth_target{};
 
         u32                                                                 m_frame_counter = 0;

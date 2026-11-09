@@ -24,6 +24,10 @@ namespace GLT::editor::file_watcher {
 
     void shutdown();
 
+    // Posts the file events collected by the watcher thread on the event bus. Main thread only, once per frame.
+    // The event bus is not thread-safe, so the watcher thread never posts itself: it only queues
+    void pump();
+
 
     // Watch a directory. If `recursive` is true, subdirectories are watched too,
     // including new ones created later. Returns true on success.

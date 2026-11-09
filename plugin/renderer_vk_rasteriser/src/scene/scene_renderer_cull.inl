@@ -158,6 +158,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_packed_instances.clear();
         m_material_table.clear();
         m_scene_materials.clear();
+        m_translucent_candidates.clear();
         m_procedural_draw_slots.clear();
         m_asset_instance_count = 0;
 
@@ -228,8 +229,15 @@ namespace GLT::renderer::vk_rasterizer {
 
                 m_material_table.push_back(material);
                 if (material < MAX_MATERIALS) {
-                    note_material(material);
-                    m_material_draw_counts[material]++;
+                    note_material(material);            // translucents need their material descriptor written too
+
+                    // Translucent submeshes are not counted: their range stays empty, so cull.comp skips them (and they
+                    // stay out of the depth pre-pass and shadows). They are drawn sorted in the translucent pass instead
+                    if (m_shared->get_material(material).is_translucent())
+                        m_translucent_candidates.push_back({ 0.f, static_cast<u32>(m_packed_instances.size() - 1), material,
+                            rit->second, sm, false });
+                    else
+                        m_material_draw_counts[material]++;
                 }
             }
         }
@@ -261,6 +269,9 @@ namespace GLT::renderer::vk_rasterizer {
             m_procedural_draw_slots.push_back(id - 1);
 
             note_material(pm.material_slot);
+            if (pm.material_slot < MAX_MATERIALS && m_shared->get_material(pm.material_slot).is_translucent())
+                m_translucent_candidates.push_back({ 0.f, static_cast<u32>(m_packed_instances.size() - 1), pm.material_slot,
+                    id - 1, 0u, true });
         }
 
         // ---- Material refs: drop last frame's set now that this frame's set is acquired ------------

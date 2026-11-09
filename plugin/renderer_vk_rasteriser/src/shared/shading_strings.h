@@ -56,6 +56,8 @@ struct RendererCamera {
     float4                                                      cluster_depth;      // x=near y=far z=render_w w=render_h
     float4x4                                                    light_view_proj;
     float4                                                      shadow_params;      // x=world_per_texel y=normal_bias z=depth_bias w=1/res
+    float4                                                      ambient_sky;        // rgb = linear radiance from above
+    float4                                                      ambient_ground;     // rgb = linear radiance from below
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<RendererCamera>            renderer_camera;
@@ -87,7 +89,6 @@ struct renderer_vertex_outputs {
 
 // ---- helpers -------------------------------------------------------------------------
 static const float                                              RENDERER_PI = 3.14159265359;
-static const float3                                             RENDERER_AMBIENT = float3(0.03, 0.03, 0.03);
 
 float renderer_linearize_depth(float d) {
 
@@ -165,9 +166,27 @@ float3 renderer_F_Schlick(float VoH, float3 f0) {
     return f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0);
 }
 
-float3 renderer_output_transform(float3 c) {
-    c = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
-    return pow(c, float3(1.0 / 2.2));
+// ---- ambient ------------------------------------------------------------------------
+// Hemispherical sky: radiance blends from ground (straight down) to sky (straight up). Stand-in for a captured
+// environment until the sky pass provides one (cubemap IBL), same call sites
+float3 renderer_sky_radiance(float3 dir) {
+    float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+    return lerp(renderer_camera.ambient_ground.rgb, renderer_camera.ambient_sky.rgb, t);
+}
+
+// Analytic fit of the split-sum environment BRDF (Karis, "Physically Based Shading on Mobile"). Replaces the 2D LUT
+float3 renderer_env_brdf_approx(float3 f0, float roughness, float NoV) {
+    const float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+    const float4 c1 = float4( 1.0,  0.0425,  1.040, -0.040);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
+    float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + ab.y;
+}
+
+// Specular occlusion from AO (Lagarde & de Rousiers, "Moving Frostbite to PBR")
+float renderer_specular_occlusion(float NoV, float ao, float a) {
+    return clamp(pow(NoV + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
 }
 )SLANG";
 
@@ -281,13 +300,17 @@ material_textures renderer_assemble_textures() {
 }
 
 [shader("fragment")]
-float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) : SV_Target {
+float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position, bool is_front : SV_IsFrontFace) : SV_Target {
 
     material_textures tex = renderer_assemble_textures();
 
+    // Double-sided materials (no back-face culling): back faces see the surface from behind, so the interpolated
+    // normal points away from the viewer -> flip it. Single-sided pipelines cull back faces, so this never triggers there
+    const float3 geo_normal = normalize(i.normal_ws) * (is_front ? 1.0 : -1.0);
+
     surface_input s = {};
     s.position_ws = i.position_ws;
-    s.normal_ws = normalize(i.normal_ws);
+    s.normal_ws = geo_normal;
     s.tangent_ws = i.tangent_ws;
     s.uv0 = i.uv0;
     s.uv1 = float2(0.0, 0.0);
@@ -300,7 +323,7 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) : S
 
     surface_output o = surface_evaluate(s, renderer_material_params, tex);
 
-    const float3 Ng = normalize(i.normal_ws);
+    const float3 Ng = geo_normal;
     const float3 N = normalize(o.normal_ws);
     const float3 V = s.view_dir_ws;
     const float  NoV = max(dot(N, V), 1e-4);
@@ -374,10 +397,17 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) : S
         Lo += (diffuse_color + spec * RENDERER_PI) * radiance * NoL;
     }
 
-    float3 ambient = RENDERER_AMBIENT * (diffuse_color + f0 * lerp(0.5, 0.1, o.roughness)) * o.ao;
-    float3 final_c = renderer_output_transform(ambient + Lo + o.emissive);
+    // ---- ambient (split-sum style: irradiance x albedo + prefiltered radiance x env BRDF) ---
+    const float3 R = reflect(-V, N);
+    const float3 R_rough = normalize(lerp(R, N, a));            // rough lobes lean towards the normal
+    const float3 ambient_diffuse = diffuse_color * renderer_sky_radiance(N) * o.ao;
+    const float3 ambient_specular = renderer_env_brdf_approx(f0, o.roughness, NoV) * renderer_sky_radiance(R_rough)
+        * renderer_specular_occlusion(NoV, o.ao, a);
 
-    return float4(final_c, o.opacity);
+    // Linear HDR radiance. Exposure, tonemapping and sRGB encoding happen in the tonemap pass. Clamp to the fp16 range
+    // so a hot light can't produce inf (which the tonemapper would turn into NaN)
+    float3 color = min(ambient_diffuse + ambient_specular + Lo + o.emissive, float3(65000.0, 65000.0, 65000.0));
+    return float4(color, o.opacity);
 }
 )SLANG";
 

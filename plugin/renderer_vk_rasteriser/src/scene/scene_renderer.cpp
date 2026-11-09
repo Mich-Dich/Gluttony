@@ -182,6 +182,7 @@ namespace GLT::renderer::vk_rasterizer {
         update_lights();
         update_shadow();
         update_camera_ubo();
+        prepare_translucent_draws();
         update_globals();
         write_scene_material_descriptors();
         process_debug_primitives();
@@ -267,10 +268,14 @@ namespace GLT::renderer::vk_rasterizer {
             add_clear_light_grid_pass();
             add_light_culling_pass();
             add_scene_pass();
+            add_translucent_pass();             // sorted, blended into scene_hdr after all opaque geometry
+            add_tonemap_pass();                 // HDR -> scene_color (display); debug draw goes on top, unaffected by exposure
             add_debug_draw_pass();
 
             if (!m_offscreen)
                 add_blit_to_backbuffer_pass();
+            else
+                add_output_to_shader_read_pass();
         } else {
 
             if (!m_offscreen)                   // Inactive surface: clear the backbuffer so ImGui's eLoad has valid base content
@@ -407,7 +412,15 @@ namespace GLT::renderer::vk_rasterizer {
         m_plugin.get_vk_device().waitIdle();
 
         if (m_offscreen) {
-            m_output_image->resize({ extent.x, extent.y, 1 });
+            // Build the new target BEFORE dropping the old one and give it valid content in SHADER_READ_ONLY layout.
+            // The UI samples the output image this same frame, before this renderer draws into it again (the main window
+            // renders first); a freshly created image is uninitialised + UNDEFINED, which showed up as garbled,
+            // colour-shifted blocks on GPUs with framebuffer compression while dragging a resize
+            auto next = GLT::create_ref<GLT::renderer::vk_rasterizer::image>();
+            next->resize({ extent.x, extent.y, 1 });
+            if (m_output_image)
+                seed_resized_output(*m_output_image, *next);
+            m_output_image = next;                  // old image (and its ImGui descriptor) released here; GPU is idle
             m_extent = extent;
             return;
         }
@@ -655,6 +668,99 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    // Offscreen output is sampled by ImGui (another submission, typically the main window's next frame). Declaring a
+    // sampled read as the last use makes the graph emit the colour-write -> fragment-read barrier and transition the image
+    // to SHADER_READ_ONLY_OPTIMAL, the layout its ImGui descriptor was created with. Before, it stayed in
+    // COLOR_ATTACHMENT_OPTIMAL with no barrier
+    void scene_renderer::add_output_to_shader_read_pass() {
+
+        m_graph->add_pass("output_to_shader_read",
+            [this](graph::pass_builder& b) {
+                b.read(m_scene_color, graph::texture_usage::sampled);
+                b.set_side_effects(true);
+            },
+            [](graph::pass_context&) {});      // the barrier emitted before this pass is the whole point
+    }
+
+
+    // Scaled copy of the last frame into a freshly resized output image (or a clear if there is no frame yet), leaving
+    // it in SHADER_READ_ONLY_OPTIMAL. Synchronous (immediate_submit waits); caller already waited for the device
+    void scene_renderer::seed_resized_output(GLT::renderer::vk_rasterizer::image& from, GLT::renderer::vk_rasterizer::image& to) {
+
+        const util::allocated_image& src = from.get_allocated_image_ref();
+        const util::allocated_image& dst = to.get_allocated_image_ref();
+        const vk::ImageLayout src_layout = from.get_accessible_image_ref().layout;
+        const bool has_content = src.image && src_layout != vk::ImageLayout::eUndefined;
+
+        if (!dst.image)
+            return;
+
+        const vk::ImageSubresourceRange range{ vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+
+        m_shared->immediate_submit([&](vk::CommandBuffer cmd) {
+
+            std::array<vk::ImageMemoryBarrier2, 2> to_transfer{};
+            u32 barrier_count = 0;
+
+            vk::ImageMemoryBarrier2& dst_barrier = to_transfer[barrier_count++];
+            dst_barrier.srcStageMask = vk::PipelineStageFlagBits2::eNone;
+            dst_barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
+            dst_barrier.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
+            dst_barrier.oldLayout = vk::ImageLayout::eUndefined;
+            dst_barrier.newLayout = vk::ImageLayout::eTransferDstOptimal;
+            dst_barrier.image = dst.image;
+            dst_barrier.subresourceRange = range;
+
+            if (has_content) {
+                vk::ImageMemoryBarrier2& src_barrier = to_transfer[barrier_count++];
+                src_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAllCommands;
+                src_barrier.srcAccessMask = vk::AccessFlagBits2::eMemoryWrite;
+                src_barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
+                src_barrier.dstAccessMask = vk::AccessFlagBits2::eTransferRead;
+                src_barrier.oldLayout = src_layout;
+                src_barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+                src_barrier.image = src.image;
+                src_barrier.subresourceRange = range;
+            }
+
+            vk::DependencyInfo dep{};
+            dep.imageMemoryBarrierCount = barrier_count;
+            dep.pImageMemoryBarriers = to_transfer.data();
+            cmd.pipelineBarrier2(dep);
+
+            if (has_content) {
+                vk::ImageBlit blit{};
+                blit.srcSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+                blit.srcOffsets[1] = vk::Offset3D(static_cast<i32>(src.width), static_cast<i32>(src.height), 1);
+                blit.dstSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+                blit.dstOffsets[1] = vk::Offset3D(static_cast<i32>(dst.width), static_cast<i32>(dst.height), 1);
+                cmd.blitImage(src.image, vk::ImageLayout::eTransferSrcOptimal, dst.image, vk::ImageLayout::eTransferDstOptimal,
+                    blit, vk::Filter::eLinear);
+            } else {
+                const vk::ClearColorValue clear(std::array<f32, 4>{ m_clear_color.r, m_clear_color.g, m_clear_color.b, m_clear_color.a });
+                cmd.clearColorImage(dst.image, vk::ImageLayout::eTransferDstOptimal, clear, range);
+            }
+
+            vk::ImageMemoryBarrier2 to_read{};
+            to_read.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
+            to_read.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
+            to_read.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            to_read.dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead;
+            to_read.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+            to_read.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            to_read.image = dst.image;
+            to_read.subresourceRange = range;
+
+            vk::DependencyInfo read_dep{};
+            read_dep.imageMemoryBarrierCount = 1;
+            read_dep.pImageMemoryBarriers = &to_read;
+            cmd.pipelineBarrier2(read_dep);
+        });
+
+        to.get_accessible_image_ref().layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    }
+
+
     void scene_renderer::add_clear_backbuffer_pass() {
 
         m_graph->add_pass("clear_backbuffer",
@@ -682,3 +788,4 @@ namespace GLT::renderer::vk_rasterizer {
 #include "scene/scene_renderer_cull.inl"
 #include "scene/scene_renderer_shadow.inl"
 #include "scene/scene_renderer_blit.inl"
+#include "scene/scene_renderer_tonemap.inl"

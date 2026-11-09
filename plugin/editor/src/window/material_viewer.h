@@ -108,6 +108,7 @@ namespace GLT::editor {
         // details sections --------------------------------------------------------------------------------------------
 
         void draw_blend_section();
+        void push_live_render_state();      // blend + flags -> live asset (renderer rebuilds pipelines, no recompile needed)
 
         void draw_parameters_section();
 
@@ -174,6 +175,8 @@ namespace GLT::editor {
 
         GLT::asset::material::blend_mode                        m_edit_blend{ GLT::asset::material::blend_mode::opaque };
         GLT::asset::material::blend_mode                        m_baseline_blend{ GLT::asset::material::blend_mode::opaque };
+        u32                                                     m_edit_flags{ 0 };          // GLT::asset::material::material_flag bits
+        u32                                                     m_baseline_flags{ 0 };
 
         texture_handles                                         m_edit_textures{};
         texture_handles                                         m_baseline_textures{};

@@ -505,6 +505,10 @@ namespace GLT::renderer::vk_rasterizer {
             material_slots[i] = acquire_material(mesh.submeshes[i].material);
         slot.material_slots = std::move(material_slots);
 
+        slot.submesh_ranges.resize(submesh_count);
+        for (u32 i = 0; i < submesh_count; ++i)
+            slot.submesh_ranges[i] = glm::uvec2(mesh.submeshes[i].first_index, mesh.submeshes[i].index_count);
+
         // Submesh SSBO — write at the pool-allocated offset
         {
             auto* sub = static_cast<gpu_submesh_data*>(m_dev->map_buffer(m_submesh_data_buffer));

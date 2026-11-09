@@ -51,7 +51,13 @@ namespace GLT::renderer::vk_rasterizer {
 
     // codegen revision (bump to invalidate bytecode) ------------------------------------------------------------------
 
-    static constexpr u32                                            VK_MATERIAL_CODEGEN_REVISION = 1;
+    // Bump whenever shading_strings.h changes: it is mixed into the implementation hash, so materials recompile
+    // rev 2: HDR output (linear radiance, tonemapping moved to a post pass), hemispherical sky ambient
+    // rev 3: SV_IsFrontFace normal flip (double-sided materials)
+    static constexpr u32                                            VK_MATERIAL_CODEGEN_REVISION = 3;
+
+    // Lit scene colour target. Material "main" pipelines are created against this format
+    inline constexpr vk::Format                                     HDR_COLOR_FORMAT = vk::Format::eR16G16B16A16Sfloat;
 
     inline constexpr shared_mesh_id                                 INVALID_SHARED_MESH = 0xFFFFFFFFu;
 
@@ -109,6 +115,7 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         submesh_count = 0;
         bool                                                        alive = false;
         std::vector<u32>                                            material_slots{};
+        std::vector<glm::uvec2>                                     submesh_ranges{};   // per submesh: {first_index, index_count} (CPU copy for direct draws)
         glm::vec3                                                   local_min{0.0f};
         glm::vec3                                                   local_max{0.0f};
         u32                                                         ref_count = 0;
@@ -164,7 +171,21 @@ namespace GLT::renderer::vk_rasterizer {
         vk::Pipeline                                                depth_pipeline = nullptr;
 
         GLT::asset::material::blend_mode                            blend{ GLT::asset::material::blend_mode::opaque };
+        u32                                                         flags = 0;          // material_flag bits
         u64                                                         bytecode_hash = 0;
+
+        // Blend + flags the current pipelines were built with (pack_material rebuilds them when the asset changes)
+        GLT::asset::material::blend_mode                            pipeline_blend{ GLT::asset::material::blend_mode::opaque };
+        u32                                                         pipeline_flags = 0;
+
+        // Translucent modes are drawn in the sorted translucent pass instead of the GPU-culled opaque path
+        [[nodiscard]] bool is_translucent() const noexcept {
+            using bm = GLT::asset::material::blend_mode;
+            return blend != bm::opaque && blend != bm::masked;
+        }
+        [[nodiscard]] bool is_double_sided() const noexcept {
+            return (flags & GLT::asset::material::material_flag::double_sided) != 0;
+        }
     };
 
     // Persistent per-mesh SSBO entry (read by the cull compute shader)

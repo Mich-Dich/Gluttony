@@ -113,6 +113,7 @@ namespace GLT::renderer::vk_rasterizer {
         GETTER_C(GLT::platform::i_window_plugin*,                               window, mp_window)
         GETTER_C(shared_resource_manager*,                                      shared, m_shared.get())
         GETTER_C(GLT::platform::window_handle,                                  primary_window, m_primary_window)
+        [[nodiscard]] const settings::visual& visual_settings() const { return m_visual_settings; }
 
     private:
 

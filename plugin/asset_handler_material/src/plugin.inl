@@ -171,6 +171,12 @@ namespace GLT::asset::handler::material {
                 LOG(warn, "[{}] CHUNK_MATERIAL_BLEND_MODE out of range ({}) - defaulting to opaque", info.name, b[0])
         }
 
+        // ---- flags (absent => 0, older files) -------------------------------------------------------------------------
+
+        asset->flags = 0;
+        if (const auto f = reader.get_as<u32>(CHUNK_MATERIAL_FLAGS); f.size() == 1)
+            asset->flags = f[0];
+
         // ---- texture refs + dependency resolution -------------------------------------------------------------------
 
         asset->textures.fill(INVALID_HANDLE);
@@ -258,6 +264,9 @@ namespace GLT::asset::handler::material {
             const u32 blend = static_cast<u32>(mat.blend);
             out.write_chunk(CHUNK_MATERIAL_BLEND_MODE, std::as_bytes(std::span{ &blend, 1 }));
         }
+
+        // material flags (double sided, ...) - authored, not derived
+        out.write_chunk(CHUNK_MATERIAL_FLAGS, std::as_bytes(std::span{ &mat.flags, 1 }));
 
         // texture refs + dependency declarations ----------------------------------------------------------------------
 

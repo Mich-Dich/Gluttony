@@ -30,6 +30,20 @@ namespace GLT::editor::file_watcher {
 
     static constexpr std::size_t s_read_buffer_size = 16 * 1024;
 
+    // Events detected on the watcher thread, waiting for pump() on the main thread. Posting from the watcher thread raced
+    // with the main thread inside event_bus::bus::post (shared snapshot pool / depth counter -> out-of-range index abort)
+    struct pending_event {
+        file_event_type                 type;
+        std::filesystem::path           path;
+    };
+    static std::mutex                   s_pending_mutex{};
+    static std::vector<pending_event>   s_pending{};
+
+    static void queue_event(file_event_type type, const std::filesystem::path& path) {
+        std::lock_guard lock(s_pending_mutex);
+        s_pending.push_back({ type, path });
+    }
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -236,29 +250,29 @@ namespace GLT::editor::file_watcher {
         const std::filesystem::path full = (ev->len > 0) ? (entry.path / ev->name) : entry.path;
 
         if (ev->mask & IN_CREATE) {
-            GLT::event_bus::post(GLT::editor::file_event(file_event_type::created, full));
+            queue_event(file_event_type::created, full);
             if ((ev->mask & IN_ISDIR) && entry.recursive)
                 add_watch(full, /*recursive=*/true);
         }
 
         if (ev->mask & IN_CLOSE_WRITE) {
-            GLT::event_bus::post(GLT::editor::file_event(file_event_type::modified, full));
+            queue_event(file_event_type::modified, full);
         }
 
         if (ev->mask & IN_DELETE) {
-            GLT::event_bus::post(GLT::editor::file_event(file_event_type::deleted, full));
+            queue_event(file_event_type::deleted, full);
             if (ev->mask & IN_ISDIR)
                 remove_watches_under(full);
         }
 
         if (ev->mask & IN_MOVED_FROM) {
-            GLT::event_bus::post(GLT::editor::file_event(file_event_type::moved_from, full));
+            queue_event(file_event_type::moved_from, full);
             if (ev->mask & IN_ISDIR)
                 remove_watches_under(full);
         }
 
         if (ev->mask & IN_MOVED_TO) {
-            GLT::event_bus::post(GLT::editor::file_event(file_event_type::moved_to, full));
+            queue_event(file_event_type::moved_to, full);
             if ((ev->mask & IN_ISDIR) && entry.recursive)
                 add_watch(full, /*recursive=*/true);
         }
@@ -304,6 +318,23 @@ namespace GLT::editor::file_watcher {
 
         if (s_wakeup_fd  != -1) 
             ::close(s_wakeup_fd);
+
+        // The thread is joined: nobody queues anymore. Drop what was never pumped (subscribers may already be gone)
+        std::lock_guard lock(s_pending_mutex);
+        s_pending.clear();
+    }
+
+
+    void pump() {
+
+        std::vector<pending_event> events;
+        {
+            std::lock_guard lock(s_pending_mutex);
+            events.swap(s_pending);
+        }
+
+        for (auto& event : events)
+            GLT::event_bus::post(GLT::editor::file_event(event.type, std::move(event.path)));
     }
 
 

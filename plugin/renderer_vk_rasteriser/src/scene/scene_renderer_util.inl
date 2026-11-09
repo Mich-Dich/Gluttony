@@ -103,6 +103,10 @@ namespace GLT::renderer::vk_rasterizer {
         cam.flags.x = m_asset_instance_count;   // cull.comp: only the asset-backed prefix of this frame's instance SSBO is valid
         cam.flags.y = 1u;                       // cull.comp: main view writes the draw statistics (shadow cull does not)
 
+        const settings::visual& visual = m_plugin.visual_settings();
+        cam.ambient_sky = glm::vec4(visual.ambient_sky_r, visual.ambient_sky_g, visual.ambient_sky_b, 0.f) * visual.ambient_intensity;
+        cam.ambient_ground = glm::vec4(visual.ambient_ground_r, visual.ambient_ground_g, visual.ambient_ground_b, 0.f) * visual.ambient_intensity;
+
         // Frustum planes
         const glm::mat4 t = glm::transpose(cam.view_proj);
         glm::vec4 p[6] = { t[3] + t[0], t[3] - t[0], t[3] + t[1], t[3] - t[1], t[3] + t[2], t[3] - t[2] };
@@ -112,6 +116,73 @@ namespace GLT::renderer::vk_rasterizer {
         }
 
         m_plugin.get_dev()->update_buffer(m_camera_ubos[m_current_frame], &cam, sizeof(cam));
+    }
+
+
+    // Translucent candidates -> visible list sorted back-to-front. Bounds are the whole mesh's AABB (per-submesh bounds
+    // are not stored), so all submeshes of one instance share a sort depth and keep their submesh order
+    void scene_renderer::prepare_translucent_draws() {
+
+        m_translucent_draws.clear();
+        if (m_translucent_candidates.empty())
+            return;
+
+        glm::vec4 planes[6];
+        extract_frustum_planes(camera_projection() * m_active_camera.view, planes);
+
+        const glm::mat4& view = m_active_camera.view;
+        const glm::vec3 camera_pos = m_active_camera.position;
+        const glm::vec3 camera_forward = -glm::vec3(view[0][2], view[1][2], view[2][2]);
+
+        m_translucent_draws.reserve(m_translucent_candidates.size());
+        for (translucent_draw draw : m_translucent_candidates) {
+
+            glm::vec3 local_min, local_max;
+            if (draw.procedural) {
+                const auto& pm = m_procedural_meshes[draw.mesh];
+                local_min = pm.local_min;
+                local_max = pm.local_max;
+            } else {
+                const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
+                if (!slot || !slot->alive || draw.submesh >= slot->submesh_ranges.size())
+                    continue;
+                local_min = slot->local_min;
+                local_max = slot->local_max;
+            }
+
+            // World AABB of the transformed local box
+            const glm::mat4& model = m_packed_instances[draw.instance].model;
+            glm::vec3 world_min(std::numeric_limits<f32>::max());
+            glm::vec3 world_max(std::numeric_limits<f32>::lowest());
+            for (u32 corner = 0; corner < 8; ++corner) {
+                const glm::vec3 local((corner & 1u) ? local_max.x : local_min.x,
+                                      (corner & 2u) ? local_max.y : local_min.y,
+                                      (corner & 4u) ? local_max.z : local_min.z);
+                const glm::vec3 world = glm::vec3(model * glm::vec4(local, 1.f));
+                world_min = glm::min(world_min, world);
+                world_max = glm::max(world_max, world);
+            }
+
+            bool visible = true;
+            for (const glm::vec4& plane : planes) {
+                const glm::vec3 positive(plane.x >= 0.f ? world_max.x : world_min.x,
+                                         plane.y >= 0.f ? world_max.y : world_min.y,
+                                         plane.z >= 0.f ? world_max.z : world_min.z);
+                if (glm::dot(glm::vec3(plane), positive) + plane.w < 0.f) {
+                    visible = false;
+                    break;
+                }
+            }
+            if (!visible)
+                continue;
+
+            draw.sort_depth = glm::dot((world_min + world_max) * 0.5f - camera_pos, camera_forward);
+            m_translucent_draws.push_back(draw);
+        }
+
+        // Far -> near. Stable so submeshes of one instance (equal depth) keep their authored order
+        std::stable_sort(m_translucent_draws.begin(), m_translucent_draws.end(),
+            [](const translucent_draw& a, const translucent_draw& b) { return a.sort_depth > b.sort_depth; });
     }
 
 
@@ -186,6 +257,7 @@ namespace GLT::renderer::vk_rasterizer {
         create_local_shadow_resources();
         if (!m_offscreen)
             create_blit_pipeline();
+        create_tonemap_pipeline();
         create_debug_draw_resources();
     }
 
@@ -195,6 +267,7 @@ namespace GLT::renderer::vk_rasterizer {
         auto* dev = m_plugin.get_dev();
 
         destroy_debug_draw_resources();
+        destroy_tonemap_pipeline();
         if (!m_offscreen)
             destroy_blit_pipeline();
         destroy_local_shadow_resources();
@@ -293,6 +366,16 @@ namespace GLT::renderer::vk_rasterizer {
                 m_output_image->get_accessible_image_ref().view,
                 { m_output_image->get_accessible_image_ref().layout, {}, vk::PipelineStageFlagBits2::eNone });
         }
+
+        // HDR scene colour (lit passes render here, the tonemap pass resolves it into scene_color) -------------
+        graph::texture_desc hdr{};
+        hdr.name = "scene_hdr";
+        hdr.format = HDR_COLOR_FORMAT;
+        hdr.width = m_extent.x;
+        hdr.height = m_extent.y;
+        hdr.usage = VKIU::eColorAttachment | VKIU::eSampled;
+        hdr.persistent = true;
+        m_scene_hdr = m_graph->create_texture(hdr);
 
         // Depth ---------------------------------------------------------------------
         graph::texture_desc dd{};

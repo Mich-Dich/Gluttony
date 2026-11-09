@@ -211,7 +211,9 @@ namespace GLT::editor {
 
 
     void editor_layer::update(const f32 delta_time) {
-        
+
+        file_watcher::pump();               // file events from the watcher thread -> event bus, on the main thread
+
         for (const auto& editor_window : m_windows)
             editor_window->update(delta_time);
 

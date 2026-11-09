@@ -215,6 +215,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         m_baseline_params.clear();
         m_edit_blend = GLT::asset::material::blend_mode::opaque;
         m_baseline_blend = GLT::asset::material::blend_mode::opaque;
+        m_edit_flags = 0;
+        m_baseline_flags = 0;
         m_edit_textures.fill(INVALID_HANDLE);
         m_baseline_textures.fill(INVALID_HANDLE);
         m_reflection_blob.clear();
@@ -278,6 +280,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         asset->slang_source = m_edit_slang;
         asset->packed_params = m_edit_params;
         asset->blend = m_edit_blend;
+        asset->flags = m_edit_flags;
 
         for (std::size_t i = 0; i < TEXTURE_SLOT_COUNT; ++i) {
             asset->textures[i] = m_edit_textures[i];
@@ -298,6 +301,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         m_baseline_slang = m_edit_slang;
         m_baseline_params = m_edit_params;
         m_baseline_blend = m_edit_blend;
+        m_baseline_flags = m_edit_flags;
         m_baseline_textures = m_edit_textures;
 
         m_compiler_hash_matches = asset->compiler_hash_matches;
@@ -352,6 +356,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
         asset->slang_source = m_edit_slang;
         asset->blend = m_edit_blend;
+        asset->flags = m_edit_flags;
         asset->bytecode = std::move(result->bytecode);
         asset->bytecode_hash = GLT::UUID{};                 // force a random hash in editor
         asset->reflection = std::move(result->reflection);
@@ -385,7 +390,9 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         m_edit_slang = m_baseline_slang;
         m_edit_params = m_baseline_params;
         m_edit_blend = m_baseline_blend;
+        m_edit_flags = m_baseline_flags;
         m_edit_textures = m_baseline_textures;
+        push_live_render_state();
 
         m_slang_editor.SetText(m_edit_slang);
 
@@ -599,11 +606,42 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::Combo("##blend_mode", &current, kBlendLabels, IM_ARRAYSIZE(kBlendLabels))) {
             m_edit_blend = static_cast<bm>(current);
+            push_live_render_state();
             mark_dirty();
         }
 
         if (m_edit_blend == bm::masked)
             ImGui::TextDisabled("Masked materials must declare alpha_test().");
+        else if (m_edit_blend == bm::alpha_composite)
+            ImGui::TextDisabled("Alpha Composite expects premultiplied colour (rgb * opacity).");
+        else if (m_edit_blend != bm::opaque)
+            ImGui::TextDisabled("Translucent: sorted back-to-front, no depth write, no shadows.");
+
+        namespace mf = GLT::asset::material::material_flag;
+        bool double_sided = (m_edit_flags & mf::double_sided) != 0;
+        if (ImGui::Checkbox("Double sided", &double_sided)) {
+            m_edit_flags = double_sided ? (m_edit_flags | mf::double_sided) : (m_edit_flags & ~mf::double_sided);
+            push_live_render_state();
+            mark_dirty();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Render back faces too (no back-face culling, back faces get a flipped normal)");
+    }
+
+
+    void material_viewer_window::push_live_render_state() {
+
+        if (!m_has_material)
+            return;
+
+        auto* registry = GLT::asset::registry::get_ptr();
+        if (!registry)
+            return;
+
+        if (auto* asset = registry->data_as<GLT::asset::material::material_asset>(m_asset_handle.get())) {
+            asset->blend = m_edit_blend;
+            asset->flags = m_edit_flags;
+        }
     }
 
 
@@ -900,6 +938,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         m_dirty = (m_edit_slang    != m_baseline_slang)
                || (m_edit_params   != m_baseline_params)
                || (m_edit_blend    != m_baseline_blend)
+               || (m_edit_flags    != m_baseline_flags)
                || (m_edit_textures != m_baseline_textures);
     }
 
@@ -936,6 +975,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
         m_edit_blend = GLT::asset::material::blend_mode::opaque;
         m_baseline_blend = m_edit_blend;
+        m_edit_flags = 0;
+        m_baseline_flags = 0;
 
         m_edit_textures.fill(INVALID_HANDLE);
         m_baseline_textures.fill(INVALID_HANDLE);
@@ -980,6 +1021,8 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
         m_edit_blend = asset->blend;
         m_baseline_blend = m_edit_blend;
+        m_edit_flags = asset->flags;
+        m_baseline_flags = m_edit_flags;
 
         for (std::size_t i = 0; i < TEXTURE_SLOT_COUNT; ++i)
             m_edit_textures[i] = asset->textures[i];
