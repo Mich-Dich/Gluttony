@@ -398,9 +398,11 @@ namespace GLT::renderer::vk_rasterizer {
         if (--t.ref_count > 0)
             return;
 
-        m_device.waitIdle();
+        // In-flight frames may still sample it (their descriptors hold the view): destroy once the GPU is done with them.
+        // The slot itself can be reused right away, descriptors are rewritten per frame
         m_texture_slot_by_asset.erase(t.asset);
-        destroy_gpu_texture(t);
+        m_retire.retire([this, dead = t]() mutable { destroy_gpu_texture(dead); });
+        t = {};
         m_texture_table[slot] = m_texture_table[TEXTURE_SLOT_WHITE];
         m_free_texture_slots.push_back(slot);
     }

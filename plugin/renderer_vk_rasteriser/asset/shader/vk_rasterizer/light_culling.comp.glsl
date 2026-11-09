@@ -47,7 +47,7 @@ void cluster_aabb_view(uvec3 cluster, float min_linear, float max_linear, out ve
     const uint  slices = camera.cluster_dims.z;
     const float near_z = camera.cluster_depth.x;
     const float far_z = camera.cluster_depth.y;
-    const ivec2 tile_origin = ivec2(cluster.xy) * ivec2(16, 16);
+    const ivec2 tile_origin = ivec2(cluster.xy) * ivec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y);
 
     // Small relative padding: the cull and fragment shaders linearize in different
     // places, so rounding could otherwise put a boundary pixel a hair outside the range
@@ -72,7 +72,7 @@ void cluster_aabb_view(uvec3 cluster, float min_linear, float max_linear, out ve
     // ---- 2. Build the view-space AABB for the tightened slice range ----
     const vec2 render_size = camera.cluster_depth.zw;
     const vec2 tile_px_min = vec2(tile_origin);
-    const vec2 tile_px_max = tile_px_min + vec2(16.0, 16.0);
+    const vec2 tile_px_max = tile_px_min + vec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y);
 
     const vec2 ndc_min = (tile_px_min / render_size) * 2.0 - 1.0;
     const vec2 ndc_max = (tile_px_max / render_size) * 2.0 - 1.0;
@@ -125,7 +125,7 @@ bool sphere_intersects_cone(vec3 apex, vec3 axis, float cos_outer, vec3 sphere_c
 // Entry point: one workgroup per cluster ------------------------------------------------------------------------------
 
 const uint LOCAL_SIZE = 64u;
-const uint MAX_PER_CLUSTER_LDS = 256u;   // matches MAX_LIGHTS_PER_CLUSTER on the C++ side
+const uint MAX_PER_CLUSTER_LDS = MAX_LIGHTS_PER_CLUSTER;   // injected from the C++ constant
 
 shared uint s_light_count;
 shared uint s_light_indices[MAX_PER_CLUSTER_LDS];
@@ -150,14 +150,14 @@ void main() {
     barrier();
 
     {
-        const ivec2 tile_origin = ivec2(cluster.xy) * 16;
+        const ivec2 tile_origin = ivec2(cluster.xy) * ivec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y);
         const ivec2 max_pixel = textureSize(depth_texture, 0) - 1;   // partial edge tiles
 
         float local_min = 1e30;
         float local_max = 0.0;
 
-        for (uint i = local_id; i < 256u; i += LOCAL_SIZE) {
-            const ivec2 pixel = min(tile_origin + ivec2(i % 16u, i / 16u), max_pixel);
+        for (uint i = local_id; i < CLUSTER_TILE_SIZE_X * CLUSTER_TILE_SIZE_Y; i += LOCAL_SIZE) {
+            const ivec2 pixel = min(tile_origin + ivec2(i % CLUSTER_TILE_SIZE_X, i / CLUSTER_TILE_SIZE_X), max_pixel);
             const float lz = max(linearize_depth(texelFetch(depth_texture, pixel, 0).r, camera.inv_projection), 0.0);
             local_min = min(local_min, lz);
             local_max = max(local_max, lz);
@@ -172,7 +172,7 @@ void main() {
         cluster_aabb_view(cluster, uintBitsToFloat(s_min_bits), uintBitsToFloat(s_max_bits), s_aabb_min, s_aabb_max);
     barrier();
 
-    const uint max_per_cluster = min(min(light_meta.meta.z, MAX_PER_CLUSTER_LDS), 256u);
+    const uint max_per_cluster = min(light_meta.meta.z, MAX_PER_CLUSTER_LDS);
 
     if (local_id == 0u)
         s_light_count = 0u;

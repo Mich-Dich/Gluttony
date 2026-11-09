@@ -2,6 +2,7 @@
 #pragma once
 
 #include "shared/type.h"
+#include "util/retire_queue.h"
 
 
 
@@ -120,6 +121,24 @@ namespace GLT::renderer::vk_rasterizer {
 
         std::expected<GLT::render::compiled_shader, GLT::render::shader_compile_error> compile(std::string_view slang_source,
             GLT::asset::material::blend_mode blend);
+
+        // deferred destruction ----------------------------------------------------------------------------------------
+
+        // Every queue submission that can reference renderer resources must signal `retire_timeline()` with
+        // `next_retire_value()`. Objects handed to `retire*()` are destroyed once that work has completed
+        [[nodiscard]] vk::Semaphore retire_timeline() const { return m_retire.timeline(); }
+        [[nodiscard]] u64 next_retire_value() { return m_retire.next_signal_value(); }
+        void retire(std::function<void()>&& fn) { m_retire.retire(std::move(fn)); }
+
+        // Moves [buffer] into the retire queue and clears the caller's copy
+        void retire_buffer(util::allocated_buffer& buffer);
+
+        // GPU frame statistics ----------------------------------------------------------------------------------------
+
+        // Scene renderers report their resolved timestamp results here (one report per completed frame). The totals of
+        // all reports between two begin_frame() calls become `last_gpu_stats()`
+        void report_gpu_frame(const gpu_frame_report& report);
+        [[nodiscard]] const gpu_frame_report& last_gpu_stats() const { return m_last_gpu_stats; }
 
         // stats -------------------------------------------------------------------------------------------------------
 
@@ -283,6 +302,12 @@ namespace GLT::renderer::vk_rasterizer {
         linear_pool                                                         m_index_pool{};
         linear_pool                                                         m_submesh_pool{};
         u64                                                                 m_frames_since_compact = 0;
+
+        // deferred destruction + GPU stats ----------------------------------------------------------------------------
+
+        util::retire_queue                                                  m_retire{};
+        gpu_frame_report                                                    m_accum_gpu_stats{};
+        gpu_frame_report                                                    m_last_gpu_stats{};
 
     };
 

@@ -73,6 +73,9 @@ namespace GLT::renderer::vk_rasterizer {
 
     void shared_resource_manager::create() {
 
+        m_retire.init(m_device);
+
+
         create_immediate_submit();
         create_samplers();
         create_shader_compiler();
@@ -106,6 +109,7 @@ namespace GLT::renderer::vk_rasterizer {
     void shared_resource_manager::destroy() {
 
         m_device.waitIdle();
+        m_retire.flush();                       // device is idle: everything retired so far can go now
 
         for (auto& slot : m_material_slots) {
             if (slot.pipeline)
@@ -171,11 +175,18 @@ namespace GLT::renderer::vk_rasterizer {
         m_live_pipeline_count = 0;
         m_live_descriptor_set_count = 0;
 
+        m_retire.shutdown();                    // runs anything the teardown above retired (device still idle)
+
         LOG(trace, "shared_resource_manager destroyed");
     }
 
 
     void shared_resource_manager::begin_frame(u64 /*frame_number*/) {
+
+        m_retire.collect();                     // destroy everything the GPU is done with
+
+        m_last_gpu_stats = std::move(m_accum_gpu_stats);
+        m_accum_gpu_stats = {};
 
         m_frames_since_compact++;
 
@@ -303,7 +314,7 @@ namespace GLT::renderer::vk_rasterizer {
         if (--entry.ref_count > 0)
             return;
         destroy_material_shaders(entry);
-        if (entry.params_ubo.buffer) { m_dev->destroy_buffer(entry.params_ubo); entry.params_ubo = {}; entry.params_size = 0; }
+        if (entry.params_ubo.buffer) { retire_buffer(entry.params_ubo); entry.params_size = 0; }
         for (u32 i = 0; i < MATERIAL_TEXTURE_SLOTS; ++i)
             if (entry.texture_assets[i] != INVALID_HANDLE)
                 release_texture_internal(entry.texture_slots[i]);
@@ -341,7 +352,6 @@ namespace GLT::renderer::vk_rasterizer {
 
         std::vector<util::descriptor_item> items;
         items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, const_cast<util::allocated_buffer*>(&slot.params_ubo));
-        items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eFragment, 1, const_cast<util::allocated_buffer*>(&slot.params_ubo));
         for (u32 t = 0; t < 6; ++t)
             items.emplace_back(1 + t, vk::DescriptorType::eSampledImage, VKSF::eFragment, 1, &images[t]);
 
@@ -538,7 +548,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         const u32 needed = static_cast<u32>(asset->packed_params.size());
         if (!slot.params_ubo.buffer || slot.params_size < needed) {
-            if (slot.params_ubo.buffer) m_dev->destroy_buffer(slot.params_ubo);
+            if (slot.params_ubo.buffer) retire_buffer(slot.params_ubo);     // previous frames may still read it
             const u32 alloc_size = std::max<u32>(needed, 256);
             slot.params_ubo = m_dev->create_buffer(alloc_size, vk::BufferUsageFlagBits::eUniformBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
@@ -550,12 +560,58 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    // Pipelines may still be bound by in-flight command buffers (material released or hot-reloaded this frame), so the
+    // handles are moved into the retire queue instead of being destroyed immediately
     void shared_resource_manager::destroy_material_shaders(material_slot& slot) {
-        if (slot.pipeline)        { m_device.destroyPipeline(slot.pipeline);        slot.pipeline = nullptr; }
-        if (slot.depth_pipeline)  { m_device.destroyPipeline(slot.depth_pipeline);  slot.depth_pipeline = nullptr; }
-        if (slot.vertex_module)   { m_device.destroyShaderModule(slot.vertex_module);   slot.vertex_module = nullptr; }
-        if (slot.fragment_module) { m_device.destroyShaderModule(slot.fragment_module); slot.fragment_module = nullptr; }
-        if (slot.depth_module)    { m_device.destroyShaderModule(slot.depth_module);    slot.depth_module = nullptr; }
+
+        const vk::Pipeline pipeline = std::exchange(slot.pipeline, nullptr);
+        const vk::Pipeline depth_pipeline = std::exchange(slot.depth_pipeline, nullptr);
+        const vk::ShaderModule vertex_module = std::exchange(slot.vertex_module, nullptr);
+        const vk::ShaderModule fragment_module = std::exchange(slot.fragment_module, nullptr);
+        const vk::ShaderModule depth_module = std::exchange(slot.depth_module, nullptr);
+
+        if (pipeline)       m_live_pipeline_count--;
+        if (depth_pipeline) m_live_pipeline_count--;
+
+        if (!pipeline && !depth_pipeline && !vertex_module && !fragment_module && !depth_module)
+            return;
+
+        m_retire.retire([device = m_device, pipeline, depth_pipeline, vertex_module, fragment_module, depth_module]() {
+            if (pipeline)        device.destroyPipeline(pipeline);
+            if (depth_pipeline)  device.destroyPipeline(depth_pipeline);
+            if (vertex_module)   device.destroyShaderModule(vertex_module);
+            if (fragment_module) device.destroyShaderModule(fragment_module);
+            if (depth_module)    device.destroyShaderModule(depth_module);
+        });
+    }
+
+
+    void shared_resource_manager::retire_buffer(util::allocated_buffer& buffer) {
+
+        if (!buffer.buffer)
+            return;
+
+        m_retire.retire([dev = m_dev, dead = buffer]() mutable { dev->destroy_buffer(dead); });
+        buffer = {};
+    }
+
+
+    void shared_resource_manager::report_gpu_frame(const gpu_frame_report& report) {
+
+        m_accum_gpu_stats.gpu_time_ms += report.gpu_time_ms;
+        m_accum_gpu_stats.render_passes += report.render_passes;
+        m_accum_gpu_stats.draw_calls += report.draw_calls;
+        m_accum_gpu_stats.triangles += report.triangles;
+
+        // Merge by pass name so several scene renderers (editor viewports) sum up instead of producing duplicate rows
+        for (const auto& [name, ms] : report.pass_times_ms) {
+            auto it = std::find_if(m_accum_gpu_stats.pass_times_ms.begin(), m_accum_gpu_stats.pass_times_ms.end(),
+                [&](const auto& entry) { return entry.first == name; });
+            if (it != m_accum_gpu_stats.pass_times_ms.end())
+                it->second += ms;
+            else
+                m_accum_gpu_stats.pass_times_ms.emplace_back(name, ms);
+        }
     }
 
 

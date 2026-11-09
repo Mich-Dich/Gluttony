@@ -3,9 +3,8 @@
 
 layout(local_size_x = 64) in;
 
-const uint MAX_SUBMESHES_PER_MESH = 32u;      // keep in sync with types.h
-const uint MAX_MATERIALS = 4096u;
-const uint MAX_COMMANDS_PER_MATERIAL = 256u;
+// Shared limits (MAX_MATERIALS, MAX_SUBMESHES_PER_MESH, ...) are injected as #defines by the renderer's shader
+// compiler from the C++ constants (util/shader_compiler.cpp). Do not redeclare them here.
 
 struct InstanceData {
     mat4 model;
@@ -52,9 +51,19 @@ layout(set = 0, binding = 5) uniform CameraUBO {
     mat4  view;
     vec4  camera_pos;
     vec4  frustum_planes[6];
-    uvec4 flags;
+    uvec4 flags;        // x = number of valid instances this frame (the SSBO holds stale data past it), y = write stats
 } camera;
-layout(std430, set = 0, binding = 6) readonly buffer InstanceMaterialBuffer { uint slots[]; } instance_materials;
+// Compact per-instance material list: instance.material_index is the offset of the instance's first submesh entry
+layout(std430, set = 0, binding = 6) readonly buffer MaterialTable { uint material_table[]; };
+// Per material slot: x = first command of the material's range, y = range capacity (CPU-computed upper bound of draws)
+layout(std430, set = 0, binding = 7) readonly buffer MaterialRanges { uvec2 material_ranges[]; };
+// Main-view statistics, read back on the host (only written when camera.flags.y != 0)
+layout(std430, set = 0, binding = 8) buffer DrawStats {
+    uint visible_draws;
+    uint triangles;
+    uint visible_instances;
+    uint _pad;
+} stats;
 
 
 vec3 aabb_world_corner(vec3 mn, vec3 mx, mat4 model, uint ci) {
@@ -82,7 +91,7 @@ bool frustum_test(vec3 mn, vec3 mx) {
 void main() {
 
     const uint instance_index = gl_GlobalInvocationID.x;
-    if (instance_index >= uint(instances.length()))
+    if (instance_index >= camera.flags.x || instance_index >= uint(instances.length()))
         return;
 
     const InstanceData instance = instances[instance_index];
@@ -100,25 +109,38 @@ void main() {
     if (!frustum_test(world_min, world_max))
         return;
 
+    uint emitted_draws = 0u;
+    uint emitted_triangles = 0u;
+
     for (uint sm = 0u; sm < mesh.submesh_count; ++sm) {
 
         const SubmeshData submesh = submeshes[mesh.first_submesh + sm];
         if (submesh.index_count < 3u)
             continue;
 
-        const uint mat_slot = instance_materials.slots[instance_index * MAX_SUBMESHES_PER_MESH + sm];
+        const uint mat_slot = material_table[instance.material_index + sm];
         if (mat_slot >= MAX_MATERIALS)
             continue;
 
+        const uvec2 range = material_ranges[mat_slot];
         const uint slot = atomicAdd(counts[mat_slot], 1u);
-        if (slot >= MAX_COMMANDS_PER_MATERIAL)
-            continue;
+        if (slot >= range.y)
+            continue;                                   // cannot happen (CPU sized the range), but never write outside it
 
-        const uint cmd = mat_slot * MAX_COMMANDS_PER_MATERIAL + slot;
+        const uint cmd = range.x + slot;
         commands[cmd].indexCount = submesh.index_count;
         commands[cmd].instanceCount = 1u;
         commands[cmd].firstIndex = mesh.index_offset + submesh.first_index;
         commands[cmd].vertexOffset = int(mesh.vertex_offset);
         commands[cmd].firstInstance = instance_index;
+
+        emitted_draws++;
+        emitted_triangles += submesh.index_count / 3u;
+    }
+
+    if (camera.flags.y != 0u && emitted_draws > 0u) {
+        atomicAdd(stats.visible_draws, emitted_draws);
+        atomicAdd(stats.triangles, emitted_triangles);
+        atomicAdd(stats.visible_instances, 1u);
     }
 }

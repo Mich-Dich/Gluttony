@@ -77,6 +77,23 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
         std::string dump() const;
 
+        // -------- deferred destruction ---
+
+        // Graph-owned images/buffers that are dropped while frames are in flight (transient resources at begin_frame(),
+        // persistent resources rebuilt on resize) are handed to this callback instead of being destroyed immediately.
+        // Without a callback they are destroyed on the spot (only safe if the caller waited for the GPU)
+        using retire_fn = std::function<void(std::function<void()>&&)>;
+        void set_retire_callback(retire_fn fn) { m_retire = std::move(fn); }
+
+        // -------- GPU timing -------------
+
+        // When set, execute() resets [first_query, first_query + query_count) and writes one timestamp before the first
+        // live pass and one after every live pass. Query i+1 - query i is the duration of timed_pass_names()[i].
+        // Passes beyond the query budget are not timed. Pass a null pool to disable
+        void set_timestamp_queries(vk::QueryPool pool, u32 first_query, u32 query_count);
+        [[nodiscard]] const std::vector<std::string>& timed_pass_names() const { return m_timed_pass_names; }
+        [[nodiscard]] u32 timestamps_written() const { return m_timestamps_written; }
+
         // -------- resource lookup (used by pass_context) --------
 
         vk::Image texture_image(texture_handle handle) const;
@@ -152,7 +169,12 @@ namespace GLT::renderer::vk_rasterizer::graph {
         void destroy_texture(texture_resource& texture_resource);
 
         void destroy_buffer(buffer_resource& buffer_resource);
-        
+
+        // Deferred variants: go through m_retire when set, otherwise identical to destroy_*
+        void release_texture(texture_resource& texture_resource);
+
+        void release_buffer(buffer_resource& buffer_resource);
+
 
         util::device*                                           m_device = nullptr;
         std::vector<texture_resource>                           m_textures;
@@ -163,6 +185,14 @@ namespace GLT::renderer::vk_rasterizer::graph {
         // Persistent resources are looked up by name so their handle is stable across frames
         std::unordered_map<std::string, texture_handle>         m_persistent_textures;
         std::unordered_map<std::string, buffer_handle >         m_persistent_buffers;
+
+        retire_fn                                               m_retire{};
+
+        vk::QueryPool                                           m_timestamp_pool = nullptr;
+        u32                                                     m_first_query = 0;
+        u32                                                     m_query_count = 0;
+        u32                                                     m_timestamps_written = 0;
+        std::vector<std::string>                                m_timed_pass_names;
     };
 
 }

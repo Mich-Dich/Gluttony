@@ -142,6 +142,26 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    void scene_renderer::abort_imgui_frame() {
+
+        if (!m_imgui_initialized)
+            return;
+        ImGui::SetCurrentContext(imgui_config::get_context_imgui());
+
+        // Render() (not just EndFrame()) so every viewport gets valid DrawData: RenderPlatformWindowsDefault() dereferences
+        // viewport->DrawData, which is null after a bare EndFrame() -> segfault. The main viewport's draw data is simply not
+        // recorded this frame; secondary platform windows (e.g. a detached stats window) keep rendering, even while the main
+        // window is minimized
+        ImGui::Render();
+
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+        }
+    }
+
+
     void scene_renderer::add_imgui_pass() {
 
         VALIDATE_IMGUI_INIT

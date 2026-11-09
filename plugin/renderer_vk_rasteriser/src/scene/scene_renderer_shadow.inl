@@ -98,10 +98,10 @@ namespace GLT::renderer::vk_rasterizer {
 
             graph::buffer_desc commands_desc{};
             commands_desc.name = "shadow_draw_commands_" + std::to_string(frame_index);
-            commands_desc.size = static_cast<vk::DeviceSize>(MAX_MATERIALS) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand);
+            commands_desc.size = static_cast<vk::DeviceSize>(INITIAL_DRAW_CAPACITY) * sizeof(vk::DrawIndexedIndirectCommand);
             commands_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
             commands_desc.persistent = true;
-            m_shadow_draw_commands_handles[frame_index] = m_graph->create_buffer(commands_desc);
+            m_shadow_draw_commands_handles[frame_index] = m_graph->create_buffer(commands_desc);     // grown by ensure_draw_buffers()
 
             graph::buffer_desc count_desc{};
             count_desc.name = "shadow_draw_count_" + std::to_string(frame_index);
@@ -112,23 +112,13 @@ namespace GLT::renderer::vk_rasterizer {
             count_desc.persistent = true;
             m_shadow_draw_count_handles[frame_index] = m_graph->create_buffer(count_desc);
 
-            util::allocated_buffer* commands_allocation = m_graph->buffer_allocation(m_shadow_draw_commands_handles[frame_index]);
-            util::allocated_buffer* count_allocation = m_graph->buffer_allocation(m_shadow_draw_count_handles[frame_index]);
-            ASSERT(commands_allocation && count_allocation, "", "Graph failed to allocate shadow draw buffers");
-
-            // Same layout + pipeline as the camera cull; only the outputs (3, 4) and the "camera" (5) differ
+            // Same layout + pipeline as the camera cull; only the outputs (3, 4) and the "camera" (5) differ.
+            // Contents are written every frame by update_cull_descriptors()
             std::vector<util::descriptor_item> items;
-            items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_buffers[frame_index]);
-            items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_mesh_data_buffer_alloc_ref());
-            items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_submesh_data_buffer_alloc_ref());
-            items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, commands_allocation);
-            items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, count_allocation);
-            items.emplace_back(5, VKDT::eUniformBuffer, VKSF::eCompute, 1, &m_shadow_camera_ubos[frame_index]);
-            items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_override_buffers[frame_index]);
-
+            for (u32 binding = 0; binding <= 8; ++binding)
+                items.emplace_back(binding, binding == 5 ? VKDT::eUniformBuffer : VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
             m_shadow_cull_desc_buffers[frame_index] = m_plugin.get_dev()->create_descriptor_buffer(m_cull_set_layout, items,
                 util::descriptor_buffer_type::resource, 1);
-            m_plugin.get_dev()->update_descriptor_buffer(m_shadow_cull_desc_buffers[frame_index], items, util::descriptor_buffer_type::resource);
         }
     }
 
@@ -209,6 +199,7 @@ namespace GLT::renderer::vk_rasterizer {
         shadow_camera.view = light_view;
         shadow_camera.view_proj = m_shadow.view_proj;
         extract_frustum_planes(m_shadow.view_proj, shadow_camera.frustum_planes);
+        shadow_camera.flags.x = m_asset_instance_count;     // cull.comp: valid instance prefix (procedurals are not culled on GPU)
 
         m_plugin.get_dev()->update_buffer(m_shadow_camera_ubos[m_current_frame], &shadow_camera, sizeof(shadow_camera));
     }
@@ -225,12 +216,22 @@ namespace GLT::renderer::vk_rasterizer {
         for (u32 binding = 0; binding < 5; binding++)
             layout_items.emplace_back(binding, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
         layout_items.emplace_back(5, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
+        layout_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);     // material table
+        layout_items.emplace_back(7, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);     // material ranges
 
         m_local_shadow_cull_set_layout = m_plugin.get_dev()->create_descriptor_set_layout(layout_items);
+
+        // Push constants: { valid instance count, commands per view } (see shadow_cull.comp.glsl)
+        vk::PushConstantRange instance_count_range{};
+        instance_count_range.stageFlags = VKSF::eCompute;
+        instance_count_range.offset = 0;
+        instance_count_range.size = 2 * sizeof(u32);
 
         vk::PipelineLayoutCreateInfo pipeline_layout_info{};
         pipeline_layout_info.setLayoutCount = 1;
         pipeline_layout_info.pSetLayouts = &m_local_shadow_cull_set_layout;
+        pipeline_layout_info.pushConstantRangeCount = 1;
+        pipeline_layout_info.pPushConstantRanges = &instance_count_range;
         m_local_shadow_cull_pipeline_layout = m_plugin.get_vk_device().createPipelineLayout(pipeline_layout_info);
 
         const auto shader_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "shader" / "vk_rasterizer";
@@ -264,8 +265,9 @@ namespace GLT::renderer::vk_rasterizer {
 
             graph::buffer_desc commands_desc{};
             commands_desc.name = "local_shadow_commands_" + std::to_string(frame_index);
-            commands_desc.size = static_cast<vk::DeviceSize>(MAX_SHADOW_VIEWS) * MAX_MATERIALS * MAX_COMMANDS_PER_MATERIAL
-                * sizeof(vk::DrawIndexedIndirectCommand);
+            // One view's worth to start with; ensure_draw_buffers() grows it to (views x draw capacity) on demand. The old
+            // fixed layout (48 views x 1024 materials x 256 commands) was ~250 MB per frame in flight
+            commands_desc.size = static_cast<vk::DeviceSize>(INITIAL_DRAW_CAPACITY) * sizeof(vk::DrawIndexedIndirectCommand);
             commands_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
             commands_desc.persistent = true;
             m_local_shadow_commands_handles[frame_index] = m_graph->create_buffer(commands_desc);
@@ -276,47 +278,53 @@ namespace GLT::renderer::vk_rasterizer {
             counts_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
             counts_desc.persistent = true;
             m_local_shadow_counts_handles[frame_index] = m_graph->create_buffer(counts_desc);
+            m_local_draw_views[frame_index] = 1;
 
-            util::allocated_buffer* commands_allocation = m_graph->buffer_allocation(m_local_shadow_commands_handles[frame_index]);
-            util::allocated_buffer* counts_allocation = m_graph->buffer_allocation(m_local_shadow_counts_handles[frame_index]);
-            ASSERT(commands_allocation && counts_allocation, "", "Graph failed to allocate local shadow buffers");
-
-            // Cull descriptors
+            // Cull descriptors: written every frame by update_cull_descriptors()
             std::vector<util::descriptor_item> cull_items;
-            cull_items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_buffers[frame_index]);
-            cull_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_mesh_data_buffer_alloc_ref());
-            cull_items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_submesh_data_buffer_alloc_ref());
-            cull_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, commands_allocation);
-            cull_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, counts_allocation);
-            cull_items.emplace_back(5, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shadow_view_buffers[frame_index]);
-
+            for (u32 binding = 0; binding <= 7; ++binding)
+                cull_items.emplace_back(binding, VKDT::eStorageBuffer, VKSF::eCompute, 1, nullptr);
             m_local_shadow_cull_desc_buffers[frame_index] = m_plugin.get_dev()->create_descriptor_buffer(m_local_shadow_cull_set_layout,
                 cull_items, util::descriptor_buffer_type::resource, 1);
-            m_plugin.get_dev()->update_descriptor_buffer(m_local_shadow_cull_desc_buffers[frame_index], cull_items, util::descriptor_buffer_type::resource);
 
-            // Draw descriptors: MAX_SHADOW_VIEWS sets using the mesh layout. Set v has binding 0 = view v's UBO slice, so the
-            // unchanged mesh.vert + m_depth_pipeline render any view just by switching the descriptor offset. Written once at init
-            std::array<util::allocated_buffer, MAX_SHADOW_VIEWS> slices{};
-            for (u32 view = 0; view < MAX_SHADOW_VIEWS; view++) {
-                slices[view] = m_shadow_view_buffers[frame_index];
-                slices[view].dev_address += static_cast<vk::DeviceAddress>(view) * SHADOW_VIEW_STRIDE;
-                slices[view].size = SHADOW_VIEW_STRIDE;
-            }
-
+            // Draw descriptors: MAX_SHADOW_VIEWS sets using the mesh layout
             std::vector<util::descriptor_item> draw_items;
-            draw_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &slices[0]);
-            draw_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, &m_instance_buffers[frame_index]);
-            draw_items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_globals_ubos[frame_index]);
-
-            constexpr auto buffer_type = util::descriptor_buffer_type::combined;
+            draw_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);
+            draw_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, nullptr);
+            draw_items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);
             m_local_shadow_desc_buffers[frame_index] = m_plugin.get_dev()->create_descriptor_buffer(m_shared->get_mesh_set_layout(),
-                draw_items, buffer_type, MAX_SHADOW_VIEWS);
+                draw_items, util::descriptor_buffer_type::combined, MAX_SHADOW_VIEWS);
 
-            m_plugin.get_dev()->compute_descriptor_binding_offsets(m_shared->get_mesh_set_layout(), draw_items);
-            for (u32 view = 0; view < MAX_SHADOW_VIEWS; view++) {
-                draw_items[0].p_resources = &slices[view];
-                m_plugin.get_dev()->update_descriptor_buffer(m_local_shadow_desc_buffers[frame_index], draw_items, buffer_type, view);
-            }
+            write_local_shadow_draw_descriptors(frame_index);
+            m_local_shadow_desc_generation[frame_index] = m_instance_buffer_generation[frame_index];
+        }
+    }
+
+
+    // Set v has binding 0 = view v's UBO slice, so the unchanged mesh.vert + depth pipeline render any view just by switching
+    // the descriptor offset. Binding 1 is the instance buffer, so this is rewritten whenever that buffer is reallocated
+    void scene_renderer::write_local_shadow_draw_descriptors(u32 frame_index) {
+
+        using VKDT = vk::DescriptorType;
+        using VKSF = vk::ShaderStageFlagBits;
+
+        std::array<util::allocated_buffer, MAX_SHADOW_VIEWS> slices{};
+        for (u32 view = 0; view < MAX_SHADOW_VIEWS; view++) {
+            slices[view] = m_shadow_view_buffers[frame_index];
+            slices[view].dev_address += static_cast<vk::DeviceAddress>(view) * SHADOW_VIEW_STRIDE;
+            slices[view].size = SHADOW_VIEW_STRIDE;
+        }
+
+        std::vector<util::descriptor_item> draw_items;
+        draw_items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &slices[0]);
+        draw_items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, &m_instance_buffers[frame_index]);
+        draw_items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_globals_ubos[frame_index]);
+
+        constexpr auto buffer_type = util::descriptor_buffer_type::combined;
+        m_plugin.get_dev()->compute_descriptor_binding_offsets(m_shared->get_mesh_set_layout(), draw_items);
+        for (u32 view = 0; view < MAX_SHADOW_VIEWS; view++) {
+            draw_items[0].p_resources = &slices[view];
+            m_plugin.get_dev()->update_descriptor_buffer(m_local_shadow_desc_buffers[frame_index], draw_items, buffer_type, view);
         }
     }
 
@@ -551,13 +559,14 @@ namespace GLT::renderer::vk_rasterizer {
             },
             [this](graph::pass_context& ctx) {
 
-                if (m_instance_count == 0)
+                // Only the asset-backed prefix: procedural instances have no mesh-table entry (mesh_index 0 would alias a real mesh)
+                if (m_asset_instance_count == 0)
                     return;
 
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
                 m_plugin.get_dev()->bind_descriptor_buffer({ m_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
                 m_plugin.get_dev()->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-                ctx.cmd.dispatch((m_instance_count + 63) / 64, 1, 1);
+                ctx.cmd.dispatch((m_asset_instance_count + 63) / 64, 1, 1);
             });
     }
 
@@ -595,8 +604,12 @@ namespace GLT::renderer::vk_rasterizer {
 
                 for (u32 mat_slot : m_scene_materials) {
 
+                    const glm::uvec2 range = m_material_ranges[mat_slot];
+                    if (range.y == 0)
+                        continue;                               // no culled draws use this material (e.g. procedural only)
+
                     const material_slot& entry = m_shared->get_material(mat_slot);
-                    if (!entry.alive || !entry.pipeline)
+                    if (!entry.alive || !entry.depth_pipeline)
                         continue;
 
                     ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
@@ -606,10 +619,10 @@ namespace GLT::renderer::vk_rasterizer {
 
                     ctx.cmd.drawIndexedIndirectCount(
                         cmd_buffer,
-                        static_cast<vk::DeviceSize>(mat_slot) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand),
+                        static_cast<vk::DeviceSize>(range.x) * sizeof(vk::DrawIndexedIndirectCommand),
                         count_buffer,
                         static_cast<vk::DeviceSize>(mat_slot) * sizeof(u32),
-                        MAX_COMMANDS_PER_MATERIAL,
+                        range.y,
                         sizeof(vk::DrawIndexedIndirectCommand));
                 }
 
@@ -641,13 +654,17 @@ namespace GLT::renderer::vk_rasterizer {
             },
             [this](graph::pass_context& ctx) {
 
-                if (m_instance_count == 0)
+                // Only the asset-backed prefix (see shadow_cull above)
+                if (m_asset_instance_count == 0)
                     return;
 
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_local_shadow_cull_pipeline);
                 m_plugin.get_dev()->bind_descriptor_buffer({ m_local_shadow_cull_desc_buffers[m_current_frame] }, ctx.cmd);
                 m_plugin.get_dev()->bind_descriptor_set(m_local_shadow_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-                ctx.cmd.dispatch((m_instance_count + 63) / 64, m_local_shadow_view_count, 1);   // y = view
+                const std::array<u32, 2> push = { m_asset_instance_count, m_draw_capacity[m_current_frame] };    // view stride
+                ctx.cmd.pushConstants(m_local_shadow_cull_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
+                    static_cast<u32>(sizeof(push)), push.data());
+                ctx.cmd.dispatch((m_asset_instance_count + 63) / 64, m_local_shadow_view_count, 1);   // y = view
             });
 
         // ---- Draw (atlas) -------------------------------------------------------------------------------------------
@@ -666,6 +683,7 @@ namespace GLT::renderer::vk_rasterizer {
                 const vk::Buffer counts = ctx.get_buffer(m_local_shadow_counts_handles[m_current_frame]);
                 const auto& view_desc_buffer = m_local_shadow_desc_buffers[m_current_frame];
                 const auto& mat_desc_buffer = m_material_desc_buffers[m_current_frame];
+                const vk::DeviceSize view_stride = m_draw_capacity[m_current_frame];
 
                 ctx.begin_rendering();
 
@@ -686,8 +704,12 @@ namespace GLT::renderer::vk_rasterizer {
 
                     for (u32 mat_slot : m_scene_materials) {
 
+                        const glm::uvec2 range = m_material_ranges[mat_slot];
+                        if (range.y == 0)
+                            continue;
+
                         const material_slot& entry = m_shared->get_material(mat_slot);
-                        if (!entry.alive || !entry.pipeline)
+                        if (!entry.alive || !entry.depth_pipeline)
                             continue;
 
                         ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
@@ -696,15 +718,15 @@ namespace GLT::renderer::vk_rasterizer {
                         m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 1, /*bufferIndex=*/1,
                             mat_desc_buffer.get_offset_to_set(mat_slot), ctx.cmd, vk::PipelineBindPoint::eGraphics);
 
-                        // per (view, material) command bucket
-                        const vk::DeviceSize cmd_off = static_cast<vk::DeviceSize>(
-                            (tile.view * MAX_MATERIALS + mat_slot)) * MAX_COMMANDS_PER_MATERIAL * sizeof(vk::DrawIndexedIndirectCommand);
+                        // per (view, material) range: the main view's material range, repeated every m_draw_capacity commands
+                        const vk::DeviceSize cmd_off = (static_cast<vk::DeviceSize>(tile.view) * view_stride + range.x)
+                            * sizeof(vk::DrawIndexedIndirectCommand);
                         const vk::DeviceSize cnt_off = static_cast<vk::DeviceSize>((tile.view * MAX_MATERIALS + mat_slot)) * sizeof(u32);
 
                         ctx.cmd.drawIndexedIndirectCount(
                             commands, cmd_off,
                             counts, cnt_off,
-                            MAX_COMMANDS_PER_MATERIAL,
+                            range.y,
                             sizeof(vk::DrawIndexedIndirectCommand));
                     }
                 }

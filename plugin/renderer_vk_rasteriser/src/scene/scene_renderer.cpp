@@ -101,6 +101,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         init_frames();
         m_graph = GLT::create_unique_ref<graph::render_graph>(m_plugin.get_dev());
+        m_graph->set_retire_callback([shared = m_shared](std::function<void()>&& fn) { shared->retire(std::move(fn)); });
+        create_timestamp_queries();
         init_gpu_state();
 
         if (!m_offscreen && m_desc.enable_imgui)
@@ -164,6 +166,10 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_delta_time = delta_time;
         VK_SR_CHECK(m_plugin.get_vk_device().waitForFences(m_frames[m_current_frame].fence, VK_TRUE, UINT64_MAX));
+        resolve_gpu_timestamps(m_current_frame);    // this slot's previous frame is complete -> its queries are available
+
+        if (!m_offscreen)
+            sync_swapchain_to_window();             // before the ImGui frame opens and before camera/cluster data use m_extent
 
         if (m_imgui_initialized)            // Surface target: ImGui frame MUST open every frame
             begin_imgui_frame();
@@ -191,9 +197,27 @@ namespace GLT::renderer::vk_rasterizer {
         const auto& queues = m_plugin.get_queues_ref();
         auto& frame = m_frames[m_current_frame];
 
-        device.resetFences(frame.fence);
-
         if (!m_offscreen) {
+
+            // Resizes are handled in update() (sync_swapchain_to_window). This is only a safety net for a size change between
+            // update() and render() (e.g. events pumped by a layer in between) and for the minimized case
+            if (auto* window = m_plugin.get_window(); window && window->is_valid(m_window)) {
+
+                const auto fb = window->get_framebuffer_size(m_window);
+                if (fb.x <= 0 || fb.y <= 0) {                   // minimized: nothing to render, keep the fence signalled
+                    abort_imgui_frame();
+                    return {};
+                }
+
+                if (static_cast<u32>(fb.x) != m_swapchain_builder.width || static_cast<u32>(fb.y) != m_swapchain_builder.height) {
+                    abort_imgui_frame();
+                    return std::unexpected(GLT::render::render_error{
+                        GLT::render::render_error::code::target_out_of_date,
+                        "window size changed"
+                    });
+                }
+            }
+
             try {
 
                 auto r = device.acquireNextImageKHR(m_swapchain.swapchain_handle, UINT64_MAX, frame.image_available, nullptr);
@@ -201,12 +225,18 @@ namespace GLT::renderer::vk_rasterizer {
 
             } catch (const vk::OutOfDateKHRError&) {
 
+                m_swapchain_out_of_date = true;
+                abort_imgui_frame();
                 return std::unexpected(GLT::render::render_error{
                     GLT::render::render_error::code::target_out_of_date,
                     "swapchain out of date"
                 });
             }
         }
+
+        // Reset only once we know we will submit: an early return above must leave the fence signalled, otherwise the next
+        // update() blocks forever in waitForFences
+        device.resetFences(frame.fence);
 
         frame.cmd.reset();
         frame.cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
@@ -220,6 +250,8 @@ namespace GLT::renderer::vk_rasterizer {
         import_frame_textures();
         update_light_cull_descriptors();
         update_mesh_descriptors();
+        ensure_draw_buffers();                  // grow indirect buffers to this frame's draw count (before descriptors)
+        update_cull_descriptors();
 
         if (m_active) {
 
@@ -251,7 +283,10 @@ namespace GLT::renderer::vk_rasterizer {
             end_imgui_frame();                  // ImGui::Render() — pass consumes draw data at exec
 
         m_graph->compile();
+        m_graph->set_timestamp_queries(m_timestamp_pool, m_current_frame * MAX_TIMESTAMPS_PER_FRAME, MAX_TIMESTAMPS_PER_FRAME);
         m_graph->execute(frame.cmd);
+        m_timed_pass_names[m_current_frame] = m_graph->timed_pass_names();
+        m_timestamps_written[m_current_frame] = m_graph->timestamps_written();
         m_graph->end_frame();
 
         // if (m_dup_counter >= 300) {
@@ -275,9 +310,21 @@ namespace GLT::renderer::vk_rasterizer {
         if (!m_offscreen) {
             wait_si.semaphore = frame.image_available;
             wait_si.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-            signal_si.semaphore = frame.render_finished;
+            signal_si.semaphore = m_render_finished[m_current_swapchain_image];
             signal_si.stageMask = vk::PipelineStageFlagBits2::eAllCommands;
         }
+
+        // Every submission signals the shared retire timeline so deferred destruction knows when this frame is done
+        vk::SemaphoreSubmitInfo retire_si{};
+        retire_si.semaphore = m_shared->retire_timeline();
+        retire_si.value = m_shared->next_retire_value();
+        retire_si.stageMask = vk::PipelineStageFlagBits2::eAllCommands;
+
+        std::array<vk::SemaphoreSubmitInfo, 2> signal_infos{};
+        u32 signal_count = 0;
+        if (!m_offscreen)
+            signal_infos[signal_count++] = signal_si;
+        signal_infos[signal_count++] = retire_si;
 
         vk::SubmitInfo2 si{};
         si.commandBufferInfoCount = 1;
@@ -285,9 +332,9 @@ namespace GLT::renderer::vk_rasterizer {
         if (!m_offscreen) {
             si.waitSemaphoreInfoCount = 1;
             si.pWaitSemaphoreInfos = &wait_si;
-            si.signalSemaphoreInfoCount = 1;
-            si.pSignalSemaphoreInfos = &signal_si;
         }
+        si.signalSemaphoreInfoCount = signal_count;
+        si.pSignalSemaphoreInfos = signal_infos.data();
 
         try {
 
@@ -303,7 +350,7 @@ namespace GLT::renderer::vk_rasterizer {
         if (!m_offscreen) {
             vk::PresentInfoKHR pi{};
             pi.waitSemaphoreCount = 1;
-            pi.pWaitSemaphores = &frame.render_finished;
+            pi.pWaitSemaphores = &m_render_finished[m_current_swapchain_image];
             pi.swapchainCount = 1;
             pi.pSwapchains = &m_swapchain.swapchain_handle;
             pi.pImageIndices = &m_current_swapchain_image;
@@ -312,6 +359,9 @@ namespace GLT::renderer::vk_rasterizer {
                 (void)queues.present_queue.presentKHR(pi);
 
             } catch (const vk::OutOfDateKHRError&) {
+                m_swapchain_out_of_date = true;
+                m_frame_counter++;                                              // the frame WAS submitted: advance the slot
+                m_current_frame = (m_current_frame + 1) % MAX_CONCURRENT_FRAMES;
                 return std::unexpected(GLT::render::render_error{
                     GLT::render::render_error::code::target_out_of_date,
                     "present out of date"
@@ -325,10 +375,34 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    // Wayland never returns VK_ERROR_OUT_OF_DATE_KHR on resize (the swapchain extent defines the surface size there) and
+    // some X11 drivers only report SUBOPTIMAL, so the acquire/present errors alone leave the swapchain at its old size.
+    // Polled once per frame in update(), before the ImGui frame opens, so a resize never has to abort a frame.
+    // resize() compares against the size we last *requested*, so a driver that clamps the extent can't cause a rebuild loop
+    void scene_renderer::sync_swapchain_to_window() {
+
+        auto* window = m_plugin.get_window();
+        if (!window || !window->is_valid(m_window))
+            return;
+
+        const auto fb = window->get_framebuffer_size(m_window);
+        if (fb.x <= 0 || fb.y <= 0)
+            return;                                 // minimized: render() skips the frame
+
+        resize({ static_cast<u32>(fb.x), static_cast<u32>(fb.y) });     // no-op when nothing changed
+    }
+
+
     void scene_renderer::resize(glm::uvec2 extent) {
 
-        if (extent.x == 0 || extent.y == 0 || extent == m_extent)
+        if (extent.x == 0 || extent.y == 0)
             return;
+
+        // Surface: compare against the requested size (see render()); the swapchain extent may be clamped by the driver
+        if (m_offscreen ? (extent == m_extent)
+                        : (!m_swapchain_out_of_date && extent.x == m_swapchain_builder.width && extent.y == m_swapchain_builder.height))
+            return;
+        m_swapchain_out_of_date = false;
 
         m_plugin.get_vk_device().waitIdle();
 
@@ -345,6 +419,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_image_count = static_cast<u32>(m_swapchain.swapchain_images.size());
         m_swapchain_images_layout.assign(m_image_count, vk::ImageLayout::eUndefined);
         m_extent = { m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height };
+        create_present_semaphores();            // image count can change on rebuild
 
         recreate_imgui_framebuffers();
     }
@@ -394,6 +469,95 @@ namespace GLT::renderer::vk_rasterizer {
         m_image_count = static_cast<u32>(m_swapchain.swapchain_images.size());
         m_swapchain_images_layout.assign(m_image_count, vk::ImageLayout::eUndefined);
         m_extent = { m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height };
+        create_present_semaphores();
+    }
+
+
+    void scene_renderer::create_present_semaphores() {
+
+        destroy_present_semaphores();
+        auto device = m_plugin.get_vk_device();
+        m_render_finished.resize(m_image_count);
+        for (auto& semaphore : m_render_finished)
+            semaphore = device.createSemaphore(vk::SemaphoreCreateInfo{});
+    }
+
+
+    void scene_renderer::destroy_present_semaphores() {
+
+        auto device = m_plugin.get_vk_device();
+        for (auto& semaphore : m_render_finished)
+            if (semaphore)
+                device.destroySemaphore(semaphore);
+        m_render_finished.clear();
+    }
+
+
+    void scene_renderer::create_timestamp_queries() {
+
+        const auto& queues = m_plugin.get_queues_ref();
+        const auto families = m_plugin.get_physical_device().getQueueFamilyProperties();
+        const u32 valid_bits = queues.graphics_index < families.size() ? families[queues.graphics_index].timestampValidBits : 0;
+        const f32 period = m_plugin.get_dev()->get_properties().limits.timestampPeriod;
+
+        if (valid_bits == 0 || period <= 0.f) {
+            LOG(warn, "GPU timestamps not supported on the graphics queue, GPU timings disabled")
+            return;
+        }
+
+        m_timestamp_period_ns = period;
+        m_timestamp_mask = valid_bits >= 64 ? ~0ull : ((1ull << valid_bits) - 1ull);
+
+        vk::QueryPoolCreateInfo qci{};
+        qci.queryType = vk::QueryType::eTimestamp;
+        qci.queryCount = MAX_CONCURRENT_FRAMES * MAX_TIMESTAMPS_PER_FRAME;
+        m_timestamp_pool = m_plugin.get_vk_device().createQueryPool(qci);
+        // No host reset needed: render_graph::execute() resets each frame slot's range on the GPU before writing it, and
+        // only ranges that were written are ever read back
+    }
+
+
+    void scene_renderer::destroy_timestamp_queries() {
+
+        if (m_timestamp_pool) {
+            m_plugin.get_vk_device().destroyQueryPool(m_timestamp_pool);
+            m_timestamp_pool = nullptr;
+        }
+    }
+
+
+    void scene_renderer::resolve_gpu_timestamps(u32 frame_slot) {
+
+        gpu_frame_report report{};
+        read_back_draw_stats(frame_slot, report);   // visible draws / triangles from GPU culling
+
+        const u32 written = std::exchange(m_timestamps_written[frame_slot], 0u);
+        std::array<u64, MAX_TIMESTAMPS_PER_FRAME> ticks{};
+        const bool have_timestamps = m_timestamp_pool && written >= 2 &&
+            m_plugin.get_vk_device().getQueryPoolResults(m_timestamp_pool, frame_slot * MAX_TIMESTAMPS_PER_FRAME, written,
+                written * sizeof(u64), ticks.data(), sizeof(u64), vk::QueryResultFlagBits::e64) == vk::Result::eSuccess;
+
+        if (!have_timestamps) {
+            if (report.draw_calls > 0)
+                m_shared->report_gpu_frame(report);
+            return;
+        }
+
+        const auto& names = m_timed_pass_names[frame_slot];
+        const f64 to_ms = static_cast<f64>(m_timestamp_period_ns) * 1e-6;
+        auto delta_ms = [&](u32 from, u32 to) -> f32 {
+            const u64 a = ticks[from] & m_timestamp_mask;
+            const u64 b = ticks[to] & m_timestamp_mask;
+            return b >= a ? static_cast<f32>(static_cast<f64>(b - a) * to_ms) : 0.f;
+        };
+
+        report.gpu_time_ms = delta_ms(0, written - 1);
+        report.render_passes = written - 1;
+        report.pass_times_ms.reserve(written - 1);
+        for (u32 i = 1; i < written && (i - 1) < names.size(); ++i)
+            report.pass_times_ms.emplace_back(names[i - 1], delta_ms(i - 1, i));
+
+        m_shared->report_gpu_frame(report);
     }
 
 
@@ -417,10 +581,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         for (auto& slot : m_frames) {
             slot.fence = device.createFence(fence_ci);
-            if (!m_offscreen) {
+            if (!m_offscreen)
                 slot.image_available = device.createSemaphore(sem_ci);
-                slot.render_finished = device.createSemaphore(sem_ci);
-            }
         }
 
         vk::CommandBufferAllocateInfo cai{};
@@ -457,10 +619,6 @@ namespace GLT::renderer::vk_rasterizer {
                 m_plugin.get_vk_device().destroySemaphore(slot.image_available);
                 slot.image_available = nullptr;
             }
-            if (slot.render_finished)  {
-                m_plugin.get_vk_device().destroySemaphore(slot.render_finished);
-                slot.render_finished = nullptr;
-            }
         }
 
         if (m_graphics_pool) {
@@ -468,6 +626,9 @@ namespace GLT::renderer::vk_rasterizer {
             m_graphics_pool = nullptr;
             for (auto& slot : m_frames) slot.cmd = nullptr;
         }
+
+        destroy_present_semaphores();
+        destroy_timestamp_queries();
 
         if (!m_offscreen && m_swapchain.swapchain_handle) {
             for (auto& view : m_swapchain.swapchain_image_views)
@@ -478,7 +639,11 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_graph.reset();
 
-        // Release all mesh references we took
+        // Release the override materials and mesh references we took
+        for (u32 slot : m_held_materials)
+            m_shared->release_material(slot);
+        m_held_materials.clear();
+
         for (const auto& [h, id] : m_resident_meshes)
             m_shared->release_mesh(id);
         m_resident_meshes.clear();

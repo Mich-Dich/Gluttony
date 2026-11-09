@@ -105,7 +105,8 @@ namespace GLT::renderer::vk_rasterizer {
             vk::Fence                                   fence = nullptr;
             vk::CommandBuffer                           cmd = nullptr;
             vk::Semaphore                               image_available = nullptr;   // surface only
-            vk::Semaphore                               render_finished = nullptr;   // surface only
+            // render_finished lives per swapchain image (m_render_finished), not per frame slot: the present engine may still
+            // be waiting on it when this slot comes around again
         };
 
         struct cluster_grid_params {
@@ -122,6 +123,11 @@ namespace GLT::renderer::vk_rasterizer {
         void init_surface_target(const GLT::render::surface_target_desc& target);
         void init_offscreen_target(const GLT::render::offscreen_target_desc& target);
         void init_frames();
+        void create_present_semaphores();
+        void destroy_present_semaphores();
+        void create_timestamp_queries();
+        void destroy_timestamp_queries();
+        void resolve_gpu_timestamps(u32 frame_slot);
         void init_gpu_state();
         void destroy_gpu_state();
         void destroy_internal();
@@ -130,6 +136,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         void ensure_scene_meshes();
         void build_instance_buffer();
+        void upload_instance_data();
         void update_lights();
         void update_shadow();
         void update_local_shadows();
@@ -144,6 +151,12 @@ namespace GLT::renderer::vk_rasterizer {
         void update_light_meta_ubo();
         void update_light_cull_descriptors();
         void update_mesh_descriptors();
+        void ensure_draw_buffers();                 // grow this frame's indirect command buffers to the scene's draw count
+        void update_cull_descriptors();             // per frame: buffers can be reallocated when they grow
+        void read_back_draw_stats(u32 frame_slot, gpu_frame_report& report);
+
+        // Grow-only host-visible buffer: reallocates (power of two) and retires the old one. Returns true if reallocated
+        bool ensure_host_buffer(util::allocated_buffer& buffer, vk::DeviceSize bytes, vk::BufferUsageFlags usage);
 
         // pipelines + resources ---------------------------------------------------------------------------------------
 
@@ -158,6 +171,7 @@ namespace GLT::renderer::vk_rasterizer {
         void create_shadow_resources();
         void destroy_shadow_resources();
         void create_local_shadow_resources();
+        void write_local_shadow_draw_descriptors(u32 frame_index);
         void destroy_local_shadow_resources();
         void create_blit_pipeline();
         void destroy_blit_pipeline();
@@ -190,6 +204,8 @@ namespace GLT::renderer::vk_rasterizer {
         void imgui_shutdown();
         void begin_imgui_frame();
         void end_imgui_frame();
+        void abort_imgui_frame();               // close an opened ImGui frame when render() bails out before recording
+        void sync_swapchain_to_window();        // surface only: rebuild the swapchain if the window size changed
         void add_imgui_pass();
         void recreate_imgui_framebuffers();
 
@@ -222,6 +238,8 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                                 m_image_count = 0;
         u32                                                                 m_current_swapchain_image = 0;
         std::vector<vk::ImageLayout>                                        m_swapchain_images_layout{};
+        std::vector<vk::Semaphore>                                          m_render_finished{};     // one per swapchain image
+        bool                                                                m_swapchain_out_of_date = false;    // driver said so: rebuild even at the same size
 
         // Offscreen
         ref<GLT::renderer::vk_rasterizer::image>                            m_output_image = nullptr;
@@ -235,9 +253,24 @@ namespace GLT::renderer::vk_rasterizer {
         // Instances
         std::vector<gpu_instance_data>                                      m_packed_instances{};
         u32                                                                 m_instance_count = 0;
-        std::vector<u32>                                                    m_instance_material_slots{};
-        std::vector<GLT::asset::handle>                                     m_instance_material_handles{};
-        std::vector<u32>                                                    m_scene_materials{};
+        std::vector<u32>                                                    m_scene_materials{};        // unique material slots drawn this frame
+
+        // Materials -> draw ranges. Every asset instance owns `submesh_count` consecutive entries in m_material_table
+        // (gpu_instance_data::material_index = first entry). Each scene material gets an exact command range sized by the
+        // number of (instance, submesh) pairs using it, so culling can never overflow or drop draws
+        std::vector<u32>                                                    m_material_table{};
+        std::vector<glm::uvec2>                                             m_material_ranges{};        // [MAX_MATERIALS] x = first cmd, y = capacity
+        std::vector<u32>                                                    m_material_draw_counts{};   // [MAX_MATERIALS] scratch
+        u32                                                                 m_total_draw_capacity = 0;
+        std::vector<u32>                                                    m_held_materials{};         // override materials this scene holds a ref on
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_material_table_buffers{};
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_material_range_buffers{};
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_instance_buffer_generation{};   // bumps when reallocated
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_local_shadow_desc_generation{};
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_draw_capacity{};          // per-view command capacity
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_local_draw_views{};       // views the local buffer holds
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_stats_handles{};
+        std::array<bool, MAX_CONCURRENT_FRAMES>                             m_draw_stats_written{};
 
         // Lights
         std::vector<gpu_light>                                              m_packed_lights{};
@@ -268,7 +301,6 @@ namespace GLT::renderer::vk_rasterizer {
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_camera_ubos{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_globals_ubos{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_instance_buffers{};
-        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_instance_override_buffers{};
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_frame_desc_buffers{};
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_material_desc_buffers{};
 
@@ -309,6 +341,15 @@ namespace GLT::renderer::vk_rasterizer {
         graph::texture_handle                                               m_depth_target{};
 
         u32                                                                 m_frame_counter = 0;
+
+        // GPU timing (render graph writes one timestamp per pass into this frame slot's query range) ----------------------
+
+        static constexpr u32                                                MAX_TIMESTAMPS_PER_FRAME = 64;
+        vk::QueryPool                                                       m_timestamp_pool = nullptr;
+        f32                                                                 m_timestamp_period_ns = 0.f;
+        u64                                                                 m_timestamp_mask = ~0ull;
+        std::array<std::vector<std::string>, MAX_CONCURRENT_FRAMES>         m_timed_pass_names{};
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_timestamps_written{};
 
         // debug draw state --------------------------------------------------------------------------------------------
 

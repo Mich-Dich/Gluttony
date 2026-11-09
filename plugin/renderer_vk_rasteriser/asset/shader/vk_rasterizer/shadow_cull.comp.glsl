@@ -45,7 +45,10 @@ struct ShadowView {
     vec4        _pad[3];
 };
 
-const uint COMMANDS_PER_VIEW = 4096u;   // SHADOW_COMMANDS_PER_VIEW
+// Commands are bucketed per (view, material) because the draw pass binds one pipeline per material: the per-material
+// ranges are the same as the main view's (material_ranges), repeated once per view (view_stride apart).
+// Shared limits (MAX_MATERIALS, MAX_SUBMESHES_PER_MESH, ...) are injected as #defines by the renderer's shader
+// compiler from the C++ constants (util/shader_compiler.cpp). Do not redeclare them here.
 
 layout(std430, set = 0, binding = 0) readonly buffer InstanceBuffer { InstanceData instances[]; };
 layout(std430, set = 0, binding = 1) readonly buffer MeshBuffer { MeshData meshes[]; };
@@ -53,6 +56,13 @@ layout(std430, set = 0, binding = 2) readonly buffer SubmeshBuffer { SubmeshData
 layout(std430, set = 0, binding = 3) writeonly buffer DrawCommandBuffer { DrawIndexedIndirectCommand commands[]; };
 layout(std430, set = 0, binding = 4) buffer DrawCountBuffer { uint counts[]; };
 layout(std430, set = 0, binding = 5) readonly buffer ShadowViewBuffer { ShadowView views[]; };
+layout(std430, set = 0, binding = 6) readonly buffer MaterialTable { uint material_table[]; };   // see cull.comp.glsl
+layout(std430, set = 0, binding = 7) readonly buffer MaterialRanges { uvec2 material_ranges[]; };
+
+layout(push_constant) uniform PushConstants {
+    uint instance_count;    // number of valid instances this frame (the SSBO holds stale data past it)
+    uint view_stride;       // commands per view: view v's material ranges start at v * view_stride
+} pc;
 
 
 
@@ -60,7 +70,7 @@ void main() {
 
     const uint view_index = gl_WorkGroupID.y;
     const uint instance_index = gl_GlobalInvocationID.x;
-    if (instance_index >= uint(instances.length()))
+    if (instance_index >= pc.instance_count || instance_index >= uint(instances.length()))
         return;
 
     const ShadowView view = views[view_index];
@@ -104,21 +114,26 @@ void main() {
     if (radius < dist * view.params.x)
         return;
 
-    const uint base = view_index * COMMANDS_PER_VIEW;
     for (uint submesh_offset = 0u; submesh_offset < mesh.submesh_count; ++submesh_offset) {
 
         const SubmeshData submesh = submeshes[mesh.first_submesh + submesh_offset];
         if (submesh.index_count < 3u)
             continue;
 
-        const uint slot = atomicAdd(counts[view_index], 1u);
-        if (slot >= COMMANDS_PER_VIEW)
-            continue;                                   // drawIndexedIndirectCount clamps to maxDrawCount
+        const uint mat_slot = material_table[instance.material_index + submesh_offset];
+        if (mat_slot >= MAX_MATERIALS)
+            continue;
 
-        commands[base + slot].indexCount = submesh.index_count;
-        commands[base + slot].instanceCount = 1u;
-        commands[base + slot].firstIndex = mesh.index_offset + submesh.first_index;
-        commands[base + slot].vertexOffset = int(mesh.vertex_offset);
-        commands[base + slot].firstInstance = instance_index;
+        const uvec2 range = material_ranges[mat_slot];
+        const uint slot = atomicAdd(counts[view_index * MAX_MATERIALS + mat_slot], 1u);
+        if (slot >= range.y)
+            continue;
+
+        const uint cmd = view_index * pc.view_stride + range.x + slot;
+        commands[cmd].indexCount = submesh.index_count;
+        commands[cmd].instanceCount = 1u;
+        commands[cmd].firstIndex = mesh.index_offset + submesh.first_index;
+        commands[cmd].vertexOffset = int(mesh.vertex_offset);
+        commands[cmd].firstInstance = instance_index;
     }
 }

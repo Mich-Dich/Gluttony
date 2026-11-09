@@ -6,6 +6,8 @@
 #include <util/io/vfs.h>
 
 #include "shader_compiler.h"
+#include "scene/type.h"
+#include "shared/type.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -78,6 +80,31 @@ namespace GLT::renderer::vk_rasterizer::util {
 
     // CLASS PUBLIC ====================================================================================================
 
+    // Every GLSL shader gets these limits as #defines, generated from the C++ constants. This keeps buffer sizes on the
+    // CPU side and indexing on the GPU side in lock-step: a mismatch here is exactly what caused the culling corruption
+    // (shader assumed 4096 materials, buffers were sized for 1024). Shaders must NOT redeclare these names
+    static const std::string& shared_constants_preamble() {
+
+        static const std::string preamble = [] {
+            std::string out;
+            auto define_u = [&out](const char* name, u32 value) { out += std::format("#define {} {}u\n", name, value); };
+
+            define_u("MAX_MATERIALS",               MAX_MATERIALS);
+            define_u("MAX_SUBMESHES_PER_MESH",      MAX_SUBMESHES_PER_MESH);
+            define_u("MAX_MESHES",                  MAX_MESHES);
+            define_u("MAX_INSTANCES",               MAX_INSTANCES);
+            define_u("MAX_LIGHTS",                  MAX_LIGHTS);
+            define_u("MAX_LIGHTS_PER_CLUSTER",      MAX_LIGHTS_PER_CLUSTER);
+            define_u("CLUSTER_TILE_SIZE_X",         CLUSTER_TILE_SIZE_X);
+            define_u("CLUSTER_TILE_SIZE_Y",         CLUSTER_TILE_SIZE_Y);
+            define_u("CLUSTER_DEPTH_SLICES",        CLUSTER_DEPTH_SLICES);
+            define_u("MAX_SHADOW_VIEWS",            MAX_SHADOW_VIEWS);
+            return out;
+        }();
+        return preamble;
+    }
+
+
     std::vector<u32> shader_compiler::compile_glsl_to_spirv(const std::filesystem::path& source_path) {
 
         // Read the GLSL source file
@@ -140,6 +167,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         glslang::TShader shader(shader_stage);
         const char* shader_strings[] = { source_code.c_str() };
         shader.setStrings(shader_strings, 1);
+        shader.setPreamble(shared_constants_preamble().c_str());
 
         // Set up Vulkan/SPIR-V environment
         shader.setEnvInput(glslang::EShSourceGlsl, shader_stage, glslang::EShClientVulkan, 100);

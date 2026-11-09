@@ -91,15 +91,17 @@ namespace GLT::renderer::vk_rasterizer {
                 return std::unexpected(PME{ Code::invalid_input, std::format("index {} >= vertex count {}", idx, vertices.size()) });
         }
 
-        m_plugin.get_vk_device().waitIdle();
+        // In-flight frames may still be drawing the previous contents, so never write into the existing buffers: allocate
+        // fresh ones and retire the old pair (destroyed once the GPU is done). This replaces a full waitIdle() per update
+        // TODO(roadmap step 7): suballocate from per-frame ring buffers instead of allocating per update
+        if (slot.vertex_buffer.buffer)
+            m_shared->retire_buffer(slot.vertex_buffer);
+        if (slot.index_buffer.buffer)
+            m_shared->retire_buffer(slot.index_buffer);
 
         // Vertex buffer -----------------------------------------------------------------------------------------------
 
-        const bool grow_v = !slot.vertex_buffer.buffer || vb_bytes > slot.vertex_buffer.size;
-        if (grow_v) {
-
-            if (slot.vertex_buffer.buffer)
-                m_plugin.get_dev()->destroy_buffer(slot.vertex_buffer);
+        {
             slot.vertex_buffer = m_plugin.get_dev()->create_buffer(vb_bytes,
                 vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer, 
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
@@ -111,12 +113,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Index buffer ------------------------------------------------------------------------------------------------
 
-        const bool grow_i = !slot.index_buffer.buffer || ib_bytes > slot.index_buffer.size;
-        if (grow_i) {
-
-            if (slot.index_buffer.buffer)
-                m_plugin.get_dev()->destroy_buffer(slot.index_buffer);
-
+        {
             slot.index_buffer = m_plugin.get_dev()->create_buffer(ib_bytes,
                 vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eStorageBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
@@ -160,12 +157,11 @@ namespace GLT::renderer::vk_rasterizer {
         if (!slot.alive)
             return;
 
-        m_plugin.get_vk_device().waitIdle();
-
+        // Retired, not destroyed: frames in flight may still draw this mesh
         if (slot.vertex_buffer.buffer)
-            m_plugin.get_dev()->destroy_buffer(slot.vertex_buffer);
+            m_shared->retire_buffer(slot.vertex_buffer);
         if (slot.index_buffer.buffer)
-            m_plugin.get_dev()->destroy_buffer(slot.index_buffer);
+            m_shared->retire_buffer(slot.index_buffer);
         if (slot.material_slot != DEFAULT_MATERIAL_SLOT)
             m_shared->release_material(slot.material_slot);
 

@@ -152,6 +152,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         phys_selector.add_required_extension_features(descbufferFeatures);
 
         physical_device_features12.bufferDeviceAddress = true;
+        physical_device_features12.timelineSemaphore = true;            // util::retire_queue (deferred destruction)
         physical_device_features12.descriptorIndexing = true;
         physical_device_features12.descriptorBindingVariableDescriptorCount = true;
         physical_device_features12.descriptorBindingPartiallyBound = true;

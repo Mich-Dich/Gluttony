@@ -44,6 +44,20 @@ namespace GLT::renderer::vk_rasterizer {
         return p;
     }
 
+    bool scene_renderer::ensure_host_buffer(util::allocated_buffer& buffer, vk::DeviceSize bytes, vk::BufferUsageFlags usage) {
+
+        if (buffer.buffer && buffer.size >= bytes)
+            return false;
+
+        const vk::DeviceSize capacity = std::bit_ceil(std::max<vk::DeviceSize>(bytes, 1024));
+        if (buffer.buffer)
+            m_shared->retire_buffer(buffer);           // the previous frame using this slot is done, but be safe & uniform
+
+        buffer = m_plugin.get_dev()->create_buffer(capacity, usage, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        ASSERT(buffer.buffer, "", "Failed to grow host buffer to {} bytes", (capacity))
+        return true;
+    }
+
     // per-frame CPU work (update()) -----------------------------------------------------------------------------------
 
     void scene_renderer::ensure_scene_meshes() {
@@ -86,6 +100,8 @@ namespace GLT::renderer::vk_rasterizer {
             static_cast<f32>(m_extent.x), static_cast<f32>(m_extent.y));
         cam.light_view_proj = m_shadow.view_proj;
         cam.shadow_params = m_shadow.params;
+        cam.flags.x = m_asset_instance_count;   // cull.comp: only the asset-backed prefix of this frame's instance SSBO is valid
+        cam.flags.y = 1u;                       // cull.comp: main view writes the draw statistics (shadow cull does not)
 
         // Frustum planes
         const glm::mat4 t = glm::transpose(cam.view_proj);
@@ -133,6 +149,9 @@ namespace GLT::renderer::vk_rasterizer {
 
         auto* dev = m_plugin.get_dev();
 
+        m_material_ranges.assign(MAX_MATERIALS, glm::uvec2(0u));
+        m_material_draw_counts.assign(MAX_MATERIALS, 0u);
+
         using BU = vk::BufferUsageFlagBits;
 
         // Per-frame buffers
@@ -141,10 +160,15 @@ namespace GLT::renderer::vk_rasterizer {
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
             m_globals_ubos[i] = dev->create_buffer(sizeof(gpu_globals), BU::eUniformBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-            m_instance_buffers[i] = dev->create_buffer(MAX_INSTANCES * sizeof(gpu_instance_data), BU::eStorageBuffer,
+            // Instance + material-table buffers start small and grow on demand (ensure_host_buffer)
+            m_instance_buffers[i] = dev->create_buffer(INITIAL_INSTANCE_CAPACITY * sizeof(gpu_instance_data), BU::eStorageBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-            m_instance_override_buffers[i] = dev->create_buffer(MAX_INSTANCES * 32 * sizeof(u32), BU::eStorageBuffer,
+            m_material_table_buffers[i] = dev->create_buffer(INITIAL_DRAW_CAPACITY * sizeof(u32), BU::eStorageBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+            m_material_range_buffers[i] = dev->create_buffer(MAX_MATERIALS * sizeof(glm::uvec2), BU::eStorageBuffer,
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+            std::memset(dev->map_buffer(m_material_range_buffers[i]), 0, MAX_MATERIALS * sizeof(glm::uvec2));
+            dev->unmap_buffer(m_material_range_buffers[i]);
             m_light_buffers[i] = dev->create_buffer(MAX_LIGHTS * sizeof(gpu_light), BU::eStorageBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
@@ -189,7 +213,10 @@ namespace GLT::renderer::vk_rasterizer {
         for (auto& b : m_instance_buffers)
             if (b.buffer)
                 dev->destroy_buffer(b);
-        for (auto& b : m_instance_override_buffers)
+        for (auto& b : m_material_table_buffers)
+            if (b.buffer)
+                dev->destroy_buffer(b);
+        for (auto& b : m_material_range_buffers)
             if (b.buffer)
                 dev->destroy_buffer(b);
         for (auto& b : m_light_buffers)
@@ -217,7 +244,8 @@ namespace GLT::renderer::vk_rasterizer {
         m_camera_ubos.fill({});
         m_globals_ubos.fill({});
         m_instance_buffers.fill({});
-        m_instance_override_buffers.fill({});
+        m_material_table_buffers.fill({});
+        m_material_range_buffers.fill({});
         m_light_buffers.fill({});
         m_light_meta_ubos.fill({});
     }

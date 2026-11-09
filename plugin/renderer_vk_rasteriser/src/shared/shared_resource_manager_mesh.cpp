@@ -70,23 +70,28 @@ namespace GLT::renderer::vk_rasterizer {
 
         mesh_slot& slot = m_mesh_slots[id];
 
-        // Return ranges to their pools (CPU-only, does not touch GPU memory)
-        pool_free(m_vertex_pool, slot.vertex_offset, slot.vertex_count);
-        pool_free(m_index_pool, slot.index_offset, slot.index_count);
-        pool_free(m_submesh_pool, slot.submesh_offset, slot.submesh_count);
+        // In-flight frames still draw from these ranges (and read the mesh-table entry). Only hand the ranges and the slot
+        // back once the GPU is done, otherwise the next upload overwrites geometry that is still being rendered
+        m_retire.retire([this, id,
+            vertex_offset = slot.vertex_offset, vertex_count = slot.vertex_count,
+            index_offset = slot.index_offset, index_count = slot.index_count,
+            submesh_offset = slot.submesh_offset, submesh_count = slot.submesh_count]() {
+            pool_free(m_vertex_pool, vertex_offset, vertex_count);
+            pool_free(m_index_pool, index_offset, index_count);
+            pool_free(m_submesh_pool, submesh_offset, submesh_count);
+            m_free_slots.push_back(id);
+        });
 
         // Release material slots owned by the submeshes
         for (u32 ms : slot.material_slots)
             release_material(ms);
         slot.material_slots.clear();
 
-        // NOTE: SSBO entry is intentionally NOT zeroed here. In-flight frames may still reference this slot
-        // with the old instance transforms; leaving stale data lets them render the old mesh unchanged.
-        // load_mesh_internal() waits for the GPU before overwriting a recycled slot.
+        // NOTE: SSBO entry is intentionally NOT zeroed here. In-flight frames may still reference this slot. The slot only
+        // becomes reusable (m_free_slots) once the retire callback above has run
 
         m_mesh_id_by_asset.erase(slot.asset);
         slot = {};
-        m_free_slots.push_back(id);
     }
 
 
@@ -254,10 +259,10 @@ namespace GLT::renderer::vk_rasterizer {
             m_dev->unmap_buffer(*p.buffer);
         }
 
-        m_device.waitIdle();
+        // In-flight frames have the old buffer bound: retire it instead of stalling the GPU
         std::swap(*p.buffer, new_buf);
         if (new_buf.buffer)
-            m_dev->destroy_buffer(new_buf);
+            retire_buffer(new_buf);
 
         p.capacity = new_capacity;
         return true;
@@ -279,6 +284,7 @@ namespace GLT::renderer::vk_rasterizer {
     void shared_resource_manager::try_compact() {
 
         m_device.waitIdle();
+        m_retire.flush();           // pending range frees must land before compaction rewrites the pools (device is idle)
 
         // Gather live mesh indices
         std::vector<u32> live;
@@ -593,9 +599,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         upload_mesh_slice(slot, *mesh);
 
-        // If we recycled a slot, its SSBO entry may still be read by in-flight frames. Wait before overwriting.
-        if (reusing_slot)
-            m_device.waitIdle();
+        // Recycled slots only reach m_free_slots after the GPU finished with them (see release_mesh), no wait needed
+        (void)reusing_slot;
 
         pack_mesh_into_ssbo(slot, *mesh);
 

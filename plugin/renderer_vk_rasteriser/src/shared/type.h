@@ -133,6 +133,16 @@ namespace GLT::renderer::vk_rasterizer {
         bool                                                        alive = false;
     };
 
+    // GPU timing of one completed frame (or the sum of several scene renderers' frames)
+    struct gpu_frame_report {
+
+        f32                                                         gpu_time_ms = 0.0f;
+        u32                                                         render_passes = 0;
+        u32                                                         draw_calls = 0;     // visible draws emitted by GPU culling (main view)
+        u32                                                         triangles = 0;      // triangles of those draws
+        std::vector<std::pair<std::string, f32>>                    pass_times_ms{};
+    };
+
     // Resident material slot
     struct material_slot {
 

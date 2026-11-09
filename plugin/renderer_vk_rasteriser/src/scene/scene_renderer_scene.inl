@@ -68,6 +68,10 @@ namespace GLT::renderer::vk_rasterizer {
 
                 // ---- Asset-backed (culled) draws -----------------------------------------------
                 for (u32 slot : m_scene_materials) {
+                    const glm::uvec2 range = m_material_ranges[slot];
+                    if (range.y == 0)
+                        continue;                               // no culled draws use this material (e.g. procedural only)
+
                     const auto& entry = m_shared->get_material(slot);
                     if (!entry.alive || !entry.depth_pipeline)
                         continue;
@@ -77,9 +81,9 @@ namespace GLT::renderer::vk_rasterizer {
                     m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 1, 1, offset, ctx.cmd,
                         vk::PipelineBindPoint::eGraphics);
                     ctx.cmd.drawIndexedIndirectCount(
-                        cmd_buf, static_cast<vk::DeviceSize>(slot) * MAX_COMMANDS_PER_MATERIAL * stride,
+                        cmd_buf, static_cast<vk::DeviceSize>(range.x) * stride,
                         cnt_buf, static_cast<vk::DeviceSize>(slot) * sizeof(u32),
-                        MAX_COMMANDS_PER_MATERIAL, stride);
+                        range.y, stride);
                 }
 
                 // ---- Procedural draws ---------------------------------------------------------
@@ -147,6 +151,10 @@ namespace GLT::renderer::vk_rasterizer {
 
                 // ---- Asset-backed (culled) draws -----------------------------------------------
                 for (u32 slot : m_scene_materials) {
+                    const glm::uvec2 range = m_material_ranges[slot];
+                    if (range.y == 0)
+                        continue;                               // no culled draws use this material (e.g. procedural only)
+
                     const auto& entry = m_shared->get_material(slot);
                     if (!entry.alive || !entry.pipeline)
                         continue;
@@ -156,9 +164,9 @@ namespace GLT::renderer::vk_rasterizer {
                     m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 1, 1, offset, ctx.cmd,
                         vk::PipelineBindPoint::eGraphics);
                     ctx.cmd.drawIndexedIndirectCount(
-                        cmd_buf, static_cast<vk::DeviceSize>(slot) * MAX_COMMANDS_PER_MATERIAL * stride,
+                        cmd_buf, static_cast<vk::DeviceSize>(range.x) * stride,
                         cnt_buf, static_cast<vk::DeviceSize>(slot) * sizeof(u32),
-                        MAX_COMMANDS_PER_MATERIAL, stride);
+                        range.y, stride);
                 }
 
                 // ---- Procedural draws ---------------------------------------------------------

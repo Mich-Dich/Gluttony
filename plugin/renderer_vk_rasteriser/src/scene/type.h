@@ -19,11 +19,16 @@ namespace GLT::renderer::vk_rasterizer {
 
     // per-scene scene state -------------------------------------------------------------------------------------------
 
-    constexpr u32                                       MAX_INSTANCES = 4096;
+    // Hard sanity cap only. Instance / material-table / draw-command buffers grow on demand (power of two, starting at the
+    // INITIAL_* sizes below); old buffers are retired, so growing never stalls the GPU
+    constexpr u32                                       MAX_INSTANCES = 1u << 20;
+
+    constexpr u32                                       INITIAL_INSTANCE_CAPACITY = 4096;
+
+    constexpr u32                                       INITIAL_DRAW_CAPACITY = 4096;       // draw commands (instance x submesh)
 
     constexpr u32                                       MAX_LIGHTS = 1024;
 
-    constexpr u32                                       MAX_COMMANDS_PER_MATERIAL = 256;
 
     // clustered lighting ----------------------------------------------------------------------------------------------
 
@@ -97,6 +102,18 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                             _pad1 = 0;
     };
     static_assert(sizeof(gpu_instance_data) == 144, "gpu_instance_data layout mismatch");
+
+
+    // Written by cull.comp (main view only), read back on the host after the frame's fence. Layout matches DrawStats in
+    // cull.comp.glsl
+    struct gpu_draw_stats {
+
+        u32                                             visible_draws = 0;          // indirect draw commands emitted
+        u32                                             triangles = 0;
+        u32                                             visible_instances = 0;
+        u32                                             _pad = 0;
+    };
+    static_assert(sizeof(gpu_draw_stats) == 16, "gpu_draw_stats layout mismatch");
 
 
     // Per-light SSBO entry

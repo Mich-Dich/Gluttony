@@ -7,6 +7,7 @@
 #include "platform/i_window.h"
 #include "reflection/registry.h"
 #include "render/image.h"
+#include "debug/profiler.h"
 #include "image.h"
 
 // GLFW is the only backend we implement surface creation for. The window plugin gives us a native
@@ -125,6 +126,19 @@ namespace GLT::renderer::vk_rasterizer {
                 // Left here as a hook for future diagnostics / dirty tracking
             });
 
+        // Per-pass GPU timings in the stats HUD (filled from the timestamp queries the scene renderers resolve)
+        m_gpu_stats_provider = GLT::debug::register_provider(GLT::debug::stats_provider{
+            .name = "GPU passes",
+            .fill = [this](GLT::debug::system_stats& out) {
+                if (!m_shared)
+                    return;
+                const auto& stats = m_shared->last_gpu_stats();
+                out.custom.push_back({ "total", stats.gpu_time_ms, "%.3f ms" });
+                for (const auto& [pass_name, ms] : stats.pass_times_ms)
+                    out.custom.push_back({ pass_name, ms, "%.3f ms" });
+            }
+        });
+
         LOG_INIT
         return true;
     }
@@ -133,6 +147,7 @@ namespace GLT::renderer::vk_rasterizer {
     void renderer::destroy() {
 
         GLT::event_bus::unsubscribe(m_framebuffer_resize_sub);
+        GLT::debug::unregister_provider(m_gpu_stats_provider);
 
         if (m_shared) {
             m_shared->destroy();
@@ -173,12 +188,14 @@ namespace GLT::renderer::vk_rasterizer {
 
     GLT::debug::render_stats renderer::get_render_stats() const {
 
+        const gpu_frame_report* gpu = m_shared ? &m_shared->last_gpu_stats() : nullptr;
+
         return GLT::debug::render_stats{
-            .gpu_time_ms = 0.0f,
-            .draw_calls = 0,
-            .triangles = 0,
+            .gpu_time_ms = gpu ? gpu->gpu_time_ms : 0.0f,
+            .draw_calls = gpu ? gpu->draw_calls : 0u,
+            .triangles = gpu ? gpu->triangles : 0u,         // main view, after GPU culling (read back from cull.comp)
             .vertices = 0,
-            .render_passes = 0,
+            .render_passes = gpu ? gpu->render_passes : 0u,
             #if defined(DEBUG)
                 .vram_bytes = GLT::render::image::get_live_vram_bytes(),
             #endif
