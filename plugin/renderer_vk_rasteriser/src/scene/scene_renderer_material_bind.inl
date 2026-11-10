@@ -36,6 +36,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     void scene_renderer::write_scene_material_descriptors() {
+        GLT_PROFILE_SCOPE("scene_renderer::write_scene_material_descriptors");
 
         // Every frame, rewrite the per-frame descriptor for every material slot this scene references. Cheap (descriptor writes
         // are memcpy-into-mapped-CPU-buffer) and always correct: `shared` may have swapped a material's params_ubo during

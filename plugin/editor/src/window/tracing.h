@@ -111,6 +111,8 @@ namespace GLT::editor {
         f32                                                             m_timeline_pan = 0.0f;  // 0..1 of the frame
 
         char                                                            m_tracy_path[512] = {};
+        int                                                             m_capture_frames = 300;
+        std::string                                                     m_export_status{};
         std::string                                                     m_launch_status{};
     };
 

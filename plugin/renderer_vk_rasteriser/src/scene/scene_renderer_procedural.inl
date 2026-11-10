@@ -30,6 +30,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
     GLT::render::procedural_mesh_id scene_renderer::create_procedural_mesh(GLT::render::mesh_update_class update_class) {
+        GLT_PROFILE_SCOPE("scene_renderer::create_procedural_mesh");
 
         u32 slot_idx;
         if (!m_free_procedural_slots.empty()) {
@@ -60,6 +61,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     std::expected<void, GLT::render::procedural_mesh_error> scene_renderer::update_procedural_mesh(GLT::render::procedural_mesh_id id,
         std::span<const GLT::asset::mesh::vertex> vertices, std::span<const u32> indices, GLT::asset::handle material) {
+        GLT_PROFILE_SCOPE("scene_renderer::update_procedural_mesh");
 
         using PME = GLT::render::procedural_mesh_error;
         using ME = GLT::render::mesh_update_class;
@@ -149,6 +151,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_procedural_mesh(GLT::render::procedural_mesh_id id) {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_procedural_mesh");
 
         if (id == GLT::render::INVALID_PROCEDURAL_MESH || id > m_procedural_meshes.size())
             return;

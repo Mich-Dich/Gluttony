@@ -147,6 +147,7 @@ namespace GLT::renderer::vk_rasterizer {
     // pipelines + resources -------------------------------------------------------------------------------------------
 
     void scene_renderer::create_environment_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_environment_resources");
 
         auto* dev = m_plugin.get_dev();
         const vk::Device device = m_plugin.get_vk_device();
@@ -273,6 +274,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_environment_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_environment_resources");
 
         auto* dev = m_plugin.get_dev();
         const vk::Device device = m_plugin.get_vk_device();
@@ -306,6 +308,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Graph-owned, fixed size. Called every frame (persistent lookup is cheap); the targets only get (re)built on the first
     // frame, which update_environment() detects through the image handles
     void scene_renderer::ensure_environment_textures() {
+        GLT_PROFILE_SCOPE("scene_renderer::ensure_environment_textures");
 
         using VKIU = vk::ImageUsageFlagBits;
 
@@ -345,6 +348,7 @@ namespace GLT::renderer::vk_rasterizer {
     // one. Rebuilds the cubemaps only when something that affects them changed (sun moved, colour, haze, ...) or the
     // targets were recreated
     void scene_renderer::update_environment() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_environment");
 
         const auto& env = m_environment;
         if (env.has_sun) {
@@ -376,6 +380,7 @@ namespace GLT::renderer::vk_rasterizer {
     // passes ----------------------------------------------------------------------------------------------------------
 
     void scene_renderer::add_environment_passes() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_environment_passes");
 
         if (!m_env.dirty)
             return;
@@ -487,6 +492,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     // After the opaque scene pass (depth complete), before translucents (which then blend over the sky in HDR)
     void scene_renderer::add_sky_background_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_sky_background_pass");
 
         if (!m_env.enabled)
             return;

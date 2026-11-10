@@ -74,6 +74,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     void scene_renderer::create_shadow_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_shadow_resources");
 
         // Comparison sampler: each tap is a hardware 2x2 PCF. Border = 1.0, so anything outside the map reads as lit
         vk::SamplerCreateInfo sampler_info{};
@@ -124,6 +125,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_shadow_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_shadow_resources");
 
         m_plugin.get_vk_device().waitIdle();
 
@@ -143,6 +145,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_shadow() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_shadow");
 
         if (!m_shadow.active)
             return;
@@ -207,6 +210,7 @@ namespace GLT::renderer::vk_rasterizer {
     // local shadows ---------------------------------------------------------------------------------------------------
 
     void scene_renderer::create_local_shadow_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_local_shadow_resources");
 
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
@@ -304,6 +308,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Set v has binding 0 = view v's UBO slice, so the unchanged mesh.vert + depth pipeline render any view just by switching
     // the descriptor offset. Binding 1 is the instance buffer, so this is rewritten whenever that buffer is reallocated
     void scene_renderer::write_local_shadow_draw_descriptors(u32 frame_index) {
+        GLT_PROFILE_SCOPE("scene_renderer::write_local_shadow_draw_descriptors");
 
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
@@ -330,6 +335,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_local_shadow_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_local_shadow_resources");
 
         m_plugin.get_vk_device().waitIdle();
 
@@ -365,6 +371,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_local_shadows() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_local_shadows");
 
         m_local_shadow_view_count = 0;
         m_local_shadow_tiles.clear();
@@ -539,6 +546,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_reset_shadow_draw_count_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_reset_shadow_draw_count_pass");
 
         m_graph->add_pass("reset_shadow_draw_count",
             [&](graph::pass_builder& builder) {
@@ -551,6 +559,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_shadow_cull_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_shadow_cull_pass");
 
         m_graph->add_pass("shadow_cull",
             [&](graph::pass_builder& builder) {
@@ -572,6 +581,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_shadow_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_shadow_pass");
 
         m_graph->add_pass("shadow_pass",
             [&](graph::pass_builder& builder) {
@@ -632,6 +642,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_local_shadow_passes() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_local_shadow_passes");
 
         if (m_local_shadow_view_count == 0)
             return;

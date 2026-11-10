@@ -126,6 +126,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     std::expected<GLT::unique_ref<scene_renderer>, GLT::render::scene_renderer_error> scene_renderer::create(renderer& plugin,
         const GLT::render::scene_renderer_desc& desc) {
+        GLT_PROFILE_SCOPE("scene_renderer::create");
 
         // Validate the surface target. Any window the platform plugin confirms as live is acceptable;
         // the renderer will happily create a swapchain for it (there is no longer a "only the plugin's
@@ -167,6 +168,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update(f32 delta_time) {
+        GLT_PROFILE_SCOPE("scene_renderer::update");
 
         if (!m_active && m_offscreen)       // Offscreen scene renderers don't own ImGui and don't need to run when inactive
             return;
@@ -203,6 +205,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     std::expected<void, GLT::render::render_error> scene_renderer::render(u64 /*frame_number*/) {
+        GLT_PROFILE_SCOPE("scene_renderer::render");
 
         if (!m_active && m_offscreen)       // Offscreen inactive: nothing to do, leave fence + frame slot alone
             return {};
@@ -252,10 +255,12 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Reset only once we know we will submit: an early return above must leave the fence signalled, otherwise the next
         // update() blocks forever in waitForFences
-        device.resetFences(frame.fence);
-
-        frame.cmd.reset();
-        frame.cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+        {
+            GLT_PROFILE_SCOPE("Reset fence + begin command buffer");
+            device.resetFences(frame.fence);
+            frame.cmd.reset();
+            frame.cmd.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+        }
 
         // LOG(trace, "render: window=[{},{}] active={} instances={} lights={}",
         //     m_window.index, m_window.generation, m_active, m_instance_count, m_light_count)
@@ -276,12 +281,52 @@ namespace GLT::renderer::vk_rasterizer {
             add_environment_passes();           // sky cubemap, specular prefilter, SH (only when the sun / sky changed)
             add_reset_draw_count_pass();
             add_cull_pass();
-            if (m_shadow.active) {
+
+            // Shadow caching: re-render only when casters, shadow views or the target image changed
+            bool render_directional = false;
+            bool render_local = false;
+            {
+                GLT_PROFILE_SCOPE("Shadow cache check");
+                auto hash_words = [](const void* data, size_t bytes, u64 h) {
+                    const auto* p = static_cast<const unsigned char*>(data);
+                    size_t i = 0;
+                    for (; i + 8 <= bytes; i += 8) {
+                        u64 w;
+                        std::memcpy(&w, p + i, 8);
+                        h = (h ^ w) * 0x100000001b3ull;
+                        h ^= h >> 29;
+                    }
+                    for (; i < bytes; ++i)
+                        h = (h ^ p[i]) * 0x100000001b3ull;
+                    return h;
+                };
+                u64 casters = hash_words(m_packed_instances.data(), m_packed_instances.size() * sizeof(gpu_instance_data), 0xcbf29ce484222325ull);
+                casters = hash_words(&m_asset_instance_count, sizeof(m_asset_instance_count), casters);
+
+                if (m_shadow.active) {
+                    u64 key = hash_words(&m_shadow.view_proj, sizeof(m_shadow.view_proj), casters);
+                    key = hash_words(&m_shadow.params, sizeof(m_shadow.params), key);
+                    const vk::Image image = m_graph->texture_image(m_shadow_map);
+                    render_directional = key != m_dir_shadow_key || image != m_dir_shadow_image;
+                    m_dir_shadow_key = key;
+                    m_dir_shadow_image = image;
+                }
+                if (m_local_shadow_view_count > 0) {
+                    const u64 key = hash_words(m_packed_shadow_views.data(), m_packed_shadow_views.size() * sizeof(gpu_shadow_view), casters);
+                    const vk::Image image = m_graph->texture_image(m_shadow_atlas);
+                    render_local = key != m_local_shadow_key || image != m_local_shadow_image;
+                    m_local_shadow_key = key;
+                    m_local_shadow_image = image;
+                }
+            }
+
+            if (m_shadow.active && render_directional) {
                 add_reset_shadow_draw_count_pass();
                 add_shadow_cull_pass();
                 add_shadow_pass();
             }
-            add_local_shadow_passes();
+            if (render_local)
+                add_local_shadow_passes();
             add_depth_prepass_pass();
             add_clear_light_grid_pass();
             add_light_culling_pass();
@@ -327,7 +372,10 @@ namespace GLT::renderer::vk_rasterizer {
         else
             m_swapchain_images_layout[m_current_swapchain_image] = vk::ImageLayout::ePresentSrcKHR;
 
-        frame.cmd.end();
+        {
+            GLT_PROFILE_SCOPE("End command buffer");
+            frame.cmd.end();
+        }
 
         // Submit
         vk::CommandBufferSubmitInfo cbsi{};
@@ -369,6 +417,7 @@ namespace GLT::renderer::vk_rasterizer {
             queues.graphics_queue.submit2(si, frame.fence);
 
         } catch (const std::exception& e) {
+            render_imgui_platform_windows();            // ImGui requires UpdatePlatformWindows() every frame
             return std::unexpected(GLT::render::render_error{
                 GLT::render::render_error::code::backend, 
                 std::format("submit failed: {}", e.what())
@@ -392,6 +441,7 @@ namespace GLT::renderer::vk_rasterizer {
                 m_swapchain_out_of_date = true;
                 m_frame_counter++;                                              // the frame WAS submitted: advance the slot
                 m_current_frame = (m_current_frame + 1) % MAX_CONCURRENT_FRAMES;
+                render_imgui_platform_windows();
                 return std::unexpected(GLT::render::render_error{
                     GLT::render::render_error::code::target_out_of_date,
                     "present out of date"
@@ -401,6 +451,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_frame_counter++;
         m_current_frame = (m_current_frame + 1) % MAX_CONCURRENT_FRAMES;
+
+        render_imgui_platform_windows();                // detached ImGui windows, after this window's own present
         return {};
     }
 
@@ -410,6 +462,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Polled once per frame in update(), before the ImGui frame opens, so a resize never has to abort a frame.
     // resize() compares against the size we last *requested*, so a driver that clamps the extent can't cause a rebuild loop
     void scene_renderer::sync_swapchain_to_window() {
+        GLT_PROFILE_SCOPE("scene_renderer::sync_swapchain_to_window");
 
         auto* window = m_plugin.get_window();
         if (!window || !window->is_valid(m_window))
@@ -424,6 +477,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::resize(glm::uvec2 extent) {
+        GLT_PROFILE_SCOPE("scene_renderer::resize");
 
         if (extent.x == 0 || extent.y == 0)
             return;
@@ -480,6 +534,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PRIVATE ===================================================================================================
 
     void scene_renderer::init_surface_target(const GLT::render::surface_target_desc& target) {
+        GLT_PROFILE_SCOPE("scene_renderer::init_surface_target");
 
         auto device = m_plugin.get_vk_device();
         const auto& queues = m_plugin.get_queues_ref();
@@ -515,6 +570,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::create_present_semaphores() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_present_semaphores");
 
         destroy_present_semaphores();
         auto device = m_plugin.get_vk_device();
@@ -525,6 +581,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_present_semaphores() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_present_semaphores");
 
         auto device = m_plugin.get_vk_device();
         for (auto& semaphore : m_render_finished)
@@ -535,6 +592,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::create_timestamp_queries() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_timestamp_queries");
 
         const auto& queues = m_plugin.get_queues_ref();
         const auto families = m_plugin.get_physical_device().getQueueFamilyProperties();
@@ -559,6 +617,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_timestamp_queries() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_timestamp_queries");
 
         if (m_timestamp_pool) {
             m_plugin.get_vk_device().destroyQueryPool(m_timestamp_pool);
@@ -568,6 +627,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::resolve_gpu_timestamps(u32 frame_slot) {
+        GLT_PROFILE_SCOPE("scene_renderer::resolve_gpu_timestamps");
 
         gpu_frame_report report{};
         read_back_draw_stats(frame_slot, report);   // visible draws / triangles from GPU culling
@@ -603,6 +663,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::init_offscreen_target(const GLT::render::offscreen_target_desc& target) {
+        GLT_PROFILE_SCOPE("scene_renderer::init_offscreen_target");
 
         if (target.extent.x == 0 || target.extent.y == 0)
             throw std::runtime_error("offscreen target extent is zero");
@@ -614,6 +675,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::init_frames() {
+        GLT_PROFILE_SCOPE("scene_renderer::init_frames");
 
         auto device = m_plugin.get_vk_device();
         vk::SemaphoreCreateInfo sem_ci{};
@@ -639,6 +701,7 @@ namespace GLT::renderer::vk_rasterizer {
     // One Tracy GPU context per scene renderer (each records into its own command buffers). Tracy calibrates the GPU clock
     // with a few one-time submits on frame slot 0's command buffer, which is unused at this point
     void scene_renderer::create_gpu_profiler() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_gpu_profiler");
 
 #if defined(GLT_TRACY_ENABLED)
         const auto& queues = m_plugin.get_queues_ref();
@@ -655,6 +718,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_gpu_profiler() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_gpu_profiler");
 
 #if defined(GLT_TRACY_ENABLED)
         if (m_gpu_profiler)
@@ -667,6 +731,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_internal() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_internal");
 
         if (!m_plugin.get_vk_device())
             return;
@@ -732,6 +797,7 @@ namespace GLT::renderer::vk_rasterizer {
     // to SHADER_READ_ONLY_OPTIMAL, the layout its ImGui descriptor was created with. Before, it stayed in
     // COLOR_ATTACHMENT_OPTIMAL with no barrier
     void scene_renderer::add_output_to_shader_read_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_output_to_shader_read_pass");
 
         m_graph->add_pass("output_to_shader_read",
             [this](graph::pass_builder& b) {
@@ -745,6 +811,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Scaled copy of the last frame into a freshly resized output image (or a clear if there is no frame yet), leaving
     // it in SHADER_READ_ONLY_OPTIMAL. Synchronous (immediate_submit waits); caller already waited for the device
     void scene_renderer::seed_resized_output(GLT::renderer::vk_rasterizer::image& from, GLT::renderer::vk_rasterizer::image& to) {
+        GLT_PROFILE_SCOPE("scene_renderer::seed_resized_output");
 
         const util::allocated_image& src = from.get_allocated_image_ref();
         const util::allocated_image& dst = to.get_allocated_image_ref();
@@ -821,6 +888,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_clear_backbuffer_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_clear_backbuffer_pass");
 
         m_graph->add_pass("clear_backbuffer",
             [this](graph::pass_builder& b) {

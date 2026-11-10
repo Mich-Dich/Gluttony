@@ -20,6 +20,7 @@ namespace GLT::renderer::vk_rasterizer {
     // material shaders, so a mismatch between light culling and shading shows up directly. Replaces the tonemap pass
 
     void scene_renderer::create_light_cull_debug_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_light_cull_debug_pipeline");
 
         auto* dev = m_plugin.get_dev();
         using VKDT = vk::DescriptorType;
@@ -111,6 +112,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_light_cull_debug_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_light_cull_debug_pipeline");
 
         auto* dev = m_plugin.get_dev();
         for (auto& d : m_light_debug_desc_buffers)
@@ -135,6 +137,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_light_cull_debug_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_light_cull_debug_pass");
 
         m_graph->add_pass("light_cull_debug",
             [&](graph::pass_builder& b) {

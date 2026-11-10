@@ -1,5 +1,6 @@
 
 #include "util/pch.h"
+#include <debug/trace.h>
 #include "util/util_pch.h"
 #include "shared_resource_manager.h"
 
@@ -124,6 +125,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PUBLIC ====================================================================================================
 
     std::expected<shared_texture_id, upload_error> shared_resource_manager::ensure_texture(GLT::asset::handle handle) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::ensure_texture");
 
         if (handle == INVALID_HANDLE)
             return std::unexpected(upload_error::make(upload_error::code::not_found, "invalid handle"));
@@ -141,6 +143,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::retain_texture(shared_texture_id id) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::retain_texture");
         if (id < m_gpu_textures.size() && m_gpu_textures[id].alive) m_gpu_textures[id].ref_count++;
     }
 
@@ -164,6 +167,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PRIVATE ===================================================================================================
 
     void shared_resource_manager::create_fallback_textures() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create_fallback_textures");
 
         const auto create = [&](u32 slot, std::array<std::byte, 4> rgba) {
             const texture_upload_mip mip{0, 1, 1};
@@ -186,6 +190,7 @@ namespace GLT::renderer::vk_rasterizer {
     bool shared_resource_manager::create_gpu_texture(vk::Format format, u32 width, u32 height,
         const std::byte* pixels, u64 pixel_bytes,
         std::span<const texture_upload_mip> mips, bool generate_mips, gpu_texture& out) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create_gpu_texture");
 
         using Stage = vk::PipelineStageFlagBits2;
         using Access = vk::AccessFlagBits2;
@@ -292,6 +297,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::destroy_gpu_texture(gpu_texture& t) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::destroy_gpu_texture");
         if (t.view)          m_device.destroyImageView(t.view);
         if (t.image.image)   m_dev->destroy_image(t.image);
         t = {};
@@ -299,6 +305,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     u32 shared_resource_manager::acquire_texture_internal(GLT::asset::handle handle) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::acquire_texture_internal");
 
         if (handle == INVALID_HANDLE)
             return TEXTURE_SLOT_WHITE;
@@ -390,6 +397,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::release_texture_internal(u32 slot) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::release_texture_internal");
 
         if (slot < FIRST_FREE_TEXTURE_SLOT || slot >= m_gpu_textures.size() || !m_gpu_textures[slot].alive)
             return;

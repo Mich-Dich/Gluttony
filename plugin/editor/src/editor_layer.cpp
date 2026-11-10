@@ -27,6 +27,7 @@
 #include "window/log_viewer.h"
 #include "window/stats.h"
 #include "window/tracing.h"
+#include <debug/trace.h>
 #include "window/audio_viewer.h"
 #include "window/plugin_wizard.h"
 #include "window/asset_import.h"
@@ -215,8 +216,11 @@ namespace GLT::editor {
 
         file_watcher::pump();               // file events from the watcher thread -> event bus, on the main thread
 
-        for (const auto& editor_window : m_windows)
+        for (const auto& editor_window : m_windows) {
+            const std::string zone = "Editor update: " + editor_window->get_window_title();
+            GLT_PROFILE_SCOPE_DYNAMIC(zone.c_str());
             editor_window->update(delta_time);
+        }
 
         auto it = std::remove_if(m_windows.begin(), m_windows.end(), [](const unique_ref<base_window>& w) { return w->should_close(); });
         m_windows.erase(it, m_windows.end());
@@ -251,11 +255,17 @@ namespace GLT::editor {
             m_start_sims = false;
         }
 
-        render_toolbar();
-        render_dockspace();
+        {
+            GLT_PROFILE_SCOPE("Editor toolbar + dockspace");
+            render_toolbar();
+            render_dockspace();
+        }
 
-        for (auto& window : m_windows)
+        for (auto& window : m_windows) {
+            const std::string zone = "Editor window: " + window->get_window_title();
+            GLT_PROFILE_SCOPE_DYNAMIC(zone.c_str());
             window->window(delta_time);
+        }
 
         if (m_show_demo)           
             ImGui::ShowDemoWindow(&m_show_demo);

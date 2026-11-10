@@ -38,6 +38,7 @@ namespace GLT::renderer::vk_rasterizer {
     // cull pipeline ---------------------------------------------------------------------------------------------------
 
     void scene_renderer::create_cull_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_cull_pipeline");
 
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
@@ -118,6 +119,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_cull_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_cull_pipeline");
 
         m_plugin.get_vk_device().waitIdle();
 
@@ -150,6 +152,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Cost is O(instances x submeshes) with O(1) work per entry: materials are resolved once per unique override handle
     // (one ref per scene, not per submesh), the mesh's own default materials are used directly (the mesh holds those refs)
     void scene_renderer::build_instance_buffer() {
+        GLT_PROFILE_SCOPE("scene_renderer::build_instance_buffer");
 
         // Reset the per-material counters of the previous frame (only the touched entries)
         for (u32 slot : m_scene_materials)
@@ -294,6 +297,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::upload_instance_data() {
+        GLT_PROFILE_SCOPE("scene_renderer::upload_instance_data");
 
         auto* dev = m_plugin.get_dev();
         const u32 frame = m_current_frame;
@@ -319,6 +323,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Grow (never shrink) this frame's indirect buffers so every material range fits. Called from render() before the
     // descriptors are written. The graph retires the old allocation, so this never stalls
     void scene_renderer::ensure_draw_buffers() {
+        GLT_PROFILE_SCOPE("scene_renderer::ensure_draw_buffers");
 
         const u32 frame = m_current_frame;
         const u32 needed = std::bit_ceil(std::max(m_total_draw_capacity, INITIAL_DRAW_CAPACITY));
@@ -361,6 +366,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Descriptors of every cull dispatch for the current frame. Rewritten each frame because instance / table / command
     // buffers can be reallocated when they grow. The frame slot's previous GPU work is complete (fence), so this is safe
     void scene_renderer::update_cull_descriptors() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_cull_descriptors");
 
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
@@ -425,6 +431,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     // Called in update() after the frame slot's fence: the stats of the frame that last used this slot are final
     void scene_renderer::read_back_draw_stats(u32 frame_slot, gpu_frame_report& report) {
+        GLT_PROFILE_SCOPE("scene_renderer::read_back_draw_stats");
 
         if (!m_draw_stats_written[frame_slot] || !m_draw_stats_handles[frame_slot].is_valid())
             return;
@@ -446,6 +453,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_reset_draw_count_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_reset_draw_count_pass");
 
         m_graph->add_pass("reset_draw_count",
             [this](graph::pass_builder& builder) {
@@ -460,6 +468,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_cull_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_cull_pass");
 
         m_graph->add_pass("cull",
             [this](graph::pass_builder& builder) {

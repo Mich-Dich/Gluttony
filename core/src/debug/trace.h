@@ -2,8 +2,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if defined(GLT_TRACY_ENABLED)
@@ -92,6 +94,27 @@ namespace GLT::debug::trace {
     [[nodiscard]] std::vector<frame_record> history();
     void clear_history();
 
+    // Record exactly the next [frames] frames (clears the history, enables capture, pauses when done)
+    void capture_frames(u32 frames) noexcept;
+    [[nodiscard]] u32 capture_frames_remaining() noexcept;
+
+    // Index (into thread_names()) of the thread that calls frame_mark()
+    [[nodiscard]] u32 main_thread_index() noexcept;
+
+    // Export --------------------------------------------------------------------------------------------------------
+    // Human readable analysis: frame statistics, hottest zones by self time, aggregated call tree per thread (avg ms per
+    // frame), and the full zone tree of the slowest frame. Meant to be pasted into a bug report / chat
+    [[nodiscard]] std::string summary_text(const std::vector<frame_record>& frames);
+
+    // Chrome trace event format (open in https://ui.perfetto.dev or chrome://tracing): every zone of every frame
+    [[nodiscard]] std::string chrome_trace_json(const std::vector<frame_record>& frames);
+
+    // Writes <dir>/trace_<timestamp>.json and <dir>/trace_<timestamp>_summary.txt. Returns the summary path (empty on error)
+    [[nodiscard]] std::filesystem::path export_to_directory(const std::vector<frame_record>& frames, const std::filesystem::path& dir);
+
+    // Stable copy of a runtime string for zone names (render graph pass names, ...). Interned once, never freed
+    [[nodiscard]] const char* intern(std::string_view name);
+
     // Names the calling thread (in the Tracing window and in Tracy). [name] is copied
     void set_thread_name(const char* name);
     [[nodiscard]] std::vector<std::string> thread_names();
@@ -168,4 +191,14 @@ namespace GLT::debug::trace {
 #define GLT_PROFILE_IDLE(name)                  GLT_TRACY_ZONE_C(name, GLT::debug::trace::COLOR_IDLE); \
     const GLT::debug::trace::scoped_zone GLT_TRACE_CONCAT(_glt_zone_, __LINE__){ name, GLT::debug::trace::zone_kind::idle }
 #define GLT_PROFILE_FRAME()                     GLT::debug::trace::frame_mark()
+
+// Runtime, null-terminated name (e.g. std::string::c_str()): Tracy transient zone + interned copy for the recorder
+#if defined(GLT_TRACY_ENABLED)
+    #define GLT_TRACY_ZONE_DYNAMIC(cstr)        ZoneTransientN(GLT_TRACE_CONCAT(_glt_tracy_dzone_, __LINE__), cstr, true)
+#else
+    #define GLT_TRACY_ZONE_DYNAMIC(cstr)        ((void)0)
+#endif
+#define GLT_PROFILE_SCOPE_DYNAMIC(cstr)         GLT_TRACY_ZONE_DYNAMIC(cstr); \
+    const GLT::debug::trace::scoped_zone GLT_TRACE_CONCAT(_glt_zone_, __LINE__){ \
+        GLT::debug::trace::is_capturing() ? GLT::debug::trace::intern(cstr) : "" }
 #define GLT_PROFILE_THREAD(name)                GLT::debug::trace::set_thread_name(name)

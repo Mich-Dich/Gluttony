@@ -1,4 +1,5 @@
 #include "util/pch.h"
+#include <debug/trace.h>
 #include "util/util_pch.h"
 #include "shared_resource_manager.h"
 
@@ -33,6 +34,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PUBLIC ====================================================================================================
 
     std::expected<shared_mesh_id, upload_error> shared_resource_manager::ensure_mesh(GLT::asset::handle handle) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::ensure_mesh");
 
         if (handle == INVALID_HANDLE)
             return std::unexpected(upload_error::make(upload_error::code::not_found, "invalid handle"));
@@ -55,12 +57,14 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::retain_mesh(shared_mesh_id /*id*/) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::retain_mesh");
 
         // v1: ref counting handled at the scene-renderer level
     }
 
 
     void shared_resource_manager::release_mesh(shared_mesh_id id) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::release_mesh");
 
         if (id >= m_mesh_slots.size() || !m_mesh_slots[id].alive)
             return;
@@ -109,6 +113,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PRIVATE ===================================================================================================
 
     void shared_resource_manager::init_pools() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::init_pools");
 
         m_vertex_pool = {
             .buffer = &m_vertex_buffer,
@@ -150,6 +155,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     std::optional<u32> shared_resource_manager::pool_try_allocate(linear_pool& p, u32 count) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::pool_try_allocate");
 
         if (count == 0)
             return p.high_water;    // no-op allocation for degenerate assets
@@ -183,6 +189,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::pool_free(linear_pool& p, u32 offset, u32 count) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::pool_free");
 
         if (count == 0)
             return;
@@ -221,6 +228,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     bool shared_resource_manager::pool_resize(linear_pool& p, u32 new_capacity) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::pool_resize");
 
         if (new_capacity == p.capacity)
             return true;
@@ -274,6 +282,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     bool shared_resource_manager::should_opportunistic_compact() const {
+        GLT_PROFILE_SCOPE("shared_resource_manager::should_opportunistic_compact");
 
         const bool v = m_vertex_pool.capacity > 0 && static_cast<u64>(m_vertex_pool.live) * 2 < m_vertex_pool.capacity;
         const bool i = m_index_pool.capacity > 0 && static_cast<u64>(m_index_pool.live) * 2 < m_index_pool.capacity;
@@ -282,6 +291,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::try_compact() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::try_compact");
 
         m_device.waitIdle();
         m_retire.flush();           // pending range frees must land before compaction rewrites the pools (device is idle)
@@ -354,6 +364,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::shrink_pools() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::shrink_pools");
 
         // Only the growable pools ever need shrinking. After compaction, high_water == live, so we target
         // live + max(live/2, headroom) — matches the growth step, so shrink is stable (won't immediately
@@ -377,6 +388,7 @@ namespace GLT::renderer::vk_rasterizer {
     // mesh allocation transaction -------------------------------------------------------------------------------------
 
     std::optional<shared_resource_manager::mesh_alloc> shared_resource_manager::allocate_mesh_ranges(u32 v, u32 i, u32 s) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::allocate_mesh_ranges");
 
         auto try_all = [&]() -> std::optional<mesh_alloc> {
             auto v_off = pool_try_allocate(m_vertex_pool,  v);
@@ -419,6 +431,7 @@ namespace GLT::renderer::vk_rasterizer {
     // buffer creation / destruction -----------------------------------------------------------------------------------
 
     void shared_resource_manager::create_mesh_buffers() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create_mesh_buffers");
 
         m_mesh_data_buffer = m_dev->create_buffer(MAX_MESHES * sizeof(gpu_mesh_data),
             vk::BufferUsageFlagBits::eStorageBuffer,
@@ -446,6 +459,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::destroy_mesh_buffers() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::destroy_mesh_buffers");
 
         if (m_mesh_data_buffer.buffer)    { m_dev->destroy_buffer(m_mesh_data_buffer);    m_mesh_data_buffer = {}; }
         if (m_submesh_data_buffer.buffer) { m_dev->destroy_buffer(m_submesh_data_buffer); m_submesh_data_buffer = {}; }
@@ -474,6 +488,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::upload_mesh_slice(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::upload_mesh_slice");
         {
             auto* dst = static_cast<GLT::asset::mesh::vertex*>(m_dev->map_buffer(m_vertex_buffer));
             std::memcpy(dst + slot.vertex_offset, mesh.vertices.data(), mesh.vertices.size() * sizeof(GLT::asset::mesh::vertex));
@@ -488,6 +503,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::pack_mesh_into_ssbo(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::pack_mesh_into_ssbo");
 
         const u32 mesh_index = static_cast<u32>(&slot - m_mesh_slots.data());
         VALIDATE(mesh_index < MAX_MESHES, return, "", "Mesh SSBO capacity exceeded")
@@ -537,6 +553,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     shared_mesh_id shared_resource_manager::load_mesh_internal(GLT::asset::handle handle) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::load_mesh_internal");
 
         auto registry = GLT::asset::registry::get_ref();
         if (!registry)

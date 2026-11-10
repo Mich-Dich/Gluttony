@@ -36,6 +36,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     void scene_renderer::create_cluster_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_cluster_resources");
 
         const u32 cluster_count = m_cluster_params.cluster_count;
         if (cluster_count == 0)
@@ -82,6 +83,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_cluster_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_cluster_resources");
 
         // Handles are owned by the render graph; nothing to release here.
         // Just forget them so a later frame doesn't try to bind dangling slots.
@@ -93,6 +95,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_cluster_dimensions() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_cluster_dimensions");
 
         const u32 grid_x = (m_extent.x + CLUSTER_TILE_SIZE_X - 1) / CLUSTER_TILE_SIZE_X;
         const u32 grid_y = (m_extent.y + CLUSTER_TILE_SIZE_Y - 1) / CLUSTER_TILE_SIZE_Y;
@@ -111,6 +114,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_clear_light_grid_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_clear_light_grid_pass");
 
         // Clears the grid (small) and the global counter. The index list is not cleared - culling only reads offsets it wrote this frame
         m_graph->add_pass("clear_light_grid",

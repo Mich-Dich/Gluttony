@@ -294,8 +294,45 @@ namespace GLT::editor {
             m_selected = -1;
         }
 
+        // ---- capture + export (for sharing exact timings) ----
+        ImGui::SetNextItemWidth(90.f);
+        ImGui::InputInt("##capture_frames", &m_capture_frames, 0, 0);
+        m_capture_frames = std::clamp(m_capture_frames, 1, static_cast<int>(trace::HISTORY_FRAMES));
+        ImGui::SameLine();
+        if (ImGui::Button("Capture frames")) {
+            m_record = true;
+            m_follow_latest = true;
+            trace::capture_frames(static_cast<u32>(m_capture_frames));
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Clears the history, records exactly this many frames, then pauses");
+        if (const u32 remaining = trace::capture_frames_remaining(); remaining > 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.3f, 1.f), "capturing... %u left", remaining);
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Export")) {
+            const auto dir = GLT::util::get_executable_path() / "traces";
+            const auto path = trace::export_to_directory(trace::history(), dir);
+            m_export_status = path.empty() ? "Export failed (" + dir.string() + ")"
+                : "Exported " + path.string() + " (+ .json for ui.perfetto.dev / chrome://tracing)";
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Writes <exe dir>/traces/trace_<time>_summary.txt (analysis: hottest zones, call tree,\n"
+                "slowest frame) and trace_<time>.json (every zone, Chrome trace format)");
+
+        ImGui::SameLine();
+        if (ImGui::Button("Copy summary")) {
+            const std::string summary = trace::summary_text(trace::history());
+            ImGui::SetClipboardText(summary.c_str());
+            m_export_status = "Summary copied to the clipboard (" + std::to_string(summary.size() / 1024) + " KB)";
+        }
+
         if (!m_launch_status.empty())
             ImGui::TextDisabled("%s", m_launch_status.c_str());
+        if (!m_export_status.empty())
+            ImGui::TextDisabled("%s", m_export_status.c_str());
     }
 
     // ---- frame history ----------------------------------------------------------------------------------------------

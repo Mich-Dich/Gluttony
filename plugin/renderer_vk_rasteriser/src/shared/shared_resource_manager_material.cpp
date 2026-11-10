@@ -73,6 +73,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PUBLIC ====================================================================================================
 
     void shared_resource_manager::create() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create");
 
         m_retire.init(m_device);
 
@@ -108,6 +109,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::destroy() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::destroy");
 
         m_device.waitIdle();
         m_retire.flush();                       // device is idle: everything retired so far can go now
@@ -183,6 +185,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::begin_frame(u64 /*frame_number*/) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::begin_frame");
 
         m_retire.collect();                     // destroy everything the GPU is done with
 
@@ -204,6 +207,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::create_immediate_submit() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create_immediate_submit");
         vk::CommandPoolCreateInfo cpi{};
         cpi.queueFamilyIndex = m_graphics_family;
         cpi.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
@@ -222,6 +226,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::destroy_immediate_submit() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::destroy_immediate_submit");
         if (m_immediate_fence) { m_device.destroyFence(m_immediate_fence);       m_immediate_fence = nullptr; }
         if (m_immediate_pool)  { m_device.destroyCommandPool(m_immediate_pool);  m_immediate_pool = nullptr; m_immediate_cmd = nullptr; }
     }
@@ -245,6 +250,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     u32 shared_resource_manager::acquire_material(GLT::asset::handle handle) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::acquire_material");
 
         if (handle == INVALID_HANDLE)
             return DEFAULT_MATERIAL_SLOT;
@@ -312,6 +318,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::release_material(u32 slot) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::release_material");
         if (slot == DEFAULT_MATERIAL_SLOT || slot >= m_material_slots.size() || !m_material_slots[slot].alive)
             return;
         material_slot& entry = m_material_slots[slot];
@@ -335,6 +342,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::poll_material_changes() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::poll_material_changes");
         for (u32 slot = 1; slot < m_material_slots.size(); ++slot)
             if (m_material_slots[slot].alive)
                 pack_material(slot);
@@ -342,6 +350,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::write_material_descriptor(util::descriptor_buffer& target, u32 slot_index) const {
+        GLT_PROFILE_SCOPE("shared_resource_manager::write_material_descriptor");
 
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
@@ -372,6 +381,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PRIVATE ===================================================================================================
 
     void shared_resource_manager::create_layouts() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create_layouts");
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
 
@@ -409,6 +419,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::destroy_layouts() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::destroy_layouts");
         if (m_mesh_pipeline_layout) { m_device.destroyPipelineLayout(m_mesh_pipeline_layout); m_mesh_pipeline_layout = nullptr; }
         if (m_mesh_set_layout)      { m_device.destroyDescriptorSetLayout(m_mesh_set_layout); m_mesh_set_layout = nullptr; m_live_descriptor_set_count--; }
         if (m_material_set_layout)  { m_device.destroyDescriptorSetLayout(m_material_set_layout); m_material_set_layout = nullptr; m_live_descriptor_set_count--; }
@@ -416,6 +427,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::create_samplers() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create_samplers");
         const f32 max_aniso = m_physical_device.getProperties().limits.maxSamplerAnisotropy;
 
         vk::SamplerCreateInfo mat{};
@@ -456,6 +468,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::destroy_samplers() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::destroy_samplers");
 
         if (m_material_sampler) {
             m_device.destroySampler(m_material_sampler);
@@ -473,6 +486,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::install_fallback_material() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::install_fallback_material");
 
         auto compiled = compile(GLT::asset::material::DEFAULT_SLANG_SOURCE, GLT::asset::material::blend_mode::opaque);
         if (!compiled) {
@@ -521,6 +535,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::pack_material(u32 slot_index) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::pack_material");
 
         material_slot& slot = m_material_slots[slot_index];
         if (slot.asset == INVALID_HANDLE || !slot.alive)
@@ -589,6 +604,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Pipelines may still be bound by in-flight command buffers (material released or hot-reloaded this frame), so the
     // handles are moved into the retire queue instead of being destroyed immediately
     void shared_resource_manager::destroy_material_shaders(material_slot& slot) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::destroy_material_shaders");
 
         const vk::Pipeline pipeline = std::exchange(slot.pipeline, nullptr);
         const vk::Pipeline depth_pipeline = std::exchange(slot.depth_pipeline, nullptr);
@@ -613,6 +629,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::retire_buffer(util::allocated_buffer& buffer) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::retire_buffer");
 
         if (!buffer.buffer)
             return;
@@ -623,6 +640,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::report_gpu_frame(const gpu_frame_report& report) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::report_gpu_frame");
 
         m_accum_gpu_stats.gpu_time_ms += report.gpu_time_ms;
         m_accum_gpu_stats.render_passes += report.render_passes;
@@ -642,6 +660,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     bool shared_resource_manager::load_material_shaders(material_slot& slot, const GLT::asset::material::material_asset& asset) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::load_material_shaders");
 
         if (asset.bytecode.size() < 3 * sizeof(u64)) return false;
 
@@ -678,6 +697,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::rebuild_material_pipelines(material_slot& slot) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::rebuild_material_pipelines");
 
         const vk::Pipeline main = create_material_pipeline(slot, material_pipeline_kind::main);
         const vk::Pipeline depth = create_material_pipeline(slot, material_pipeline_kind::depth);
@@ -734,6 +754,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     vk::Pipeline shared_resource_manager::create_material_pipeline(const material_slot& slot, material_pipeline_kind kind) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create_material_pipeline");
 
         vk::PipelineShaderStageCreateInfo stages[2]{};
         stages[0].stage = vk::ShaderStageFlagBits::eVertex;

@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <config/imgui_config.h>
+#include <debug/trace.h>
 
 
 
@@ -58,9 +59,155 @@ namespace GLT::renderer::vk_rasterizer {
 
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
+    // ImGui platform / renderer backend hooks -----------------------------------------------------------------------
+    // Every backend callback (GLFW platform + Vulkan renderer, incl. the per-viewport ones run by UpdatePlatformWindows /
+    // RenderPlatformWindowsDefault and ImGui::NewFrame) is wrapped in a profiling zone, so a slow detached window, a
+    // blocking present or a slow window-system call shows up by name. Originals are kept and called through
+    namespace imgui_hooks {
+        static decltype(ImGuiPlatformIO::Platform_CreateWindow) s_Platform_CreateWindow = nullptr;
+        static void Platform_CreateWindow(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: create window");
+            return s_Platform_CreateWindow(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_DestroyWindow) s_Platform_DestroyWindow = nullptr;
+        static void Platform_DestroyWindow(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: destroy window");
+            return s_Platform_DestroyWindow(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_ShowWindow) s_Platform_ShowWindow = nullptr;
+        static void Platform_ShowWindow(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: show window");
+            return s_Platform_ShowWindow(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_SetWindowPos) s_Platform_SetWindowPos = nullptr;
+        static void Platform_SetWindowPos(ImGuiViewport* vp, ImVec2 v) {
+            GLT_PROFILE_SCOPE("ImGui platform: set window pos");
+            return s_Platform_SetWindowPos(vp, v);
+        }
+        static decltype(ImGuiPlatformIO::Platform_GetWindowPos) s_Platform_GetWindowPos = nullptr;
+        static ImVec2 Platform_GetWindowPos(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: get window pos");
+            return s_Platform_GetWindowPos(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_SetWindowSize) s_Platform_SetWindowSize = nullptr;
+        static void Platform_SetWindowSize(ImGuiViewport* vp, ImVec2 v) {
+            GLT_PROFILE_SCOPE("ImGui platform: set window size");
+            return s_Platform_SetWindowSize(vp, v);
+        }
+        static decltype(ImGuiPlatformIO::Platform_GetWindowSize) s_Platform_GetWindowSize = nullptr;
+        static ImVec2 Platform_GetWindowSize(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: get window size");
+            return s_Platform_GetWindowSize(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_GetWindowFramebufferScale) s_Platform_GetWindowFramebufferScale = nullptr;
+        static ImVec2 Platform_GetWindowFramebufferScale(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: get framebuffer scale");
+            return s_Platform_GetWindowFramebufferScale(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_SetWindowFocus) s_Platform_SetWindowFocus = nullptr;
+        static void Platform_SetWindowFocus(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: set window focus");
+            return s_Platform_SetWindowFocus(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_GetWindowFocus) s_Platform_GetWindowFocus = nullptr;
+        static bool Platform_GetWindowFocus(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: get window focus");
+            return s_Platform_GetWindowFocus(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_GetWindowMinimized) s_Platform_GetWindowMinimized = nullptr;
+        static bool Platform_GetWindowMinimized(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: get window minimized");
+            return s_Platform_GetWindowMinimized(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_SetWindowTitle) s_Platform_SetWindowTitle = nullptr;
+        static void Platform_SetWindowTitle(ImGuiViewport* vp, const char* str) {
+            GLT_PROFILE_SCOPE("ImGui platform: set window title");
+            return s_Platform_SetWindowTitle(vp, str);
+        }
+        static decltype(ImGuiPlatformIO::Platform_SetWindowAlpha) s_Platform_SetWindowAlpha = nullptr;
+        static void Platform_SetWindowAlpha(ImGuiViewport* vp, float a) {
+            GLT_PROFILE_SCOPE("ImGui platform: set window alpha");
+            return s_Platform_SetWindowAlpha(vp, a);
+        }
+        static decltype(ImGuiPlatformIO::Platform_UpdateWindow) s_Platform_UpdateWindow = nullptr;
+        static void Platform_UpdateWindow(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: update window");
+            return s_Platform_UpdateWindow(vp);
+        }
+        static decltype(ImGuiPlatformIO::Platform_RenderWindow) s_Platform_RenderWindow = nullptr;
+        static void Platform_RenderWindow(ImGuiViewport* vp, void* arg) {
+            GLT_PROFILE_SCOPE("ImGui platform: render window");
+            return s_Platform_RenderWindow(vp, arg);
+        }
+        static decltype(ImGuiPlatformIO::Platform_SwapBuffers) s_Platform_SwapBuffers = nullptr;
+        static void Platform_SwapBuffers(ImGuiViewport* vp, void* arg) {
+            GLT_PROFILE_WAIT("ImGui platform: swap buffers");
+            return s_Platform_SwapBuffers(vp, arg);
+        }
+        static decltype(ImGuiPlatformIO::Platform_GetWindowDpiScale) s_Platform_GetWindowDpiScale = nullptr;
+        static float Platform_GetWindowDpiScale(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui platform: get dpi scale");
+            return s_Platform_GetWindowDpiScale(vp);
+        }
+        static decltype(ImGuiPlatformIO::Renderer_CreateWindow) s_Renderer_CreateWindow = nullptr;
+        static void Renderer_CreateWindow(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui renderer: create window (swapchain)");
+            return s_Renderer_CreateWindow(vp);
+        }
+        static decltype(ImGuiPlatformIO::Renderer_DestroyWindow) s_Renderer_DestroyWindow = nullptr;
+        static void Renderer_DestroyWindow(ImGuiViewport* vp) {
+            GLT_PROFILE_SCOPE("ImGui renderer: destroy window");
+            return s_Renderer_DestroyWindow(vp);
+        }
+        static decltype(ImGuiPlatformIO::Renderer_SetWindowSize) s_Renderer_SetWindowSize = nullptr;
+        static void Renderer_SetWindowSize(ImGuiViewport* vp, ImVec2 v) {
+            GLT_PROFILE_SCOPE("ImGui renderer: resize swapchain");
+            return s_Renderer_SetWindowSize(vp, v);
+        }
+        static decltype(ImGuiPlatformIO::Renderer_RenderWindow) s_Renderer_RenderWindow = nullptr;
+        static void Renderer_RenderWindow(ImGuiViewport* vp, void* arg) {
+            GLT_PROFILE_SCOPE("ImGui renderer: render window (acquire + fence + record + submit)");
+            return s_Renderer_RenderWindow(vp, arg);
+        }
+        static decltype(ImGuiPlatformIO::Renderer_SwapBuffers) s_Renderer_SwapBuffers = nullptr;
+        static void Renderer_SwapBuffers(ImGuiViewport* vp, void* arg) {
+            GLT_PROFILE_WAIT("ImGui renderer: present window");
+            return s_Renderer_SwapBuffers(vp, arg);
+        }
+
+        // Idempotent: a field that already points at its hook is left alone (re-init keeps the original)
+        static void install() {
+            ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+            if (pio.Platform_CreateWindow && pio.Platform_CreateWindow != &Platform_CreateWindow) { s_Platform_CreateWindow = pio.Platform_CreateWindow; pio.Platform_CreateWindow = &Platform_CreateWindow; }
+            if (pio.Platform_DestroyWindow && pio.Platform_DestroyWindow != &Platform_DestroyWindow) { s_Platform_DestroyWindow = pio.Platform_DestroyWindow; pio.Platform_DestroyWindow = &Platform_DestroyWindow; }
+            if (pio.Platform_ShowWindow && pio.Platform_ShowWindow != &Platform_ShowWindow) { s_Platform_ShowWindow = pio.Platform_ShowWindow; pio.Platform_ShowWindow = &Platform_ShowWindow; }
+            if (pio.Platform_SetWindowPos && pio.Platform_SetWindowPos != &Platform_SetWindowPos) { s_Platform_SetWindowPos = pio.Platform_SetWindowPos; pio.Platform_SetWindowPos = &Platform_SetWindowPos; }
+            if (pio.Platform_GetWindowPos && pio.Platform_GetWindowPos != &Platform_GetWindowPos) { s_Platform_GetWindowPos = pio.Platform_GetWindowPos; pio.Platform_GetWindowPos = &Platform_GetWindowPos; }
+            if (pio.Platform_SetWindowSize && pio.Platform_SetWindowSize != &Platform_SetWindowSize) { s_Platform_SetWindowSize = pio.Platform_SetWindowSize; pio.Platform_SetWindowSize = &Platform_SetWindowSize; }
+            if (pio.Platform_GetWindowSize && pio.Platform_GetWindowSize != &Platform_GetWindowSize) { s_Platform_GetWindowSize = pio.Platform_GetWindowSize; pio.Platform_GetWindowSize = &Platform_GetWindowSize; }
+            if (pio.Platform_GetWindowFramebufferScale && pio.Platform_GetWindowFramebufferScale != &Platform_GetWindowFramebufferScale) { s_Platform_GetWindowFramebufferScale = pio.Platform_GetWindowFramebufferScale; pio.Platform_GetWindowFramebufferScale = &Platform_GetWindowFramebufferScale; }
+            if (pio.Platform_SetWindowFocus && pio.Platform_SetWindowFocus != &Platform_SetWindowFocus) { s_Platform_SetWindowFocus = pio.Platform_SetWindowFocus; pio.Platform_SetWindowFocus = &Platform_SetWindowFocus; }
+            if (pio.Platform_GetWindowFocus && pio.Platform_GetWindowFocus != &Platform_GetWindowFocus) { s_Platform_GetWindowFocus = pio.Platform_GetWindowFocus; pio.Platform_GetWindowFocus = &Platform_GetWindowFocus; }
+            if (pio.Platform_GetWindowMinimized && pio.Platform_GetWindowMinimized != &Platform_GetWindowMinimized) { s_Platform_GetWindowMinimized = pio.Platform_GetWindowMinimized; pio.Platform_GetWindowMinimized = &Platform_GetWindowMinimized; }
+            if (pio.Platform_SetWindowTitle && pio.Platform_SetWindowTitle != &Platform_SetWindowTitle) { s_Platform_SetWindowTitle = pio.Platform_SetWindowTitle; pio.Platform_SetWindowTitle = &Platform_SetWindowTitle; }
+            if (pio.Platform_SetWindowAlpha && pio.Platform_SetWindowAlpha != &Platform_SetWindowAlpha) { s_Platform_SetWindowAlpha = pio.Platform_SetWindowAlpha; pio.Platform_SetWindowAlpha = &Platform_SetWindowAlpha; }
+            if (pio.Platform_UpdateWindow && pio.Platform_UpdateWindow != &Platform_UpdateWindow) { s_Platform_UpdateWindow = pio.Platform_UpdateWindow; pio.Platform_UpdateWindow = &Platform_UpdateWindow; }
+            if (pio.Platform_RenderWindow && pio.Platform_RenderWindow != &Platform_RenderWindow) { s_Platform_RenderWindow = pio.Platform_RenderWindow; pio.Platform_RenderWindow = &Platform_RenderWindow; }
+            if (pio.Platform_SwapBuffers && pio.Platform_SwapBuffers != &Platform_SwapBuffers) { s_Platform_SwapBuffers = pio.Platform_SwapBuffers; pio.Platform_SwapBuffers = &Platform_SwapBuffers; }
+            if (pio.Platform_GetWindowDpiScale && pio.Platform_GetWindowDpiScale != &Platform_GetWindowDpiScale) { s_Platform_GetWindowDpiScale = pio.Platform_GetWindowDpiScale; pio.Platform_GetWindowDpiScale = &Platform_GetWindowDpiScale; }
+            if (pio.Renderer_CreateWindow && pio.Renderer_CreateWindow != &Renderer_CreateWindow) { s_Renderer_CreateWindow = pio.Renderer_CreateWindow; pio.Renderer_CreateWindow = &Renderer_CreateWindow; }
+            if (pio.Renderer_DestroyWindow && pio.Renderer_DestroyWindow != &Renderer_DestroyWindow) { s_Renderer_DestroyWindow = pio.Renderer_DestroyWindow; pio.Renderer_DestroyWindow = &Renderer_DestroyWindow; }
+            if (pio.Renderer_SetWindowSize && pio.Renderer_SetWindowSize != &Renderer_SetWindowSize) { s_Renderer_SetWindowSize = pio.Renderer_SetWindowSize; pio.Renderer_SetWindowSize = &Renderer_SetWindowSize; }
+            if (pio.Renderer_RenderWindow && pio.Renderer_RenderWindow != &Renderer_RenderWindow) { s_Renderer_RenderWindow = pio.Renderer_RenderWindow; pio.Renderer_RenderWindow = &Renderer_RenderWindow; }
+            if (pio.Renderer_SwapBuffers && pio.Renderer_SwapBuffers != &Renderer_SwapBuffers) { s_Renderer_SwapBuffers = pio.Renderer_SwapBuffers; pio.Renderer_SwapBuffers = &Renderer_SwapBuffers; }
+        }
+    }
+
+
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     void scene_renderer::imgui_init() {
+        GLT_PROFILE_SCOPE("scene_renderer::imgui_init");
 
         if (m_offscreen)
             return;
@@ -98,17 +245,21 @@ namespace GLT::renderer::vk_rasterizer {
             m_imgui_framebuffers,
             m_imgui_initialized);
 
+        imgui_hooks::install();                         // after both backends registered their callbacks
         LOG(trace, " ImGui initialised for window [{}, {}]", m_window.index, m_window.generation);
     }
 
 
     void scene_renderer::imgui_shutdown() {
+        GLT_PROFILE_SCOPE("scene_renderer::imgui_shutdown");
 
         if (m_offscreen || !m_imgui_initialized)
             return;
 
         // Ensure the shared context is current before tearing down its backends
         ImGui::SetCurrentContext(imgui_config::get_context_imgui());
+        m_plugin.get_vk_device().waitIdle();
+        destroy_imgui_textures();                       // before the backend (RemoveTexture needs it)
 
         util::destroy_imgui_resources(
             m_plugin.get_vk_device_ref(),
@@ -127,6 +278,7 @@ namespace GLT::renderer::vk_rasterizer {
     void scene_renderer::begin_imgui_frame() {
 
         VALIDATE_IMGUI_INIT
+        GLT_PROFILE_SCOPE("ImGui new frame");
         ImGui::SetCurrentContext(imgui_config::get_context_imgui());
         ImGui_ImplVulkan_NewFrame();
         m_plugin.get_window()->begin_imgui_frame(m_window);
@@ -137,12 +289,14 @@ namespace GLT::renderer::vk_rasterizer {
     void scene_renderer::end_imgui_frame() {
 
         VALIDATE_IMGUI_INIT
+        GLT_PROFILE_SCOPE("ImGui render (draw lists)");
         ImGui::EndFrame();
         ImGui::Render();    // produces draw data consumed by add_imgui_pass()
     }
 
 
     void scene_renderer::abort_imgui_frame() {
+        GLT_PROFILE_SCOPE("scene_renderer::abort_imgui_frame");
 
         if (!m_imgui_initialized)
             return;
@@ -154,15 +308,13 @@ namespace GLT::renderer::vk_rasterizer {
         // window is minimized
         ImGui::Render();
 
-        ImGuiIO& io = ImGui::GetIO();
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-            ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
-        }
+        m_imgui_platform_pending = true;
+        render_imgui_platform_windows();
     }
 
 
     void scene_renderer::add_imgui_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_imgui_pass");
 
         VALIDATE_IMGUI_INIT
 
@@ -177,6 +329,11 @@ namespace GLT::renderer::vk_rasterizer {
 
                 const ImDrawData* dd = ImGui::GetDrawData();
 
+                // Font atlas / ImGui textures: uploaded here, in this frame's command buffer (outside the render pass).
+                // The backend would otherwise do it itself with a vkQueueWaitIdle per update, which also waits for the
+                // previous frames' presents (vsync) -> tens of ms of CPU stall every time a glyph gets added
+                upload_imgui_textures(ctx.cmd);
+
                 vk::RenderPassBeginInfo rpbi{};
                 rpbi.renderPass = m_imgui_render_pass;
                 rpbi.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
@@ -188,19 +345,223 @@ namespace GLT::renderer::vk_rasterizer {
                 rpbi.pClearValues = clear.data();
 
                 ctx.cmd.beginRenderPass(rpbi, vk::SubpassContents::eInline);
-                ImGui_ImplVulkan_RenderDrawData(const_cast<ImDrawData*>(dd), ctx.cmd);
+                {
+                    GLT_PROFILE_SCOPE("ImGui record draw data");
+                    ImGui_ImplVulkan_RenderDrawData(const_cast<ImDrawData*>(dd), ctx.cmd);
+                }
                 ctx.cmd.endRenderPass();
 
-                ImGuiIO& io = ImGui::GetIO();
-                if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-                    ImGui::UpdatePlatformWindows();
-                    ImGui::RenderPlatformWindowsDefault();
-                }
+                // Detached ImGui windows are rendered + presented by the backend with their own submits. Doing that here
+                // (inside this target's command recording, before its own submit + present) used to put every secondary
+                // window's acquire / fence wait / present into "Graph execute (record)". Now: after present, see render()
+                m_imgui_platform_pending = true;
             });
     }
 
 
+    // Detached ImGui windows (multi-viewport). Called once per frame after this target submitted and presented
+    void scene_renderer::render_imgui_platform_windows() {
+        GLT_PROFILE_SCOPE("scene_renderer::render_imgui_platform_windows");
+
+        if (!m_imgui_initialized || !m_imgui_platform_pending)
+            return;
+        m_imgui_platform_pending = false;
+
+        ImGuiIO& io = ImGui::GetIO();
+        if (!(io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable))
+            return;
+
+        {
+            GLT_PROFILE_SCOPE("ImGui update platform windows");
+            ImGui::UpdatePlatformWindows();
+        }
+        {
+            GLT_PROFILE_SCOPE("ImGui render platform windows");
+            ImGui::RenderPlatformWindowsDefault();      // per window: acquire, fence wait, record, submit, present
+        }
+    }
+
+
+    // Honours ImGui's texture requests (ImGuiBackendFlags_RendererHasTextures) before the backend sees them: images are
+    // created / updated through [cmd] with staging buffers that are retired once the frame is done, so nothing blocks.
+    // Statuses are OK afterwards, so ImGui_ImplVulkan_RenderDrawData skips its own (queue-idle) upload path
+    void scene_renderer::upload_imgui_textures(vk::CommandBuffer cmd) {
+        GLT_PROFILE_SCOPE("scene_renderer::upload_imgui_textures");
+
+        auto& textures = ImGui::GetPlatformIO().Textures;
+        if (textures.empty())
+            return;
+
+        GLT_PROFILE_SCOPE("ImGui texture uploads");
+        auto* dev = m_plugin.get_dev();
+        const vk::Device device = m_plugin.get_vk_device();
+
+        auto barrier = [&](vk::Image image, vk::ImageLayout from, vk::ImageLayout to,
+            vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access, vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access) {
+            vk::ImageMemoryBarrier2 b{};
+            b.srcStageMask = src_stage;
+            b.srcAccessMask = src_access;
+            b.dstStageMask = dst_stage;
+            b.dstAccessMask = dst_access;
+            b.oldLayout = from;
+            b.newLayout = to;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = image;
+            b.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+            vk::DependencyInfo di{};
+            di.imageMemoryBarrierCount = 1;
+            di.pImageMemoryBarriers = &b;
+            cmd.pipelineBarrier2(di);
+        };
+
+        // Copies [rects] of [tex] into a fresh staging buffer and records the copies. The buffer is retired with the frame
+        auto upload_rects = [&](ImTextureData* tex, vk::Image image, const std::vector<ImTextureRect>& rects) {
+
+            const u32 bpp = static_cast<u32>(tex->BytesPerPixel);
+            vk::DeviceSize total = 0;
+            for (const auto& r : rects)
+                total += static_cast<vk::DeviceSize>(r.w) * r.h * bpp;
+            if (total == 0)
+                return;
+
+            auto staging = dev->create_buffer(total, vk::BufferUsageFlagBits::eTransferSrc,
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+            auto* dst = static_cast<std::byte*>(dev->map_buffer(staging));
+
+            std::vector<vk::BufferImageCopy> copies;
+            copies.reserve(rects.size());
+            vk::DeviceSize offset = 0;
+            for (const auto& r : rects) {
+                const size_t row_bytes = static_cast<size_t>(r.w) * bpp;
+                for (u32 y = 0; y < r.h; ++y)
+                    std::memcpy(dst + offset + y * row_bytes, tex->GetPixelsAt(r.x, r.y + static_cast<int>(y)), row_bytes);
+
+                vk::BufferImageCopy c{};
+                c.bufferOffset = offset;
+                c.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+                c.imageOffset = vk::Offset3D{ static_cast<i32>(r.x), static_cast<i32>(r.y), 0 };
+                c.imageExtent = vk::Extent3D{ r.w, r.h, 1 };
+                copies.push_back(c);
+                offset += static_cast<vk::DeviceSize>(row_bytes) * r.h;
+            }
+            dev->unmap_buffer(staging);
+
+            cmd.copyBufferToImage(staging.buffer, image, vk::ImageLayout::eTransferDstOptimal, copies);
+            m_shared->retire_buffer(staging);
+        };
+
+        using PS = vk::PipelineStageFlagBits2;
+        using AF = vk::AccessFlagBits2;
+        using IL = vk::ImageLayout;
+
+        for (ImTextureData* tex : textures) {
+
+            switch (tex->Status) {
+
+                case ImTextureStatus_WantCreate: {
+
+                    const bool alpha8 = tex->Format == ImTextureFormat_Alpha8;
+                    vk::ImageCreateInfo ici{};
+                    ici.imageType = vk::ImageType::e2D;
+                    ici.format = alpha8 ? vk::Format::eR8Unorm : vk::Format::eR8G8B8A8Unorm;
+                    ici.extent = vk::Extent3D{ static_cast<u32>(tex->Width), static_cast<u32>(tex->Height), 1 };
+                    ici.mipLevels = 1;
+                    ici.arrayLayers = 1;
+                    ici.samples = vk::SampleCountFlagBits::e1;
+                    ici.tiling = vk::ImageTiling::eOptimal;
+                    ici.usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst;
+                    ici.initialLayout = IL::eUndefined;
+
+                    imgui_texture t{};
+                    t.image = dev->create_image(ici, 0);
+
+                    vk::ImageViewCreateInfo vci{};
+                    vci.image = t.image.image;
+                    vci.viewType = vk::ImageViewType::e2D;
+                    vci.format = ici.format;
+                    if (alpha8)                                  // ImGui's shader samples RGBA: white with coverage in alpha
+                        vci.components = vk::ComponentMapping{ vk::ComponentSwizzle::eOne, vk::ComponentSwizzle::eOne,
+                            vk::ComponentSwizzle::eOne, vk::ComponentSwizzle::eR };
+                    vci.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+                    t.view = device.createImageView(vci);
+
+                    barrier(t.image.image, IL::eUndefined, IL::eTransferDstOptimal, PS::eNone, {}, PS::eCopy, AF::eTransferWrite);
+                    upload_rects(tex, t.image.image, { ImTextureRect{ 0, 0, static_cast<unsigned short>(tex->Width),
+                        static_cast<unsigned short>(tex->Height) } });
+                    barrier(t.image.image, IL::eTransferDstOptimal, IL::eShaderReadOnlyOptimal, PS::eCopy, AF::eTransferWrite,
+                        PS::eFragmentShader, AF::eShaderSampledRead);
+
+                    t.set = ImGui_ImplVulkan_AddTexture(static_cast<VkImageView>(t.view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    tex->SetTexID((ImTextureID)t.set);
+                    tex->SetStatus(ImTextureStatus_OK);
+                    m_imgui_textures[tex] = t;
+                    break;
+                }
+
+                case ImTextureStatus_WantUpdates: {
+
+                    const auto it = m_imgui_textures.find(tex);
+                    if (it == m_imgui_textures.end())
+                        break;                                  // not ours (created before we took over): backend handles it
+                    std::vector<ImTextureRect> rects(tex->Updates.begin(), tex->Updates.end());
+                    if (rects.empty())
+                        rects.push_back(tex->UpdateRect);
+                    const vk::Image image = it->second.image.image;
+                    barrier(image, IL::eShaderReadOnlyOptimal, IL::eTransferDstOptimal, PS::eFragmentShader, AF::eShaderSampledRead,
+                        PS::eCopy, AF::eTransferWrite);
+                    upload_rects(tex, image, rects);
+                    barrier(image, IL::eTransferDstOptimal, IL::eShaderReadOnlyOptimal, PS::eCopy, AF::eTransferWrite,
+                        PS::eFragmentShader, AF::eShaderSampledRead);
+                    tex->SetStatus(ImTextureStatus_OK);
+                    break;
+                }
+
+                case ImTextureStatus_WantDestroy: {
+
+                    // ImGui keeps asking every frame until we comply. Once the texture has not been referenced by any draw list
+                    // for longer than the frames in flight (+ margin for detached-window swapchains), no pending GPU work can
+                    // sample it and it is destroyed right away (not via the retire queue: that may run after the backend is gone)
+                    if (tex->UnusedFrames < static_cast<int>(MAX_CONCURRENT_FRAMES) + 2)
+                        break;
+                    const auto it = m_imgui_textures.find(tex);
+                    if (it == m_imgui_textures.end())
+                        break;                                  // not ours
+                    ImGui_ImplVulkan_RemoveTexture(it->second.set);
+                    device.destroyImageView(it->second.view);
+                    dev->destroy_image(it->second.image);
+                    m_imgui_textures.erase(it);
+                    tex->SetTexID(ImTextureID_Invalid);
+                    tex->SetStatus(ImTextureStatus_Destroyed);
+                    break;
+                }
+
+                default:
+                    break;
+            }
+        }
+    }
+
+
+    // Shutdown: the GPU is idle (caller waited)
+    void scene_renderer::destroy_imgui_textures() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_imgui_textures");
+
+        const vk::Device device = m_plugin.get_vk_device();
+        for (auto& [key, t] : m_imgui_textures) {
+            auto* tex = const_cast<ImTextureData*>(static_cast<const ImTextureData*>(key));
+            ImGui_ImplVulkan_RemoveTexture(t.set);
+            device.destroyImageView(t.view);
+            m_plugin.get_dev()->destroy_image(t.image);
+            tex->SetTexID(ImTextureID_Invalid);
+            tex->SetStatus(ImTextureStatus_Destroyed);
+        }
+        m_imgui_textures.clear();
+    }
+
+
     void scene_renderer::recreate_imgui_framebuffers() {
+        GLT_PROFILE_SCOPE("scene_renderer::recreate_imgui_framebuffers");
 
         if (m_offscreen || !m_imgui_initialized)
             return;

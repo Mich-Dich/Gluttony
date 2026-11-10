@@ -36,6 +36,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     void scene_renderer::create_light_culling_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_light_culling_pipeline");
 
         // Descriptor set layout -----------------------------------------------------------------------------------
         //   0  Camera UBO           (per frame)
@@ -99,6 +100,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_light_culling_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_light_culling_pipeline");
 
         m_plugin.get_vk_device().waitIdle();
 
@@ -130,6 +132,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_light_meta_ubo() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_light_meta_ubo");
 
         glm::uvec4 meta{};
         meta.x = m_light_count;
@@ -144,6 +147,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_light_cull_descriptors() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_light_cull_descriptors");
 
         if (m_cluster_params.cluster_count == 0)
             return;
@@ -193,6 +197,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_light_culling_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_light_culling_pass");
 
         // Reads the light SSBO (Step 1) and writes the grid/index-list/counter. Runs after clear_light_grid so every cluster starts
         // with an empty {0,0} slot, and after depth_prepass so a future iteration can tighten the depth range per cluster from real depth
@@ -211,7 +216,8 @@ namespace GLT::renderer::vk_rasterizer {
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_light_cull_pipeline);
                 m_plugin.get_dev()->bind_descriptor_buffer({ m_light_cull_desc_buffers[m_current_frame] }, ctx.cmd);
                 m_plugin.get_dev()->bind_descriptor_set(m_light_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-                ctx.cmd.dispatch(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z);
+                // One workgroup per screen tile; it handles all depth slices of the tile (light_culling.comp.glsl)
+                ctx.cmd.dispatch(m_cluster_params.grid_x, m_cluster_params.grid_y, 1);
             });
     }
 

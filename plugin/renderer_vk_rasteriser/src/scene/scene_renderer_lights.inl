@@ -46,6 +46,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     void scene_renderer::update_lights() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_lights");
 
         m_shadow.active = false;
         m_packed_lights.clear();

@@ -237,6 +237,9 @@ namespace GLT::renderer::vk_rasterizer {
         void sync_swapchain_to_window();        // surface only: rebuild the swapchain if the window size changed
         void seed_resized_output(GLT::renderer::vk_rasterizer::image& from, GLT::renderer::vk_rasterizer::image& to);
         void add_imgui_pass();
+        void upload_imgui_textures(vk::CommandBuffer cmd);  // ImGui font atlas etc. without the backend's vkQueueWaitIdle
+        void destroy_imgui_textures();
+        void render_imgui_platform_windows();           // detached ImGui windows: after this target's submit + present
         void recreate_imgui_framebuffers();
 
         // helpers -----------------------------------------------------------------------------------------------------
@@ -350,6 +353,13 @@ namespace GLT::renderer::vk_rasterizer {
         graph::texture_handle                                               m_shadow_atlas{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_shadow_view_buffers{};
         std::vector<gpu_shadow_view>                                        m_packed_shadow_views{};
+
+        // Shadow caching: shadow maps are only re-rendered when what they depend on changed (casters, light / shadow views,
+        // target image). A static scene renders its shadows once instead of every frame
+        u64                                                                 m_dir_shadow_key = 0;
+        u64                                                                 m_local_shadow_key = 0;
+        vk::Image                                                           m_dir_shadow_image = nullptr;
+        vk::Image                                                           m_local_shadow_image = nullptr;
         std::vector<local_shadow_tile>                                      m_local_shadow_tiles{};
         u32                                                                 m_local_shadow_view_count = 0;
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_local_shadow_desc_buffers{};
@@ -443,6 +453,15 @@ namespace GLT::renderer::vk_rasterizer {
         vk::RenderPass                                                      m_imgui_render_pass = nullptr;
         std::vector<vk::Framebuffer>                                        m_imgui_framebuffers{};
         bool                                                                m_imgui_initialized = false;
+        bool                                                                m_imgui_platform_pending = false;   // imgui pass recorded, platform windows not yet rendered
+
+        // ImGui-managed textures (keyed by their ImTextureData*), uploaded through this renderer's frame command buffer
+        struct imgui_texture {
+            util::allocated_image                                           image{};
+            vk::ImageView                                                   view = nullptr;
+            VkDescriptorSet                                                 set = VK_NULL_HANDLE;
+        };
+        std::unordered_map<const void*, imgui_texture>                      m_imgui_textures{};
 
         // Procedural meshes -------------------------------------------------------------------------------------------
 

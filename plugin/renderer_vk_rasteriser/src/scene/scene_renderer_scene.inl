@@ -41,6 +41,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     void scene_renderer::add_depth_prepass_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_depth_prepass_pass");
 
         m_graph->add_pass("depth_prepass",
             [this](graph::pass_builder& builder) {
@@ -119,6 +120,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_scene_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_scene_pass");
 
         m_graph->add_pass("scene",
             [&](graph::pass_builder& builder) {
@@ -212,6 +214,7 @@ namespace GLT::renderer::vk_rasterizer {
     // descriptors, Forward+ clusters, shadows), blended into scene_hdr, depth tested against the opaque depth but not
     // written. Draws are the CPU-culled, back-to-front sorted list from prepare_translucent_draws()
     void scene_renderer::add_translucent_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_translucent_pass");
 
         if (m_translucent_draws.empty())
             return;

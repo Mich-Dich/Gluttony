@@ -50,6 +50,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Fullscreen triangle (blit.vert) -> tonemap.frag. Renders into scene_color (R8G8B8A8_UNORM, sRGB-encoded values),
     // which is the offscreen output image or the source of the backbuffer blit
     void scene_renderer::create_tonemap_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_tonemap_pipeline");
 
         auto* dev = m_plugin.get_dev();
         using VKDT = vk::DescriptorType;
@@ -149,6 +150,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_tonemap_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_tonemap_pipeline");
 
         auto* dev = m_plugin.get_dev();
         for (auto& d : m_tonemap_desc_buffers)
@@ -176,6 +178,7 @@ namespace GLT::renderer::vk_rasterizer {
     // passes ----------------------------------------------------------------------------------------------------------
 
     void scene_renderer::add_tonemap_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_tonemap_pass");
 
         m_graph->add_pass("tonemap",
             [&](graph::pass_builder& b) {

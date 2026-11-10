@@ -1,5 +1,6 @@
 #include "util/pch.h"
 #include "logger.h"
+#include "debug/trace.h"
 #include "util/system.h"
 #include <iomanip>
 
@@ -169,6 +170,7 @@ namespace GLT::logger {
     void log_msg_internal(severity msg_sev, const owned_source_location location, const std::string module_name,
         std::thread::id thread_id, std::string message) {
 
+        GLT_PROFILE_SCOPE("Logger: log message");
         g_logger.log_msg_internal(msg_sev, location, module_name, thread_id, std::move(message));
     }
 

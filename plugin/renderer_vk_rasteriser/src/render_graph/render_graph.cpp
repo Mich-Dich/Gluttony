@@ -70,6 +70,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // CLASS PUBLIC ====================================================================================================
 
     void render_graph::begin_frame() {
+        GLT_PROFILE_SCOPE("render_graph::begin_frame");
 
         // Non-persistent resources are per-frame. Transient resources own their memory; imported ones are references to
         // caller-owned memory. Either way the slot is reset so the next create_*() reuses it
@@ -97,6 +98,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // Resource creation -----------------------------------------------------------------------------------------------
 
     texture_handle render_graph::create_texture(const texture_desc& desc) {
+        GLT_PROFILE_SCOPE("render_graph::create_texture");
 
         u32 texture_index = UINT32_MAX;
 
@@ -216,6 +218,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     buffer_handle render_graph::create_buffer(const buffer_desc& desc) {
+        GLT_PROFILE_SCOPE("render_graph::create_buffer");
 
         if (desc.persistent) {
             auto it = m_persistent_buffers.find(desc.name);
@@ -268,6 +271,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::import_texture(texture_handle h, vk::Image image, vk::ImageView view, resource_state s) {
+        GLT_PROFILE_SCOPE("render_graph::import_texture");
 
         auto& texture = m_textures[h.id];
 
@@ -287,6 +291,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::import_buffer(buffer_handle h, const util::allocated_buffer& buf) {
+        GLT_PROFILE_SCOPE("render_graph::import_buffer");
 
         auto& buffer = m_buffers[h.id];
 
@@ -301,6 +306,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     buffer_handle render_graph::import_buffer(const buffer_desc& desc, const util::allocated_buffer& buf) {
+        GLT_PROFILE_SCOPE("render_graph::import_buffer");
 
         u32 buffer_index = UINT32_MAX;
         for (u32 i = 0; i < m_buffers.size(); ++i) {
@@ -326,6 +332,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     texture_handle render_graph::import_texture(const texture_desc& desc, vk::Image image, vk::ImageView view, resource_state s) {
+        GLT_PROFILE_SCOPE("render_graph::import_texture");
 
         u32 texture_index = UINT32_MAX;
         for (u32 i = 0; i < m_textures.size(); ++i) {
@@ -416,9 +423,9 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
             ctx.set_attachments(&pass.builder);
             {
+                // Per-pass CPU zone (recording cost; Tracy + Tracing window) and Tracy GPU zone (execution)
+                GLT_PROFILE_SCOPE_DYNAMIC(pass.name.c_str());
 #if defined(GLT_TRACY_ENABLED)
-                // Pass names are runtime strings: transient zones (Tracy copies the name). CPU = recording cost, GPU = execution
-                ZoneTransientN(tracy_pass_cpu, pass.name.c_str(), true);
                 std::optional<tracy::VkCtxScope> tracy_pass_gpu;
                 if (tracy_ctx)
                     tracy_pass_gpu.emplace(tracy_ctx, TracyLine, TracyFile, std::strlen(TracyFile), TracyFunction,
@@ -729,6 +736,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::emit_barriers(vk::CommandBuffer cmd, const pass& p) {
+        GLT_PROFILE_SCOPE("render_graph::emit_barriers");
 
         std::vector<vk::ImageMemoryBarrier2> image_barriers;
         std::vector<vk::BufferMemoryBarrier2> buffer_barriers;
@@ -841,6 +849,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // Compile ---------------------------------------------------------------------------------------------------------
 
     void render_graph::cull() {
+        GLT_PROFILE_SCOPE("render_graph::cull");
 
         // A pass is live if it has side effects, or if at least one of its written resources is read (or written) by a
         // live pass downstream. Start from side-effect / present passes and walk backwards.
@@ -903,6 +912,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::compute_lifetimes() {
+        GLT_PROFILE_SCOPE("render_graph::compute_lifetimes");
 
         for (auto& texture : m_textures) {
             texture.first_use = UINT32_MAX; 
@@ -950,6 +960,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // Destruction -----------------------------------------------------------------------------------------------------
 
     void render_graph::destroy_texture(texture_resource& texture_resource) {
+        GLT_PROFILE_SCOPE("render_graph::destroy_texture");
 
         if (texture_resource.imported) {
 
@@ -977,6 +988,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::destroy_buffer(buffer_resource& buffer_resource) {
+        GLT_PROFILE_SCOPE("render_graph::destroy_buffer");
 
         if (buffer_resource.imported) { 
             buffer_resource.allocated = {};
@@ -988,6 +1000,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::release_texture(texture_resource& texture_resource) {
+        GLT_PROFILE_SCOPE("render_graph::release_texture");
 
         if (texture_resource.imported || !m_retire) {
             destroy_texture(texture_resource);
@@ -1019,6 +1032,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::release_buffer(buffer_resource& buffer_resource) {
+        GLT_PROFILE_SCOPE("render_graph::release_buffer");
 
         if (buffer_resource.imported || !m_retire || !buffer_resource.allocated.buffer) {
             destroy_buffer(buffer_resource);

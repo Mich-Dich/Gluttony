@@ -80,6 +80,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::clear() {
+        GLT_PROFILE_SCOPE("scene_renderer::clear");
         std::lock_guard lock(m_debug_mutex);
         m_debug_primitives.clear();
         m_watched_meshes.clear();
@@ -143,6 +144,7 @@ namespace GLT::renderer::vk_rasterizer {
     // per-frame CPU work ----------------------------------------------------------------------------------------------
 
     void scene_renderer::process_debug_primitives() {
+        GLT_PROFILE_SCOPE("scene_renderer::process_debug_primitives");
 
         const f64 now = std::chrono::duration<f64>(std::chrono::steady_clock::now().time_since_epoch()).count();
         const f32 delta = (m_debug_last_frame_time > 0.0) ? static_cast<f32>(now - m_debug_last_frame_time) : 0.0f;
@@ -365,6 +367,7 @@ namespace GLT::renderer::vk_rasterizer {
     // GPU resources ------------------------------------------------------------------------------------------------------------------
 
     void scene_renderer::create_debug_draw_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_debug_draw_resources");
 
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
@@ -496,6 +499,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_debug_draw_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_debug_draw_resources");
 
         m_plugin.get_vk_device().waitIdle();
 
@@ -537,6 +541,7 @@ namespace GLT::renderer::vk_rasterizer {
     // pass ---------------------------------------------------------------------------------------------------------------------------
 
     void scene_renderer::add_debug_draw_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_debug_draw_pass");
 
         const frame_debug_layout& layout = m_debug_layouts[m_current_frame];
         const u32 total = layout.line_depth_count + layout.line_overlay_count +

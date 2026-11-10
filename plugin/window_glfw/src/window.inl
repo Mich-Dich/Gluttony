@@ -5,6 +5,7 @@
 
 #include <util/pch.h>
 #include <event/event_bus.h>
+#include <debug/trace.h>
 #include <event/application_event.h>
 #include <event/input_event.h>
 
@@ -52,7 +53,12 @@ namespace GLT::platform::glfw_backend {
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-    static void glfw_error_callback(int errorCode, const char* description) { LOG(error, "GLFW Error: [{}] [{}]", errorCode, description); }
+    static void glfw_error_callback(int errorCode, const char* description) {
+
+        // Errors raised every frame (e.g. window position calls on Wayland) cost a log line each: visible as a zone
+        GLT_PROFILE_SCOPE("GLFW error callback (logging)");
+        LOG(error, "GLFW Error: [{}] [{}]", errorCode, description);
+    }
 
 
     // Applies to the next glfwCreateWindow() (GLFW window hints are global state)
@@ -464,7 +470,11 @@ namespace GLT::platform::glfw_backend {
 
     // event loop / backend info ---------------------------------------------------------------------------------------
 
-    void plugin::poll_events() { glfwPollEvents(); }
+    void plugin::poll_events() {
+
+        GLT_PROFILE_SCOPE("glfwPollEvents");
+        glfwPollEvents();
+    }
 
 
     GLT::platform::backend_api plugin::get_backend_api() const { return GLT::platform::backend_api::glfw; }
@@ -547,6 +557,7 @@ namespace GLT::platform::glfw_backend {
         if (!slot->imgui_context) return;
 
         ImGui::SetCurrentContext(slot->imgui_context);
+        GLT_PROFILE_SCOPE("ImGui_ImplGlfw_NewFrame");
         ImGui_ImplGlfw_NewFrame();
     }
 

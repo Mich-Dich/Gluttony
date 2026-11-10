@@ -77,6 +77,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PUBLIC ====================================================================================================
 
     void renderer::on_load() {
+        GLT_PROFILE_SCOPE("renderer::on_load");
 
         // Register the image factory (used by external consumers of `render::image`)
         GLT::render::image::factory_table table{};
@@ -106,6 +107,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     bool renderer::create(GLT::platform::window_handle primary_window) {
+        GLT_PROFILE_SCOPE("renderer::create");
 
         mp_window = GLT::platform::window::get_ptr();
         ASSERT(mp_window, "", "Failed to get window plugin")
@@ -146,6 +148,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void renderer::destroy() {
+        GLT_PROFILE_SCOPE("renderer::destroy");
 
         GLT::event_bus::unsubscribe(m_framebuffer_resize_sub);
         GLT::debug::unregister_provider(m_gpu_stats_provider);
@@ -169,6 +172,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     std::expected<GLT::unique_ref<GLT::render::i_scene_renderer>, GLT::render::scene_renderer_error> renderer::create_scene_renderer(
         const GLT::render::scene_renderer_desc& desc) {
+        GLT_PROFILE_SCOPE("renderer::create_scene_renderer");
 
         // Validate surface targets up front — cheaper than doing it inside scene_renderer::create()
         if (std::holds_alternative<GLT::render::surface_target_desc>(desc.target)) {
@@ -238,12 +242,14 @@ namespace GLT::renderer::vk_rasterizer {
 
     std::expected<GLT::render::compiled_shader, GLT::render::shader_compile_error>
     renderer::compile(std::string_view slang_source, GLT::asset::material::blend_mode blend) {
+        GLT_PROFILE_SCOPE("renderer::compile");
         return m_shared->compile(slang_source, blend);
     }
 
     // window <-> surface registry -------------------------------------------------------------------------------------
 
     vk::SurfaceKHR renderer::get_or_create_surface(GLT::platform::window_handle handle) {
+        GLT_PROFILE_SCOPE("renderer::get_or_create_surface");
 
         if (!handle.is_valid() || !m_instance.instance_handle)
             return nullptr;
@@ -287,6 +293,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void renderer::release_surface(GLT::platform::window_handle handle) {
+        GLT_PROFILE_SCOPE("renderer::release_surface");
 
         auto it = m_surfaces.find(handle);
         if (it == m_surfaces.end())
@@ -305,6 +312,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PRIVATE ===================================================================================================
 
     void renderer::init_vulkan() {
+        GLT_PROFILE_SCOPE("renderer::init_vulkan");
 
         u32 count = 0;
         const char** ext = mp_window->get_required_render_extensions(&count);
@@ -335,6 +343,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void renderer::destroy_vulkan() {
+        GLT_PROFILE_SCOPE("renderer::destroy_vulkan");
 
         if (m_device)
             m_device.waitIdle();

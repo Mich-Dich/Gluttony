@@ -36,6 +36,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     glm::mat4 scene_renderer::camera_projection() const {
+        GLT_PROFILE_SCOPE("scene_renderer::camera_projection");
 
         const f32 aspect = static_cast<f32>(m_extent.x) / static_cast<f32>(m_extent.y);
         glm::mat4 p = glm::perspective(glm::radians(m_active_camera.fov), aspect,
@@ -45,6 +46,7 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
     bool scene_renderer::ensure_host_buffer(util::allocated_buffer& buffer, vk::DeviceSize bytes, vk::BufferUsageFlags usage) {
+        GLT_PROFILE_SCOPE("scene_renderer::ensure_host_buffer");
 
         if (buffer.buffer && buffer.size >= bytes)
             return false;
@@ -61,6 +63,7 @@ namespace GLT::renderer::vk_rasterizer {
     // per-frame CPU work (update()) -----------------------------------------------------------------------------------
 
     void scene_renderer::ensure_scene_meshes() {
+        GLT_PROFILE_SCOPE("scene_renderer::ensure_scene_meshes");
 
         std::unordered_set<GLT::asset::handle> current;
         for (const auto& inst : m_scene_instances)
@@ -87,6 +90,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_camera_ubo() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_camera_ubo");
 
         camera_ubo_data cam{};
         const glm::mat4 proj = camera_projection();
@@ -130,6 +134,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Translucent candidates -> visible list sorted back-to-front. Bounds are the whole mesh's AABB (per-submesh bounds
     // are not stored), so all submeshes of one instance share a sort depth and keep their submesh order
     void scene_renderer::prepare_translucent_draws() {
+        GLT_PROFILE_SCOPE("scene_renderer::prepare_translucent_draws");
 
         m_translucent_draws.clear();
         if (m_translucent_candidates.empty())
@@ -195,6 +200,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_globals() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_globals");
 
         const glm::mat4 proj = camera_projection();
         const glm::mat4 view = m_active_camera.view;
@@ -225,6 +231,7 @@ namespace GLT::renderer::vk_rasterizer {
     // init / teardown -------------------------------------------------------------------------------------------------
 
     void scene_renderer::init_gpu_state() {
+        GLT_PROFILE_SCOPE("scene_renderer::init_gpu_state");
 
         auto* dev = m_plugin.get_dev();
 
@@ -273,6 +280,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_gpu_state() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_gpu_state");
 
         auto* dev = m_plugin.get_dev();
 
@@ -338,6 +346,7 @@ namespace GLT::renderer::vk_rasterizer {
     // per-frame GPU work (render()) -----------------------------------------------------------------------------------
 
     void scene_renderer::import_frame_textures() {
+        GLT_PROFILE_SCOPE("scene_renderer::import_frame_textures");
 
         using VKIU = vk::ImageUsageFlagBits;
 
@@ -425,6 +434,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_mesh_descriptors() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_mesh_descriptors");
 
         const u32 frame = m_current_frame;
         if (!m_light_grid_handles[frame].is_valid() || !m_light_index_list_handles[frame].is_valid())
@@ -502,6 +512,7 @@ namespace GLT::renderer::vk_rasterizer {
     // pipelines + resources -------------------------------------------------------------------------------------------
 
     void scene_renderer::create_mesh_material_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_mesh_material_resources");
 
         auto* dev = m_plugin.get_dev();
         using VKDT = vk::DescriptorType;
@@ -523,6 +534,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_mesh_material_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_mesh_material_resources");
 
         auto* dev = m_plugin.get_dev();
         for (auto& d : m_material_desc_buffers)

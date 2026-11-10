@@ -1,5 +1,6 @@
 
 #include "util/pch.h"
+#include <debug/trace.h>
 #include "util/util_pch.h"
 #include "shared_resource_manager.h"
 
@@ -521,6 +522,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     std::expected<GLT::render::compiled_shader, GLT::render::shader_compile_error>
     shared_resource_manager::compile(std::string_view slang_source, GLT::asset::material::blend_mode blend) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::compile");
 
         namespace AM = GLT::asset::material;
         namespace GR = GLT::render;
@@ -609,6 +611,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PRIVATE ===================================================================================================
 
     void shared_resource_manager::create_shader_compiler() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create_shader_compiler");
 
         const auto contract_dir = GLT::util::get_executable_path() / GLT::config::ASSET_DIR / "material_contract" / "v0";
         auto slang = util::slang_compiler::create(contract_dir);
