@@ -130,7 +130,9 @@ namespace GLT::renderer::vk_rasterizer {
                 const vk::DeviceSize grid_bytes =
                     static_cast<vk::DeviceSize>(m_cluster_params.cluster_count) * sizeof(glm::uvec2);
 
-                ctx.cmd.fillBuffer(ctx.get_buffer(m_light_grid_handles[m_current_frame]),    0, grid_bytes,     0);
+                // The grid itself is not cleared any more: light_culling.comp writes every cluster (count 0 included) and
+                // always runs, also with zero lights. Only the global index cursor needs a reset
+                (void)grid_bytes;
                 ctx.cmd.fillBuffer(ctx.get_buffer(m_light_counter_handles[m_current_frame]), 0, sizeof(u32),     0);
             });
     }

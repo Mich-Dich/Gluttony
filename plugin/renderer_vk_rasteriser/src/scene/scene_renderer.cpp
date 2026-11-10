@@ -276,6 +276,7 @@ namespace GLT::renderer::vk_rasterizer {
         ensure_draw_buffers();                  // grow indirect buffers to this frame's draw count (before descriptors)
         update_cull_descriptors();
 
+        m_imgui_clears_backbuffer = false;
         if (m_active) {
 
             add_environment_passes();           // sky cubemap, specular prefilter, SH (only when the sun / sky changed)
@@ -345,7 +346,10 @@ namespace GLT::renderer::vk_rasterizer {
                 add_output_to_shader_read_pass();
         } else {
 
-            if (!m_offscreen)                   // Inactive surface: clear the backbuffer so ImGui's eLoad has valid base content
+            // Inactive surface (UI only, e.g. the editor's main window): the ImGui render pass clears the backbuffer itself
+            // (loadOp CLEAR) instead of a separate full-screen clear pass + barrier
+            m_imgui_clears_backbuffer = !m_offscreen && m_imgui_initialized && m_imgui_clear_render_pass;
+            if (!m_offscreen && !m_imgui_clears_backbuffer)
                 add_clear_backbuffer_pass();
         }
 
@@ -652,11 +656,16 @@ namespace GLT::renderer::vk_rasterizer {
             return b >= a ? static_cast<f32>(static_cast<f64>(b - a) * to_ms) : 0.f;
         };
 
+        // Rows are per target ("viewport ..." / "window ..."): several renderers used to be summed under one pass name
+        const std::string label = m_offscreen ? "viewport " : "window ";
         report.gpu_time_ms = delta_ms(0, written - 1);
         report.render_passes = written - 1;
-        report.pass_times_ms.reserve(written - 1);
+        report.pass_times_ms.reserve(written + 2);
+        report.pass_times_ms.emplace_back(label + "[frame total]", report.gpu_time_ms);
+        report.pass_times_ms.emplace_back(label + "[width]", static_cast<f32>(m_extent.x));
+        report.pass_times_ms.emplace_back(label + "[height]", static_cast<f32>(m_extent.y));
         for (u32 i = 1; i < written && (i - 1) < names.size(); ++i)
-            report.pass_times_ms.emplace_back(names[i - 1], delta_ms(i - 1, i));
+            report.pass_times_ms.emplace_back(label + names[i - 1], delta_ms(i - 1, i));
 
         m_shared->report_gpu_frame(report);
     }

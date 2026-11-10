@@ -113,10 +113,18 @@ if(GLT_ENABLE_TRACY)
     add_library(tracy_client                                            SHARED
         ${TRACY_DIR}/public/TracyClient.cpp
     )
+    # Fixed file name in every configuration. Some vendored projects (assimp) put CMAKE_DEBUG_POSTFIX="d" into the cache,
+    # which renamed this library to libtracy_clientd.so on the next configure; binaries linked before and after then loaded
+    # BOTH copies -> two tracy::Profiler instances -> TRACY_ASSERT(!s_instance) abort at startup
     set_target_properties(tracy_client                                  PROPERTIES
         POSITION_INDEPENDENT_CODE                                       ON
         CXX_VISIBILITY_PRESET                                           default
         LIBRARY_OUTPUT_DIRECTORY                                        "${CMAKE_BINARY_DIR}/bin"
+        OUTPUT_NAME                                                     "tracy_client"
+        DEBUG_POSTFIX                                                   ""
+        RELEASE_POSTFIX                                                 ""
+        RELWITHDEBINFO_POSTFIX                                          ""
+        MINSIZEREL_POSTFIX                                              ""
     )
     target_include_directories(tracy_client                             PUBLIC
         $<BUILD_INTERFACE:${TRACY_DIR}/public>

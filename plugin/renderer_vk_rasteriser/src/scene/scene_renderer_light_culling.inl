@@ -210,7 +210,8 @@ namespace GLT::renderer::vk_rasterizer {
             },
             [this](graph::pass_context& ctx) {
 
-                if (m_light_count == 0 || m_cluster_params.cluster_count == 0)
+                // Runs with zero lights too: it is what writes the (empty) grid now that the grid is no longer cleared
+                if (m_cluster_params.cluster_count == 0)
                     return;
 
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_light_cull_pipeline);

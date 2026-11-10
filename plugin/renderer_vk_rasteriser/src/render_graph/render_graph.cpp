@@ -399,7 +399,9 @@ namespace GLT::renderer::vk_rasterizer::graph {
         m_timestamps_written = 0;
         if (m_timestamp_pool && m_query_count >= 2) {
             cmd.resetQueryPool(m_timestamp_pool, m_first_query, m_query_count);
-            cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eTopOfPipe, m_timestamp_pool, m_first_query);
+            // ALL_COMMANDS (not TOP_OF_PIPE): the start mark waits for earlier submissions, so this target's numbers no longer
+            // include the tail of the previous target's GPU work (the window's "imgui" used to absorb the whole viewport)
+            cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, m_timestamp_pool, m_first_query);
             m_timestamps_written = 1;
         }
 

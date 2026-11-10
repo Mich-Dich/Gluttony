@@ -451,6 +451,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         vk::DescriptorPool                                                  m_imgui_descriptor_pool = nullptr;
         vk::RenderPass                                                      m_imgui_render_pass = nullptr;
+        vk::RenderPass                                                      m_imgui_clear_render_pass = nullptr;   // compatible variant: loadOp CLEAR (UI-only frames)
+        bool                                                                m_imgui_clears_backbuffer = false;    // this frame: no separate clear pass
         std::vector<vk::Framebuffer>                                        m_imgui_framebuffers{};
         bool                                                                m_imgui_initialized = false;
         bool                                                                m_imgui_platform_pending = false;   // imgui pass recorded, platform windows not yet rendered

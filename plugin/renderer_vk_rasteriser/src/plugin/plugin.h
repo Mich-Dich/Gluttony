@@ -139,6 +139,7 @@ namespace GLT::renderer::vk_rasterizer {
         std::unordered_map<GLT::platform::window_handle, surface_entry>         m_surfaces{};
         handle                                                                  m_framebuffer_resize_sub{};
         handle                                                                  m_gpu_stats_provider{};     // "GPU passes" HUD section
+        handle                                                                  m_gpu_device_provider{};    // "GPU device: <name>" section
         GLT::unique_ref<shared_resource_manager>                                m_shared{};
         GLT::render::renderer_feature                                           m_features{};
         settings::visual                                                        m_visual_settings{};

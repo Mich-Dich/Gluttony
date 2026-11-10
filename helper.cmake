@@ -213,9 +213,13 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
     target_link_options(${TARGET_NAME}              PRIVATE -rdynamic)
     # target_link_options(${TARGET_NAME}              PRIVATE -rdynamic -Wl,--no-undefined)
 
-    # Tracy profiler client (see GLT_ENABLE_TRACY in the root CMakeLists). Shared by every module
+    # Tracy profiler client (see GLT_ENABLE_TRACY in the root CMakeLists). Plugins only take its headers + defines and do
+    # NOT link it: the executable is the single owner (DT_NEEDED), and dlopen'd plugins resolve the Tracy symbols from it.
+    # A plugin linking its own copy (or a stale differently named one) would create a second profiler instance
     if(TARGET tracy_client)
-        target_link_libraries(${TARGET_NAME}        PRIVATE tracy_client)
+        target_include_directories(${TARGET_NAME}   PRIVATE $<TARGET_PROPERTY:tracy_client,INTERFACE_INCLUDE_DIRECTORIES>)
+        target_compile_definitions(${TARGET_NAME}   PRIVATE $<TARGET_PROPERTY:tracy_client,INTERFACE_COMPILE_DEFINITIONS>)
+        add_dependencies(${TARGET_NAME}             tracy_client)
     endif()
 
     # Link with any additional libraries passed as extra arguments

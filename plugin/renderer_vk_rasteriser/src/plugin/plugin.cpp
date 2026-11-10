@@ -118,6 +118,24 @@ namespace GLT::renderer::vk_rasterizer {
 
         init_vulkan();
 
+        // Which GPU we run on matters for every timing: log it and expose it to the stats / trace summary
+        {
+            const auto props = m_physical_device.getProperties();
+            const std::string device_name = props.deviceName.data();
+            LOG(info, "Vulkan device: {} ({}), driver {:#x}, API {}.{}.{}", device_name, vk::to_string(props.deviceType),
+                props.driverVersion, VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion),
+                VK_API_VERSION_PATCH(props.apiVersion))
+            const f32 device_type = static_cast<f32>(static_cast<u32>(props.deviceType));
+            const f32 timestamp_period = props.limits.timestampPeriod;
+            m_gpu_device_provider = GLT::debug::register_provider(GLT::debug::stats_provider{
+                .name = "GPU device: " + device_name,
+                .fill = [device_type, timestamp_period](GLT::debug::system_stats& out) {
+                    out.custom.push_back({ "type (1 integrated, 2 discrete)", device_type, "%.0f" });
+                    out.custom.push_back({ "timestamp period (ns)", timestamp_period, "%.3f" });
+                }
+            });
+        }
+
         m_shared = GLT::create_unique_ref<shared_resource_manager>(m_device, m_physical_device, m_dev,
             m_queues.graphics_queue, m_queues.graphics_index);
         m_shared->create();
@@ -152,6 +170,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         GLT::event_bus::unsubscribe(m_framebuffer_resize_sub);
         GLT::debug::unregister_provider(m_gpu_stats_provider);
+        GLT::debug::unregister_provider(m_gpu_device_provider);
 
         if (m_shared) {
             m_shared->destroy();

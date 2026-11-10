@@ -246,6 +246,43 @@ namespace GLT::renderer::vk_rasterizer {
             m_imgui_initialized);
 
         imgui_hooks::install();                         // after both backends registered their callbacks
+
+        // Same attachment format as m_imgui_render_pass (so ImGui's pipeline and the framebuffers stay compatible), but it
+        // clears the backbuffer: used on UI-only frames instead of a separate clear pass
+        {
+            vk::AttachmentDescription attachment{};
+            attachment.format = m_swapchain.swapchain_format;
+            attachment.samples = vk::SampleCountFlagBits::e1;
+            attachment.loadOp = vk::AttachmentLoadOp::eClear;
+            attachment.storeOp = vk::AttachmentStoreOp::eStore;
+            attachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+            attachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+            attachment.initialLayout = vk::ImageLayout::eUndefined;
+            attachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+
+            vk::AttachmentReference color{ 0, vk::ImageLayout::eColorAttachmentOptimal };
+            vk::SubpassDescription subpass{};
+            subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+            subpass.colorAttachmentCount = 1;
+            subpass.pColorAttachments = &color;
+
+            vk::SubpassDependency dependency{};
+            dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+            dependency.dstSubpass = 0;
+            dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+            dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+            dependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+            dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+
+            vk::RenderPassCreateInfo rpci{};
+            rpci.attachmentCount = 1;
+            rpci.pAttachments = &attachment;
+            rpci.subpassCount = 1;
+            rpci.pSubpasses = &subpass;
+            rpci.dependencyCount = 1;
+            rpci.pDependencies = &dependency;
+            m_imgui_clear_render_pass = m_plugin.get_vk_device().createRenderPass(rpci);
+        }
         LOG(trace, " ImGui initialised for window [{}, {}]", m_window.index, m_window.generation);
     }
 
@@ -260,6 +297,10 @@ namespace GLT::renderer::vk_rasterizer {
         ImGui::SetCurrentContext(imgui_config::get_context_imgui());
         m_plugin.get_vk_device().waitIdle();
         destroy_imgui_textures();                       // before the backend (RemoveTexture needs it)
+        if (m_imgui_clear_render_pass) {
+            m_plugin.get_vk_device().destroyRenderPass(m_imgui_clear_render_pass);
+            m_imgui_clear_render_pass = nullptr;
+        }
 
         util::destroy_imgui_resources(
             m_plugin.get_vk_device_ref(),
@@ -335,7 +376,7 @@ namespace GLT::renderer::vk_rasterizer {
                 upload_imgui_textures(ctx.cmd);
 
                 vk::RenderPassBeginInfo rpbi{};
-                rpbi.renderPass = m_imgui_render_pass;
+                rpbi.renderPass = m_imgui_clears_backbuffer ? m_imgui_clear_render_pass : m_imgui_render_pass;
                 rpbi.framebuffer = m_imgui_framebuffers[m_current_swapchain_image];
                 rpbi.renderArea.extent = m_swapchain.swapchain_extent;
 
