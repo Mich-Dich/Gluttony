@@ -2,6 +2,7 @@
 #include "util/pch.h"
 #include "util/util_pch.h"
 #include "shared_resource_manager.h"
+#include <debug/trace.h>
 
 #include <asset/material.h>
 
@@ -227,6 +228,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void shared_resource_manager::immediate_submit(std::function<void(vk::CommandBuffer)>&& fn) {
+        GLT_PROFILE_SCOPE("Immediate submit (upload)");
         VK_SRM_CHECK(m_device.waitForFences(m_immediate_fence, VK_TRUE, UINT64_MAX));
         m_device.resetFences(m_immediate_fence);
         m_immediate_cmd.reset();
@@ -237,6 +239,7 @@ namespace GLT::renderer::vk_rasterizer {
         vk::CommandBufferSubmitInfo cbsi{}; cbsi.commandBuffer = m_immediate_cmd;
         vk::SubmitInfo2 si{}; si.commandBufferInfoCount = 1; si.pCommandBufferInfos = &cbsi;
         m_graphics_queue.submit2(si, m_immediate_fence);
+        GLT_PROFILE_WAIT("Wait for GPU (immediate submit)");
         VK_SRM_CHECK(m_device.waitForFences(m_immediate_fence, VK_TRUE, UINT64_MAX));
     }
 
@@ -383,6 +386,9 @@ namespace GLT::renderer::vk_rasterizer {
         mesh_items.emplace_back(7, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);
         mesh_items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, nullptr);
         mesh_items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);
+        mesh_items.emplace_back(10, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);     // prefiltered specular cube
+        mesh_items.emplace_back(11, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);    // SH9 irradiance
+        mesh_items.emplace_back(12, VKDT::eSampler, VKSF::eFragment, 1, nullptr);          // env sampler
         m_mesh_set_layout = m_dev->create_descriptor_set_layout(mesh_items);
         m_live_descriptor_set_count++;
 
@@ -556,17 +562,27 @@ namespace GLT::renderer::vk_rasterizer {
                 : acquire_texture_internal(wanted);
         }
 
+        // Params: only touch the GPU when they actually changed, and never write into a UBO that in-flight frames may still
+        // read (this ran every MATERIAL_POLL_INTERVAL frames and rewrote it in place). A change gets a fresh UBO; the old
+        // one is retired. Material descriptors are rewritten every frame, so they pick up the new buffer
         const u32 needed = static_cast<u32>(asset->packed_params.size());
-        if (!slot.params_ubo.buffer || slot.params_size < needed) {
-            if (slot.params_ubo.buffer) retire_buffer(slot.params_ubo);     // previous frames may still read it
+        const u64 params_hash = needed > 0
+            ? GLT::util::fnv1a_64(std::string_view(reinterpret_cast<const char*>(asset->packed_params.data()), needed)) | 1ull
+            : 1ull;                                                         // | 1: never 0, so "no upload yet" stays distinct
+        if (!slot.params_ubo.buffer || params_hash != slot.params_hash) {
+            const bool had_buffer = slot.params_ubo.buffer != nullptr;
+            if (had_buffer)
+                retire_buffer(slot.params_ubo);                             // previous frames may still read it
             const u32 alloc_size = std::max<u32>(needed, 256);
             slot.params_ubo = m_dev->create_buffer(alloc_size, vk::BufferUsageFlagBits::eUniformBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
             slot.params_size = alloc_size;
-            m_live_buffer_count++;
+            if (!had_buffer)
+                m_live_buffer_count++;
+            if (needed > 0)
+                m_dev->update_buffer(slot.params_ubo, asset->packed_params.data(), needed);
+            slot.params_hash = params_hash;
         }
-        if (needed > 0)
-            m_dev->update_buffer(slot.params_ubo, asset->packed_params.data(), needed);
     }
 
 

@@ -213,6 +213,11 @@ function(compile_plugin TARGET_LIB_TYPE TARGET_NAME)
     target_link_options(${TARGET_NAME}              PRIVATE -rdynamic)
     # target_link_options(${TARGET_NAME}              PRIVATE -rdynamic -Wl,--no-undefined)
 
+    # Tracy profiler client (see GLT_ENABLE_TRACY in the root CMakeLists). Shared by every module
+    if(TARGET tracy_client)
+        target_link_libraries(${TARGET_NAME}        PRIVATE tracy_client)
+    endif()
+
     # Link with any additional libraries passed as extra arguments
     if(ARGN)
         target_link_libraries(${TARGET_NAME}        PRIVATE ${ARGN})

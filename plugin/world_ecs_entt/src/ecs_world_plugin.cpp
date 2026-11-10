@@ -186,6 +186,23 @@ namespace GLT::world::world_ecs_entt {
         m_codec.register_component<component::camera>("glt.camera");
         m_codec.register_component<component::light>("glt.light");
 
+        // World components: append-only PODs. Older (shorter) payloads load as a prefix, new trailing fields keep their defaults
+        auto register_prefix_pod = [this]<typename T>(std::string_view name) {
+            m_codec.register_custom_component<T>(name,
+                [](const entt::registry& registry, entt::entity entity, std::vector<std::byte>& out) {
+                    const auto& comp = registry.get<T>(entity);
+                    const auto* bytes = reinterpret_cast<const std::byte*>(&comp);
+                    out.insert(out.end(), bytes, bytes + sizeof(T));
+                },
+                [](entt::registry& registry, entt::entity entity, std::span<const std::byte> data) {
+                    T comp{};
+                    std::memcpy(&comp, data.data(), std::min(data.size(), sizeof(T)));
+                    registry.emplace_or_replace<T>(entity, comp);
+                });
+        };
+        register_prefix_pod.template operator()<component::sky>("glt.sky");
+        register_prefix_pod.template operator()<component::ambient_light>("glt.ambient_light");
+
         // custom components -------------------------------------------------------------------------------------------
 
         m_codec.register_custom_component<component::mesh>("glt.mesh_renderer",

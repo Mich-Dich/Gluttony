@@ -133,6 +133,8 @@ namespace GLT::renderer::vk_rasterizer {
                 builder.read(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_read);
                 if (m_shadow.active)
                     builder.read(m_shadow_map, graph::texture_usage::depth_sampled);
+                builder.read(m_env_specular, graph::texture_usage::sampled);      // image based lighting
+                builder.read(m_env_sh, graph::buffer_usage::storage_read);
                 if (m_local_shadow_view_count > 0)
                     builder.read(m_shadow_atlas, graph::texture_usage::depth_sampled);
                 builder.set_side_effects(true);
@@ -222,6 +224,8 @@ namespace GLT::renderer::vk_rasterizer {
                 builder.read(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_read);
                 if (m_shadow.active)
                     builder.read(m_shadow_map, graph::texture_usage::depth_sampled);
+                builder.read(m_env_specular, graph::texture_usage::sampled);      // image based lighting
+                builder.read(m_env_sh, graph::buffer_usage::storage_read);
                 if (m_local_shadow_view_count > 0)
                     builder.read(m_shadow_atlas, graph::texture_usage::depth_sampled);
                 builder.set_side_effects(true);

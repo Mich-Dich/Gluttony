@@ -95,7 +95,8 @@ namespace GLT::renderer::vk_rasterizer {
         cam.camera_pos = glm::vec4(m_active_camera.position, 1.0f);
         cam.projection = proj;
         cam.inv_projection = glm::inverse(proj);
-        cam.cluster_dims = glm::uvec4(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z, 0u);
+        cam.cluster_dims = glm::uvec4(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z,
+            CLUSTER_TILE_SIZE_X | (CLUSTER_TILE_SIZE_Y << 16));
         cam.cluster_depth = glm::vec4(m_active_camera.near_plane, m_active_camera.far_plane,
             static_cast<f32>(m_extent.x), static_cast<f32>(m_extent.y));
         cam.light_view_proj = m_shadow.view_proj;
@@ -103,9 +104,16 @@ namespace GLT::renderer::vk_rasterizer {
         cam.flags.x = m_asset_instance_count;   // cull.comp: only the asset-backed prefix of this frame's instance SSBO is valid
         cam.flags.y = 1u;                       // cull.comp: main view writes the draw statistics (shadow cull does not)
 
-        const settings::visual& visual = m_plugin.visual_settings();
-        cam.ambient_sky = glm::vec4(visual.ambient_sky_r, visual.ambient_sky_g, visual.ambient_sky_b, 0.f) * visual.ambient_intensity;
-        cam.ambient_ground = glm::vec4(visual.ambient_ground_r, visual.ambient_ground_g, visual.ambient_ground_b, 0.f) * visual.ambient_intensity;
+        const auto& env = m_environment;
+        const f32 ambient = std::max(env.ambient_intensity, 0.f);
+        if (env.has_sky) {
+            // Image based lighting from the sky cubemaps (the radiance already carries sky intensity and sun colour)
+            cam.ambient_sky = glm::vec4(glm::vec3(ambient), 1.f);
+            cam.ambient_ground = glm::vec4(0.f, 0.f, 0.f, static_cast<f32>(ENV_SPECULAR_MIPS - 1));
+        } else {
+            cam.ambient_sky = glm::vec4(env.ambient_sky_color * ambient, 0.f);
+            cam.ambient_ground = glm::vec4(env.ambient_ground_color * ambient, 0.f);
+        }
 
         // Frustum planes
         const glm::mat4 t = glm::transpose(cam.view_proj);
@@ -258,6 +266,8 @@ namespace GLT::renderer::vk_rasterizer {
         if (!m_offscreen)
             create_blit_pipeline();
         create_tonemap_pipeline();
+        create_light_cull_debug_pipeline();
+        create_environment_resources();
         create_debug_draw_resources();
     }
 
@@ -267,7 +277,9 @@ namespace GLT::renderer::vk_rasterizer {
         auto* dev = m_plugin.get_dev();
 
         destroy_debug_draw_resources();
+        destroy_environment_resources();
         destroy_tonemap_pipeline();
+        destroy_light_cull_debug_pipeline();
         if (!m_offscreen)
             destroy_blit_pipeline();
         destroy_local_shadow_resources();
@@ -361,10 +373,13 @@ namespace GLT::renderer::vk_rasterizer {
         m_scene_color = m_graph->create_texture(sc);
 
         if (m_offscreen) {
+            // The UI of the previous frame (an earlier submission on the same queue) may still be sampling this image, and
+            // window targets render after offscreen ones. Wait on all prior work (write-after-read: execution dependency
+            // only) instead of claiming nothing used it (eNone)
             m_graph->import_texture(m_scene_color,
                 m_output_image->get_allocated_image_ref().image,
                 m_output_image->get_accessible_image_ref().view,
-                { m_output_image->get_accessible_image_ref().layout, {}, vk::PipelineStageFlagBits2::eNone });
+                { m_output_image->get_accessible_image_ref().layout, {}, vk::PipelineStageFlagBits2::eAllCommands });
         }
 
         // HDR scene colour (lit passes render here, the tonemap pass resolves it into scene_color) -------------
@@ -435,6 +450,16 @@ namespace GLT::renderer::vk_rasterizer {
         util::accessible_image shadow_sampler_image{};
         shadow_sampler_image.sampler = m_shared->get_shadow_sampler();
 
+        util::accessible_image env_specular_img{};
+        env_specular_img.view = m_graph->texture_default_view(m_env_specular);
+        env_specular_img.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+        util::accessible_image env_sampler_image{};
+        env_sampler_image.sampler = m_shared->get_material_sampler();      // trilinear across the roughness mips
+
+        auto* env_sh = m_graph->buffer_allocation(m_env_sh);
+        ASSERT(env_sh, "", "Graph failed to allocate the environment SH buffer");
+
         std::vector<util::descriptor_item> items;
         items.emplace_back(0, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_camera_ubos[frame]);
         items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eVertex, 1, &m_instance_buffers[frame]);
@@ -446,6 +471,9 @@ namespace GLT::renderer::vk_rasterizer {
         items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_shadow_view_buffers[frame]);
         items.emplace_back(7, VKDT::eSampledImage, VKSF::eFragment, 1, &atlas_img);
         items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, &shadow_sampler_image);
+        items.emplace_back(10, VKDT::eSampledImage, VKSF::eFragment, 1, &env_specular_img);
+        items.emplace_back(11, VKDT::eStorageBuffer, VKSF::eFragment, 1, env_sh);
+        items.emplace_back(12, VKDT::eSampler, VKSF::eFragment, 1, &env_sampler_image);
 
         constexpr auto bt = util::descriptor_buffer_type::combined;
 
@@ -456,9 +484,12 @@ namespace GLT::renderer::vk_rasterizer {
         m_plugin.get_dev()->compute_descriptor_binding_offsets(m_shared->get_mesh_set_layout(), items);
         m_plugin.get_dev()->update_descriptor_buffer(m_frame_desc_buffers[frame], items, bt);
 
-        // Shadow-pass set: strip shadow-only bindings (keep 0-4 and 9)
-        auto shadow_items = items;
-        shadow_items.erase(shadow_items.begin() + 5, shadow_items.end());
+        // Shadow-pass set: only bindings 0-4 and 9 (camera swapped for the shadow camera). Filter by binding number: the
+        // old positional erase dropped binding 9 (globals), which sits at index 5
+        std::vector<util::descriptor_item> shadow_items;
+        for (const auto& item : items)
+            if (item.binding <= 4 || item.binding == 9)
+                shadow_items.push_back(item);
         shadow_items[0].p_resources = &m_shadow_camera_ubos[frame];
 
         if (!m_shadow_desc_buffers[frame].buffer.buffer)

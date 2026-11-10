@@ -1,4 +1,5 @@
 #include "util/pch.h"
+#include <debug/trace.h>
 #include "util/util_pch.h"
 #include "plugin/plugin.h"
 
@@ -159,7 +160,11 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    void renderer::begin_frame(u64 frame_number) { m_shared->begin_frame(frame_number); }
+    void renderer::begin_frame(u64 frame_number) {
+
+        GLT_PROFILE_SCOPE_C("Renderer begin frame", GLT::debug::trace::COLOR_RENDER);
+        m_shared->begin_frame(frame_number);
+    }
 
 
     std::expected<GLT::unique_ref<GLT::render::i_scene_renderer>, GLT::render::scene_renderer_error> renderer::create_scene_renderer(

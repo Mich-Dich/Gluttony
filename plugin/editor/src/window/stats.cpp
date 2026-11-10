@@ -163,8 +163,11 @@ namespace GLT::editor {
             if (m_gpu_available)
                 GLT::UI::table_row_text("gpu time", "%.2f ms", m_app_snapshot.render.gpu_time_ms);
 
-            if (m_app_snapshot.cpu_time_ms > 0.0f)
-                GLT::UI::table_row_text("cpu time", "%.2f ms", m_app_snapshot.cpu_time_ms);
+            // CPU time used to include every blocking call (fence waits, acquire, present/vsync), so it always tracked the frame
+            // time. Now: work = main loop minus waits; wait = blocked on GPU / swapchain; limiter = frame-rate cap sleep
+            GLT::UI::table_row_text("cpu work", "%.2f ms", m_app_snapshot.cpu_time_ms);
+            GLT::UI::table_row_text("cpu wait (gpu/vsync)", "%.2f ms", m_app_snapshot.cpu_wait_ms);
+            GLT::UI::table_row_text("frame limiter", "%.2f ms", m_app_snapshot.limiter_ms);
 
             GLT::UI::end_table();
         }
@@ -284,18 +287,15 @@ namespace GLT::editor {
         const auto target_interval_duration = GLT::application::get().get_fps_controller().get_target_interval_duration();
         const f64 target_frame_ms = std::chrono::duration<f64, std::milli>(target_interval_duration).count();
 
-        // ---- Build the cumulative series for the stacked view --------------------
+        // ---- Series --------------------------------------------------------------
         //
-        //   bottom band = CPU  ->  fills [0          .. cpu]
-        //   top band    = GPU  ->  fills [cpu        .. cpu + gpu]
-        //
-        // The total (cpu + gpu) is also kept as its own array so we can draw a
-        // crisp line on top of the stack - the shaded bands alone make the
-        // boundary visible, but a line makes the total instantly readable.
+        //   bottom band = CPU work  ->  [0        .. work]
+        //   top band    = CPU wait  ->  [work     .. work + wait]   (blocked on GPU fences / swapchain / vsync)
+        //   GPU time    = separate line: CPU and GPU run in parallel, stacking them would double count
         std::vector<f32> zero_line(count, 0.0f);
-        std::vector<f32> cpu_plus_gpu(count);
+        std::vector<f32> cpu_plus_wait(count);
         for (int i = 0; i < count; ++i)
-            cpu_plus_gpu[i] = m_cpu_time_history[i] + (m_gpu_available ? m_gpu_time_history[i] : 0.0f);
+            cpu_plus_wait[i] = m_cpu_time_history[i] + m_cpu_wait_history[i];
 
         // ---- Auto-fit Y ----------------------------------------------------------
         // Must clear: the frame budget (with headroom so the reference line never
@@ -304,7 +304,9 @@ namespace GLT::editor {
         f32 y_max = static_cast<f32>(target_frame_ms) * 1.25f;
         for (int i = 0; i < count; ++i) {
             y_max = std::max(y_max, m_frame_time_history[i]);
-            y_max = std::max(y_max, cpu_plus_gpu[i]);
+            y_max = std::max(y_max, cpu_plus_wait[i]);
+            if (m_gpu_available)
+                y_max = std::max(y_max, m_gpu_time_history[i]);
         }
         y_max = std::max(y_max, 1.0f);      // never collapse to zero height
 
@@ -324,21 +326,16 @@ namespace GLT::editor {
                     ImPlotProp_LineWeight, 1.0f,
                     ImPlotProp_Flags, ImPlotInfLinesFlags_Horizontal));
 
-            // ---- Stacked CPU + GPU "used" work ----------------------------------
-            // PlotShaded(label, xs, ys1, ys2, count, ...) fills between ys1 and ys2.
-            ImPlot::PlotShaded("CPU used", m_time_axis.data(), zero_line.data(),    m_cpu_time_history.data(), count,
+            // ---- CPU work + CPU wait (stacked), GPU (line) -----------------------
+            ImPlot::PlotShaded("CPU work", m_time_axis.data(), zero_line.data(), m_cpu_time_history.data(), count,
                 ImPlotSpec(ImPlotProp_FillColor, ImVec4(1.00f, 0.65f, 0.40f, 0.55f), ImPlotProp_LineColor, ImVec4(1.00f, 0.65f, 0.40f, 1.00f)));
 
-            if (m_gpu_available) {
+            ImPlot::PlotShaded("CPU wait", m_time_axis.data(), m_cpu_time_history.data(), cpu_plus_wait.data(), count,
+                ImPlotSpec(ImPlotProp_FillColor, ImVec4(0.85f, 0.30f, 0.30f, 0.35f), ImPlotProp_LineColor, ImVec4(0.85f, 0.30f, 0.30f, 0.80f)));
 
-                ImPlot::PlotShaded("GPU used", m_time_axis.data(), m_cpu_time_history.data(), cpu_plus_gpu.data(), count,
-                    ImPlotSpec(ImPlotProp_FillColor, ImVec4(0.40f, 0.60f, 1.00f, 0.55f), ImPlotProp_LineColor, ImVec4(0.40f, 0.60f, 1.00f, 1.00f)));
-
-                // Crisp top-of-stack line so the total is easy to read even when
-                // the two band colours are close in luminance.
-                ImPlot::PlotLine("Total work", m_time_axis.data(), cpu_plus_gpu.data(), count, 
-                    ImPlotSpec(ImPlotProp_LineColor,  ImVec4(0.85f, 0.85f, 0.95f, 0.9f), ImPlotProp_LineWeight, 1.0f));
-            }
+            if (m_gpu_available)
+                ImPlot::PlotLine("GPU", m_time_axis.data(), m_gpu_time_history.data(), count,
+                    ImPlotSpec(ImPlotProp_LineColor, ImVec4(0.40f, 0.60f, 1.00f, 1.00f), ImPlotProp_LineWeight, 1.5f));
 
             // ---- Measured wall-clock frame time ---------------------------------
             // This is the line the user actually "feels" - when it crosses above
@@ -395,6 +392,7 @@ namespace GLT::editor {
         m_frame_time_history.push_back(stats.frame_time_ms);
         m_gpu_time_history.push_back(stats.render.gpu_time_ms);
         m_cpu_time_history.push_back(stats.cpu_time_ms);
+        m_cpu_wait_history.push_back(stats.cpu_wait_ms);
 
         m_fps_history.push_back(stats.fps);
         m_draw_calls_history.push_back(static_cast<f32>(stats.render.draw_calls));
@@ -410,6 +408,7 @@ namespace GLT::editor {
             drop(m_frame_time_history);
             drop(m_gpu_time_history);
             drop(m_cpu_time_history);
+            drop(m_cpu_wait_history);
             drop(m_fps_history);
             drop(m_draw_calls_history);
             drop(m_triangles_history);
@@ -431,6 +430,7 @@ namespace GLT::editor {
         m_frame_time_history.clear();
         m_gpu_time_history.clear();
         m_cpu_time_history.clear();
+        m_cpu_wait_history.clear();
         m_fps_history.clear();
         m_draw_calls_history.clear();
         m_triangles_history.clear();

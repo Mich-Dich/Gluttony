@@ -1,8 +1,8 @@
 #version 460
 
 // HDR -> display. Reads the linear HDR scene colour, applies exposure + tonemapper and encodes sRGB for the UNORM target.
-// Pixels the scene did not cover (depth == 1) get the display-referred clear colour, so the background is unchanged by
-// exposure / tonemapping (until the sky pass exists)
+// With the sky off, pixels the scene did not cover (depth == 1) get the display-referred clear colour, so that background
+// is unchanged by exposure / tonemapping. With the sky on, the background is real HDR radiance and is tonemapped like the rest
 
 layout(set = 0, binding = 0) uniform sampler2D hdr_tex;
 layout(set = 0, binding = 1) uniform sampler2D depth_tex;
@@ -11,7 +11,7 @@ layout(push_constant) uniform PushConstants {
     vec4  clear_color;          // display-referred (already sRGB encoded), written as-is for background pixels
     float exposure;             // linear multiplier (2^EV)
     uint  tonemapper;           // 0 = ACES (fitted), 1 = AgX, 2 = Reinhard (luminance), 3 = none (clamp)
-    uint  _pad0;
+    uint  background_mode;      // 0 = clear colour composite for depth == 1, 1 = HDR sky already in hdr_tex
     uint  _pad1;
 } pc;
 
@@ -95,7 +95,7 @@ void main() {
     // Background (no opaque geometry). scene_hdr was cleared to 0; translucents drawn over the background left their
     // radiance (premultiplied by coverage) in rgb and their coverage in alpha. Composite that over the display-referred
     // clear colour. Approximate (display space, not HDR) - goes away once the sky pass renders a real HDR background
-    if (texelFetch(depth_tex, pixel, 0).r >= 1.0) {
+    if (pc.background_mode == 0u && texelFetch(depth_tex, pixel, 0).r >= 1.0) {
         const float coverage = clamp(hdr.a, 0.0, 1.0);
         const vec3 over = linear_to_srgb(tonemap(hdr.rgb));
         out_color = vec4(clamp(pc.clear_color.rgb * (1.0 - coverage) + over, 0.0, 1.0), 1.0);

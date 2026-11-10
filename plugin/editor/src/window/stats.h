@@ -95,6 +95,7 @@ namespace GLT::editor {
         std::vector<f32>                                                m_frame_time_history{};
         std::vector<f32>                                                m_gpu_time_history{};
         std::vector<f32>                                                m_cpu_time_history{};
+        std::vector<f32>                                                m_cpu_wait_history{};
         std::vector<f32>                                                m_fps_history{};
         std::vector<f32>                                                m_draw_calls_history{};
         std::vector<f32>                                                m_triangles_history{};

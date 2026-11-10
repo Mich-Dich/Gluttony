@@ -26,6 +26,7 @@
 #include "window/texture_viewer.h"
 #include "window/log_viewer.h"
 #include "window/stats.h"
+#include "window/tracing.h"
 #include "window/audio_viewer.h"
 #include "window/plugin_wizard.h"
 #include "window/asset_import.h"
@@ -365,6 +366,14 @@ namespace GLT::editor {
                         window->close_window();
                     else
                         add_window<stats_window>();
+                }
+
+                if (ImGui::MenuItem("Tracing", "", &m_show_tracing_window)) {
+
+                    if (auto* window = find_window_by_name("Tracing"))
+                        window->close_window();
+                    else
+                        add_window<tracing_window>();
                 }
             });
 

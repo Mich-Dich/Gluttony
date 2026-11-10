@@ -449,6 +449,9 @@ namespace GLT::world::world_ecs_entt {
         m_active_camera = (world_asset->active_camera_index == 0xFFFFFFFFu) ? INVALID_ENTITY
             : entity_id{ world_asset->active_camera_index, world_asset->active_camera_generation };
 
+        // Before any region streams in, so the world entity keeps its saved id
+        load_or_create_world_entity(*world_asset);
+
         return {};
     }
 
@@ -525,7 +528,12 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void ecs_world::despawn(entity_id id) noexcept { release_slot(id); }
+    void ecs_world::despawn(entity_id id) noexcept {
+
+        if (id.is_valid() && id == m_world_entity)
+            return;                             // the world entity lives as long as the world
+        release_slot(id);
+    }
 
 
     bool ecs_world::alive(entity_id id) const noexcept {
@@ -780,6 +788,9 @@ namespace GLT::world::world_ecs_entt {
                 continue;
 
             const entity_id id{ index, slot.generation };
+            if (id == m_world_entity)
+                continue;                       // not part of any region: saved with the world asset
+
             const glm::vec3 world_pos = glm::vec3(world_transform_of(id)[3]);
             const glm::ivec3 cell = cell_coord_of(world_pos);
 
@@ -802,6 +813,8 @@ namespace GLT::world::world_ecs_entt {
                 continue;
 
             const entity_id id{ i, m_slots[i].generation };
+            if (id == m_world_entity)
+                continue;                       // shown separately (i_world::world_entity)
 
             // Orphans count as roots so a corrupted parent link doesn't make an entity unreachable in the outliner
             const component::hierarchy* h = hierarchy_of(id);
@@ -824,6 +837,8 @@ namespace GLT::world::world_ecs_entt {
 
         if (const auto* n = m_registry.try_get<component::name>(entt_of(id)))
             return n->name;
+        if (id.is_valid() && id == m_world_entity)
+            return "World";
         return {};
     }
 
@@ -843,6 +858,9 @@ namespace GLT::world::world_ecs_entt {
 
         if (new_parent == child)
             return;   // self-parent
+
+        if (child == m_world_entity || (new_parent.is_valid() && new_parent == m_world_entity))
+            return;   // the world entity is never part of a hierarchy
 
         if (new_parent.is_valid() && !alive(new_parent))
             return;   // dead target
@@ -938,6 +956,7 @@ namespace GLT::world::world_ecs_entt {
         desc.name = td.meta.name;
         desc.category = td.meta.category;
         desc.required = td.meta.required;
+        desc.scope = td.meta.scope;
         desc.can_remove = [](entity_id) { return true; };
         desc.has = [storage_ptr](entity_id id) { return storage_ptr->has(id); };
         desc.add = [storage_ptr](entity_id id) { storage_ptr->add(id); };
@@ -1282,13 +1301,9 @@ namespace GLT::world::world_ecs_entt {
         auto view = m_registry.view<const component::light, const component::transform>();   // transform is required, so view constrains both
         out.reserve(view.size_hint());
 
-        for (auto entity : view) {
+        auto emit = [&](entt::entity entity, entity_id id) {
 
             const auto& light = view.get<const component::light>(entity);
-            const entity_id id = id_of(entity);
-            if (!id.is_valid())
-                continue;
-
             const glm::mat4 world = world_transform_of(id);
 
             GLT::world::light_snapshot snapshot{};
@@ -1301,9 +1316,121 @@ namespace GLT::world::world_ecs_entt {
             snapshot.outer_cone_angle = light.outer_cone_angle;
             snapshot.type = light.type;
             snapshot.entity = id;
-
             out.push_back(snapshot);
+        };
+
+        // World entity first: its directional light is THE sun (renderers give the first directional light the shadow map)
+        const entt::entity world_handle = entt_of(m_world_entity);
+        if (world_handle != entt::null && view.contains(world_handle))
+            emit(world_handle, m_world_entity);
+
+        for (auto entity : view) {
+
+            if (entity == world_handle)
+                continue;
+            const entity_id id = id_of(entity);
+            if (!id.is_valid())
+                continue;
+            emit(entity, id);
         }
+    }
+
+
+    void ecs_world::gather_environment(GLT::world::environment_snapshot& out) const {
+
+        out = {};
+        const entt::entity world_handle = entt_of(m_world_entity);
+
+        if (world_handle != entt::null) {
+
+            if (const auto* sky = m_registry.try_get<component::sky>(world_handle)) {
+                out.has_sky = true;
+                out.sky_intensity = sky->intensity;
+                out.sky_haze = sky->haze;
+                out.sky_ground_albedo = sky->ground_albedo;
+                out.sun_disk_size = sky->sun_disk_size;
+            }
+
+            if (const auto* ambient = m_registry.try_get<component::ambient_light>(world_handle)) {
+                out.ambient_intensity = ambient->intensity;
+                out.ambient_sky_color = ambient->sky_color;
+                out.ambient_ground_color = ambient->ground_color;
+            }
+        }
+
+        // Sun: the world entity's directional light, else the first directional light anywhere (legacy worlds)
+        auto take_sun = [&](entt::entity entity, entity_id id) -> bool {
+            const auto* light = m_registry.try_get<component::light>(entity);
+            if (!light || light->type != GLT::world::light_type::directional)
+                return false;
+            const glm::mat4 world = world_transform_of(id);
+            out.has_sun = true;
+            out.sun_direction = -glm::normalize(glm::vec3(world[2]));
+            out.sun_color = light->color;
+            out.sun_intensity = light->intensity;
+            out.sun_entity = id;
+            return true;
+        };
+
+        if (world_handle != entt::null && take_sun(world_handle, m_world_entity))
+            return;
+
+        for (auto entity : m_registry.view<const component::light, const component::transform>()) {
+            if (entity == world_handle)
+                continue;
+            if (const entity_id id = id_of(entity); id.is_valid() && take_sun(entity, id))
+                return;
+        }
+    }
+
+    // world entity ----------------------------------------------------------------------------------------------------
+
+    void ecs_world::load_or_create_world_entity(const asset::world::world_asset& world_asset) {
+
+        m_world_entity = INVALID_ENTITY;
+
+        if (world_asset.world_entity_codec == CODEC_ENTT_V1 && !world_asset.world_entity_data.empty()) {
+
+            const auto ids = m_codec.load(m_registry, std::span<const std::byte>(world_asset.world_entity_data),
+                [this](entity_id saved) { return allocate_for_load(saved); });
+
+            if (!ids.empty())
+                m_world_entity = ids.front();
+            for (size_t i = 1; i < ids.size(); ++i)             // only one world entity is ever written
+                release_slot(ids[i]);
+        }
+
+        const bool created = !m_world_entity.is_valid();
+        if (created) {
+            // Worlds saved before world entities existed (and fresh worlds): a default environment. No sun light is added:
+            // a legacy world's own directional light keeps working (gather_environment falls back to it)
+            m_world_entity = alloc_slot();
+            const entt::entity e = entt_of(m_world_entity);
+            m_registry.emplace_or_replace<component::sky>(e);
+            m_registry.emplace_or_replace<component::ambient_light>(e);
+            LOG(info, "world has no world entity yet - created a default one (sky + ambient)");
+        }
+
+        // Invariants: a transform (directional lights take their direction from it), never in a hierarchy
+        const entt::entity e = entt_of(m_world_entity);
+        m_registry.get_or_emplace<component::transform>(e);
+        m_registry.remove<component::hierarchy>(e);
+    }
+
+
+    void ecs_world::encode_world_entity(asset::world::world_asset& world_asset) const {
+
+        world_asset.world_entity_data.clear();
+        world_asset.world_entity_codec = CODEC_NONE;
+
+        const entt::entity e = entt_of(m_world_entity);
+        if (e == entt::null)
+            return;
+
+        const entt::entity entities[] = { e };
+        m_codec.save(m_registry, std::span<const entt::entity>(entities),
+            [this](entt::entity entity) { return entity_id_for(entity); }, world_asset.world_entity_data);
+        world_asset.world_entity_codec = CODEC_ENTT_V1;
     }
 
 
@@ -1382,7 +1509,7 @@ namespace GLT::world::world_ecs_entt {
         for (auto entity : view) {
 
             const entity_id id = id_of(entity);
-            if (!id.is_valid())
+            if (!id.is_valid() || id == m_world_entity)
                 continue;
 
             GLT::world::entity_position p{};
@@ -1437,6 +1564,7 @@ namespace GLT::world::world_ecs_entt {
 
         if (slot.handle == entt::null) {                   // Slot is free: honour the file'slot id verbatim
 
+            std::erase(m_free, preferred.index);            // a released slot sits on the free list: alloc_slot must not hand it out again
             slot.generation = preferred.generation ? preferred.generation : 1;
             slot.handle = m_registry.create();
             return { { preferred.index, slot.generation }, slot.handle };
@@ -1715,6 +1843,7 @@ namespace GLT::world::world_ecs_entt {
             region.is_active = false;
         world_asset->region_cell_size = m_region_cell_size;
         world_asset->streaming_radius = m_streaming_radius;
+        encode_world_entity(*world_asset);
         world_asset->active_camera_index = m_active_camera.index;
         world_asset->active_camera_generation = m_active_camera.generation;
         if (m_active_camera.is_valid()) {

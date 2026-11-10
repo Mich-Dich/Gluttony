@@ -13,6 +13,10 @@
 #include "entity_builder.h"
 #include "component_registry.h"
 
+namespace GLT::asset::world {
+    class world_asset;
+}
+
 
 
 // entity_codec and ecs_world_plugin are forward-declared; both are only used
@@ -50,6 +54,7 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] std::expected<void, asset::load_error> save() override;
         [[nodiscard]] std::expected<void, asset::load_error> save_as(const std::filesystem::path& path) override;
 
+        [[nodiscard]] entity_id world_entity() const noexcept override { return m_world_entity; }
         [[nodiscard]] entity_id spawn() override;
         void despawn(entity_id id) noexcept override;
         [[nodiscard]] bool alive(entity_id id) const noexcept override;
@@ -126,6 +131,7 @@ namespace GLT::world::world_ecs_entt {
         // i_world_scene -----------------------------------------------------------------------------------------------
         void gather_scene(std::vector<asset::mesh::instance>& out) const override;
         void gather_lights(std::vector<light_snapshot>& out) const override;
+        void gather_environment(environment_snapshot& out) const override;
         void gather_entity_positions(std::vector<entity_position>& out) const override;
         [[nodiscard]] bool get_camera_view(camera_snapshot& out) const override;
         [[nodiscard]] bool get_camera_view(world::entity_id camera, world::camera_snapshot& out) override;
@@ -145,6 +151,10 @@ namespace GLT::world::world_ecs_entt {
 
         // Init helpers --------------------------------------------------------
         [[nodiscard]] std::expected<void, asset::load_error> init_from_world_asset();
+
+        // World entity --------------------------------------------------------
+        void load_or_create_world_entity(const asset::world::world_asset& world_asset);
+        void encode_world_entity(asset::world::world_asset& world_asset) const;
 
         // Slot management -----------------------------------------------------
         [[nodiscard]] entity_id alloc_slot();
@@ -199,6 +209,7 @@ namespace GLT::world::world_ecs_entt {
         glm::vec3                                                                       m_streaming_anchor{ 0.f };
         f32                                                                             m_streaming_radius{ 1024.f };
         entity_id                                                                       m_active_camera{ INVALID_ENTITY };
+        entity_id                                                                       m_world_entity{ INVALID_ENTITY };   // never streamed, see i_world::world_entity
         glm::vec3                                                                       m_region_cell_size{ 256.f, 256.f, 256.f };
         physics::i_physics*                                                             m_physics = nullptr;
         std::unordered_map<u64, GLT::unique_ref<GLT::world::component::i_storage>>      m_component_storages;

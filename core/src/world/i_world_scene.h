@@ -4,6 +4,7 @@
 #include "asset/mesh.h"
 #include "world/camera_snapshot.h" 
 #include "world/light_snapshot.h"
+#include "world/environment_snapshot.h"
 #include "world/entity.h"
 
 
@@ -51,6 +52,10 @@ namespace GLT::world {
 
 
         virtual void gather_lights(std::vector<GLT::world::light_snapshot>& out) const = 0;
+
+        // World-level environment (sky, sun, ambient) from the world entity's components. [out] is reset first.
+        // Worlds without a world entity keep the default (no sky, default ambient, sun = none)
+        virtual void gather_environment(GLT::world::environment_snapshot& out) const { out = {}; }
 
 
         // World-space position of every entity that owns a transform. Used by editors that want a spatial overview (top-down views, minimaps)

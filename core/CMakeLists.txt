@@ -55,6 +55,9 @@ target_link_libraries(${CORE_NAME}                                      PRIVATE
     glm
     imgui
 )
+if(TARGET tracy_client)
+    target_link_libraries(${CORE_NAME}                                  PRIVATE tracy_client)
+endif()
 
 # expose API for gluttony user projects -----------------------------------------------------------
 add_library(${CORE_NAME}API INTERFACE)

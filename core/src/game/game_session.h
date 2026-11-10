@@ -5,6 +5,7 @@
 #include "asset/mesh.h"
 #include "world/camera_snapshot.h"
 #include "world/light_snapshot.h"
+#include "world/environment_snapshot.h"
 #include "plugin_system/plugin_manager.h"
 #include "game/session_id.h"
 #include "event/event_bus.h"
@@ -197,6 +198,7 @@ namespace GLT::game {
         bool                                                    m_paused = false;
         std::vector<asset::mesh::instance>                      m_scene_buffer{};
         std::vector<world::light_snapshot>                      m_light_buffer{};
+        world::environment_snapshot                             m_environment{};
         unique_ref<script::i_script_host>                       m_scripting{};
 
     };

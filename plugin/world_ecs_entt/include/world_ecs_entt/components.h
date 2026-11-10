@@ -141,6 +141,28 @@ namespace GLT::world::world_ecs_entt::component {
     static_assert(std::is_trivially_copyable_v<light>);
 
 
+    // ---- world-scope components (live on the world entity, see i_world::world_entity) ----------------------------
+
+    // Procedural, physically based sky (single-scattering atmosphere) driven by the sun (the world's directional light).
+    // Renders the background and the image based lighting. Append new fields at the END only: the codec loads older,
+    // shorter payloads as a prefix and keeps the defaults for the rest
+    struct sky {
+        f32                                         intensity{ 1.f };           // sky radiance relative to the sun
+        f32                                         haze{ 1.f };                // aerosol (Mie) density, 0..10
+        f32                                         ground_albedo{ 0.3f };      // reflectance below the horizon
+        f32                                         sun_disk_size{ 0.53f };     // angular diameter, degrees. 0 hides the disk
+    };
+    static_assert(std::is_trivially_copyable_v<sky>);
+
+    // Ambient light. With a sky it scales the image based lighting; without one it is a hemisphere (sky colour from
+    // above, ground colour from below). Append-only, like [sky]
+    struct ambient_light {
+        f32                                         intensity{ 1.f };
+        glm::vec3                                   sky_color{ 0.040f, 0.045f, 0.055f };     // linear RGB
+        glm::vec3                                   ground_color{ 0.020f, 0.018f, 0.016f };  // linear RGB
+    };
+    static_assert(std::is_trivially_copyable_v<ambient_light>);
+
     // Plays a single clip. Looping / attenuation / etc. live in `config` so the entity doesn't need to copy them on spawn
     struct audio_source {
 

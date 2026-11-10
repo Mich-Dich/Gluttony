@@ -13,6 +13,21 @@ namespace GLT::world {
 
 namespace GLT::world::component {
 
+    // Where a component type may live. Entity components sit on ordinary (region-streamed) entities; world components
+    // sit on the world's single, never-streamed world entity (i_world::world_entity()) and describe the world as a whole
+    // (sky, sun, ambient, ...). A type can allow both (e.g. a light: point lights on entities, the sun on the world).
+    // Plugin-defined component types pick their scope when they register (component_registry::add<T>(..., scope))
+    enum class scope : u8 {
+        entity                                                              = 1 << 0,
+        world                                                               = 1 << 1,
+        both                                                                = entity | world,
+    };
+
+    [[nodiscard]] constexpr bool allows(scope s, scope which) noexcept {
+        return (static_cast<u8>(s) & static_cast<u8>(which)) != 0;
+    }
+
+
     // CONSTANTS =======================================================================================================
 
     // MACROS ==========================================================================================================
@@ -25,6 +40,7 @@ namespace GLT::world::component {
         std::string                                                         name;
         std::string                                                         category;
         std::vector<u64>                                                    required;
+        component::scope                                                    scope = component::scope::entity;
     };
 
 
@@ -78,6 +94,7 @@ namespace GLT::world::component {
         std::string                                                         name;
         std::string                                                         category;
         std::vector<u64>                                                    required;
+        component::scope                                                    scope = component::scope::entity;
         std::function<bool(entity_id)>                                      has;
         std::function<void(entity_id)>                                      add;
         std::function<void(entity_id)>                                      remove;

@@ -18,7 +18,7 @@ namespace GLT::renderer::vk_rasterizer {
         glm::vec4                                       clear_color{0.f};       // display-referred, used for background pixels
         f32                                             exposure = 1.f;         // linear multiplier (2^EV)
         u32                                             tonemapper = 0;
-        u32                                             _pad0 = 0;
+        u32                                             background_mode = 0;    // 1 = sky drew a HDR background
         u32                                             _pad1 = 0;
     };
     static_assert(sizeof(tonemap_push_constants) == 32, "tonemap_push_constants layout mismatch");
@@ -210,6 +210,7 @@ namespace GLT::renderer::vk_rasterizer {
                 push.clear_color = m_clear_color;
                 push.exposure = std::exp2(std::clamp(visual.exposure_ev, -20.0f, 20.0f));
                 push.tonemapper = std::min(visual.tonemapper, 3u);
+                push.background_mode = m_env.enabled ? 1u : 0u;
 
                 const vk::Extent2D extent{ m_extent.x, m_extent.y };
 

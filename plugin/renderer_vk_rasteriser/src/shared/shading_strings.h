@@ -69,6 +69,9 @@ struct RendererCamera {
 [[vk::binding(6, 0)]] StructuredBuffer<RendererShadowView>      renderer_shadow_views;
 [[vk::binding(7, 0)]] Texture2D                                 renderer_shadow_atlas;
 [[vk::binding(8, 0)]] SamplerComparisonState                    renderer_shadow_sampler;
+[[vk::binding(10, 0)]] TextureCube                              renderer_env_specular;      // GGX prefiltered, roughness per mip
+[[vk::binding(11, 0)]] StructuredBuffer<float4>                 renderer_env_sh;            // SH9, eval = irradiance / PI
+[[vk::binding(12, 0)]] SamplerState                             renderer_env_sampler;
 
 // ---- set 1: per-material textures ----------------------------------------------------
 [[vk::binding(1, 1)]] Texture2D                                 renderer_tex_base_color;
@@ -167,11 +170,44 @@ float3 renderer_F_Schlick(float VoH, float3 f0) {
 }
 
 // ---- ambient ------------------------------------------------------------------------
-// Hemispherical sky: radiance blends from ground (straight down) to sky (straight up). Stand-in for a captured
-// environment until the sky pass provides one (cubemap IBL), same call sites
+// ambient_sky.a == 0: hemispherical sky, radiance blends from ground (straight down) to sky (straight up).
+// ambient_sky.a == 1: image based lighting from the procedural sky (SH9 irradiance + GGX prefiltered cubemap),
+// ambient_sky.rgb is then the intensity scale and ambient_ground.a the highest specular mip
 float3 renderer_sky_radiance(float3 dir) {
     float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
     return lerp(renderer_camera.ambient_ground.rgb, renderer_camera.ambient_sky.rgb, t);
+}
+
+bool renderer_ibl_active() {
+    return renderer_camera.ambient_sky.a > 0.5;
+}
+
+// L2 spherical harmonics with the cosine lobe baked in: irradiance(n) / PI (engine Lambert convention)
+float3 renderer_sh_irradiance(float3 n) {
+    float3 r = renderer_env_sh[0].rgb * 0.282095;
+    r += renderer_env_sh[1].rgb * (0.488603 * n.y);
+    r += renderer_env_sh[2].rgb * (0.488603 * n.z);
+    r += renderer_env_sh[3].rgb * (0.488603 * n.x);
+    r += renderer_env_sh[4].rgb * (1.092548 * n.x * n.y);
+    r += renderer_env_sh[5].rgb * (1.092548 * n.y * n.z);
+    r += renderer_env_sh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0));
+    r += renderer_env_sh[7].rgb * (1.092548 * n.x * n.z);
+    r += renderer_env_sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(r, float3(0.0, 0.0, 0.0));
+}
+
+float3 renderer_ambient_irradiance(float3 n) {
+    if (renderer_ibl_active())
+        return renderer_sh_irradiance(n) * renderer_camera.ambient_sky.rgb;
+    return renderer_sky_radiance(n);
+}
+
+float3 renderer_ambient_specular_radiance(float3 r, float roughness) {
+    if (renderer_ibl_active()) {
+        const float lod = roughness * renderer_camera.ambient_ground.a;
+        return renderer_env_specular.SampleLevel(renderer_env_sampler, r, lod).rgb * renderer_camera.ambient_sky.rgb;
+    }
+    return renderer_sky_radiance(r);
 }
 
 // Analytic fit of the split-sum environment BRDF (Karis, "Physically Based Shading on Mobile"). Replaces the 2D LUT
@@ -334,7 +370,8 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position, boo
 
     // ---- cluster lookup -----------------------------------------------------------
     uint3  grid_dims = renderer_camera.cluster_dims.xyz;
-    uint2  tile = uint2(sv_pos.xy / float2(16.0, 16.0));
+    const uint tile_packed = renderer_camera.cluster_dims.w;
+    uint2  tile = uint2(sv_pos.xy) / max(uint2(tile_packed & 0xFFFFu, tile_packed >> 16u), uint2(1u, 1u));
     float  near_z = renderer_camera.cluster_depth.x;
     float  far_z = renderer_camera.cluster_depth.y;
     float  lz = clamp(s.view_depth, near_z, far_z);
@@ -400,9 +437,9 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position, boo
     // ---- ambient (split-sum style: irradiance x albedo + prefiltered radiance x env BRDF) ---
     const float3 R = reflect(-V, N);
     const float3 R_rough = normalize(lerp(R, N, a));            // rough lobes lean towards the normal
-    const float3 ambient_diffuse = diffuse_color * renderer_sky_radiance(N) * o.ao;
-    const float3 ambient_specular = renderer_env_brdf_approx(f0, o.roughness, NoV) * renderer_sky_radiance(R_rough)
-        * renderer_specular_occlusion(NoV, o.ao, a);
+    const float3 ambient_diffuse = diffuse_color * renderer_ambient_irradiance(N) * o.ao;
+    const float3 ambient_specular = renderer_env_brdf_approx(f0, o.roughness, NoV)
+        * renderer_ambient_specular_radiance(R_rough, o.roughness) * renderer_specular_occlusion(NoV, o.ao, a);
 
     // Linear HDR radiance. Exposure, tonemapping and sRGB encoding happen in the tonemap pass. Clamp to the fp16 range
     // so a hot light can't produce inf (which the tonemapper would turn into NaN)

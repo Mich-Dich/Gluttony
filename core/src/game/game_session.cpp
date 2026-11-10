@@ -1,5 +1,6 @@
 #include "util/pch.h"
 #include "game_session.h"
+#include "debug/trace.h"
 
 #include "world/i_world.h"
 #include "world/i_world_plugin.h"
@@ -239,18 +240,26 @@ namespace GLT::game {
         if (m_paused)
             return;
 
+        GLT_PROFILE_SCOPE_C("Session update", GLT::debug::trace::COLOR_WORLD);
+
         // Controller runs first so any input-driven intent lands in the world/ECS state before physics reads it. Physics
         // runs before world->update so the world's gather step sees this frame's post-physics transforms
-        if (m_controller)
+        if (m_controller) {
+            GLT_PROFILE_SCOPE("Controller");
             m_controller->update(dt);
+        }
 
-        if (m_physics)
+        if (m_physics) {
+            GLT_PROFILE_SCOPE_C("Physics step", GLT::debug::trace::COLOR_WORLD);
             m_physics->step(dt);
+        }
 
         // scripting: globals tick even with no world; entity slots tick only when the host has a live world context
         ensure_script_host();
-        if (m_scripting)
+        if (m_scripting) {
+            GLT_PROFILE_SCOPE("Scripting");
             m_scripting->update(dt);
+        }
 
         if (!m_world)
             return;
@@ -265,16 +274,26 @@ namespace GLT::game {
                 m_world->set_streaming_anchor(cam.position);
         }
 
-        m_world->update(dt);
+        {
+            GLT_PROFILE_SCOPE_C("World update (streaming)", GLT::debug::trace::COLOR_WORLD);
+            m_world->update(dt);
+        }
         m_sim_time += dt;
         m_sim_delta = dt;
 
         if (!scene)
             return;
 
-        scene->gather_scene(m_scene_buffer);
-        scene->gather_lights(m_light_buffer);
+        {
+            GLT_PROFILE_SCOPE_C("Gather scene", GLT::debug::trace::COLOR_WORLD);
+            scene->gather_scene(m_scene_buffer);
+            scene->gather_lights(m_light_buffer);
+            scene->gather_environment(m_environment);
+        }
+        GLT_PROFILE_PLOT("Scene instances", static_cast<int64_t>(m_scene_buffer.size()));
+        GLT_PROFILE_PLOT("Lights", static_cast<int64_t>(m_light_buffer.size()));
 
+        GLT_PROFILE_SCOPE("Submit to renderers");
         for (auto& slot : m_renderers) {
 
             if (!slot.renderer)
@@ -282,6 +301,7 @@ namespace GLT::game {
 
             slot.renderer->submit_scene(m_scene_buffer);
             slot.renderer->submit_lights(m_light_buffer);
+            slot.renderer->submit_environment(m_environment);
 
             const auto camera = resolve_camera(scene, slot.camera);
             world::camera_snapshot cam{};

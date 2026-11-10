@@ -36,6 +36,12 @@ namespace GLT::renderer::vk_rasterizer {
 
     constexpr u32                                       CLUSTER_TILE_SIZE_Y = 16;
 
+    // Environment (sky + image based lighting)
+    constexpr u32                                       ENV_SKY_SIZE = 128;         // texels per face of the raymarched sky cube
+    constexpr u32                                       ENV_SPECULAR_SIZE = 64;     // mip 0 of the prefiltered cube
+    constexpr u32                                       ENV_SPECULAR_MIPS = 5;      // 64 .. 4, roughness = mip / (mips - 1)
+    constexpr u32                                       ENV_PREFILTER_SAMPLES = 128;
+
     constexpr u32                                       CLUSTER_DEPTH_SLICES = 24;
 
     constexpr u32                                       MAX_LIGHTS_PER_CLUSTER = 256;
@@ -82,15 +88,29 @@ namespace GLT::renderer::vk_rasterizer {
 
         glm::mat4                                       projection{1.0f};
         glm::mat4                                       inv_projection{1.0f};
-        glm::uvec4                                      cluster_dims{0u};    // x = grid_x, y = grid_y, z = grid_z
+        glm::uvec4                                      cluster_dims{0u};    // x = grid_x, y = grid_y, z = grid_z, w = tile x | tile y << 16
         glm::vec4                                       cluster_depth{0.0f}; // x = near, y = far, z = render_w, w = render_h
 
         glm::mat4                                       light_view_proj{1.0f};
         glm::vec4                                       shadow_params{0.0f}; // x = world per texel, y = normal bias, z = depth bias, w = 1/res
 
-        // Hemispherical sky ambient (linear HDR radiance). Appended so existing shaders keep their offsets
-        glm::vec4                                       ambient_sky{0.0f};      // rgb = radiance from above, a = unused
-        glm::vec4                                       ambient_ground{0.0f};   // rgb = radiance from below, a = unused
+        // Ambient. a = 0: hemisphere (rgb = radiance from above / below). ambient_sky.a = 1: image based lighting from the
+        // sky (ambient_sky.rgb = intensity scale, ambient_ground.a = highest prefiltered specular mip)
+        glm::vec4                                       ambient_sky{0.0f};
+        glm::vec4                                       ambient_ground{0.0f};
+    };
+
+
+    // CPU side view of the environment (sky / IBL) for this frame
+    struct environment_state {
+
+        glm::vec3                                       sun_dir{0.f, 1.f, 0.f};     // towards the sun
+        glm::vec3                                       sun_color{1.f};             // colour * intensity of the sun light
+        bool                                            enabled = false;            // sky background + IBL active
+        bool                                            dirty = true;               // rebuild cubemaps + SH this frame
+        u64                                             hash = 0;                   // parameters the cubemaps were built with
+        vk::Image                                       sky_image = nullptr;        // detects graph recreation of the targets
+        vk::Image                                       specular_image = nullptr;
     };
     static_assert(sizeof(camera_ubo_data) == 528, "camera_ubo_data layout mismatch (RendererCamera in shading_strings.h)");
 

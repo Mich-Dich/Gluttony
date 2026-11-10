@@ -83,6 +83,13 @@ namespace GLT::world {
         // (this is Save-As on a never-saved world). If one is already bound elsewhere, migrates
         [[nodiscard]] virtual std::expected<void, asset::load_error> save_as(const std::filesystem::path& path) = 0;
 
+        // world entity ------------------------------------------------------------------------------------------------
+        // Every world owns exactly one world entity: never streamed, never part of a region, saved with the world asset,
+        // cannot be despawned or parented. World-scope components (sky, sun light, ambient, plugin-defined world
+        // settings) live on it; see component::scope. INVALID_ENTITY on worlds that don't support it
+        [[nodiscard]] virtual entity_id world_entity() const noexcept { return INVALID_ENTITY; }
+        [[nodiscard]] bool is_world_entity(entity_id id) const noexcept { return id.is_valid() && id == world_entity(); }
+
         // entity lifecycle -------------------------------------------------------------------------------------------
         [[nodiscard]] virtual entity_id spawn() = 0;
         virtual void despawn(entity_id id) noexcept = 0;

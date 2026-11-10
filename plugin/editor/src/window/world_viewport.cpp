@@ -562,7 +562,7 @@ namespace GLT::editor {
         const float avail = ImGui::GetContentRegionAvail().x;
         {
             const auto name = m_world->entity_name(id);
-            ImGui::Text("Entity:");
+            ImGui::Text(m_world->is_world_entity(id) ? "World settings:" : "Entity:");
             if (!name.empty()) {
                 ImGui::SameLine();
                 ImGui::TextDisabled("%.*s", static_cast<int>(name.size()), name.data());
@@ -674,7 +674,7 @@ namespace GLT::editor {
         bool any = false;
         for (const auto& d : m_inspector->descriptors()) {
 
-            if (!matches(d) || d.has(id))
+            if (!matches(d) || d.has(id) || !component_fits(d, id))
                 continue;
 
             any = true;
@@ -696,7 +696,7 @@ namespace GLT::editor {
             for (const auto& e : m_inspector->descriptors())
                 if (e.hash == m_clipboard_component) { pasted = &e; break; }
 
-            if (pasted && !pasted->has(id)) {
+            if (pasted && !pasted->has(id) && component_fits(*pasted, id)) {
                 ImGui::Separator();
                 if (ImGui::Selectable(std::string("Paste: " + std::string(pasted->name)).c_str())) {
                     m_inspector->add_component(id, m_clipboard_component);
@@ -824,6 +824,10 @@ namespace GLT::editor {
             return;
         }
 
+        // ---- world entity (pinned, never streamed) ----
+        if (!filter_mode)
+            render_world_row();
+
         // ---- draw rows ----
         int row_index = 0;
         if (!filter_mode)
@@ -847,13 +851,70 @@ namespace GLT::editor {
             && !m_selected_entities.empty()) {
 
             for (auto id : m_selected_entities)
-                if (m_world->alive(id))
+                if (m_world->alive(id) && !m_world->is_world_entity(id))
                     m_world->despawn(id);
 
             clear_selection();
         }
 
         ImGui::End();
+    }
+
+    // ---- outliner (world row) -------------------------------------------------------------------------------------
+
+    // World-scope components only on the world entity, entity-scope ones everywhere else
+    bool world_viewport_window::component_fits(const GLT::world::component::descriptor& d, GLT::world::entity_id id) const {
+
+        using GLT::world::component::scope;
+        const bool on_world = m_world && m_world->is_world_entity(id);
+        return GLT::world::component::allows(d.scope, on_world ? scope::world : scope::entity);
+    }
+
+
+    void world_viewport_window::render_world_row() {
+
+        const auto world_id = m_world->world_entity();
+        if (!world_id.is_valid() || !m_world->alive(world_id))
+            return;
+
+        ImGui::PushID("##world_entity_row");
+
+        const bool selected = is_selected(world_id);
+        const auto icon_data = icon_manager::get(icon_manager::icon::sun);
+        ImGui::Image(icon_data.tex_ref, ImVec2(ROW_ICON_SIZE, ROW_ICON_SIZE), icon_data.uv0, icon_data.uv1);
+        ImGui::SameLine();
+
+        if (ImGui::Selectable("World", selected, ImGuiSelectableFlags_SpanAvailWidth)) {
+            m_selected_entities = { world_id };
+            m_selection_anchor = world_id;
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("World settings: sky, sun (directional light), ambient, ...\n"
+                "Never streamed, saved with the world. Rotate it to move the sun.");
+
+        if (ImGui::BeginPopupContextItem("##world_ctx")) {
+
+            m_selected_entities = { world_id };
+            m_selection_anchor = world_id;
+
+            if (m_inspector && ImGui::BeginMenu("Add Component")) {
+                bool any = false;
+                for (const auto& d : m_inspector->descriptors()) {
+                    if (d.has(world_id) || !component_fits(d, world_id))
+                        continue;
+                    any = true;
+                    if (ImGui::MenuItem(d.name.data()))
+                        m_inspector->add_component(world_id, d.hash);
+                }
+                if (!any)
+                    ImGui::TextDisabled("nothing to add");
+                ImGui::EndMenu();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopID();
+        ImGui::Separator();
     }
 
     // ---- outliner (per-row) ---------------------------------------------------------------------------------------
@@ -1052,7 +1113,7 @@ namespace GLT::editor {
             for (auto& [cat, list] : by_cat) {
                 if (ImGui::BeginMenu(std::string(cat).c_str())) {
                     for (const auto* d : list) {
-                        if (d->has(id))
+                        if (d->has(id) || !component_fits(*d, id))
                             continue;
                         if (ImGui::MenuItem(d->name.data()))
                             m_inspector->add_component(id, d->hash);

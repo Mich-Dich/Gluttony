@@ -264,10 +264,10 @@ namespace GLT::renderer::vk_rasterizer {
                 .setBaseArrayLayer(0)
                 .setLayerCount(1);
 
-            // note: from eShaderReadOnlyOptimal, not eUndefined - the image is
-            // already in use by ImGui at this point
+            // From the tracked layout (an image that was never uploaded / rendered is still UNDEFINED; one that was
+            // rendered to may be in another layout). The whole image is overwritten, so contents may be discarded
             vr_dev->transition_image_layout(cmd, m_allocated_image.image,
-                vk::ImageLayout::eShaderReadOnlyOptimal,
+                m_accessible_image.layout,
                 vk::ImageLayout::eTransferDstOptimal,
                 base_range,
                 vk::PipelineStageFlagBits::eFragmentShader,
@@ -283,19 +283,8 @@ namespace GLT::renderer::vk_rasterizer {
                 vk::ImageLayout::eTransferDstOptimal, 1, &copy_region);
 
             if (m_mip_levels > 1) {
-                const vk::ImageSubresourceRange upper = vk::ImageSubresourceRange()
-                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                    .setBaseMipLevel(1)
-                    .setLevelCount(m_mip_levels - 1)
-                    .setBaseArrayLayer(0).setLayerCount(1);
-
-                vr_dev->transition_image_layout(cmd, m_allocated_image.image,
-                    vk::ImageLayout::eShaderReadOnlyOptimal,
-                    vk::ImageLayout::eTransferDstOptimal,
-                    upper,
-                    vk::PipelineStageFlagBits::eFragmentShader,
-                    vk::PipelineStageFlagBits::eTransfer);
-
+                // base_range above already covers every mip level (now TRANSFER_DST), so no second transition here.
+                // generate_mipmaps leaves every level in SHADER_READ_ONLY_OPTIMAL
                 generate_mipmaps(cmd, m_allocated_image.image,
                     m_allocated_image.width, m_allocated_image.height, m_mip_levels);
             } else {
@@ -308,6 +297,7 @@ namespace GLT::renderer::vk_rasterizer {
             }
         });
 
+        m_accessible_image.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         vr_dev->destroy_buffer(staging);
     }
 
@@ -345,12 +335,10 @@ namespace GLT::renderer::vk_rasterizer {
                 .setBaseArrayLayer(0)
                 .setLayerCount(1);
 
-            // Convention: images live in eShaderReadOnlyOptimal whenever they're
-            // not actively being used by an upload (see allocate_memory/assign_data).
-            // If you ever start keeping long-lived images in a different layout,
-            // you'll need to store the current layout per image instead.
+            // From the tracked layout (m_accessible_image.layout), not an assumed SHADER_READ_ONLY: render targets and
+            // never-uploaded images live in other layouts
             vr_dev->transition_image_layout(cmd, m_allocated_image.image,
-                vk::ImageLayout::eShaderReadOnlyOptimal,
+                m_accessible_image.layout,
                 vk::ImageLayout::eTransferDstOptimal,
                 level_range,
                 vk::PipelineStageFlagBits::eFragmentShader,
@@ -383,7 +371,7 @@ namespace GLT::renderer::vk_rasterizer {
                     .setLayerCount(1);
 
                 vr_dev->transition_image_layout(cmd, m_allocated_image.image,
-                    vk::ImageLayout::eShaderReadOnlyOptimal,
+                    m_accessible_image.layout,                      // upper levels are still in the tracked layout
                     vk::ImageLayout::eTransferDstOptimal,
                     upper_levels,
                     vk::PipelineStageFlagBits::eFragmentShader,
@@ -403,6 +391,7 @@ namespace GLT::renderer::vk_rasterizer {
             }
         });
 
+        m_accessible_image.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         vr_dev->destroy_buffer(staging);
     }
 
@@ -505,6 +494,7 @@ namespace GLT::renderer::vk_rasterizer {
                         m_allocated_image.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
                         base_range,              vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader);
             });
+            m_accessible_image.layout = vk::ImageLayout::eShaderReadOnlyOptimal;   // reupload/update_region start from it
             vr_dev->destroy_buffer(staging);
         }
     }

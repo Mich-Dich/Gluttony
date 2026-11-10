@@ -16,6 +16,12 @@ namespace GLT::platform::glfw_backend {
 
     // CONSTANTS =======================================================================================================
 
+    // Window class / app id, so window managers can tell engine windows from ImGui's platform windows (detached panels,
+    // menus, tooltips, popups). X11: WM_CLASS (instance + class), Wayland: xdg app_id. KWin / Krohnkite report it as the
+    // window "class", so a tiling rule can ignore "gluttony-imgui" while still tiling (or ignoring) "gluttony"
+    inline constexpr const char*                    ENGINE_WINDOW_CLASS = "gluttony";
+    inline constexpr const char*                    IMGUI_WINDOW_CLASS = "gluttony-imgui";
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -24,11 +30,20 @@ namespace GLT::platform::glfw_backend {
 
     bool plugin::s_GLFWinitialized = false;
 
+    // ImGui backend's Platform_CreateWindow, wrapped by imgui_create_window_with_class()
+    static void (*s_imgui_create_window_original)(ImGuiViewport*) = nullptr;
+
     // INTERNAL TEMPLATE DECLARATION ===================================================================================
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
     static void glfw_error_callback(int errorCode, const char* description);
+
+
+    static void set_window_class_hint(const char* window_class);
+
+
+    static void imgui_create_window_with_class(ImGuiViewport* viewport);
 
 
     static void get_max_workarea_size(int& max_width, int& max_height);
@@ -38,6 +53,31 @@ namespace GLT::platform::glfw_backend {
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
     static void glfw_error_callback(int errorCode, const char* description) { LOG(error, "GLFW Error: [{}] [{}]", errorCode, description); }
+
+
+    // Applies to the next glfwCreateWindow() (GLFW window hints are global state)
+    static void set_window_class_hint(const char* window_class) {
+
+        #if defined(GLFW_WAYLAND_APP_ID)
+            glfwWindowHintString(GLFW_WAYLAND_APP_ID, window_class);
+        #endif
+        #if defined(GLFW_X11_CLASS_NAME) && defined(GLFW_X11_INSTANCE_NAME)
+            glfwWindowHintString(GLFW_X11_CLASS_NAME, window_class);
+            glfwWindowHintString(GLFW_X11_INSTANCE_NAME, window_class);
+        #endif
+    }
+
+
+    // Every ImGui platform window is created through here: tag it with the ImGui class, call the backend's original
+    // implementation (from the downloaded ImGui sources, unmodified), then restore the engine class so windows the
+    // engine creates later are not affected
+    static void imgui_create_window_with_class(ImGuiViewport* viewport) {
+
+        set_window_class_hint(IMGUI_WINDOW_CLASS);
+        if (s_imgui_create_window_original)
+            s_imgui_create_window_original(viewport);
+        set_window_class_hint(ENGINE_WINDOW_CLASS);
+    }
 
 
     static void get_max_workarea_size(int& max_width, int& max_height) {
@@ -153,6 +193,7 @@ namespace GLT::platform::glfw_backend {
         slot.data.width -= 8;
         slot.data.height -= 35;
 
+        set_window_class_hint(ENGINE_WINDOW_CLASS);
         slot.native = glfwCreateWindow(static_cast<int>(slot.data.width), static_cast<int>(slot.data.height), 
             slot.data.title.c_str(), nullptr, nullptr);
 
@@ -469,6 +510,16 @@ namespace GLT::platform::glfw_backend {
                 LOG(error, "imgui_init: unsupported render API {}", static_cast<int>(used_render_api));
                 slot->imgui_context = nullptr;
                 break;
+        }
+
+        // Tag ImGui's own platform windows with a separate window class (see IMGUI_WINDOW_CLASS). The backend installs
+        // Platform_CreateWindow during init; wrap it once (re-init after a shutdown installs the original again)
+        if (slot->imgui_context) {
+            ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+            if (platform_io.Platform_CreateWindow && platform_io.Platform_CreateWindow != imgui_create_window_with_class) {
+                s_imgui_create_window_original = platform_io.Platform_CreateWindow;
+                platform_io.Platform_CreateWindow = imgui_create_window_with_class;
+            }
         }
     }
 

@@ -86,6 +86,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
         u32                                                     array_layers = 1;
         vk::SampleCountFlagBits                                 samples = vk::SampleCountFlagBits::e1;
         vk::ImageUsageFlags                                     usage = {};      // auto-derived if empty
+        bool                                                    cube = false;    // array_layers must be 6: cube-compatible image, default view is a cube
         // persistent resources survive end_frame(); their handle stays stable across frames (lookup by name)
         bool                                                    persistent = false;
     };

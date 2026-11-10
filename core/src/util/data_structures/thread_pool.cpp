@@ -1,6 +1,7 @@
 
 #include "util/pch.h"
 #include "thread_pool.h"
+#include "debug/trace.h"
 
 
 
@@ -49,7 +50,10 @@ namespace GLT::thread_pool {
 
     static void worker_loop(const u32 index) {
 
-        GLT::logger::register_label_for_thread(std::string("thread pool worker " + index));
+        // NOTE: was std::string("thread pool worker " + index) - pointer arithmetic on the literal, not concatenation
+        const std::string label = "thread pool worker " + std::to_string(index);
+        GLT::logger::register_label_for_thread(label);
+        GLT_PROFILE_THREAD(label.c_str());
 
         for (;;) {
 
@@ -71,7 +75,10 @@ namespace GLT::thread_pool {
 
             // Run the task outside the lock. Exceptions are the caller's problem - a task that throws takes the whole worker down unless
             // the task wraps its own body in try/catch. That is deliberate: silently swallowing exceptions in a worker hides bugs
-            current();
+            {
+                GLT_PROFILE_SCOPE("Worker task");
+                current();
+            }
 
             {
                 std::unique_lock lock(s_worker_mutex);
@@ -174,6 +181,7 @@ namespace GLT::thread_pool {
             local.swap(s_main_queue);
         }
 
+        GLT_PROFILE_SCOPE("Main thread tasks");
         for (auto& fn : local)
             if (fn) fn();
     }

@@ -54,6 +54,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         void submit_scene(std::span<const GLT::asset::mesh::instance> instances) override;
         void submit_lights(std::span<const GLT::world::light_snapshot> lights) override;
+        void submit_environment(const GLT::world::environment_snapshot& environment) override;
         void set_active_camera(const GLT::world::camera_snapshot& camera) override;
 
         // lifecycle ---------------------------------------------------------------------------------------------------
@@ -137,6 +138,8 @@ namespace GLT::renderer::vk_rasterizer {
         void create_present_semaphores();
         void destroy_present_semaphores();
         void create_timestamp_queries();
+        void create_gpu_profiler();                     // Tracy Vulkan context (no-op without GLT_TRACY_ENABLED)
+        void destroy_gpu_profiler();
         void destroy_timestamp_queries();
         void resolve_gpu_timestamps(u32 frame_slot);
         void init_gpu_state();
@@ -189,6 +192,12 @@ namespace GLT::renderer::vk_rasterizer {
         void destroy_blit_pipeline();
         void create_tonemap_pipeline();
         void destroy_tonemap_pipeline();
+        void create_light_cull_debug_pipeline();
+        void destroy_light_cull_debug_pipeline();
+        void create_environment_resources();        // sky / IBL compute + background pipelines
+        void destroy_environment_resources();
+        void ensure_environment_textures();         // graph-owned env cubemaps + SH buffer (before update_mesh_descriptors)
+        void update_environment();                  // sun + parameters -> m_env, decides whether the env must be rebuilt
 
         // passes ------------------------------------------------------------------------------------------------------
 
@@ -201,6 +210,9 @@ namespace GLT::renderer::vk_rasterizer {
         void add_translucent_pass();
         void add_blit_to_backbuffer_pass();
         void add_tonemap_pass();
+        void add_light_cull_debug_pass();           // render mode "Light Culling": replaces the tonemap pass
+        void add_environment_passes();              // sky cubemap -> specular prefilter + SH (only when the env changed)
+        void add_sky_background_pass();             // sky + sun disk into scene_hdr where no geometry was drawn
         void add_reset_shadow_draw_count_pass();
         void add_shadow_cull_pass();
         void add_shadow_pass();
@@ -360,6 +372,35 @@ namespace GLT::renderer::vk_rasterizer {
         vk::Pipeline                                                        m_tonemap_pipeline = nullptr;
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_tonemap_desc_buffers{};
 
+        // Environment: procedural sky cubemap, GGX-prefiltered specular cubemap, SH9 irradiance, sky background
+        vk::DescriptorSetLayout                                             m_sky_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_sky_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_sky_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_sky_desc_buffers{};
+        vk::DescriptorSetLayout                                             m_env_prefilter_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_env_prefilter_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_env_prefilter_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_env_prefilter_desc_buffers{};    // one set per mip
+        vk::DescriptorSetLayout                                             m_env_sh_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_env_sh_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_env_sh_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_env_sh_desc_buffers{};
+        vk::DescriptorSetLayout                                             m_sky_bg_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_sky_bg_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_sky_bg_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_sky_bg_desc_buffers{};
+        graph::texture_handle                                               m_env_sky{};            // ENV_SKY_SIZE cube, no sun disk
+        graph::texture_handle                                               m_env_specular{};       // ENV_SPECULAR_SIZE cube, ENV_SPECULAR_MIPS
+        graph::buffer_handle                                                m_env_sh{};             // 9 x vec4, irradiance / PI
+        environment_state                                                   m_env{};
+        GLT::world::environment_snapshot                                    m_environment{};       // from the world entity (sky / sun / ambient)
+
+        // Light culling heatmap (debug render mode)
+        vk::DescriptorSetLayout                                             m_light_debug_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_light_debug_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_light_debug_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_light_debug_desc_buffers{};
+
         // Graph + target handles
         unique_ref<graph::render_graph>                                     m_graph;
         graph::texture_handle                                               m_backbuffer_handle{};
@@ -373,6 +414,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         static constexpr u32                                                MAX_TIMESTAMPS_PER_FRAME = 64;
         vk::QueryPool                                                       m_timestamp_pool = nullptr;
+        void*                                                               m_gpu_profiler = nullptr;          // tracy::VkCtx*
         f32                                                                 m_timestamp_period_ns = 0.f;
         u64                                                                 m_timestamp_mask = ~0ull;
         std::array<std::vector<std::string>, MAX_CONCURRENT_FRAMES>         m_timed_pass_names{};

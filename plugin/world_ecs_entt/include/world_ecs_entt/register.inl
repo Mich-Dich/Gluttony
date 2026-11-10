@@ -28,7 +28,7 @@ namespace GLT::world::component_registry {
     template<typename T>
     component::type_descriptor make_descriptor(std::string_view name, std::string_view category,
         std::function<void(GLT::world::i_world&, entity_id)> draw, std::function<std::string(GLT::world::i_world&, entity_id)> summary,
-        std::vector<u64> required) {
+        std::vector<u64> required, component::scope scope) {
 
         const u64 hash = hash_of(name);
         g_type_hash<T> = hash;
@@ -38,6 +38,7 @@ namespace GLT::world::component_registry {
         td.meta.name = std::string(name);
         td.meta.category = std::string(category);
         td.meta.required = std::move(required);
+        td.meta.scope = scope;
         td.draw = std::move(draw);
         td.summary = std::move(summary);
 
@@ -52,9 +53,10 @@ namespace GLT::world::component_registry {
 
     template<typename T>
     void add(std::string_view name, std::string_view category, std::function<void(GLT::world::i_world&, GLT::world::entity_id)> draw,
-        std::function<std::string(GLT::world::i_world&, GLT::world::entity_id)> summary, std::vector<u64> required) {
+        std::function<std::string(GLT::world::i_world&, GLT::world::entity_id)> summary, std::vector<u64> required,
+        component::scope scope) {
 
-        auto td = make_descriptor<T>(name, category, std::move(draw), std::move(summary), std::move(required));
+        auto td = make_descriptor<T>(name, category, std::move(draw), std::move(summary), std::move(required), scope);
         register_meta(td.meta);
 
         if (auto* plugin = GLT::world::manager::get_ptr()) {

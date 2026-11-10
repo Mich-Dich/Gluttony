@@ -54,7 +54,7 @@ namespace GLT::renderer::vk_rasterizer {
     // Bump whenever shading_strings.h changes: it is mixed into the implementation hash, so materials recompile
     // rev 2: HDR output (linear radiance, tonemapping moved to a post pass), hemispherical sky ambient
     // rev 3: SV_IsFrontFace normal flip (double-sided materials)
-    static constexpr u32                                            VK_MATERIAL_CODEGEN_REVISION = 3;
+    static constexpr u32                                            VK_MATERIAL_CODEGEN_REVISION = 4;
 
     // Lit scene colour target. Material "main" pipelines are created against this format
     inline constexpr vk::Format                                     HDR_COLOR_FORMAT = vk::Format::eR16G16B16A16Sfloat;
@@ -163,6 +163,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         util::allocated_buffer                                      params_ubo{};
         u32                                                         params_size{0};
+        u64                                                         params_hash = 0;    // of the uploaded packed params (0 = none)
 
         vk::ShaderModule                                            vertex_module = nullptr;
         vk::ShaderModule                                            fragment_module = nullptr;

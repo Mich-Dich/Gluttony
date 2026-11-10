@@ -2,6 +2,11 @@
 #include "util/pch.h"
 #include "render_graph.h"
 
+#include <debug/trace.h>
+#if defined(GLT_TRACY_ENABLED)
+    #include <tracy/TracyVulkan.hpp>
+#endif
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -140,7 +145,8 @@ namespace GLT::renderer::vk_rasterizer::graph {
                 texture.desc.depth          != desc.depth        ||
                 texture.desc.mip_levels     != desc.mip_levels   ||
                 texture.desc.array_layers   != desc.array_layers ||
-                texture.desc.samples        != desc.samples;
+                texture.desc.samples        != desc.samples      ||
+                texture.desc.cube           != desc.cube;
         }
 
         if (!is_fresh && !needs_recreate) {
@@ -188,13 +194,16 @@ namespace GLT::renderer::vk_rasterizer::graph {
         image_ci.usage = usage;
         image_ci.sharingMode = vk::SharingMode::eExclusive;
         image_ci.initialLayout = vk::ImageLayout::eUndefined;
+        if (desc.cube)
+            image_ci.flags = vk::ImageCreateFlagBits::eCubeCompatible;
 
         texture.allocated = m_device->create_image(image_ci, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
         texture.image = texture.allocated.image;
 
         vk::ImageViewCreateInfo image_view_ci{};
         image_view_ci.image = texture.image;
-        image_view_ci.viewType = (desc.array_layers > 1) ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
+        image_view_ci.viewType = desc.cube ? vk::ImageViewType::eCube
+                               : (desc.array_layers > 1) ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
         image_view_ci.format = desc.format;
         image_view_ci.subresourceRange = { aspect_for(desc.format), 0, desc.mip_levels, 0, desc.array_layers };
         texture.default_view = m_device->get_device().createImageView(image_view_ci);
@@ -345,6 +354,8 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
     void render_graph::compile() {
 
+        GLT_PROFILE_SCOPE_C("Graph compile", GLT::debug::trace::COLOR_RENDER);
+
         for (u32 index = 0; index < m_passes.size(); ++index) 
             m_passes[index].index = index;
 
@@ -360,6 +371,14 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // Execute ---------------------------------------------------------------------------------------------------------
 
     void render_graph::execute(vk::CommandBuffer cmd) {
+
+        GLT_PROFILE_SCOPE_C("Graph execute (record)", GLT::debug::trace::COLOR_RENDER);
+
+#if defined(GLT_TRACY_ENABLED)
+        auto* const tracy_ctx = static_cast<tracy::VkCtx*>(m_gpu_profiler);
+        if (tracy_ctx)
+            tracy_ctx->Collect(static_cast<VkCommandBuffer>(cmd));     // outside any rendering scope: resets its queries
+#endif
 
         // Reset tracked state for transient images (their old layouts mean nothing after we destroyed them last frame)
         // Persistent and imported images keep whatever state they had
@@ -396,7 +415,17 @@ namespace GLT::renderer::vk_rasterizer::graph {
                 ctx.render_area = texture_extent(pass.builder.m_depth_attachment->handle);
 
             ctx.set_attachments(&pass.builder);
-            pass.execute(ctx);
+            {
+#if defined(GLT_TRACY_ENABLED)
+                // Pass names are runtime strings: transient zones (Tracy copies the name). CPU = recording cost, GPU = execution
+                ZoneTransientN(tracy_pass_cpu, pass.name.c_str(), true);
+                std::optional<tracy::VkCtxScope> tracy_pass_gpu;
+                if (tracy_ctx)
+                    tracy_pass_gpu.emplace(tracy_ctx, TracyLine, TracyFile, std::strlen(TracyFile), TracyFunction,
+                        std::strlen(TracyFunction), pass.name.c_str(), pass.name.size(), static_cast<VkCommandBuffer>(cmd), true);
+#endif
+                pass.execute(ctx);
+            }
 
             if (m_timestamps_written > 0 && m_timestamps_written < m_query_count) {
                 cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, m_timestamp_pool, m_first_query + m_timestamps_written);
@@ -577,6 +606,25 @@ namespace GLT::renderer::vk_rasterizer::graph {
         image_view_ci.viewType = vk::ImageViewType::e2D;
         image_view_ci.format = texture.desc.format;
         image_view_ci.subresourceRange = { aspect_for(texture.desc.format), mip, 1, layer, 1 };
+
+        vk::ImageView image_view = m_device->get_device().createImageView(image_view_ci);
+        texture.view_cache[key] = image_view;
+        return image_view;
+    }
+
+
+    vk::ImageView render_graph::texture_mip_array_view(texture_handle h, u32 mip) {
+
+        auto& texture = m_textures[h.id];
+        const u64 key = (u64(mip) << 32) | 0xFFFFFFFFull;          // layer = all (distinct from texture_view keys)
+        if (auto it = texture.view_cache.find(key); it != texture.view_cache.end())
+            return it->second;
+
+        vk::ImageViewCreateInfo image_view_ci{};
+        image_view_ci.image = texture.image;
+        image_view_ci.viewType = vk::ImageViewType::e2DArray;
+        image_view_ci.format = texture.desc.format;
+        image_view_ci.subresourceRange = { aspect_for(texture.desc.format), mip, 1, 0, texture.desc.array_layers };
 
         vk::ImageView image_view = m_device->get_device().createImageView(image_view_ci);
         texture.view_cache[key] = image_view;

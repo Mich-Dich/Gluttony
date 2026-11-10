@@ -91,6 +91,10 @@ namespace GLT::renderer::vk_rasterizer::graph {
         // live pass and one after every live pass. Query i+1 - query i is the duration of timed_pass_names()[i].
         // Passes beyond the query budget are not timed. Pass a null pool to disable
         void set_timestamp_queries(vk::QueryPool pool, u32 first_query, u32 query_count);
+
+        // Tracy Vulkan context (tracy::VkCtx*, opaque here). When set, execute() collects it and wraps every pass in a
+        // GPU zone named after the pass
+        void set_gpu_profiler(void* tracy_vk_ctx) noexcept { m_gpu_profiler = tracy_vk_ctx; }
         [[nodiscard]] const std::vector<std::string>& timed_pass_names() const { return m_timed_pass_names; }
         [[nodiscard]] u32 timestamps_written() const { return m_timestamps_written; }
 
@@ -99,6 +103,9 @@ namespace GLT::renderer::vk_rasterizer::graph {
         vk::Image texture_image(texture_handle handle) const;
 
         vk::ImageView texture_view(texture_handle handle, u32 mip, u32 layer);
+
+        // 2D-array view of one mip covering every layer (e.g. all 6 cube faces as image2DArray for compute writes)
+        vk::ImageView texture_mip_array_view(texture_handle handle, u32 mip);
 
         // View that includes every mip level. Use this when a shader needs to sample the full mip chain via textureLod();
         // texture_view(h, 0, 0) only covers mip 0
@@ -189,6 +196,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
         retire_fn                                               m_retire{};
 
         vk::QueryPool                                           m_timestamp_pool = nullptr;
+        void*                                                   m_gpu_profiler = nullptr;       // tracy::VkCtx*
         u32                                                     m_first_query = 0;
         u32                                                     m_query_count = 0;
         u32                                                     m_timestamps_written = 0;

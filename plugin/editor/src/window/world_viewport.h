@@ -82,6 +82,8 @@ namespace GLT::editor {
                                  const std::vector<GLT::world::entity_id>& visible_order, bool flat);
         void render_entity_tooltip(GLT::world::entity_id id);
         void render_entity_context_menu(GLT::world::entity_id id, bool visible);
+        void render_world_row();                                // pinned "World" row: the world entity (world-scope components)
+        [[nodiscard]] bool component_fits(const GLT::world::component::descriptor& d, GLT::world::entity_id id) const;
 
         // ---- outliner helpers ----
         void handle_outliner_click(GLT::world::entity_id id, const std::vector<GLT::world::entity_id>& visible_order);

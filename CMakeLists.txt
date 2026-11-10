@@ -91,6 +91,42 @@ target_compile_definitions(imgui                                        PRIVATE
     GLFW_INCLUDE_NONE
 )
 
+# ------------- Tracy (profiler client) ----------------------------------------------------------
+# One shared TracyClient for the executable and every plugin (a single profiler instance across dlopen'd modules).
+# On-demand: nothing is collected or sent until the Tracy profiler app connects, so leaving it ON costs ~nothing.
+# OFF: GLT_PROFILE_* macros compile to the in-engine recorder only (no Tracy symbols at all)
+option(GLT_ENABLE_TRACY                                                 "Instrument the engine for the Tracy profiler" ON)
+set(GLT_TRACY_VERSION                                                   "v0.14.1" CACHE STRING "Tracy git tag (client and profiler app must match)")
+
+if(GLT_ENABLE_TRACY)
+    set(TRACY_DIR                                                       "${VENDOR_DIR}/tracy")
+    git_clone_or_update("https://github.com/wolfpld/tracy.git"          "${TRACY_DIR}" DEPTH 1 TAG ${GLT_TRACY_VERSION})
+
+    add_library(tracy_client                                            SHARED
+        ${TRACY_DIR}/public/TracyClient.cpp
+    )
+    set_target_properties(tracy_client                                  PROPERTIES
+        POSITION_INDEPENDENT_CODE                                       ON
+        CXX_VISIBILITY_PRESET                                           default
+        LIBRARY_OUTPUT_DIRECTORY                                        "${CMAKE_BINARY_DIR}/bin"
+    )
+    target_include_directories(tracy_client                             PUBLIC
+        $<BUILD_INTERFACE:${TRACY_DIR}/public>
+    )
+    target_compile_definitions(tracy_client                             PUBLIC
+        TRACY_ENABLE
+        TRACY_ON_DEMAND
+        GLT_TRACY_ENABLED
+        GLT_TRACY_SOURCE_DIR="${TRACY_DIR}"
+    )
+    target_link_libraries(tracy_client                                  PUBLIC ${LINUX_SYSTEM_LIBS})
+    install(TARGETS tracy_client
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+    message(STATUS "Tracy ${GLT_TRACY_VERSION} enabled (on-demand). Profiler app: build ${TRACY_DIR}/profiler or install the same version")
+endif()
+
 # =================================================================================================
 # Build resource limits (RAM-friendly build)
 # =================================================================================================

@@ -38,6 +38,9 @@ namespace GLT::renderer::vk_rasterizer {
         m_submitted_lights.assign(lights.begin(), lights.end());
     }
 
+
+    void scene_renderer::submit_environment(const GLT::world::environment_snapshot& environment) { m_environment = environment; }
+
     // TEMPLATE CLASS PROTECTED ========================================================================================
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================

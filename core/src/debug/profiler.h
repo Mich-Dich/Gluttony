@@ -1,5 +1,7 @@
 #pragma once
 
+#include "debug/trace.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -60,7 +62,9 @@ namespace GLT::debug {
 
         // timing ------------------------------------------------------------------------------------------------------
         f32                                     frame_time_ms = 0.0f;   // CPU wall-clock for the frame
-        f32                                     cpu_time_ms = 0.0f;     // time spent in CPU work
+        f32                                     cpu_time_ms = 0.0f;     // main-thread CPU work: loop time minus blocking waits
+        f32                                     cpu_wait_ms = 0.0f;     // main thread blocked (GPU fences, swapchain, vsync) - excludes the frame limiter
+        f32                                     limiter_ms = 0.0f;      // frame-rate limiter sleep
         f32                                     fps = 0.0f;
         u64                                     ram_bytes = 0;
 
@@ -128,15 +132,13 @@ namespace GLT::debug {
 }
 
 // Profiling macros ----------------------------------------------------------------------------------------------------
-
-#if defined(DEBUG) || defined(PROFILING_ENABLED)
-
-    #define PROFILE_SCOPE(name)     GLT::debug::scope_timer _glt_profile_scope_##__LINE__(name)
-    #define PROFILE_FUNCTION()      PROFILE_SCOPE(__FUNCTION__)
-
+// Legacy names, kept for existing call sites. PROFILE_SCOPE accepts runtime strings, so it only goes to Tracy (transient
+// zone, the name is copied); the in-engine recorder stores name pointers and needs literals: use GLT_PROFILE_SCOPE
+// (debug/trace.h) for new code
+#if defined(GLT_TRACY_ENABLED)
+    #define GLT_TRACY_TRANSIENT(name)   ZoneTransientN(GLT_TRACE_CONCAT(_glt_tracy_tzone_, __LINE__), name, true)
 #else
-
-    #define PROFILE_SCOPE(name)     ((void)0)
-    #define PROFILE_FUNCTION()      ((void)0)
-
+    #define GLT_TRACY_TRANSIENT(name)   ((void)0)
 #endif
+#define PROFILE_SCOPE(name)             GLT_TRACY_TRANSIENT(name)
+#define PROFILE_FUNCTION()              GLT_PROFILE_FUNCTION()

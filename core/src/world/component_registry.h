@@ -71,9 +71,16 @@ namespace GLT::world::component_registry {
 
     // The definition lives in <world_ecs_entt/register.h>. Game plugins include that header. This keeps the core
     // header clean of entt, while letting the game's translation unit instantiate the typed storage.
+    // [scope]: entity (default), world (only on the world entity, e.g. sky) or both (e.g. light)
     template<typename T>
     void add(std::string_view name, std::string_view category, std::function<void(i_world&, entity_id)> draw = {},
-        std::function<std::string(i_world&, entity_id)> summary = {}, std::vector<u64> required = {});
+        std::function<std::string(i_world&, entity_id)> summary = {}, std::vector<u64> required = {},
+        component::scope scope = component::scope::entity);
+
+    // World-level access: the component T on the world entity (nullptr if the world has none, or no T on it).
+    // Any plugin can read / write its own world components this way without the world plugin knowing about T
+    template<typename T>
+    [[nodiscard]] T* get_world(i_world& world);
 
     template<typename T>
     bool remove_type();

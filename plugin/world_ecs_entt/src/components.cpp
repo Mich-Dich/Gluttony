@@ -59,6 +59,9 @@ namespace GLT::world::world_ecs_entt::component {
     void register_camera_descriptor(GLT::world::world_ecs_entt::ecs_world_plugin& plugin);
 
     void register_light_descriptor(GLT::world::world_ecs_entt::ecs_world_plugin& plugin);
+    void register_sky_descriptor(GLT::world::world_ecs_entt::ecs_world_plugin& plugin);
+    void register_ambient_light_descriptor(GLT::world::world_ecs_entt::ecs_world_plugin& plugin);
+    void move_light_to_world(i_world& world, entity_id id);
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
@@ -68,6 +71,30 @@ namespace GLT::world::world_ecs_entt::component {
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
     ecs_world* as_entt(i_world& world) { return static_cast<ecs_world*>(&world); }
+
+
+    // Copies the light and the entity's WORLD rotation onto the world entity, then removes the light from [id]
+    void move_light_to_world(i_world& world, entity_id id) {
+
+        auto* inspector = world.as<GLT::world::i_world_inspector>();
+        const entity_id world_entity = world.world_entity();
+        const auto* source = fetch<component::light>(world, id);
+        if (!inspector || !world_entity.is_valid() || !source)
+            return;
+
+        const component::light copy = *source;
+        glm::quat rotation = world.get_local_rotation_q(id);
+        for (entity_id parent = world.parent_of(id); parent.is_valid(); parent = world.parent_of(parent))
+            rotation = world.get_local_rotation_q(parent) * rotation;
+
+        const u64 light_hash = GLT::world::component_registry::hash_of("light");
+        if (!fetch<component::light>(world, world_entity))
+            inspector->add_component(world_entity, light_hash);
+        if (auto* target = fetch<component::light>(world, world_entity))
+            *target = copy;
+        world.set_local_rotation_q(world_entity, rotation);
+        inspector->remove_component(id, light_hash);
+    }
 
 
     void register_transform_descriptor(GLT::world::world_ecs_entt::ecs_world_plugin& plugin) {
@@ -96,7 +123,7 @@ namespace GLT::world::world_ecs_entt::component {
                     std::snprintf(buf, sizeof(buf), "(%.1f, %.1f, %.1f)", t->position.x, t->position.y, t->position.z);
                     return std::string(buf);
                 },
-                {}));
+                {}, GLT::world::component::scope::both));
     }
 
 
@@ -282,7 +309,7 @@ namespace GLT::world::world_ecs_entt::component {
 
                     audio->config.min_distance = GLT::math::clamp(audio->config.min_distance, 0.f, audio->config.max_distance);
                 },
-                {}, {}));
+                {}, {}, GLT::world::component::scope::both));
     }
 
 
@@ -356,6 +383,22 @@ namespace GLT::world::world_ecs_entt::component {
 
                         GLT::UI::end_table();
                     }
+
+                    // A sun on a normal entity can be streamed out with its region. Offer to move it to the world entity
+                    const entity_id world_entity = world.world_entity();
+                    if (light->type == GLT::world::light_type::directional && world_entity.is_valid() && !world.is_world_entity(id)) {
+
+                        ImGui::Spacing();
+                        ImGui::TextDisabled("This sun disappears when its region streams out.");
+                        if (ImGui::Button("Move to World")) {
+                            move_light_to_world(world, id);
+                            ImGui::PopID();
+                            return;                                         // [light] no longer exists on this entity
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Moves this light (and its world rotation) to the world entity, which is never streamed.\n"
+                                "Replaces a light the world entity already has.");
+                    }
                     ImGui::PopID();
                 },
 
@@ -380,11 +423,82 @@ namespace GLT::world::world_ecs_entt::component {
                     return std::string(buf);
                 },
 
-                { GLT::world::component_registry::hash_of("transform") }));
+                { GLT::world::component_registry::hash_of("transform") }, GLT::world::component::scope::both));
     }
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
+
+    void register_sky_descriptor(GLT::world::world_ecs_entt::ecs_world_plugin& plugin) {
+
+        plugin.register_component_type(
+            GLT::world::component_registry::make_descriptor<component::sky>(
+                "sky", "Environment",
+
+                [](i_world& world, entity_id id) {
+                    auto* sky = fetch<component::sky>(world, id);
+                    if (!sky) return;
+
+                    ImGui::PushID("sky_component");
+                    if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
+                        GLT::UI::table_row("intensity",     sky->intensity,     0.01f, 0.f, 10.f);
+                        GLT::UI::table_row("haze",          sky->haze,          0.01f, 0.f, 10.f);
+                        GLT::UI::table_row("ground albedo", sky->ground_albedo, 0.005f, 0.f, 1.f);
+                        GLT::UI::table_row("sun disk size", sky->sun_disk_size, 0.01f, 0.f, 5.f);
+                        GLT::UI::end_table();
+                    }
+                    ImGui::TextDisabled("Driven by the world's directional light (rotate the World to move the sun).");
+                    ImGui::PopID();
+                },
+
+                [](i_world& world, entity_id id) {
+                    const auto* sky = fetch<component::sky>(world, id);
+                    if (!sky) return std::string{};
+                    char buf[48];
+                    std::snprintf(buf, sizeof(buf), "haze %.2f", sky->haze);
+                    return std::string(buf);
+                },
+
+                {}, GLT::world::component::scope::world));
+    }
+
+
+    void register_ambient_light_descriptor(GLT::world::world_ecs_entt::ecs_world_plugin& plugin) {
+
+        plugin.register_component_type(
+            GLT::world::component_registry::make_descriptor<component::ambient_light>(
+                "ambient_light", "Environment",
+
+                [](i_world& world, entity_id id) {
+                    auto* ambient = fetch<component::ambient_light>(world, id);
+                    if (!ambient) return;
+
+                    ImGui::PushID("ambient_light_component");
+                    if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
+                        GLT::UI::table_row("intensity", ambient->intensity, 0.01f, 0.f, 20.f);
+                        const bool has_sky = fetch<component::sky>(world, id) != nullptr;
+                        if (!has_sky) {
+                            GLT::UI::table_row_color("sky colour",    ambient->sky_color);
+                            GLT::UI::table_row_color("ground colour", ambient->ground_color);
+                        }
+                        GLT::UI::end_table();
+                    }
+                    if (fetch<component::sky>(world, id))
+                        ImGui::TextDisabled("Scales the image based lighting from the sky.");
+                    ImGui::PopID();
+                },
+
+                [](i_world& world, entity_id id) {
+                    const auto* ambient = fetch<component::ambient_light>(world, id);
+                    if (!ambient) return std::string{};
+                    char buf[32];
+                    std::snprintf(buf, sizeof(buf), "i=%.2f", ambient->intensity);
+                    return std::string(buf);
+                },
+
+                {}, GLT::world::component::scope::world));
+    }
+
 
     void register_all_component_descriptors(GLT::world::world_ecs_entt::ecs_world_plugin& plugin) {
 
@@ -396,6 +510,8 @@ namespace GLT::world::world_ecs_entt::component {
         register_no_inherit_transform_descriptor(plugin);
         register_camera_descriptor(plugin);
         register_light_descriptor(plugin);
+        register_sky_descriptor(plugin);
+        register_ambient_light_descriptor(plugin);
     }
 
     // CLASS IMPLEMENTATION ============================================================================================

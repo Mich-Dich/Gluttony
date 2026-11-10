@@ -13,6 +13,11 @@
 
 #include "modes.h"
 
+#include <debug/trace.h>
+#if defined(GLT_TRACY_ENABLED)
+    #include <tracy/TracyVulkan.hpp>
+#endif
+
 
 
 namespace GLT::renderer::vk_rasterizer {
@@ -103,6 +108,8 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph = GLT::create_unique_ref<graph::render_graph>(m_plugin.get_dev());
         m_graph->set_retire_callback([shared = m_shared](std::function<void()>&& fn) { shared->retire(std::move(fn)); });
         create_timestamp_queries();
+        create_gpu_profiler();
+        m_graph->set_gpu_profiler(m_gpu_profiler);
         init_gpu_state();
 
         if (!m_offscreen && m_desc.enable_imgui)
@@ -164,8 +171,14 @@ namespace GLT::renderer::vk_rasterizer {
         if (!m_active && m_offscreen)       // Offscreen scene renderers don't own ImGui and don't need to run when inactive
             return;
 
+        GLT_PROFILE_SCOPE_C("Scene renderer update", GLT::debug::trace::COLOR_RENDER);
+
         m_delta_time = delta_time;
-        VK_SR_CHECK(m_plugin.get_vk_device().waitForFences(m_frames[m_current_frame].fence, VK_TRUE, UINT64_MAX));
+        {
+            // Blocks until the GPU finished the frame that last used this slot (MAX_CONCURRENT_FRAMES ago): GPU-bound time
+            GLT_PROFILE_WAIT("Wait for GPU (frame fence)");
+            VK_SR_CHECK(m_plugin.get_vk_device().waitForFences(m_frames[m_current_frame].fence, VK_TRUE, UINT64_MAX));
+        }
         resolve_gpu_timestamps(m_current_frame);    // this slot's previous frame is complete -> its queries are available
 
         if (!m_offscreen)
@@ -194,6 +207,7 @@ namespace GLT::renderer::vk_rasterizer {
         if (!m_active && m_offscreen)       // Offscreen inactive: nothing to do, leave fence + frame slot alone
             return {};
 
+        GLT_PROFILE_SCOPE_C("Scene renderer render", GLT::debug::trace::COLOR_RENDER);
         auto device = m_plugin.get_vk_device();
         const auto& queues = m_plugin.get_queues_ref();
         auto& frame = m_frames[m_current_frame];
@@ -221,6 +235,7 @@ namespace GLT::renderer::vk_rasterizer {
 
             try {
 
+                GLT_PROFILE_WAIT("Acquire swapchain image");
                 auto r = device.acquireNextImageKHR(m_swapchain.swapchain_handle, UINT64_MAX, frame.image_available, nullptr);
                 m_current_swapchain_image = r.value;
 
@@ -249,6 +264,8 @@ namespace GLT::renderer::vk_rasterizer {
         update_cluster_dimensions();
         update_light_meta_ubo();
         import_frame_textures();
+        ensure_environment_textures();
+        update_environment();
         update_light_cull_descriptors();
         update_mesh_descriptors();
         ensure_draw_buffers();                  // grow indirect buffers to this frame's draw count (before descriptors)
@@ -256,6 +273,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         if (m_active) {
 
+            add_environment_passes();           // sky cubemap, specular prefilter, SH (only when the sun / sky changed)
             add_reset_draw_count_pass();
             add_cull_pass();
             if (m_shadow.active) {
@@ -268,8 +286,12 @@ namespace GLT::renderer::vk_rasterizer {
             add_clear_light_grid_pass();
             add_light_culling_pass();
             add_scene_pass();
+            add_sky_background_pass();          // sky + sun where no opaque geometry was drawn
             add_translucent_pass();             // sorted, blended into scene_hdr after all opaque geometry
-            add_tonemap_pass();                 // HDR -> scene_color (display); debug draw goes on top, unaffected by exposure
+            if (m_active_mode == modes::Light_cull.id)
+                add_light_cull_debug_pass();    // debug render mode: lights-per-cluster heatmap instead of the shaded image
+            else
+                add_tonemap_pass();             // HDR -> scene_color (display); debug draw goes on top, unaffected by exposure
             add_debug_draw_pass();
 
             if (!m_offscreen)
@@ -343,6 +365,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         try {
 
+            GLT_PROFILE_SCOPE("Queue submit");
             queues.graphics_queue.submit2(si, frame.fence);
 
         } catch (const std::exception& e) {
@@ -361,6 +384,8 @@ namespace GLT::renderer::vk_rasterizer {
             pi.pImageIndices = &m_current_swapchain_image;
             try {
 
+                // FIFO (vsync) blocks here (or in the next acquire) once the swapchain queue is full
+                GLT_PROFILE_WAIT("Present (vsync)");
                 (void)queues.present_queue.presentKHR(pi);
 
             } catch (const vk::OutOfDateKHRError&) {
@@ -425,10 +450,13 @@ namespace GLT::renderer::vk_rasterizer {
             return;
         }
 
-        m_swapchain_builder.destroy_swapchain(m_plugin.get_vk_device(), m_swapchain);
+        // Build the replacement with the old swapchain as oldSwapchain, then destroy the old one. The presentation engine
+        // can hand over images instead of starting from nothing (smoother live resize; some WSI implementations need it)
+        const util::swapchain_resources old_swapchain = m_swapchain;
         m_swapchain_builder.width = extent.x;
         m_swapchain_builder.height = extent.y;
-        m_swapchain = m_swapchain_builder.build_swapchain();
+        m_swapchain = m_swapchain_builder.build_swapchain(old_swapchain.swapchain_handle);
+        m_swapchain_builder.destroy_swapchain(m_plugin.get_vk_device(), old_swapchain);
         m_image_count = static_cast<u32>(m_swapchain.swapchain_images.size());
         m_swapchain_images_layout.assign(m_image_count, vk::ImageLayout::eUndefined);
         m_extent = { m_swapchain.swapchain_extent.width, m_swapchain.swapchain_extent.height };
@@ -608,12 +636,43 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    // One Tracy GPU context per scene renderer (each records into its own command buffers). Tracy calibrates the GPU clock
+    // with a few one-time submits on frame slot 0's command buffer, which is unused at this point
+    void scene_renderer::create_gpu_profiler() {
+
+#if defined(GLT_TRACY_ENABLED)
+        const auto& queues = m_plugin.get_queues_ref();
+        auto* ctx = tracy::CreateVkContext(static_cast<VkPhysicalDevice>(m_plugin.get_physical_device()),
+            static_cast<VkDevice>(m_plugin.get_vk_device()), static_cast<VkQueue>(queues.graphics_queue),
+            static_cast<VkCommandBuffer>(m_frames[0].cmd), nullptr, nullptr);
+        if (ctx) {
+            const std::string name = m_offscreen ? "GPU (offscreen target)" : "GPU (window)";
+            ctx->Name(name.c_str(), static_cast<uint16_t>(name.size()));
+        }
+        m_gpu_profiler = ctx;
+#endif
+    }
+
+
+    void scene_renderer::destroy_gpu_profiler() {
+
+#if defined(GLT_TRACY_ENABLED)
+        if (m_gpu_profiler)
+            tracy::DestroyVkContext(static_cast<tracy::VkCtx*>(m_gpu_profiler));
+#endif
+        m_gpu_profiler = nullptr;
+        if (m_graph)
+            m_graph->set_gpu_profiler(nullptr);
+    }
+
+
     void scene_renderer::destroy_internal() {
 
         if (!m_plugin.get_vk_device())
             return;
 
         m_plugin.get_vk_device().waitIdle();
+        destroy_gpu_profiler();
 
         if (m_offscreen && m_output_image)
             m_output_image.reset();
@@ -789,3 +848,5 @@ namespace GLT::renderer::vk_rasterizer {
 #include "scene/scene_renderer_shadow.inl"
 #include "scene/scene_renderer_blit.inl"
 #include "scene/scene_renderer_tonemap.inl"
+#include "scene/scene_renderer_light_cull_debug.inl"
+#include "scene/scene_renderer_environment.inl"

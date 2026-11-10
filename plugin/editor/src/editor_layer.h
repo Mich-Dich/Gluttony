@@ -210,6 +210,7 @@ namespace GLT::editor {
         std::vector<GLT::unique_ref<base_window>>       m_windows{};
 
         bool                                            m_show_stats_window = false;
+        bool                                            m_show_tracing_window = false;
         bool                                            m_show_plugin_manager_window = false;
         bool                                            m_show_demo = false;
         bool                                            m_show_style = false;

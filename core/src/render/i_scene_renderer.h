@@ -5,6 +5,7 @@
 #include "platform/i_window.h"
 #include "world/camera_snapshot.h"
 #include "world/light_snapshot.h"
+#include "world/environment_snapshot.h"
 #include "render/i_debug_draw.h"
 #include "render/render_mode.h"
 #include "render/type.h"
@@ -126,6 +127,10 @@ namespace GLT::render {
 
 
         virtual void submit_lights(std::span<const GLT::world::light_snapshot> lights) = 0;
+
+
+        // World-level environment (sky / sun / ambient). Renderers that don't support it can ignore it
+        virtual void submit_environment(const GLT::world::environment_snapshot& /*environment*/) {}
 
 
         virtual void set_active_camera(const GLT::world::camera_snapshot& camera) = 0;
