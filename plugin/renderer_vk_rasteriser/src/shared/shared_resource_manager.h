@@ -192,6 +192,8 @@ namespace GLT::renderer::vk_rasterizer {
         void create_mesh_buffers();
         void destroy_mesh_buffers();
         void create_fallback_textures();
+        void create_depth_only_fragment_module();
+        void destroy_depth_only_fragment_module();
         void install_fallback_material();
 
         // mesh internal -----------------------------------------------------------------------------------------------
@@ -298,6 +300,7 @@ namespace GLT::renderer::vk_rasterizer {
         vk::DescriptorSetLayout                                             m_mesh_set_layout = nullptr;
         vk::DescriptorSetLayout                                             m_material_set_layout = nullptr;
         vk::PipelineLayout                                                  m_mesh_pipeline_layout = nullptr;
+        vk::ShaderModule                                                    m_depth_only_fragment_module = nullptr;
         vk::Sampler                                                         m_material_sampler = nullptr;
         vk::Sampler                                                         m_shadow_sampler = nullptr;
         vk::Sampler                                                         m_depth_sampler = nullptr;

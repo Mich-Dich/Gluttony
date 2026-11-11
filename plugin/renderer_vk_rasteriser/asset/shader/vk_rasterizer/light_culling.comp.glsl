@@ -2,22 +2,37 @@
 
 // Clustered light assignment (Forward+). ONE WORKGROUP PER SCREEN TILE (all depth slices of that tile).
 //
-// The previous version ran one 64-thread workgroup per CLUSTER (tile x slice): every slice of a tile re-read and
+// The first version ran one 64-thread workgroup per CLUSTER (tile x slice): every slice of a tile re-read and
 // re-linearised the same 16x16 depth texels, a single thread built the cluster AABB while 63 idled, and every light was
 // tested by a separate workgroup per slice. ~200k workgroups at 1080p, ~24 ms of GPU time with 2 lights.
 //
-// Now, per tile:
-//   1. 256 threads read one depth texel each (sky / cleared depth == 1 is skipped: no geometry there) -> min/max,
-//      extended by the translucents' view depth span (clamped to the opaque surface)
-//   2. one thread per slice builds that slice's view-space AABB, clamped to the tile's real depth range; slices with no
-//      geometry are inactive and get no lights (fragments never land in them)
-//   3. lights are transformed to view space once per batch of 256 (shared memory), then every (active slice, light)
-//      pair is tested in parallel; hits set a bit in a per-slice light bitmask (MAX_LIGHTS bits)
+// The second version ran one workgroup per tile with one thread per depth texel (256): 0.61 ms on an Intel Arc iGPU at
+// 1260x693 (trace 2026-11-11 15:03), more than the depth pre-pass. The work per tile is small; the cost is that every
+// tile starts 256 threads, lines them up at up to six barriers and sends two shared-memory atomics per texel.
+//
+// Now, per tile, with GROUP_SIZE_X * GROUP_SIZE_Y (16) threads:
+//   1. every thread reads its block of the tile's depth texels (4x4) and reduces it to min/max in registers (sky /
+//      cleared depth == 1 is skipped: no geometry there); two atomics per THREAD merge the blocks. The range is extended
+//      by the translucents' view depth span (clamped to the opaque surface)
+//   2. the threads share out the slices: each slice gets its view-space AABB, clamped to the tile's real depth range;
+//      slices with no geometry are inactive and get no lights (fragments never land in them)
+//   3. lights are transformed to view space once per batch of 16 (shared memory), then every (active slice, light) pair
+//      is tested in parallel; hits set a bit in a per-slice light bitmask (MAX_LIGHTS bits)
 //   4. per slice: popcount -> one atomicAdd reserves the index range, threads write the indices (sorted by light index)
+//
+// 16 threads are few enough to fit into one SIMD unit of current GPUs (Intel 16 or 32 lanes, NVIDIA 32, AMD 64). A
+// driver can then run a tile's threads in lock-step, and barrier() needs no real synchronisation.
+//
+// The result is the same as with one thread per texel: same texels, same arithmetic per texel, same (slice, light)
+// tests. Checked against the second version on random scenes (identical light lists for every cluster); only the
+// offsets into light_index_list differ from run to run, as before (atomic counter).
 //
 // Output format is unchanged: light_grid[cluster] = { offset, count } into light_index_list.
 
-layout(local_size_x = CLUSTER_TILE_SIZE_X, local_size_y = CLUSTER_TILE_SIZE_Y, local_size_z = 1) in;
+#define GROUP_SIZE_X 4
+#define GROUP_SIZE_Y 4
+
+layout(local_size_x = GROUP_SIZE_X, local_size_y = GROUP_SIZE_Y, local_size_z = 1) in;
 
 // Bindings ------------------------------------------------------------------------------------------------------------
 layout(set = 0, binding = 0) uniform CameraUBO {
@@ -48,8 +63,11 @@ layout(set = 0, binding = 6) uniform sampler2D depth_texture;
 
 // Constants / shared --------------------------------------------------------------------------------------------------
 
-const uint THREADS = CLUSTER_TILE_SIZE_X * CLUSTER_TILE_SIZE_Y;
-const uint SLICES = CLUSTER_DEPTH_SLICES;
+const uint  THREADS = uint(GROUP_SIZE_X * GROUP_SIZE_Y);
+const uvec2 GROUP_SIZE = uvec2(GROUP_SIZE_X, GROUP_SIZE_Y);
+const uvec2 TILE_SIZE = uvec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y);
+const uvec2 BLOCK_SIZE = (TILE_SIZE + GROUP_SIZE - 1u) / GROUP_SIZE;        // depth texels per thread (rounded up)
+const uint  SLICES = CLUSTER_DEPTH_SLICES;
 const uint MASK_WORDS = (MAX_LIGHTS + 31u) / 32u;
 
 shared uint  s_min_bits;
@@ -153,24 +171,41 @@ void main() {
         s_active_any = 0u;
         s_has_background = 0u;
     }
-    for (uint i = tid; i < SLICES * MASK_WORDS; i += THREADS)
-        s_mask[i / MASK_WORDS][i % MASK_WORDS] = 0u;
+    for (uint i = tid; i < slices * words; i += THREADS)        // only these words of the masks are ever read or written
+        s_mask[i / words][i % words] = 0u;
     barrier();
 
-    // ---- 1. tile depth range (one texel per thread) ---------------------------------------------------------------
+    // ---- 1. tile depth range (one block of texels per thread) -------------------------------------------------------
     {
         const ivec2 size = textureSize(depth_texture, 0);
-        const ivec2 pixel = ivec2(tile * uvec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y) + gl_LocalInvocationID.xy);
-        if (pixel.x < size.x && pixel.y < size.y) {
-            const float d = texelFetch(depth_texture, pixel, 0).r;
-            if (d < 1.0) {                                      // background: nothing to light
-                const float lz = max(linearize_depth(d), 0.0);
-                atomicMin(s_min_bits, floatBitsToUint(lz));     // positive floats order like their bit patterns
-                atomicMax(s_max_bits, floatBitsToUint(lz));
-            } else {
-                s_has_background = 1u;                          // benign race: every writer stores 1
+        const uvec2 block = gl_LocalInvocationID.xy * BLOCK_SIZE;
+        uint min_bits = 0xFFFFFFFFu;
+        uint max_bits = 0u;
+        bool geometry = false;
+        bool background = false;
+        for (uint y = 0u; y < BLOCK_SIZE.y; ++y) {
+            for (uint x = 0u; x < BLOCK_SIZE.x; ++x) {
+                const uvec2 texel = block + uvec2(x, y);        // within the tile
+                const ivec2 pixel = ivec2(tile * TILE_SIZE + texel);
+                if (texel.x >= TILE_SIZE.x || texel.y >= TILE_SIZE.y || pixel.x >= size.x || pixel.y >= size.y)
+                    continue;
+                const float d = texelFetch(depth_texture, pixel, 0).r;
+                if (d < 1.0) {                                  // background: nothing to light
+                    const uint lz_bits = floatBitsToUint(max(linearize_depth(d), 0.0));
+                    min_bits = min(min_bits, lz_bits);          // positive floats order like their bit patterns
+                    max_bits = max(max_bits, lz_bits);
+                    geometry = true;
+                } else {
+                    background = true;
+                }
             }
         }
+        if (geometry) {
+            atomicMin(s_min_bits, min_bits);
+            atomicMax(s_max_bits, max_bits);
+        }
+        if (background)
+            s_has_background = 1u;                              // benign race: every writer stores 1
     }
     barrier();
 
@@ -192,13 +227,13 @@ void main() {
         }
     }
 
-    // ---- 2. per-slice AABBs -----------------------------------------------------------------------------------------
-    if (tid < slices) {
+    // ---- 2. per-slice AABBs (thread t: slices t, t + THREADS, ...) --------------------------------------------------
+    for (uint slice = tid; slice < slices; slice += THREADS) {
         vec3 mn, mx;
-        const bool slice_live = tile_has_geometry && slice_aabb(tile, tid, slices, min_linear, max_linear, mn, mx);
-        s_aabb_min[tid] = mn;
-        s_aabb_max[tid] = mx;
-        s_slice_active[tid] = slice_live ? 1u : 0u;
+        const bool slice_live = tile_has_geometry && slice_aabb(tile, slice, slices, min_linear, max_linear, mn, mx);
+        s_aabb_min[slice] = mn;
+        s_aabb_max[slice] = mx;
+        s_slice_active[slice] = slice_live ? 1u : 0u;
         if (slice_live)
             atomicOr(s_active_any, 1u);
     }
@@ -254,10 +289,10 @@ void main() {
     }
 
     // ---- 4. per slice: count, reserve, write --------------------------------------------------------------------------
-    if (tid < slices) {
+    for (uint slice = tid; slice < slices; slice += THREADS) {
         uint running = 0u;
         for (uint w = 0u; w < words; ++w)
-            running += uint(bitCount(s_mask[tid][w]));
+            running += uint(bitCount(s_mask[slice][w]));
         uint count = min(running, max_per_cluster);
         uint base = 0u;
         if (count > 0u) {
@@ -268,9 +303,9 @@ void main() {
             else if (base + count > capacity)
                 count = capacity - base;
         }
-        s_base[tid] = base;
-        s_count[tid] = count;
-        light_grid.grid[tid * tiles_per_slice + tile_index] = uvec2(count > 0u ? base : 0u, count);
+        s_base[slice] = base;
+        s_count[slice] = count;
+        light_grid.grid[slice * tiles_per_slice + tile_index] = uvec2(count > 0u ? base : 0u, count);
     }
     barrier();
 

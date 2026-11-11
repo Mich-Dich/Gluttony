@@ -175,6 +175,11 @@ namespace GLT::renderer::vk_rasterizer {
         vk::ShaderModule                                            vertex_module = nullptr;
         vk::ShaderModule                                            fragment_module = nullptr;
         vk::ShaderModule                                            depth_module = nullptr;
+
+        // True: the depth-only fragment shader of this bytecode runs the material's alpha_test (masked). False: it is the
+        // no-op variant, and the depth pipeline uses the manager's empty fragment shader instead of [depth_module]
+        bool                                                        depth_alpha_test = false;
+
         vk::Pipeline                                                pipeline = nullptr;
         vk::Pipeline                                                depth_pipeline = nullptr;
 

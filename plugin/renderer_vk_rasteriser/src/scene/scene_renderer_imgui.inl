@@ -1,9 +1,15 @@
 
 #pragma once
 
+#include <algorithm>
+#include <atomic>
+#include <string_view>
+#include <vector>
+
 #include <imgui.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <config/imgui_config.h>
+#include <debug/profiler.h>
 #include <debug/trace.h>
 
 
@@ -201,6 +207,259 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    // ImGui Vulkan backend: function interposition --------------------------------------------------------------------
+    // The backend reaches Vulkan only through the table filled by ImGui_ImplVulkan_LoadFunctions(). load_function() hands
+    // it the real entry points, except for the few wrapped below (the ImGui sources stay untouched):
+    //
+    //  - vkAcquireNextImageKHR / vkQueuePresentKHR: the backend rebuilds a detached window's swapchain whenever one of
+    //    them returns VK_SUBOPTIMAL_KHR, and every rebuild starts with vkDeviceWaitIdle(): the main thread blocks until
+    //    the GPU has finished the frame that was just submitted. A window system that reports SUBOPTIMAL again and again
+    //    turns that into a stall per frame (suspected cause of +3.3 ms in 76 of 300 frames, trace 2026-11-11 15:03; the
+    //    counters below tell). SUBOPTIMAL only says the swapchain could match the surface better: presenting still works,
+    //    and this renderer ignores it for its own swapchains too. The wrappers report VK_SUCCESS instead, unless the
+    //    surface has another size than the swapchain (then a rebuild changes something and the backend gets to do it).
+    //    VK_ERROR_OUT_OF_DATE_KHR and every other result pass through unchanged. Resizes made through ImGui never
+    //    depended on SUBOPTIMAL: they reach the backend through Renderer_SetWindowSize
+    //  - vkCreateSwapchainKHR / vkDestroySwapchainKHR: remember surface + extent per swapchain for that size check
+    //  - vkDeviceWaitIdle / vkQueueWaitIdle / vkWaitForFences (+ acquire): wait zones, so a blocking call inside the
+    //    backend shows up by name in a trace instead of as self time of "ImGui renderer: render window"
+    namespace imgui_vk {
+
+        // A swapchain that reports SUBOPTIMAL is compared with its surface at most this often: the query is a round trip
+        // to the window system, and a swapchain may go on reporting SUBOPTIMAL with every acquire and present
+        static constexpr u64                                    EXTENT_CHECK_INTERVAL_NS = 500'000'000;
+
+        struct tracked_swapchain {
+            VkSwapchainKHR                                      swapchain = VK_NULL_HANDLE;
+            VkSurfaceKHR                                        surface = VK_NULL_HANDLE;
+            VkExtent2D                                          extent{};
+            u64                                                 next_extent_check_ns = 0;
+        };
+
+        // Real entry points (set by load_function)
+        static PFN_vkAcquireNextImageKHR                        s_acquire_next_image = nullptr;
+        static PFN_vkQueuePresentKHR                            s_queue_present = nullptr;
+        static PFN_vkCreateSwapchainKHR                         s_create_swapchain = nullptr;
+        static PFN_vkDestroySwapchainKHR                        s_destroy_swapchain = nullptr;
+        static PFN_vkDeviceWaitIdle                             s_device_wait_idle = nullptr;
+        static PFN_vkQueueWaitIdle                              s_queue_wait_idle = nullptr;
+        static PFN_vkWaitForFences                              s_wait_for_fences = nullptr;
+        static PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR    s_get_surface_capabilities = nullptr;
+
+        static VkPhysicalDevice                                 s_physical_device = VK_NULL_HANDLE;
+        static std::vector<tracked_swapchain>                   s_swapchains{};         // swapchains of detached windows
+        static handle                                           s_stats_provider = INVALID_HANDLE;
+
+        // Totals since imgui_init(), shown as "ImGui viewports" in the stats HUD and in the trace summary
+        static std::atomic<u64>                                 s_suboptimal_ignored{ 0 };
+        static std::atomic<u64>                                 s_suboptimal_forwarded{ 0 };
+        static std::atomic<u64>                                 s_out_of_date{ 0 };
+        static std::atomic<u64>                                 s_swapchains_created{ 0 };
+        static std::atomic<u64>                                 s_device_idle_waits{ 0 };
+
+
+        // [swapchain] reported SUBOPTIMAL. True: hide it from the backend, a rebuild would create the same swapchain again
+        static bool can_ignore_suboptimal(VkSwapchainKHR swapchain) {
+
+            const auto it = std::find_if(s_swapchains.begin(), s_swapchains.end(),
+                [swapchain](const tracked_swapchain& tracked) { return tracked.swapchain == swapchain; });
+            if (it == s_swapchains.end() || !s_get_surface_capabilities || s_physical_device == VK_NULL_HANDLE)
+                return true;
+
+            const u64 now = GLT::debug::trace::now_ns();
+            if (now < it->next_extent_check_ns)
+                return true;
+            it->next_extent_check_ns = now + EXTENT_CHECK_INTERVAL_NS;
+
+            VkSurfaceCapabilitiesKHR capabilities{};
+            if (s_get_surface_capabilities(s_physical_device, it->surface, &capabilities) != VK_SUCCESS)
+                return true;
+
+            // 0xFFFFFFFF: the surface takes its size from the swapchain (Wayland). 0: minimized, nothing to rebuild to
+            const VkExtent2D current = capabilities.currentExtent;
+            if (current.width == 0xFFFFFFFFu || current.height == 0xFFFFFFFFu || current.width == 0 || current.height == 0)
+                return true;
+            return current.width == it->extent.width && current.height == it->extent.height;
+        }
+
+
+        static VkResult filter_swapchain_result(VkResult result, const VkSwapchainKHR* swapchains, u32 swapchain_count) {
+
+            if (result == VK_ERROR_OUT_OF_DATE_KHR)
+                s_out_of_date.fetch_add(1, std::memory_order_relaxed);
+            if (result != VK_SUBOPTIMAL_KHR)
+                return result;
+
+            bool ignore = true;
+            for (u32 i = 0; i < swapchain_count; ++i)
+                ignore = can_ignore_suboptimal(swapchains[i]) && ignore;
+
+            (ignore ? s_suboptimal_ignored : s_suboptimal_forwarded).fetch_add(1, std::memory_order_relaxed);
+            return ignore ? VK_SUCCESS : VK_SUBOPTIMAL_KHR;
+        }
+
+
+        static VKAPI_ATTR VkResult VKAPI_CALL acquire_next_image(VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout,
+            VkSemaphore semaphore, VkFence fence, uint32_t* image_index) {
+
+            VkResult result = VK_SUCCESS;
+            {
+                GLT_PROFILE_WAIT("ImGui viewport: acquire swapchain image");
+                result = s_acquire_next_image(device, swapchain, timeout, semaphore, fence, image_index);
+            }
+            return filter_swapchain_result(result, &swapchain, 1);
+        }
+
+
+        // Runs inside the "ImGui renderer: present window" wait zone
+        static VKAPI_ATTR VkResult VKAPI_CALL queue_present(VkQueue queue, const VkPresentInfoKHR* present_info) {
+
+            const VkResult result = s_queue_present(queue, present_info);
+            const VkResult filtered = filter_swapchain_result(result, present_info->pSwapchains, present_info->swapchainCount);
+            if (filtered != result && present_info->pResults)
+                for (u32 i = 0; i < present_info->swapchainCount; ++i)
+                    if (present_info->pResults[i] == VK_SUBOPTIMAL_KHR)
+                        present_info->pResults[i] = VK_SUCCESS;
+            return filtered;
+        }
+
+
+        static VKAPI_ATTR VkResult VKAPI_CALL create_swapchain(VkDevice device, const VkSwapchainCreateInfoKHR* create_info,
+            const VkAllocationCallbacks* allocator, VkSwapchainKHR* swapchain) {
+
+            const VkResult result = s_create_swapchain(device, create_info, allocator, swapchain);
+            if (result == VK_SUCCESS) {
+                s_swapchains.push_back(tracked_swapchain{ *swapchain, create_info->surface, create_info->imageExtent, 0 });
+                s_swapchains_created.fetch_add(1, std::memory_order_relaxed);
+            }
+            return result;
+        }
+
+
+        static VKAPI_ATTR void VKAPI_CALL destroy_swapchain(VkDevice device, VkSwapchainKHR swapchain,
+            const VkAllocationCallbacks* allocator) {
+
+            std::erase_if(s_swapchains, [swapchain](const tracked_swapchain& tracked) { return tracked.swapchain == swapchain; });
+            s_destroy_swapchain(device, swapchain, allocator);
+        }
+
+
+        static VKAPI_ATTR VkResult VKAPI_CALL device_wait_idle(VkDevice device) {
+
+            GLT_PROFILE_WAIT("ImGui backend: vkDeviceWaitIdle (swapchain create / rebuild / destroy)");
+            s_device_idle_waits.fetch_add(1, std::memory_order_relaxed);
+            return s_device_wait_idle(device);
+        }
+
+
+        static VKAPI_ATTR VkResult VKAPI_CALL queue_wait_idle(VkQueue queue) {
+
+            GLT_PROFILE_WAIT("ImGui backend: vkQueueWaitIdle (texture upload)");
+            return s_queue_wait_idle(queue);
+        }
+
+
+        // The backend polls its frame fence with a 100 ns timeout until it is signalled. Signalled already (the normal
+        // case): no zone. Otherwise the wait shows up in a trace and blocks in the driver (1 ms per call) instead of spinning
+        static VKAPI_ATTR VkResult VKAPI_CALL wait_for_fences(VkDevice device, uint32_t fence_count, const VkFence* fences,
+            VkBool32 wait_all, uint64_t timeout) {
+
+            const VkResult ready = s_wait_for_fences(device, fence_count, fences, wait_all, 0);
+            if (ready != VK_TIMEOUT || timeout == 0)
+                return ready;
+
+            GLT_PROFILE_WAIT("ImGui viewport: wait for frame fence");
+            return s_wait_for_fences(device, fence_count, fences, wait_all, std::max<uint64_t>(timeout, 1'000'000));
+        }
+
+
+        // Loader for ImGui_ImplVulkan_LoadFunctions(). [user_data]: the vk::Instance
+        static PFN_vkVoidFunction load_function(const char* function_name, void* user_data) {
+
+            const VkInstance instance = static_cast<VkInstance>(*static_cast<vk::Instance*>(user_data));
+            const PFN_vkVoidFunction real = vkGetInstanceProcAddr(instance, function_name);
+            if (!real)
+                return nullptr;
+
+            const std::string_view name{ function_name };
+            if (name == "vkAcquireNextImageKHR") {
+                s_acquire_next_image = reinterpret_cast<PFN_vkAcquireNextImageKHR>(real);
+                return reinterpret_cast<PFN_vkVoidFunction>(&acquire_next_image);
+            }
+            if (name == "vkQueuePresentKHR") {
+                s_queue_present = reinterpret_cast<PFN_vkQueuePresentKHR>(real);
+                return reinterpret_cast<PFN_vkVoidFunction>(&queue_present);
+            }
+            if (name == "vkCreateSwapchainKHR") {
+                s_create_swapchain = reinterpret_cast<PFN_vkCreateSwapchainKHR>(real);
+                return reinterpret_cast<PFN_vkVoidFunction>(&create_swapchain);
+            }
+            if (name == "vkDestroySwapchainKHR") {
+                s_destroy_swapchain = reinterpret_cast<PFN_vkDestroySwapchainKHR>(real);
+                return reinterpret_cast<PFN_vkVoidFunction>(&destroy_swapchain);
+            }
+            if (name == "vkDeviceWaitIdle") {
+                s_device_wait_idle = reinterpret_cast<PFN_vkDeviceWaitIdle>(real);
+                return reinterpret_cast<PFN_vkVoidFunction>(&device_wait_idle);
+            }
+            if (name == "vkQueueWaitIdle") {
+                s_queue_wait_idle = reinterpret_cast<PFN_vkQueueWaitIdle>(real);
+                return reinterpret_cast<PFN_vkVoidFunction>(&queue_wait_idle);
+            }
+            if (name == "vkWaitForFences") {
+                s_wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(real);
+                return reinterpret_cast<PFN_vkVoidFunction>(&wait_for_fences);
+            }
+            if (name == "vkGetPhysicalDeviceSurfaceCapabilitiesKHR")
+                s_get_surface_capabilities = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(real);
+            return real;
+        }
+
+
+        // Before ImGui_ImplVulkan_LoadFunctions(): forget the previous backend instance
+        static void reset(VkPhysicalDevice physical_device) {
+
+            s_physical_device = physical_device;
+            s_swapchains.clear();
+            s_suboptimal_ignored = 0;
+            s_suboptimal_forwarded = 0;
+            s_out_of_date = 0;
+            s_swapchains_created = 0;
+            s_device_idle_waits = 0;
+        }
+
+
+        // Idempotent. The provider reads the counters above, so it must be gone before this plugin is unloaded
+        static void register_stats() {
+
+            if (s_stats_provider != INVALID_HANDLE)
+                return;
+            s_stats_provider = GLT::debug::register_provider(GLT::debug::stats_provider{
+                .name = "ImGui viewports",
+                .fill = [](GLT::debug::system_stats& out) {
+                    const auto row = [&out](const char* label, const std::atomic<u64>& counter) {
+                        out.custom.push_back({ label, static_cast<f32>(counter.load(std::memory_order_relaxed)), "%.0f" });
+                    };
+                    row("suboptimal results ignored (no swapchain rebuild)", s_suboptimal_ignored);
+                    row("suboptimal results forwarded (surface size changed)", s_suboptimal_forwarded);
+                    row("out-of-date results", s_out_of_date);
+                    row("swapchains created", s_swapchains_created);
+                    row("vkDeviceWaitIdle calls", s_device_idle_waits);
+                }
+            });
+        }
+
+
+        static void unregister_stats() {
+
+            if (s_stats_provider == INVALID_HANDLE)
+                return;
+            GLT::debug::unregister_provider(s_stats_provider);
+            s_stats_provider = INVALID_HANDLE;
+        }
+    }
+
+
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     void scene_renderer::imgui_init() {
@@ -222,13 +481,10 @@ namespace GLT::renderer::vk_rasterizer {
 
         window->imgui_init(m_window, GLT::render::backend_api::vulkan);
 
+        // The backend gets its Vulkan entry points from imgui_vk::load_function: the real ones, a few of them wrapped
         vk::Instance inst = m_plugin.get_instance();
-        ASSERT(ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_4,
-            [](const char* fn, void* ud) -> PFN_vkVoidFunction {
-                auto* i = static_cast<vk::Instance*>(ud);
-                return vkGetInstanceProcAddr(static_cast<VkInstance>(*i), fn);
-            },
-            &inst),
+        imgui_vk::reset(static_cast<VkPhysicalDevice>(m_plugin.get_physical_device_ref()));
+        ASSERT(ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_4, &imgui_vk::load_function, &inst),
             "", "Failed to load Vulkan functions for ImGui")
 
         util::create_imgui_resources(
@@ -243,6 +499,8 @@ namespace GLT::renderer::vk_rasterizer {
             m_imgui_initialized);
 
         imgui_hooks::install();                         // after both backends registered their callbacks
+        if (m_imgui_initialized)
+            imgui_vk::register_stats();
 
         // Same attachment format as m_imgui_render_pass (so ImGui's pipeline and the framebuffers stay compatible), but it
         // clears the backbuffer: used on UI-only frames instead of a separate clear pass
@@ -289,6 +547,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         if (m_offscreen || !m_imgui_initialized)
             return;
+
+        imgui_vk::unregister_stats();
 
         // Ensure the shared context is current before tearing down its backends
         ImGui::SetCurrentContext(imgui_config::get_context_imgui());

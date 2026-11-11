@@ -25,6 +25,32 @@ namespace GLT::renderer::vk_rasterizer {
         { 3, 0, vk::Format::eR32G32Sfloat, offsetof(GLT::asset::mesh::vertex, uv0) },
     }};
 
+    // SPIR-V of asset/shader/vk_rasterizer/depth_only.frag.glsl (`void main() { }`), assembled with spirv-as and checked
+    // with spirv-val. Inline because the material pipelines are created before any GLSL shader file is compiled:
+    //                 OpCapability Shader
+    //                 OpMemoryModel Logical GLSL450
+    //                 OpEntryPoint Fragment %main "main"
+    //                 OpExecutionMode %main OriginUpperLeft
+    //         %void = OpTypeVoid
+    //         %func = OpTypeFunction %void
+    //         %main = OpFunction %void None %func
+    //        %entry = OpLabel
+    //                 OpReturn
+    //                 OpFunctionEnd
+    static constexpr std::array<u32, 32> depth_only_fragment_spirv = {{
+        0x07230203, 0x00010000, 0x00070000, 0x00000005, 0x00000000,     // magic, SPIR-V 1.0, generator, bound, schema
+        0x00020011, 0x00000001,                                         // OpCapability Shader
+        0x0003000e, 0x00000000, 0x00000001,                             // OpMemoryModel Logical GLSL450
+        0x0005000f, 0x00000004, 0x00000001, 0x6e69616d, 0x00000000,     // OpEntryPoint Fragment %1 "main"
+        0x00030010, 0x00000001, 0x00000007,                             // OpExecutionMode %1 OriginUpperLeft
+        0x00020013, 0x00000002,                                         // %2 = OpTypeVoid
+        0x00030021, 0x00000003, 0x00000002,                             // %3 = OpTypeFunction %2
+        0x00050036, 0x00000002, 0x00000001, 0x00000000, 0x00000003,     // %1 = OpFunction %2 None %3
+        0x000200f8, 0x00000004,                                         // %4 = OpLabel
+        0x000100fd,                                                     // OpReturn
+        0x00010038,                                                     // OpFunctionEnd
+    }};
+
     // MACROS ==========================================================================================================
 
     // The call ALWAYS runs; only the result check is debug-only (see VK_SR_CHECK in scene_renderer.cpp)
@@ -44,6 +70,9 @@ namespace GLT::renderer::vk_rasterizer {
 
     static u32 fallback_texture_slot_for(u32 texture_slot_index);
 
+
+    static bool bytecode_has_alpha_test(const GLT::asset::material::material_asset& asset);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
@@ -51,6 +80,22 @@ namespace GLT::renderer::vk_rasterizer {
     static u32 fallback_texture_slot_for(u32 texture_slot_index) {
         return texture_slot_index == static_cast<u32>(GLT::asset::material::texture_slot::normal)
             ? TEXTURE_SLOT_FLAT_NORMAL : TEXTURE_SLOT_WHITE;
+    }
+
+
+    // The reflection header describes the bytecode stored next to it. compile() only emits the alpha-testing depth shader
+    // (shading_strings::depth_suffix) for a material with an alpha_test entry point; every other material gets the no-op
+    // one. Unreadable header: assume alpha test, so the material's own depth shader stays in use
+    static bool bytecode_has_alpha_test(const GLT::asset::material::material_asset& asset) {
+
+        namespace AM = GLT::asset::material;
+        if (asset.reflection.size() < sizeof(AM::reflection_header))
+            return true;
+        AM::reflection_header header{};
+        std::memcpy(&header, asset.reflection.data(), sizeof(header));
+        if (header.magic != AM::REFLECT_SCHEMA_MAGIC)
+            return true;
+        return (header.entry_flags & AM::alpha_test) != 0;
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -83,6 +128,7 @@ namespace GLT::renderer::vk_rasterizer {
         create_samplers();
         create_shader_compiler();
         create_layouts();
+        create_depth_only_fragment_module();
         create_mesh_buffers();
 
         // texture table + fallbacks
@@ -167,6 +213,7 @@ namespace GLT::renderer::vk_rasterizer {
             m_submesh_data_buffer = {}; 
         }
 
+        destroy_depth_only_fragment_module();
         destroy_layouts();
         destroy_samplers();
         destroy_shader_compiler();
@@ -427,6 +474,26 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    // The fragment shader of every depth-only material pipeline without alpha test (see create_material_pipeline)
+    void shared_resource_manager::create_depth_only_fragment_module() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::create_depth_only_fragment_module");
+
+        m_depth_only_fragment_module = m_dev->create_shader_module(std::span<const u32>(depth_only_fragment_spirv));
+        if (!m_depth_only_fragment_module)
+            LOG(error, "Failed to create the depth-only fragment shader: depth pipelines keep the per-material no-op shader")
+    }
+
+
+    void shared_resource_manager::destroy_depth_only_fragment_module() {
+        GLT_PROFILE_SCOPE("shared_resource_manager::destroy_depth_only_fragment_module");
+
+        if (m_depth_only_fragment_module) {
+            m_device.destroyShaderModule(m_depth_only_fragment_module);
+            m_depth_only_fragment_module = nullptr;
+        }
+    }
+
+
     void shared_resource_manager::create_samplers() {
         GLT_PROFILE_SCOPE("shared_resource_manager::create_samplers");
         const f32 max_aniso = m_physical_device.getProperties().limits.maxSamplerAnisotropy;
@@ -526,6 +593,7 @@ namespace GLT::renderer::vk_rasterizer {
             m_dev->update_buffer(fb.params_ubo, compiled->default_params.data(), params_bytes);
 
         fb.blend = GLT::asset::material::blend_mode::opaque;
+        fb.depth_alpha_test = false;                    // compiled as opaque above: no alpha_test entry point
         fb.pipeline = create_material_pipeline(fb, material_pipeline_kind::main);
         fb.depth_pipeline = create_material_pipeline(fb, material_pipeline_kind::depth);
         if (fb.pipeline)
@@ -687,6 +755,7 @@ namespace GLT::renderer::vk_rasterizer {
             if (!slot.depth_module) { destroy_material_shaders(slot); return false; }
         }
 
+        slot.depth_alpha_test = bytecode_has_alpha_test(asset);
         slot.pipeline = create_material_pipeline(slot, material_pipeline_kind::main);
         slot.depth_pipeline = create_material_pipeline(slot, material_pipeline_kind::depth);
         if (!slot.pipeline || !slot.depth_pipeline) { destroy_material_shaders(slot); return false; }
@@ -764,6 +833,13 @@ namespace GLT::renderer::vk_rasterizer {
         stages[1].stage = vk::ShaderStageFlagBits::eFragment;
         stages[1].module = (kind == material_pipeline_kind::main) ? slot.fragment_module : slot.depth_module;
         stages[1].pName = "main";
+
+        // Depth-only without alpha test (pre-pass, shadow maps): the per-material no-op shader contains a `discard` that
+        // never fires (it only keeps Slang from emitting an empty entry point, see shading_strings::depth_noop_suffix). A
+        // shader that may discard has to run for every fragment before depth can be written. The empty shader cannot
+        // discard, so the GPU writes depth straight from the rasteriser. Same vertex shader, same positions, same depth
+        if (kind == material_pipeline_kind::depth && !slot.depth_alpha_test && m_depth_only_fragment_module)
+            stages[1].module = m_depth_only_fragment_module;
 
         vk::PipelineVertexInputStateCreateInfo vi{};
         vi.vertexBindingDescriptionCount = 1;
