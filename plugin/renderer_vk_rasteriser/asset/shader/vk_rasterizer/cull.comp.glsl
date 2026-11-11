@@ -24,6 +24,7 @@ struct MeshData {
     uint index_offset;
     uint lod_count;     // submesh table holds lod_count x submesh_count entries, [lod][submesh]
     uint _pad1;
+    float lod_screen[8];    // [0] cull size (0 = never), [n] screen size below which LOD n is used
 };
 
 struct SubmeshData {
@@ -51,8 +52,15 @@ layout(set = 0, binding = 5) uniform CameraUBO {
     mat4  view;
     vec4  camera_pos;
     vec4  frustum_planes[6];
-    uvec4 flags;        // x = number of valid instances this frame (the SSBO holds stale data past it), y = write stats
+    uvec4 flags;        // x = number of valid instances this frame (the SSBO holds stale data past it), y = main view
+    mat4  projection;   // main view: LOD screen size = sphere radius * |P11| / distance
 } camera;
+
+// firstInstance of every draw = instance index | LOD info. The material vertex shader masks the index back out
+// (shading_strings.h, RendererInstanceInfo); MAX_INSTANCES <= 2^20 is static_asserted on the C++ side
+const uint INSTANCE_INDEX_MASK = 0xFFFFFu;
+const uint INSTANCE_LOD_SHIFT  = 20u;           // 4 bits: LOD level
+const uint INSTANCE_HAS_LODS   = 1u << 24u;     // the mesh has generated levels (debug colouring)
 // Compact per-instance material list: instance.material_index is the offset of the instance's first submesh entry
 layout(std430, set = 0, binding = 6) readonly buffer MaterialTable { uint material_table[]; };
 // Per material slot: x = first command of the material's range, y = range capacity (CPU-computed upper bound of draws)
@@ -109,9 +117,29 @@ void main() {
     if (!frustum_test(world_min, world_max))
         return;
 
-    // LOD: only a forced level for now (mesh editor preview), clamped to the uploaded levels; otherwise LOD 0
+    // LOD. Forced level (mesh editor preview) wins. Otherwise, in the main view, by projected size: bounding sphere
+    // diameter / viewport height = r * |P11| / d (same metric as the mesh editor and asset::mesh::fit_screen_sizes).
+    // Shadow views use LOD 0 (camera independent, keeps the shadow cache valid)
+    const uint lod_count = max(mesh.lod_count, 1u);
     const uint forced = instance.flags & 0xFu;
-    const uint lod = forced != 0u ? min(forced - 1u, max(mesh.lod_count, 1u) - 1u) : 0u;
+    uint lod = 0u;
+    if (forced != 0u) {
+        lod = min(forced - 1u, lod_count - 1u);
+    } else if (camera.flags.y != 0u) {
+        const vec3  center_local = 0.5 * (mesh.local_min + mesh.local_max);
+        const float radius_local = 0.5 * length(mesh.local_max - mesh.local_min);
+        const float scale = max(length(instance.model[0].xyz), max(length(instance.model[1].xyz), length(instance.model[2].xyz)));
+        const vec3  center = (instance.model * vec4(center_local, 1.0)).xyz;
+        const float radius = radius_local * scale;
+        const float dist = distance(center, camera.camera_pos.xyz);
+        const float screen = dist > radius ? radius * abs(camera.projection[1][1]) / dist : 1e9;
+        if (mesh.lod_screen[0] > 0.0 && screen < mesh.lod_screen[0])
+            return;                                     // "Cull below": too small to draw at all
+        for (uint level = 1u; level < lod_count; ++level)
+            if (screen < mesh.lod_screen[level])
+                lod = level;
+    }
+    const uint instance_info = instance_index | (lod << INSTANCE_LOD_SHIFT) | (lod_count > 1u ? INSTANCE_HAS_LODS : 0u);
     const uint first_submesh = mesh.first_submesh + lod * mesh.submesh_count;
 
     uint emitted_draws = 0u;
@@ -137,7 +165,7 @@ void main() {
         commands[cmd].instanceCount = 1u;
         commands[cmd].firstIndex = mesh.index_offset + submesh.first_index;
         commands[cmd].vertexOffset = int(mesh.vertex_offset);
-        commands[cmd].firstInstance = instance_index;
+        commands[cmd].firstInstance = instance_info;
 
         emitted_draws++;
         emitted_triangles += submesh.index_count / 3u;

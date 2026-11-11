@@ -122,6 +122,7 @@ namespace GLT::renderer::vk_rasterizer {
         const void*                                                 source = nullptr;   // mesh_asset uploaded from (change detection only)
         u32                                                         source_revision = 0;
         u64                                                         source_geometry = 0; // hash of the geometry arrays' data pointers + sizes
+        std::array<f32, 8>                                          lod_screen{};       // CPU copy of gpu_mesh_data::lod_screen (translucents)
         glm::vec3                                                   local_min{0.0f};
         glm::vec3                                                   local_max{0.0f};
         u32                                                         ref_count = 0;
@@ -206,8 +207,10 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         index_offset = 0;
         u32                                                         lod_count = 1;          // submesh table holds [lod][submesh_count]
         u32                                                         _pad1 = 0;
+        // [0] = cull screen size (0 = never), [1..7] = screen size below which LOD n takes over (asset lod_settings)
+        f32                                                         lod_screen[8]{};
     };
-    static_assert(sizeof(gpu_mesh_data) == 48, "gpu_mesh_data layout mismatch");
+    static_assert(sizeof(gpu_mesh_data) == 80, "gpu_mesh_data layout mismatch");
 
     // Persistent per-submesh SSBO entry
     struct gpu_submesh_data {

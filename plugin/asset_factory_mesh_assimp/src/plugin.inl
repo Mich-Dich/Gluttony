@@ -4,6 +4,7 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #include <glm/gtc/type_ptr.hpp>
+#include <cmath>
 
 #include <asset/mesh.h>
 #include <asset/mesh_lod.h>
@@ -297,6 +298,30 @@ namespace GLT::asset::factory::mesh_assimp {
                     out.uv0 = { uv.x, uv.y };
                 }
 
+                // aiProcess_CalcTangentSpace writes qNaN tangents where the UVs are degenerate, and GenSmoothNormals /
+                // glm::normalize produce NaN for zero-area faces. A NaN frame turns the whole fragment's shading NaN
+                // (renders black). Repair: unit normal (fallback +Y), tangent orthogonal to it, sign +-1
+                {
+                    auto finite = [](const glm::vec3& x) { return std::isfinite(x.x) && std::isfinite(x.y) && std::isfinite(x.z); };
+                    auto usable = [&](const glm::vec3& x) { return finite(x) && glm::dot(x, x) > 1e-12f; };
+
+                    if (!usable(out.normal))
+                        out.normal = glm::vec3(0.f, 1.f, 0.f);
+                    out.normal = glm::normalize(out.normal);
+
+                    glm::vec3 t(out.tangent);
+                    t -= out.normal * glm::dot(out.normal, t);
+                    if (!usable(t)) {
+                        const glm::vec3 axis = std::abs(out.normal.x) < 0.9f ? glm::vec3(1.f, 0.f, 0.f) : glm::vec3(0.f, 1.f, 0.f);
+                        t = glm::cross(axis, out.normal);
+                    }
+                    const f32 sign = (std::isfinite(out.tangent.w) && out.tangent.w < 0.f) ? -1.f : 1.f;
+                    out.tangent = glm::vec4(glm::normalize(t), sign);
+
+                    if (!std::isfinite(out.uv0.x) || !std::isfinite(out.uv0.y))
+                        out.uv0 = glm::vec2(0.f);
+                }
+
                 vertices.push_back(out);
             }
 
@@ -588,6 +613,8 @@ namespace GLT::asset::factory::mesh_assimp {
             out.write_chunk(GLT::asset::mesh::CHUNK_LOD_LEVELS,  std::as_bytes(std::span{ lods.lods }));
             out.write_chunk(GLT::asset::mesh::CHUNK_LOD_RANGES,  std::as_bytes(std::span{ lods.ranges }));
             out.write_chunk(GLT::asset::mesh::CHUNK_LOD_INDICES, std::as_bytes(std::span{ lods.indices }));
+            if (!lods.vertices.empty())
+                out.write_chunk(GLT::asset::mesh::CHUNK_LOD_VERTICES, std::as_bytes(std::span{ lods.vertices }));
         }
 
         // Dependencies: one per submesh, in submesh order so material_slot lines up with info.dependencies[N] on load

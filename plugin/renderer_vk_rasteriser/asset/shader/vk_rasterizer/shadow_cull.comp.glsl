@@ -19,6 +19,7 @@ struct MeshData { vec3 local_min;
     uint        index_offset;
     uint        lod_count;      // submesh table holds lod_count x submesh_count entries, [lod][submesh]
     uint        _pad1;
+    float       lod_screen[8];  // unused here (shadows: forced level or LOD 0)
 };
 
 struct SubmeshData {
@@ -118,6 +119,8 @@ void main() {
     const uint forced = instance.flags & 0xFu;
     const uint lod = forced != 0u ? min(forced - 1u, max(mesh.lod_count, 1u) - 1u) : 0u;
     const uint first_submesh = mesh.first_submesh + lod * mesh.submesh_count;
+    // firstInstance = instance index | LOD info (see cull.comp.glsl)
+    const uint instance_info = instance_index | (lod << 20u) | (max(mesh.lod_count, 1u) > 1u ? (1u << 24u) : 0u);
 
     for (uint submesh_offset = 0u; submesh_offset < mesh.submesh_count; ++submesh_offset) {
 
@@ -139,6 +142,6 @@ void main() {
         commands[cmd].instanceCount = 1u;
         commands[cmd].firstIndex = mesh.index_offset + submesh.first_index;
         commands[cmd].vertexOffset = int(mesh.vertex_offset);
-        commands[cmd].firstInstance = instance_index;
+        commands[cmd].firstInstance = instance_info;
     }
 }

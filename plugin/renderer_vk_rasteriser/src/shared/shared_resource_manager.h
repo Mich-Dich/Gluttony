@@ -211,6 +211,7 @@ namespace GLT::renderer::vk_rasterizer {
         };
         [[nodiscard]] static mesh_upload_layout mesh_layout_of(const GLT::asset::mesh::mesh_asset& mesh);
         [[nodiscard]] static u64 geometry_signature(const GLT::asset::mesh::mesh_asset& mesh);
+        [[nodiscard]] static std::array<f32, 8> lod_screen_sizes(const GLT::asset::mesh::mesh_asset& mesh, u32 lod_count);
 
         // texture internal --------------------------------------------------------------------------------------------
 

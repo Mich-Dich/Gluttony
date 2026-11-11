@@ -9,6 +9,10 @@
 #include <event/application_event.h>
 #include <util/data_structures/thread_pool.h>
 
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -303,8 +307,34 @@ namespace GLT::asset::registry_default {
         void release_slot(GLT::asset::handle h) noexcept;
 
 
-        // Fired on the main thread when the application broadcasts a save. Queues one background job per live asset onto the thread pool
+        // Fired on the main thread when the application broadcasts a save. Serializes every live asset right here and queues
+        // one background job per asset (hash, compose, write) onto the thread pool
         void on_save_event(GLT::save_event& event);
+
+
+        // A save split in two: prepare_save() copies the asset into the writer on the calling (owning) thread,
+        // commit_save() hashes / composes / writes from that copy on any thread without touching the runtime asset
+        struct pending_save {
+
+            GLT::asset::handle                                                  handle{};
+            std::filesystem::path                                               target{};          // content-relative
+            std::filesystem::path                                               abs_target{};
+            std::filesystem::path                                               abs_tmp{};
+            bool                                                                renamed{ false };  // save-as to a new path
+            UUID                                                                id{};
+            GLT::asset::type                                                    asset_type{ GLT::asset::core_types::invalid };
+            std::filesystem::path                                               source_path{};
+            GLT::asset::content_hash                                            previous_hash{};
+            std::unique_ptr<asset_writer_impl>                                  writer{};
+        };
+
+        [[nodiscard]] std::expected<pending_save, GLT::asset::load_error> prepare_save(GLT::asset::handle h,
+            const std::filesystem::path& new_path);
+
+        [[nodiscard]] std::expected<void, GLT::asset::load_error> commit_save(pending_save& pending);
+
+        // Blocks until every queued background save finished (plugin unload / shutdown)
+        void wait_for_save_jobs();
 
 
         // Parses header + tables into out_params; recurses into deps
@@ -353,6 +383,11 @@ namespace GLT::asset::registry_default {
         // event subscriptions -----------------------------------------------------------------------------------------
 
         handle                                                                  m_save_subscription{};
+
+        // background save jobs in flight (on_save_event -> thread pool)
+        std::mutex                                                              m_save_jobs_mutex{};
+        std::condition_variable                                                 m_save_jobs_done{};
+        u32                                                                     m_save_jobs{ 0 };
 
     };
 

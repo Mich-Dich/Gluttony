@@ -35,6 +35,16 @@ namespace GLT::renderer::vk_rasterizer::modes {
     [[=category{"Debug"}]]
     inline constexpr GLT::render::render_mode Light_cull{ .id = 2 };
 
+    [[=display_name{"Level of Detail"}]]
+    [[=tooltip{"Meshes coloured by the LOD they are drawn with: green 0, yellow-green 1, yellow 2, orange 3, red 4, magenta 5, purple 6, blue 7. Dark grey = no LODs generated, light grey = procedural"}]]
+    [[=category{"Debug"}]]
+    inline constexpr GLT::render::render_mode Lod{ .id = 3 };
+
+    [[=display_name{"Triangle Density"}]]
+    [[=tooltip{"Heatmap of triangles per pixel over a flat, unlit world (blue = sparse, red = one or more triangles per pixel). Blur radius and range: renderer settings, Debug"}]]
+    [[=category{"Debug"}]]
+    inline constexpr GLT::render::render_mode Tri_density{ .id = 4 };
+
     // STATIC VARIABLES ================================================================================================
 
     inline constexpr auto mode_table = GLT::render::make_render_mode_entries<^^modes>();

@@ -242,7 +242,7 @@ namespace GLT::renderer::vk_rasterizer {
                     // stay out of the depth pre-pass and shadows). They are drawn sorted in the translucent pass instead
                     if (m_shared->get_material(material).is_translucent())
                         m_translucent_candidates.push_back({ 0.f, static_cast<u32>(m_packed_instances.size() - 1), material,
-                            rit->second, sm, false, forced_lod });
+                            rit->second, sm, false, forced_lod, inst.flags != 0u });
                     else
                         m_material_draw_counts[material]++;
                 }
@@ -278,7 +278,7 @@ namespace GLT::renderer::vk_rasterizer {
             note_material(pm.material_slot);
             if (pm.material_slot < MAX_MATERIALS && m_shared->get_material(pm.material_slot).is_translucent())
                 m_translucent_candidates.push_back({ 0.f, static_cast<u32>(m_packed_instances.size() - 1), pm.material_slot,
-                    id - 1, 0u, true, 0u });
+                    id - 1, 0u, true, 0u, false });
         }
 
         // ---- Material refs: drop last frame's set now that this frame's set is acquired ------------

@@ -35,6 +35,14 @@ namespace GLT::renderer::vk_rasterizer {
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
+    u32 scene_renderer::debug_shading_mode() const {
+
+        if (m_active_mode == modes::Lod.id)         return 1u;
+        if (m_active_mode == modes::Tri_density.id) return 2u;
+        return 0u;
+    }
+
+
     glm::mat4 scene_renderer::camera_projection() const {
         GLT_PROFILE_SCOPE("scene_renderer::camera_projection");
 
@@ -114,6 +122,7 @@ namespace GLT::renderer::vk_rasterizer {
         cam.shadow_params = m_shadow.params;
         cam.flags.x = m_asset_instance_count;   // cull.comp: only the asset-backed prefix of this frame's instance SSBO is valid
         cam.flags.y = 1u;                       // cull.comp: main view writes the draw statistics (shadow cull does not)
+        cam.flags.z = debug_shading_mode();     // material fragment shaders: 0 lit, 1 LOD colours, 2 flat grey
 
         const auto& env = m_environment;
         const f32 ambient = std::max(env.ambient_intensity, 0.f);
@@ -156,6 +165,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         const glm::mat4& view = m_active_camera.view;
         const glm::vec3 camera_pos = m_active_camera.position;
+        const f32 p11 = std::abs(camera_projection()[1][1]);
         const glm::vec3 camera_forward = -glm::vec3(view[0][2], view[1][2], view[2][2]);
 
         m_translucent_draws.reserve(m_translucent_candidates.size());
@@ -185,6 +195,22 @@ namespace GLT::renderer::vk_rasterizer {
                 const glm::vec3 world = glm::vec3(model * glm::vec4(local, 1.f));
                 world_min = glm::min(world_min, world);
                 world_max = glm::max(world_max, world);
+            }
+
+            // LOD + "cull below", same rule as cull.comp (sphere of the local AABB, largest axis scale)
+            if (!draw.procedural && !draw.forced_lod) {
+                const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
+                const glm::vec3 center = glm::vec3(model * glm::vec4(0.5f * (local_min + local_max), 1.f));
+                const f32 scale = std::max({ glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])), glm::length(glm::vec3(model[2])) });
+                const f32 radius = 0.5f * glm::length(local_max - local_min) * scale;
+                const f32 dist = glm::distance(center, camera_pos);
+                const f32 screen = dist > radius ? radius * p11 / dist : 1e9f;
+                if (slot->lod_screen[0] > 0.f && screen < slot->lod_screen[0])
+                    continue;
+                draw.lod = 0;
+                for (u32 level = 1; level < std::min<u32>(slot->lod_count, 8u); ++level)
+                    if (screen < slot->lod_screen[level])
+                        draw.lod = level;
             }
 
             bool visible = true;
@@ -301,6 +327,7 @@ namespace GLT::renderer::vk_rasterizer {
             create_blit_pipeline();
         create_tonemap_pipeline();
         create_light_cull_debug_pipeline();
+        create_tri_density_resources();
         create_environment_resources();
         create_debug_draw_resources();
     }
@@ -315,6 +342,7 @@ namespace GLT::renderer::vk_rasterizer {
         destroy_environment_resources();
         destroy_tonemap_pipeline();
         destroy_light_cull_debug_pipeline();
+        destroy_tri_density_resources();
         if (!m_offscreen)
             destroy_blit_pipeline();
         destroy_local_shadow_resources();

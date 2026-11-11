@@ -24,6 +24,7 @@ namespace GLT::asset::mesh {
         std::vector<lod_level>                          lods;           // [0] = source mesh
         std::vector<lod_range>                          ranges;         // [level * submesh_count + submesh]
         std::vector<u32>                                indices;        // LOD 1..N, addressed after the source indices
+        std::vector<vertex>                             vertices;       // extra vertices (recomputed normals), addressed after the source vertices
         u32                                             requested = 1;  // lod_count asked for
         f64                                             build_ms = 0.0;
     };

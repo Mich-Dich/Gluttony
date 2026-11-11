@@ -38,6 +38,7 @@ namespace GLT::asset::mesh {
     inline constexpr GLT::asset::chunk_id               CHUNK_LOD_RANGES = 0x000A;      // lod_range[lod_count * submesh_count]
 
     inline constexpr GLT::asset::chunk_id               CHUNK_LOD_INDICES = 0x000B;     // u32[] of LOD 1..N (LOD 0 = CHUNK_INDICES)
+    inline constexpr GLT::asset::chunk_id               CHUNK_LOD_VERTICES = 0x000C;    // vertex[] only LOD 1..N use (recomputed normals), optional
 
     // Hard upper bound of LOD levels per mesh, LOD 0 included. The renderer packs the per-level switch distances of
     // this many levels into its mesh table, so raising it is a GPU layout change
@@ -154,6 +155,19 @@ namespace GLT::asset::mesh {
         LOD_FLAG_AUTO_SCREEN_SIZE = 1u << 1,            // derive screen_size from the achieved error and [pixel_error]
         LOD_FLAG_PRUNE = 1u << 2,                       // allow removing small disconnected parts (bounded by the error limit)
         LOD_FLAG_ALLOW_SUBMESH_REMOVAL = 1u << 3,       // off (default): a submesh never vanishes, it keeps the previous level's geometry
+
+        // Bits 4..5: normals of the generated levels (lod_normals_mode). Simplified triangles reuse LOD 0's vertices, whose
+        // normals belong to the original, finer surface; recomputing gives each level normals that match its own faces
+        LOD_FLAG_NORMALS_SHIFT = 4,
+        LOD_FLAG_NORMALS_MASK = 3u << 4,
+    };
+
+    // @brief How the generated levels get their normals (lod_settings::flags bits 4..5)
+    enum class lod_normals_mode : u32 {
+        keep = 0,                                       // reuse LOD 0's vertex normals (no extra vertices)
+        flat = 1,                                       // one normal per face (faceted)
+        auto_smooth = 2,                                // smooth across edges below lod_settings::smooth_angle, hard above
+        smooth = 3,                                     // smooth everywhere
     };
 
 
@@ -161,13 +175,14 @@ namespace GLT::asset::mesh {
     struct lod_settings {
 
         u32                                             lod_count = 4;                  // requested levels, LOD 0 included (1..MAX_LODS)
-        u32                                             flags = LOD_FLAG_LOCK_BORDERS | LOD_FLAG_AUTO_SCREEN_SIZE | LOD_FLAG_PRUNE;
+        u32                                             flags = LOD_FLAG_LOCK_BORDERS | LOD_FLAG_AUTO_SCREEN_SIZE | LOD_FLAG_PRUNE
+                                                              | (static_cast<u32>(lod_normals_mode::auto_smooth) << LOD_FLAG_NORMALS_SHIFT);
         f32                                             cull_screen_size = 0.0f;        // below this the mesh is not drawn at all (0 = never)
         u32                                             shadow_lod_bias = 1;            // shadow passes use this many levels coarser
         f32                                             pixel_error = 1.0f;             // AUTO_SCREEN_SIZE: allowed error in pixels at 1080p
         f32                                             normal_weight = 0.5f;           // simplifier attribute weights
         f32                                             uv_weight = 0.5f;
-        u32                                             _pad = 0;
+        f32                                             smooth_angle = 45.0f;           // auto_smooth: max angle (degrees) between smoothed faces
         lod_level_settings                              levels[MAX_LODS]{
             { 1.000f, 1.000f, 0.000f, 0 },
             { 0.300f, 0.500f, 0.005f, 0 },
@@ -235,7 +250,8 @@ namespace GLT::asset::mesh {
         lod_settings                                    lod{};
         std::vector<lod_level>                          lods;           // generated levels, [0] describes LOD 0
         std::vector<lod_range>                          lod_ranges;     // [level * submesh_count + submesh]
-        std::vector<u32>                                lod_indices;    // index data of LOD 1..N
+        std::vector<u32>                                lod_indices;    // index data of LOD 1..N, into [vertices ++ lod_vertices]
+        std::vector<vertex>                             lod_vertices;   // extra vertices of LOD 1..N (recomputed normals)
 
         // Bumped by in-place edits (LOD regeneration, ...) so GPU consumers know to re-upload. Runtime only
         u32                                             revision = 0;
@@ -280,6 +296,21 @@ namespace GLT::asset::mesh {
         }
 
 
+        // @brief Vertex [index] of the concatenated stream [vertices ++ lod_vertices] (what LOD indices address)
+        FORCE_INLINE_R const vertex& vertex_at(u32 index) const noexcept {
+            return index < vertices.size() ? vertices[index] : lod_vertices[index - vertices.size()];
+        }
+
+        // @brief Size of [vertices ++ lod_vertices]
+        FORCE_INLINE_R u32 total_vertex_count() const noexcept {
+            return static_cast<u32>(vertices.size() + lod_vertices.size());
+        }
+
+        // @brief Normals mode of the generated levels
+        FORCE_INLINE_R lod_normals_mode normals_mode() const noexcept {
+            return static_cast<lod_normals_mode>((lod.flags & LOD_FLAG_NORMALS_MASK) >> LOD_FLAG_NORMALS_SHIFT);
+        }
+
         // @brief Index value at [position] of the concatenated stream [indices ++ lod_indices]
         FORCE_INLINE_R u32 index_at(u32 position) const noexcept {
 
@@ -306,7 +337,8 @@ namespace GLT::asset::mesh {
                 + colliders.capacity() * sizeof(GLT::asset::mesh::mesh_collider)
                 + lods.capacity() * sizeof(GLT::asset::mesh::lod_level)
                 + lod_ranges.capacity() * sizeof(GLT::asset::mesh::lod_range)
-                + lod_indices.capacity() * sizeof(u32);
+                + lod_indices.capacity() * sizeof(u32)
+                + lod_vertices.capacity() * sizeof(GLT::asset::mesh::vertex);
         }
         
     };

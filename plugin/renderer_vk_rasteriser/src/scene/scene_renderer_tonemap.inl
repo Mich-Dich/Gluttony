@@ -214,6 +214,13 @@ namespace GLT::renderer::vk_rasterizer {
                 push.exposure = std::exp2(std::clamp(visual.exposure_ev, -20.0f, 20.0f));
                 push.tonemapper = std::min(visual.tonemapper, 3u);
                 push.background_mode = m_env.enabled ? 1u : 0u;
+                if (debug_view_active()) {
+                    // Debug colours are display values: no exposure / curve, flat dark background instead of the sky
+                    push.exposure = 1.0f;
+                    push.tonemapper = 3u;
+                    push.background_mode = 0u;
+                    push.clear_color = glm::vec4(0.06f, 0.06f, 0.07f, 1.0f);
+                }
 
                 const vk::Extent2D extent{ m_extent.x, m_extent.y };
 

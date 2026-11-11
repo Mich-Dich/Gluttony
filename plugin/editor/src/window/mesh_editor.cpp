@@ -1973,6 +1973,7 @@ namespace GLT::editor {
         mesh->lods = std::move(result.lods);
         mesh->lod_ranges = std::move(result.ranges);
         mesh->lod_indices = std::move(result.indices);
+        mesh->lod_vertices = std::move(result.vertices);
         if (mesh->lod.flags & GLT::asset::mesh::LOD_FLAG_AUTO_SCREEN_SIZE)
             GLT::asset::mesh::fit_screen_sizes(mesh->lod, mesh->lods, mesh->bounds);
         mesh->revision++;                       // renderers re-upload (shared_resource_manager::refresh_meshes)
@@ -2061,6 +2062,33 @@ namespace GLT::editor {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Small submeshes are simplified relative to their own size and never removed completely.\n"
                     "Uncheck to let coarse levels drop parts that are tiny compared to the whole mesh");
+        }
+
+        // ---- normals of the generated levels -------------------------------------------------------------------------
+        {
+            static constexpr const char* NORMAL_MODES[] = { "Keep source", "Flat", "Auto smooth", "Smooth" };
+            int mode = static_cast<int>((lod.flags & LOD_FLAG_NORMALS_MASK) >> LOD_FLAG_NORMALS_SHIFT);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::Combo("Normals##lod_normals", &mode, NORMAL_MODES, IM_ARRAYSIZE(NORMAL_MODES))) {
+                lod.flags = (lod.flags & ~static_cast<u32>(LOD_FLAG_NORMALS_MASK))
+                    | ((static_cast<u32>(mode) << LOD_FLAG_NORMALS_SHIFT) & LOD_FLAG_NORMALS_MASK);
+                regen_changed = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Normals of LOD 1+. Simplified triangles reuse LOD 0's vertices, whose normals describe the\n"
+                    "original, finer surface (dark / light smears on coarse levels).\n"
+                    "Keep source: reuse them (no extra vertices)\n"
+                    "Flat: one normal per face\n"
+                    "Auto smooth: smooth across edges flatter than the angle, hard edges above it\n"
+                    "Smooth: smooth everywhere");
+            if (mode == static_cast<int>(lod_normals_mode::auto_smooth)) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::DragFloat("Angle##lod_smooth_angle", &lod.smooth_angle, 0.5f, 0.0f, 180.0f, "%.0f deg");
+                regen_changed |= ImGui::IsItemDeactivatedAfterEdit();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Edges between faces bent more than this stay hard");
+            }
         }
 
         if (flag_checkbox("Auto screen sizes", LOD_FLAG_AUTO_SCREEN_SIZE,
@@ -2313,7 +2341,7 @@ namespace GLT::editor {
 
             // Lift the lines slightly off the surface (along the vertex normal) so they win the depth test
             const f32 lift = 0.002f * std::max(GLT::asset::mesh::lod_sphere_radius(mesh.bounds), 1e-4f);
-            auto lifted = [&](u32 v) { return mesh.vertices[v].position + mesh.vertices[v].normal * lift; };
+            auto lifted = [&](u32 v) { const auto& vx = mesh.vertex_at(v); return vx.position + vx.normal * lift; };
 
             std::unordered_set<u64> seen;
             u32 edges = 0;
@@ -2328,7 +2356,7 @@ namespace GLT::editor {
 
                         const u32 a = tri[e];
                         const u32 b = tri[(e + 1) % 3];
-                        if (a >= mesh.vertices.size() || b >= mesh.vertices.size())
+                        if (a >= mesh.total_vertex_count() || b >= mesh.total_vertex_count())
                             continue;
                         const u64 key = (static_cast<u64>(std::min(a, b)) << 32) | std::max(a, b);
                         if (!seen.insert(key).second)

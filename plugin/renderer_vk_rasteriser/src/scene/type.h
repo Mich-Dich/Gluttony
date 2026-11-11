@@ -23,6 +23,13 @@ namespace GLT::renderer::vk_rasterizer {
     // INITIAL_* sizes below); old buffers are retired, so growing never stalls the GPU
     constexpr u32                                       MAX_INSTANCES = 1u << 20;
 
+    // firstInstance of every mesh draw = instance index | LOD info (cull.comp.glsl, material vertex shader)
+    constexpr u32                                       INSTANCE_INDEX_MASK = (1u << 20) - 1u;
+    constexpr u32                                       INSTANCE_LOD_SHIFT = 20;            // 4 bits
+    constexpr u32                                       INSTANCE_HAS_LODS = 1u << 24;       // mesh has generated levels
+    constexpr u32                                       INSTANCE_PROCEDURAL = 1u << 25;     // procedural mesh (debug colouring)
+    static_assert(MAX_INSTANCES - 1u <= INSTANCE_INDEX_MASK, "instance index must fit the firstInstance encoding");
+
     constexpr u32                                       INITIAL_INSTANCE_CAPACITY = 4096;
 
     constexpr u32                                       INITIAL_DRAW_CAPACITY = 4096;       // draw commands (instance x submesh)

@@ -88,6 +88,7 @@ struct renderer_vertex_outputs {
     [[vk::location(1)]] float3                                  normal_ws;
     [[vk::location(2)]] float4                                  tangent_ws;
     [[vk::location(3)]] float2                                  uv0;
+    [[vk::location(4)]] nointerpolation uint                    lod_info;   // firstInstance >> 20: LOD | has LODs | procedural
 };
 
 // ---- helpers -------------------------------------------------------------------------
@@ -97,6 +98,39 @@ float renderer_linearize_depth(float d) {
 
     float4 view = mul(renderer_camera.inv_projection, float4(0.0, 0.0, d, 1.0));
     return -view.z / view.w;
+}
+
+// Normalise with a fallback for zero / NaN / inf vectors (comparisons with NaN are false -> fallback). Assets can carry
+// NaN tangents (assimp CalcTangentSpace on degenerate UVs) or zero normals (degenerate faces); one NaN in the frame
+// makes the whole fragment NaN, which the tonemapper writes out as black
+float3 renderer_safe_normalize(float3 v, float3 fallback) {
+    const float l2 = dot(v, v);
+    return (l2 > 1e-20 && l2 < 1e30) ? v * rsqrt(l2) : fallback;
+}
+
+// Tangent frame that is always finite: unit normal, tangent orthogonal to it, handedness +-1
+void renderer_safe_frame(inout float3 n, inout float4 t) {
+    n = renderer_safe_normalize(n, float3(0.0, 1.0, 0.0));
+    float3 tt = t.xyz - n * dot(n, t.xyz);
+    const float3 axis = abs(n.x) < 0.9 ? float3(1.0, 0.0, 0.0) : float3(0.0, 1.0, 0.0);
+    tt = renderer_safe_normalize(tt, normalize(cross(axis, n)));
+    t = float4(tt, t.w < 0.0 ? -1.0 : 1.0);
+}
+
+// Debug render modes (renderer_camera.flags.z): 1 = LOD colours, 2 = flat grey (triangle density background)
+float3 renderer_lod_color(uint lod_info) {
+    if ((lod_info & 0x20u) != 0u) return float3(0.85, 0.85, 0.85);        // procedural mesh
+    if ((lod_info & 0x10u) == 0u) return float3(0.35, 0.35, 0.38);        // mesh without generated levels
+    switch (lod_info & 0xFu) {
+        case 0u:  return float3(0.05, 0.75, 0.10);
+        case 1u:  return float3(0.55, 0.85, 0.05);
+        case 2u:  return float3(0.95, 0.85, 0.05);
+        case 3u:  return float3(1.00, 0.45, 0.02);
+        case 4u:  return float3(0.90, 0.05, 0.05);
+        case 5u:  return float3(0.85, 0.05, 0.75);
+        case 6u:  return float3(0.45, 0.10, 0.95);
+        default:  return float3(0.10, 0.35, 1.00);
+    }
 }
 
 uint renderer_point_face(float3 d) {
@@ -246,12 +280,14 @@ struct renderer_vert_result {
 renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID,
     uint base_instance : SV_StartInstanceLocation) {
 
-    RendererInstance inst = renderer_instances[base_instance + instance_id];
+    // firstInstance carries the instance index in its low 20 bits and LOD info above (cull.comp.glsl)
+    RendererInstance inst = renderer_instances[(base_instance & 0xFFFFFu) + instance_id];
 
     vertex_input vi;
     vi.position_ws = mul(inst.model, float4(v.position, 1.0)).xyz;
-    vi.normal_ws = normalize(mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz);
-    vi.tangent_ws = float4(normalize(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz), v.tangent.w);
+    vi.normal_ws = mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz;
+    vi.tangent_ws = float4(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz, v.tangent.w);
+    renderer_safe_frame(vi.normal_ws, vi.tangent_ws);
     vi.uv0 = v.uv0;
     vi.uv1 = float2(0.0, 0.0);
     vi.color = float3(1.0, 1.0, 1.0);
@@ -264,6 +300,7 @@ renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : 
     o.varyings.normal_ws = vo.normal_ws;
     o.varyings.tangent_ws = vo.tangent_ws;
     o.varyings.uv0 = vo.uv0;
+    o.varyings.lod_info = base_instance >> 20u;
     return o;
 }
 )SLANG";
@@ -292,12 +329,14 @@ struct renderer_vert_result {
 renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID,
     uint base_instance : SV_StartInstanceLocation) {
 
-    RendererInstance inst = renderer_instances[base_instance + instance_id];
+    // firstInstance carries the instance index in its low 20 bits and LOD info above (cull.comp.glsl)
+    RendererInstance inst = renderer_instances[(base_instance & 0xFFFFFu) + instance_id];
 
     vertex_input vi;
     vi.position_ws = mul(inst.model, float4(v.position, 1.0)).xyz;
-    vi.normal_ws = normalize(mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz);
-    vi.tangent_ws = float4(normalize(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz), v.tangent.w);
+    vi.normal_ws = mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz;
+    vi.tangent_ws = float4(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz, v.tangent.w);
+    renderer_safe_frame(vi.normal_ws, vi.tangent_ws);
     vi.uv0 = v.uv0;
     vi.uv1 = float2(0.0, 0.0);
     vi.color = float3(1.0, 1.0, 1.0);
@@ -313,6 +352,7 @@ renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : 
     o.varyings.normal_ws = vo.normal_ws;
     o.varyings.tangent_ws = vo.tangent_ws;
     o.varyings.uv0 = vo.uv0;
+    o.varyings.lod_info = base_instance >> 20u;
     return o;
 }
 )SLANG";
@@ -342,7 +382,16 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position, boo
 
     // Double-sided materials (no back-face culling): back faces see the surface from behind, so the interpolated
     // normal points away from the viewer -> flip it. Single-sided pipelines cull back faces, so this never triggers there
-    const float3 geo_normal = normalize(i.normal_ws) * (is_front ? 1.0 : -1.0);
+    const float3 geo_normal = renderer_safe_normalize(i.normal_ws, float3(0.0, 1.0, 0.0)) * (is_front ? 1.0 : -1.0);
+
+    // Debug render modes: unlit, no material evaluation (uniform branch)
+    const uint debug_mode = renderer_camera.flags.z;
+    if (debug_mode != 0u) {
+        const float facing = abs(dot(geo_normal, renderer_safe_normalize(renderer_camera.camera_pos.xyz - i.position_ws, geo_normal)));
+        if (debug_mode == 1u)
+            return float4(renderer_lod_color(i.lod_info) * (0.35 + 0.65 * facing), 1.0);
+        return float4(float3(0.30, 0.30, 0.32) * (0.75 + 0.25 * facing), 1.0);
+    }
 
     surface_input s = {};
     s.position_ws = i.position_ws;
@@ -360,7 +409,7 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position, boo
     surface_output o = surface_evaluate(s, renderer_material_params, tex);
 
     const float3 Ng = geo_normal;
-    const float3 N = normalize(o.normal_ws);
+    const float3 N = renderer_safe_normalize(o.normal_ws, Ng);
     const float3 V = s.view_dir_ws;
     const float  NoV = max(dot(N, V), 1e-4);
 
@@ -473,7 +522,7 @@ void depth_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) {
 
     surface_input s = {};
     s.position_ws = i.position_ws;
-    s.normal_ws = normalize(i.normal_ws);
+    s.normal_ws = renderer_safe_normalize(i.normal_ws, float3(0.0, 1.0, 0.0));
     s.tangent_ws = i.tangent_ws;
     s.uv0 = i.uv0;
     s.uv1 = float2(0.0, 0.0);

@@ -492,6 +492,9 @@ namespace GLT::renderer::vk_rasterizer {
         {
             auto* dst = static_cast<GLT::asset::mesh::vertex*>(m_dev->map_buffer(m_vertex_buffer));
             std::memcpy(dst + slot.vertex_offset, mesh.vertices.data(), mesh.vertices.size() * sizeof(GLT::asset::mesh::vertex));
+            if (slot.vertex_count > mesh.vertices.size())           // LOD vertices (recomputed normals) right behind
+                std::memcpy(dst + slot.vertex_offset + mesh.vertices.size(), mesh.lod_vertices.data(),
+                    (slot.vertex_count - mesh.vertices.size()) * sizeof(GLT::asset::mesh::vertex));
             m_dev->unmap_buffer(m_vertex_buffer);
         }
         {
@@ -501,6 +504,22 @@ namespace GLT::renderer::vk_rasterizer {
             if (slot.lod_count > 1 && slot.index_count > mesh.indices.size())
                 std::memcpy(dst + slot.index_offset + mesh.indices.size(), mesh.lod_indices.data(),
                     (slot.index_count - mesh.indices.size()) * sizeof(u32));
+
+            // Never let the GPU fetch past this mesh's vertices (another mesh's data / uninitialised pool memory: huge
+            // NaN-shaded triangles). Out-of-range triangles become degenerate. Checks the CPU copy (the mapped buffer is
+            // write-combined: reading it back would be slow) and only patches the uploaded triangles that are bad
+            u32 bad_triangles = 0;
+            u32* uploaded = dst + slot.index_offset;
+            const size_t base_count = mesh.indices.size();
+            auto source_index = [&](u32 i) { return i < base_count ? mesh.indices[i] : mesh.lod_indices[i - base_count]; };
+            for (u32 t = 0; t + 2 < slot.index_count; t += 3) {
+                if (source_index(t) < slot.vertex_count && source_index(t + 1) < slot.vertex_count && source_index(t + 2) < slot.vertex_count)
+                    continue;
+                uploaded[t] = uploaded[t + 1] = uploaded[t + 2] = 0u;
+                ++bad_triangles;
+            }
+            if (bad_triangles > 0)
+                LOG(warn, "mesh slot: {} triangle(s) with out-of-range vertex indices dropped (corrupt mesh data)", bad_triangles);
             m_dev->unmap_buffer(m_index_buffer);
         }
     }
@@ -562,6 +581,8 @@ namespace GLT::renderer::vk_rasterizer {
             md.vertex_offset = slot.vertex_offset;
             md.index_offset = slot.index_offset;
             md.lod_count = lod_count;
+            slot.lod_screen = lod_screen_sizes(mesh, lod_count);
+            std::copy(slot.lod_screen.begin(), slot.lod_screen.end(), md.lod_screen);
 
             auto* m = static_cast<gpu_mesh_data*>(m_dev->map_buffer(m_mesh_data_buffer));
             m[mesh_index] = md;
@@ -592,7 +613,6 @@ namespace GLT::renderer::vk_rasterizer {
         }
 
         mesh_upload_layout layout = mesh_layout_of(*mesh);
-        const u32 vertex_count = layout.vertex_count;
         const u32 submesh_count = layout.submesh_count;
 
         // Reserve a slot index up front so we know whether we're reusing
@@ -613,12 +633,13 @@ namespace GLT::renderer::vk_rasterizer {
         }
 
         // Allocate buffer ranges (may compact / grow / fail)
-        auto alloc = allocate_mesh_ranges(vertex_count, layout.index_count, submesh_count * layout.lod_count);
+        auto alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, submesh_count * layout.lod_count);
         if (!alloc && layout.lod_count > 1) {
             // Submesh table / index pool full: fall back to LOD 0 only
             layout.lod_count = 1;
             layout.index_count = static_cast<u32>(mesh->indices.size());
-            alloc = allocate_mesh_ranges(vertex_count, layout.index_count, submesh_count);
+            layout.vertex_count = static_cast<u32>(mesh->vertices.size());
+            alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, submesh_count);
         }
         if (!alloc) {
             // Return the slot — no ranges were allocated
@@ -632,7 +653,7 @@ namespace GLT::renderer::vk_rasterizer {
         slot = {};
         slot.asset = handle;
         slot.vertex_offset = alloc->vertex_offset;
-        slot.vertex_count = vertex_count;
+        slot.vertex_count = layout.vertex_count;
         slot.index_offset = alloc->index_offset;
         slot.index_count = layout.index_count;
         slot.submesh_offset = alloc->submesh_offset;
@@ -667,10 +688,13 @@ namespace GLT::renderer::vk_rasterizer {
         l.lod_count = std::min(mesh.lod_count(), GLT::asset::mesh::MAX_LODS);
         if (l.lod_count > 1) {
             const u64 total = static_cast<u64>(mesh.indices.size()) + mesh.lod_indices.size();
-            if (total > UINT32_MAX)
+            const u64 vertices = static_cast<u64>(mesh.vertices.size()) + mesh.lod_vertices.size();
+            if (total > UINT32_MAX || vertices > UINT32_MAX)
                 l.lod_count = 1;
-            else
+            else {
                 l.index_count = static_cast<u32>(total);
+                l.vertex_count = static_cast<u32>(vertices);       // [vertices ++ lod_vertices] (recomputed LOD normals)
+            }
         }
         return l;
     }
@@ -686,7 +710,21 @@ namespace GLT::renderer::vk_rasterizer {
         mix(reinterpret_cast<std::uintptr_t>(mesh.lod_ranges.data()));  mix(mesh.lod_ranges.size());
         mix(reinterpret_cast<std::uintptr_t>(mesh.lod_indices.data())); mix(mesh.lod_indices.size());
         mix(mesh.lods.size());
+        mix(reinterpret_cast<std::uintptr_t>(mesh.lod_vertices.data())); mix(mesh.lod_vertices.size());
         return h;
+    }
+
+
+    std::array<f32, 8> shared_resource_manager::lod_screen_sizes(const GLT::asset::mesh::mesh_asset& mesh, u32 lod_count) {
+
+        // [0] cull size, [n] = size below which LOD n is used. Unused levels get 0 (never selected)
+        std::array<f32, 8> sizes{};
+        sizes[0] = std::isfinite(mesh.lod.cull_screen_size) ? std::max(mesh.lod.cull_screen_size, 0.0f) : 0.0f;
+        for (u32 level = 1; level < std::min<u32>(lod_count, 8u); ++level) {
+            const f32 s = mesh.lod.levels[level].screen_size;
+            sizes[level] = std::isfinite(s) ? std::max(s, 0.0f) : 0.0f;
+        }
+        return sizes;
     }
 
 
@@ -709,7 +747,14 @@ namespace GLT::renderer::vk_rasterizer {
         // is dragged). The renderer does not use those, so only re-upload when the geometry arrays were replaced/resized
         const u64 geometry = geometry_signature(*mesh);
         if (mesh == m_mesh_slots[id].source && geometry == m_mesh_slots[id].source_geometry) {
-            m_mesh_slots[id].source_revision = mesh->revision;
+            // Settings only: the switch sizes may have changed. Patch them into the mesh table entry (a few floats; an
+            // in-flight frame sees either the old or the new sizes, both valid)
+            mesh_slot& slot = m_mesh_slots[id];
+            slot.source_revision = mesh->revision;
+            slot.lod_screen = lod_screen_sizes(*mesh, slot.lod_count);
+            auto* m = static_cast<gpu_mesh_data*>(m_dev->map_buffer(m_mesh_data_buffer));
+            std::copy(slot.lod_screen.begin(), slot.lod_screen.end(), m[id].lod_screen);
+            m_dev->unmap_buffer(m_mesh_data_buffer);
             return false;
         }
 
@@ -721,6 +766,7 @@ namespace GLT::renderer::vk_rasterizer {
         if (!alloc && layout.lod_count > 1) {
             layout.lod_count = 1;
             layout.index_count = static_cast<u32>(mesh->indices.size());
+            layout.vertex_count = static_cast<u32>(mesh->vertices.size());
             alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, layout.submesh_count);
         }
 

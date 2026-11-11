@@ -336,12 +336,15 @@ namespace GLT::renderer::vk_rasterizer {
             add_clear_light_grid_pass();
             add_light_culling_pass();
             add_scene_pass();
-            add_sky_background_pass();          // sky + sun where no opaque geometry was drawn
+            if (!debug_view_active())
+                add_sky_background_pass();      // sky + sun where no opaque geometry was drawn (debug views: flat background)
             add_translucent_pass();             // sorted, blended into scene_hdr after all opaque geometry
             if (m_active_mode == modes::Light_cull.id)
                 add_light_cull_debug_pass();    // debug render mode: lights-per-cluster heatmap instead of the shaded image
             else
                 add_tonemap_pass();             // HDR -> scene_color (display); debug draw goes on top, unaffected by exposure
+            if (m_active_mode == modes::Tri_density.id)
+                add_tri_density_passes();       // triangles-per-pixel heatmap blended over the flat grey scene
             add_debug_draw_pass();
 
             if (!m_offscreen)
@@ -930,4 +933,5 @@ namespace GLT::renderer::vk_rasterizer {
 #include "scene/scene_renderer_blit.inl"
 #include "scene/scene_renderer_tonemap.inl"
 #include "scene/scene_renderer_light_cull_debug.inl"
+#include "scene/scene_renderer_tri_density.inl"
 #include "scene/scene_renderer_environment.inl"

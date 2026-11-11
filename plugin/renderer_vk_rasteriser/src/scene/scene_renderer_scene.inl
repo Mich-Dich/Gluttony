@@ -110,7 +110,7 @@ namespace GLT::renderer::vk_rasterizer {
                     m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 1, 1, offset, ctx.cmd,
                         vk::PipelineBindPoint::eGraphics);
 
-                    const u32 base_instance = m_asset_instance_count + static_cast<u32>(i);
+                    const u32 base_instance = (m_asset_instance_count + static_cast<u32>(i)) | INSTANCE_PROCEDURAL;
                     ctx.cmd.drawIndexed(pm.index_count, 1, 0, 0, base_instance);
                 }
 
@@ -201,7 +201,7 @@ namespace GLT::renderer::vk_rasterizer {
                     m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 1, 1, offset, ctx.cmd,
                         vk::PipelineBindPoint::eGraphics);
 
-                    const u32 base_instance = m_asset_instance_count + static_cast<u32>(i);
+                    const u32 base_instance = (m_asset_instance_count + static_cast<u32>(i)) | INSTANCE_PROCEDURAL;
                     ctx.cmd.drawIndexed(pm.index_count, 1, 0, 0, base_instance);
                 }
 
@@ -270,7 +270,7 @@ namespace GLT::renderer::vk_rasterizer {
                         ctx.cmd.bindVertexBuffers(0, { pm.vertex_buffer.buffer }, { 0 });
                         ctx.cmd.bindIndexBuffer(pm.index_buffer.buffer, 0, vk::IndexType::eUint32);
                         shared_geometry_bound = false;
-                        ctx.cmd.drawIndexed(pm.index_count, 1, 0, 0, draw.instance);
+                        ctx.cmd.drawIndexed(pm.index_count, 1, 0, 0, draw.instance | INSTANCE_PROCEDURAL);
 
                     } else {
 
@@ -288,7 +288,7 @@ namespace GLT::renderer::vk_rasterizer {
                             shared_geometry_bound = true;
                         }
                         ctx.cmd.drawIndexed(range.y, 1, slot->index_offset + range.x, static_cast<i32>(slot->vertex_offset),
-                            draw.instance);
+                            draw.instance | (draw.lod << INSTANCE_LOD_SHIFT) | (slot->lod_count > 1 ? INSTANCE_HAS_LODS : 0u));
                     }
                 }
 

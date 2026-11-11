@@ -119,7 +119,8 @@ namespace GLT::renderer::vk_rasterizer {
             u32                                         mesh = 0;               // shared_mesh_id, or procedural slot index
             u32                                         submesh = 0;
             bool                                        procedural = false;
-            u32                                         lod = 0;                // LOD level (forced by instance flags)
+            u32                                         lod = 0;                // LOD level (forced, else chosen in prepare_translucent_draws)
+            bool                                        forced_lod = false;
         };
 
         struct cluster_grid_params {
@@ -212,6 +213,11 @@ namespace GLT::renderer::vk_rasterizer {
         void add_blit_to_backbuffer_pass();
         void add_tonemap_pass();
         void add_light_cull_debug_pass();           // render mode "Light Culling": replaces the tonemap pass
+        void add_tri_density_passes();              // render mode "Triangle Density": count, blur, heat overlay on scene_color
+        void create_tri_density_resources();
+        void destroy_tri_density_resources();
+        [[nodiscard]] u32 debug_shading_mode() const;   // camera flags.z for the material shaders (0 = lit)
+        [[nodiscard]] bool debug_view_active() const { return debug_shading_mode() != 0u; }
         void add_environment_passes();              // sky cubemap -> specular prefilter + SH (only when the env changed)
         void add_sky_background_pass();             // sky + sun disk into scene_hdr where no geometry was drawn
         void add_reset_shadow_draw_count_pass();
@@ -414,6 +420,18 @@ namespace GLT::renderer::vk_rasterizer {
         vk::PipelineLayout                                                  m_light_debug_pipeline_layout = nullptr;
         vk::Pipeline                                                        m_light_debug_pipeline = nullptr;
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_light_debug_desc_buffers{};
+
+        // Triangle density heatmap (debug render mode)
+        vk::DescriptorSetLayout                                             m_tri_density_count_set_layout = nullptr;
+        vk::DescriptorSetLayout                                             m_tri_density_blur_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_tri_density_count_pipeline_layout = nullptr;
+        vk::PipelineLayout                                                  m_tri_density_blur_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_tri_density_count_pipeline = nullptr;
+        vk::Pipeline                                                        m_tri_density_blur_h_pipeline = nullptr;
+        vk::Pipeline                                                        m_tri_density_blur_v_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_tri_density_count_desc{};
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_tri_density_blur_h_desc{};
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_tri_density_blur_v_desc{};
 
         // Graph + target handles
         unique_ref<graph::render_graph>                                     m_graph;
