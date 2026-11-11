@@ -125,6 +125,7 @@ namespace GLT::renderer::vk_rasterizer {
             ri.pColorAttachmentFormats = &format;
 
             vk::GraphicsPipelineCreateInfo pi{};
+            pi.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;    // bound via descriptor buffers (spec: mandatory)
             pi.pNext = &ri;
             pi.stageCount = 2;
             pi.pStages = stages;

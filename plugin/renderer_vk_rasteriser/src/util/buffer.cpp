@@ -80,9 +80,12 @@ namespace GLT::renderer::vk_rasterizer::util {
         alloc_inf.flags = flags;
         alloc_inf.pool = pool == nullptr ? m_current_pool : pool;
 
+        // Every buffer is addressed by device address: the descriptor buffers themselves (bindDescriptorBuffersEXT) and
+        // every uniform / storage buffer written into one (getDescriptorEXT takes an address). getBufferAddress() below
+        // is only valid for buffers created with this usage; drivers that are strict about it hand out a null address
         vk::BufferCreateInfo buffer_info = {};
         buffer_info.setSize(size);
-        buffer_info.setUsage(buffer_usage);
+        buffer_info.setUsage(buffer_usage | vk::BufferUsageFlagBits::eShaderDeviceAddress);
 
         vk::Result result;
         if (alignment)

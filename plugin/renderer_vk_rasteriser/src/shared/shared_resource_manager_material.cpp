@@ -820,6 +820,7 @@ namespace GLT::renderer::vk_rasterizer {
         ri.depthAttachmentFormat = depth_format;
 
         vk::GraphicsPipelineCreateInfo info{};
+        info.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;      // bound via descriptor buffers (spec: mandatory)
         info.pNext = &ri;
         info.stageCount = 2;
         info.pStages = stages;

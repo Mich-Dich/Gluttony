@@ -1,6 +1,9 @@
 
 #include "util/pch.h"
 
+#include <cctype>
+#include <cstdlib>
+
 #include <VkBootstrap.h>
 
 #include "builders.h"
@@ -61,6 +64,41 @@ namespace GLT::renderer::vk_rasterizer::util {
 
     std::vector<const char *> get_required_extensions_for_vk_ray() { return ray_tracing_extensions; }
 
+
+    // Higher wins. A software rasteriser is only ever the last resort: it implements nearly every extension and feature,
+    // so "the first device that passes the requirement checks" silently picked llvmpipe over the real GPU as soon as one
+    // requirement was stricter than the GPU's driver (2026-11: ~15 fps on a laptop with a perfectly usable iGPU)
+    static int device_type_rank(VkPhysicalDeviceType type) {
+
+        switch (type) {
+            case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:      return 4;
+            case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:    return 3;
+            case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:       return 2;
+            case VK_PHYSICAL_DEVICE_TYPE_CPU:               return 0;
+            default:                                        return 1;
+        }
+    }
+
+
+    static std::string to_lower(std::string text) {
+
+        std::transform(text.begin(), text.end(), text.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    }
+
+
+    // Enables ONE feature bit of a Vulkan 1.1 / 1.2 / 1.3 / extension feature struct if the device supports it. One bit
+    // per call: vk-bootstrap enables a struct all-or-nothing, so a single missing feature must not block the others
+    template<typename features_t>
+    static bool enable_feature_if_present(vkb::PhysicalDevice& device, VkStructureType type, VkBool32 features_t::* member) {
+
+        features_t features{};
+        features.sType = type;
+        features.*member = VK_TRUE;
+        return device.enable_extension_features_if_present(features);
+    }
+
     // CLASS IMPLEMENTATION ============================================================================================
 
     vulkan_builder::vulkan_builder() {
@@ -91,6 +129,13 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         if (enable_debug)
         {
+            // request_validation_layers() silently carries on without the layer when it is not installed. Say so: a debug
+            // build that validates nothing looks exactly like one that has no API misuse
+            const auto system_info = vkb::SystemInfo::get_system_info();
+            if (system_info.has_value() && !system_info.value().validation_layers_available)
+                LOG(warn, "Vulkan validation was requested, but VK_LAYER_KHRONOS_validation is not installed / not found: this build "
+                    "validates NOTHING. Install the package 'vulkan-validationlayers' (or source the Vulkan SDK's setup-env.sh)")
+
             inst_builder.request_validation_layers()
                 .set_debug_callback_user_data_pointer(debug_callback_user_data)
                 .set_debug_callback(debug_callback == nullptr ? vk_ray_vulkan_debug_cback : debug_callback)
@@ -125,61 +170,226 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         vkb::Instance &instance = reinterpret_cast<builder_vkb_structs *>(struct_data.get())->instance;
 
-        auto phys_selector = vkb::PhysicalDeviceSelector(instance, surface)
-                                 .add_required_extensions(device_extensions)
-                                 .add_required_extensions(ray_tracing_extensions)
-                                 .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
-                                 .set_surface(surface)
-                                 .require_present();
-
-        // Enable needed features
-        auto raytracing_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR().setRayTracingPipeline(true);
-        auto ray_query_features = vk::PhysicalDeviceRayQueryFeaturesKHR().setRayQuery(true);
-        auto ray_tracing_position_fetch_features = vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR().setRayTracingPositionFetch(true);
-
-        auto accelFeatures = vk::PhysicalDeviceAccelerationStructureFeaturesKHR()
-                                 .setAccelerationStructure(true)
-                                 .setDescriptorBindingAccelerationStructureUpdateAfterBind(true);
-
-        auto descbufferFeatures = vk::PhysicalDeviceDescriptorBufferFeaturesEXT()
-                                      .setDescriptorBuffer(true)
-                                      .setDescriptorBufferImageLayoutIgnored(true);
-
-        phys_selector.add_required_extension_features(raytracing_features);
-        phys_selector.add_required_extension_features(ray_query_features);
-        phys_selector.add_required_extension_features(ray_tracing_position_fetch_features);
-        phys_selector.add_required_extension_features(accelFeatures);
-        phys_selector.add_required_extension_features(descbufferFeatures);
-
+        // ---- HARD requirements: only what the rasteriser cannot run without ------------------------------------------
+        // Everything is bound through VK_EXT_descriptor_buffer (and therefore by buffer device address), deferred
+        // destruction uses a timeline semaphore, dynamic rendering + synchronization2 are core (and mandatory) in 1.3.
+        // This list used to contain the whole ray tracing extension set and descriptorBufferImageLayoutIgnored, none of
+        // which the rasteriser uses: hardware GPUs that lack one of them were rejected and the software rasteriser
+        // (which has them all) was picked instead
         physical_device_features12.bufferDeviceAddress = true;
         physical_device_features12.timelineSemaphore = true;            // util::retire_queue (deferred destruction)
-        physical_device_features12.descriptorIndexing = true;
-        physical_device_features12.descriptorBindingVariableDescriptorCount = true;
-        physical_device_features12.descriptorBindingPartiallyBound = true;
-        physical_device_features12.runtimeDescriptorArray = true;
-        physical_device_features12.shaderSampledImageArrayNonUniformIndexing = true;
-        physical_device_features12.shaderStorageBufferArrayNonUniformIndexing = true;
-        physical_device_features12.shaderStorageImageArrayNonUniformIndexing = true;
-        physical_device_features12.shaderUniformBufferArrayNonUniformIndexing = true;
-        physical_device_features12.shaderUniformTexelBufferArrayNonUniformIndexing = true;
-        physical_device_features12.shaderStorageTexelBufferArrayNonUniformIndexing = true;
+        physical_device_features13.dynamicRendering = true;
+        physical_device_features13.synchronization2 = true;
 
-        phys_selector.set_required_features(physical_device_features10);
-        phys_selector.set_required_features_11(physical_device_features11);
-        phys_selector.set_required_features_12(physical_device_features12);
-        phys_selector.set_required_features_13(physical_device_features13);
+        std::vector<const char*> required_extensions = device_extensions;
+        const auto require_extension = [&](const char* extension) {
+            const bool listed = std::any_of(required_extensions.begin(), required_extensions.end(),
+                [&](const char* other) { return std::strcmp(other, extension) == 0; });
+            if (!listed)
+                required_extensions.push_back(extension);
+        };
+        require_extension(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+        if (require_ray_tracing)
+            for (const char* extension : ray_tracing_extensions)
+                require_extension(extension);
 
-        phys_selector.set_minimum_version(1, 2);
-        auto phys_result = phys_selector.select();
-        if (!phys_result.has_value())
-        {
-            LOG(error, "Physical Device Build failed, Error: {}", phys_result.error().message());
-            throw std::runtime_error("Physical Device Build failed");
-            return {};
+        const auto configure = [&](vkb::PhysicalDeviceSelector& selector) {
+
+            selector.add_required_extensions(required_extensions)
+                .set_surface(surface)
+                .require_present()
+                .allow_any_gpu_device_type(true)        // the device type is ranked below, it never rejects a device
+                .set_minimum_version(1, 3);
+
+            selector.add_required_extension_features(vk::PhysicalDeviceDescriptorBufferFeaturesEXT().setDescriptorBuffer(true));
+
+            if (require_ray_tracing) {
+                selector.add_required_extension_features(vk::PhysicalDeviceRayTracingPipelineFeaturesKHR().setRayTracingPipeline(true));
+                selector.add_required_extension_features(vk::PhysicalDeviceRayQueryFeaturesKHR().setRayQuery(true));
+                selector.add_required_extension_features(
+                    vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR().setRayTracingPositionFetch(true));
+                selector.add_required_extension_features(vk::PhysicalDeviceAccelerationStructureFeaturesKHR()
+                    .setAccelerationStructure(true)
+                    .setDescriptorBindingAccelerationStructureUpdateAfterBind(true));
+            }
+
+            selector.set_required_features(physical_device_features10);
+            selector.set_required_features_11(physical_device_features11);
+            selector.set_required_features_12(physical_device_features12);
+            selector.set_required_features_13(physical_device_features13);
+        };
+
+        // ---- Check every device on its own, so the reason for a rejection can be reported ----------------------------
+        struct candidate {
+            vkb::PhysicalDevice                         device;
+            u32                                         index = 0;      // position in the enumeration (= logged index)
+            int                                         rank = 0;       // device_type_rank()
+        };
+        std::vector<candidate> candidates;
+        std::vector<std::string> rejections;
+
+        const std::vector<vk::PhysicalDevice> all_devices = vk::Instance(instance.instance).enumeratePhysicalDevices();
+        for (u32 index = 0; index < all_devices.size(); ++index) {
+
+            const vk::PhysicalDeviceProperties properties = all_devices[index].getProperties();
+            const std::string name = properties.deviceName.data();
+            const std::string label = std::format("[{}] {} ({}, Vulkan {}.{}.{})", index, name, vk::to_string(properties.deviceType),
+                VK_API_VERSION_MAJOR(properties.apiVersion), VK_API_VERSION_MINOR(properties.apiVersion),
+                VK_API_VERSION_PATCH(properties.apiVersion));
+
+            vkb::PhysicalDeviceSelector selector(instance, surface);
+            configure(selector);
+            selector.set_name(name);                    // restrict this run to the one device
+            const auto result = selector.select();
+
+            if (result.has_value()) {
+
+                const VkPhysicalDevice picked = result.value().physical_device;
+                const bool known = std::any_of(candidates.begin(), candidates.end(),
+                    [&](const candidate& other) { return other.device.physical_device == picked; });
+                if (!known) {
+                    candidates.push_back({ result.value(), index,
+                        device_type_rank(static_cast<VkPhysicalDeviceType>(properties.deviceType)) });
+                    LOG(info, "Vulkan device {}: usable", label)
+                }
+                continue;
+            }
+
+            // vk-bootstrap prefixes every reason with the device it belongs to; the other devices only fail the name filter
+            std::string reasons;
+            const std::string prefix = "Physical Device " + name + " not selected due to: ";
+            for (const std::string& reason : result.detailed_failure_reasons()) {
+                if (!reason.starts_with(prefix) || reason.find("doesn't match requested name") != std::string::npos)
+                    continue;
+                if (!reasons.empty())
+                    reasons += "; ";
+                reasons += reason.substr(prefix.size());
+            }
+            if (reasons.empty())
+                reasons = result.error().message();
+
+            rejections.push_back(label + ": " + reasons);
+            LOG(warn, "Vulkan device {}: REJECTED - {}", label, reasons)
         }
 
+        if (candidates.empty()) {
+
+            for (const std::string& rejection : rejections)
+                LOG(error, "Vulkan device REJECTED: {}", rejection)
+            LOG(error, "No Vulkan device fulfils the renderer's requirements (Vulkan 1.3, VK_EXT_descriptor_buffer, present support)")
+            throw std::runtime_error("Physical Device Build failed");
+        }
+
+        // ---- Choose: an explicit request first, otherwise the best device type (ties: the system's own order) -------
+        const candidate* chosen = nullptr;
+
+        std::string wanted = preferred_device;
+        if (const char* env = std::getenv("GLT_VK_DEVICE"); env && *env)
+            wanted = env;
+
+        if (!wanted.empty()) {
+
+            const bool is_index = std::all_of(wanted.begin(), wanted.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            const std::string needle = to_lower(wanted);
+            for (const candidate& option : candidates) {
+                const bool match = is_index ? (std::to_string(option.index) == wanted)
+                                            : (to_lower(option.device.name).find(needle) != std::string::npos);
+                if (match) {
+                    chosen = &option;
+                    break;
+                }
+            }
+            if (!chosen)
+                LOG(error, "Requested Vulkan device '{}' (GLT_VK_DEVICE) matches no usable device, choosing automatically", wanted)
+        }
+
+        if (!chosen) {
+            chosen = &candidates.front();
+            for (const candidate& option : candidates)
+                if (option.rank > chosen->rank)
+                    chosen = &option;
+        }
+
+        vkb::PhysicalDevice selected = chosen->device;
+
+        if (selected.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) {
+
+            // error level on purpose: it is the only level (besides fatal) that reaches the log in release builds
+            for (const std::string& rejection : rejections)
+                LOG(error, "Vulkan device REJECTED: {}", rejection)
+            LOG(error, "Rendering on the SOFTWARE rasteriser '{}': no hardware GPU fulfils the renderer's requirements, so every "
+                "pixel is shaded on the CPU and the frame rate will be very low. See the rejection reasons above (GPU driver / "
+                "Mesa too old?), or force a device with the environment variable GLT_VK_DEVICE=<part of the device name>",
+                selected.name)
+        }
+
+        // ---- Features the renderer uses when they exist: enabled on the chosen device, never a reason to reject it --
+        std::string missing_used;           // used by the renderer: every desktop driver has them
+        std::string missing_optional;       // enabled for completeness only
+        const auto note = [](std::string& list, bool enabled, const char* feature) {
+            if (enabled)
+                return;
+            if (!list.empty())
+                list += ", ";
+            list += feature;
+        };
+
+        const auto enable_10 = [&](VkBool32 VkPhysicalDeviceFeatures::* member) {
+            VkPhysicalDeviceFeatures features{};
+            features.*member = VK_TRUE;
+            return selected.enable_features_if_present(features);
+        };
+        const auto enable_11 = [&](VkBool32 VkPhysicalDeviceVulkan11Features::* member) {
+            return enable_feature_if_present<VkPhysicalDeviceVulkan11Features>(selected,
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, member);
+        };
+        const auto enable_12 = [&](VkBool32 VkPhysicalDeviceVulkan12Features::* member) {
+            return enable_feature_if_present<VkPhysicalDeviceVulkan12Features>(selected,
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, member);
+        };
+        const auto enable_13 = [&](VkBool32 VkPhysicalDeviceVulkan13Features::* member) {
+            return enable_feature_if_present<VkPhysicalDeviceVulkan13Features>(selected,
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, member);
+        };
+
+        // Used by the draw path. They were never enabled before (drivers tolerate that, the spec does not)
+        note(missing_used, enable_10(&VkPhysicalDeviceFeatures::multiDrawIndirect), "multiDrawIndirect");                  // one indirect call per material
+        note(missing_used, enable_10(&VkPhysicalDeviceFeatures::drawIndirectFirstInstance), "drawIndirectFirstInstance");  // firstInstance = instance index
+        note(missing_used, enable_12(&VkPhysicalDeviceVulkan12Features::drawIndirectCount), "drawIndirectCount");          // drawIndexedIndirectCount
+        note(missing_used, enable_11(&VkPhysicalDeviceVulkan11Features::shaderDrawParameters), "shaderDrawParameters");    // SV_StartInstanceLocation
+
+        note(missing_optional, enable_10(&VkPhysicalDeviceFeatures::textureCompressionBC), "textureCompressionBC");        // BC1-7 texture assets
+        note(missing_optional, enable_13(&VkPhysicalDeviceVulkan13Features::shaderDemoteToHelperInvocation), "shaderDemoteToHelperInvocation");
+        note(missing_optional, enable_13(&VkPhysicalDeviceVulkan13Features::maintenance4), "maintenance4");
+
+        // Enabled since the first version of this builder; the rasteriser has no descriptor arrays, so they are optional
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::descriptorIndexing), "descriptorIndexing");
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::descriptorBindingVariableDescriptorCount), "descriptorBindingVariableDescriptorCount");
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::descriptorBindingPartiallyBound), "descriptorBindingPartiallyBound");
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::runtimeDescriptorArray), "runtimeDescriptorArray");
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::shaderSampledImageArrayNonUniformIndexing), "shaderSampledImageArrayNonUniformIndexing");
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::shaderStorageBufferArrayNonUniformIndexing), "shaderStorageBufferArrayNonUniformIndexing");
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::shaderStorageImageArrayNonUniformIndexing), "shaderStorageImageArrayNonUniformIndexing");
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::shaderUniformBufferArrayNonUniformIndexing), "shaderUniformBufferArrayNonUniformIndexing");
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::shaderUniformTexelBufferArrayNonUniformIndexing), "shaderUniformTexelBufferArrayNonUniformIndexing");
+        note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::shaderStorageTexelBufferArrayNonUniformIndexing), "shaderStorageTexelBufferArrayNonUniformIndexing");
+
+        // Optional capability of the extension, and not needed here: every image descriptor is written with the layout the
+        // render graph puts the image in. It used to be a hard requirement, which disqualified every GPU without it
+        note(missing_optional, enable_feature_if_present<VkPhysicalDeviceDescriptorBufferFeaturesEXT>(selected,
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,
+            &VkPhysicalDeviceDescriptorBufferFeaturesEXT::descriptorBufferImageLayoutIgnored), "descriptorBufferImageLayoutIgnored");
+
+        if (!missing_used.empty())
+            LOG(error, "Vulkan device '{}' does not report features the renderer uses: {}", selected.name, missing_used)
+        if (!missing_optional.empty())
+            LOG(info, "Vulkan device '{}': optional features not available: {}", selected.name, missing_optional)
+
+        LOG(info, "Using Vulkan device [{}] {} ({})", chosen->index, selected.name,
+            vk::to_string(static_cast<vk::PhysicalDeviceType>(selected.properties.deviceType)))
+
         vkb::PhysicalDevice &return_struct = reinterpret_cast<builder_vkb_structs*>(struct_data.get())->physical_device;
-        return_struct = phys_result.value();
+        return_struct = selected;
 
         return return_struct.physical_device;
     }

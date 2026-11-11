@@ -68,6 +68,7 @@ namespace GLT::renderer::vk_rasterizer {
         shader_stage.pName = "main";
 
         vk::ComputePipelineCreateInfo pipeline_info{};
+        pipeline_info.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;     // bound via descriptor buffers (spec: mandatory)
         pipeline_info.layout = m_cull_pipeline_layout;
         pipeline_info.stage = shader_stage;
 

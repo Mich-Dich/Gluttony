@@ -105,6 +105,7 @@ namespace GLT::renderer::vk_rasterizer {
             ASSERT(!spv.empty(), "", "Failed to compile {} shader", (what))
             vk::ShaderModule module = dev->create_shader_module(spv);
             vk::ComputePipelineCreateInfo ci{};
+            ci.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;    // bound via descriptor buffers (spec: mandatory)
             ci.layout = layout;
             ci.stage.stage = vk::ShaderStageFlagBits::eCompute;
             ci.stage.module = module;
@@ -241,6 +242,7 @@ namespace GLT::renderer::vk_rasterizer {
             ri.depthAttachmentFormat = vk::Format::eD32Sfloat;
 
             vk::GraphicsPipelineCreateInfo pi{};
+            pi.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;    // bound via descriptor buffers (spec: mandatory)
             pi.pNext = &ri;
             pi.stageCount = 2;
             pi.pStages = stages;

@@ -127,10 +127,14 @@ namespace GLT::renderer::vk_rasterizer {
                 VK_API_VERSION_PATCH(props.apiVersion))
             const f32 device_type = static_cast<f32>(static_cast<u32>(props.deviceType));
             const f32 timestamp_period = props.limits.timestampPeriod;
+
+            // A software rasteriser (llvmpipe & co) must be impossible to overlook: it is 10-100x slower than any GPU and
+            // makes every "GPU" timing a CPU timing. (It went unnoticed for days as "type 4" in this section.)
+            const bool software = props.deviceType == vk::PhysicalDeviceType::eCpu;
             m_gpu_device_provider = GLT::debug::register_provider(GLT::debug::stats_provider{
-                .name = "GPU device: " + device_name,
+                .name = "GPU device: " + device_name + (software ? "  !! SOFTWARE RASTERISER (CPU), NOT A GPU !!" : ""),
                 .fill = [device_type, timestamp_period](GLT::debug::system_stats& out) {
-                    out.custom.push_back({ "type (1 integrated, 2 discrete)", device_type, "%.0f" });
+                    out.custom.push_back({ "type (1 integrated, 2 discrete, 3 virtual, 4 CPU/software)", device_type, "%.0f" });
                     out.custom.push_back({ "timestamp period (ns)", timestamp_period, "%.3f" });
                 }
             });
@@ -339,8 +343,9 @@ namespace GLT::renderer::vk_rasterizer {
         util::vulkan_builder builder;
         builder.enable_debug = USE_VULKAN_VALIDATION;
         builder.debug_callback = util::vulkan_debug_callback;
+        // Hard requirements only. pick_physical_device() adds what the renderer itself cannot run without and enables
+        // the optional features on whatever device it picks; a requirement listed here rejects every device without it
         builder.physical_device_features10.samplerAnisotropy = true;
-        builder.physical_device_features12.shaderSampledImageArrayNonUniformIndexing = true;
         for (u32 i = 0; i < count; i++)
             builder.instance_extensions.push_back(ext[i]);
 
