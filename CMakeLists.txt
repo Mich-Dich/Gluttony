@@ -143,6 +143,23 @@ if(GLT_ENABLE_TRACY)
     message(STATUS "Tracy ${GLT_TRACY_VERSION} enabled (on-demand). Profiler app: build ${TRACY_DIR}/profiler or install the same version")
 endif()
 
+# ------------- meshoptimizer (LOD generation, index optimisation) --------------------------------
+# Static, linked into the core executable only. Plugins (asset factory, editor) call the core wrappers in
+# asset/mesh_lod.h, so there is exactly one copy of the library in the process
+set(MESHOPT_DIR                                                         "${VENDOR_DIR}/meshoptimizer")
+git_clone_or_update("https://github.com/zeux/meshoptimizer.git"         "${MESHOPT_DIR}" DEPTH 1 TAG v1.3)
+
+set(MESHOPT_BUILD_DEMO                                                  OFF CACHE BOOL "" FORCE)
+set(MESHOPT_BUILD_GLTFPACK                                              OFF CACHE BOOL "" FORCE)
+set(MESHOPT_BUILD_SHARED_LIBS                                           OFF CACHE BOOL "" FORCE)
+set(MESHOPT_INSTALL                                                     OFF CACHE BOOL "" FORCE)
+add_subdirectory("${MESHOPT_DIR}"                                       "${CMAKE_BINARY_DIR}/meshoptimizer" EXCLUDE_FROM_ALL)
+set_target_properties(meshoptimizer                                     PROPERTIES
+    POSITION_INDEPENDENT_CODE                                           ON
+)
+# Always optimised: LOD generation runs on import / in the editor and is ~10x slower at -O0 (seconds per large mesh)
+target_compile_options(meshoptimizer                                    PRIVATE -O2)
+
 # =================================================================================================
 # Build resource limits (RAM-friendly build)
 # =================================================================================================

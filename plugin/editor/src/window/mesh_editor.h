@@ -6,6 +6,8 @@
 #include <asset/type.h>
 #include <asset/asset_ref.h>
 #include <asset/mesh.h>
+#include <asset/mesh_lod.h>
+#include <future>
 #include <render/i_renderer.h>
 #include <render/i_debug_draw.h>
 #include <physics/material.h>
@@ -78,7 +80,10 @@ namespace GLT::editor {
     // Three-panel layout:
     //   - Outliner: mesh hierarchy / submeshes / collider list
     //   - Preview : 3D viewport with camera controls and collider wireframes
-    //   - Inspector: properties for the currently selected item
+    //   - Inspector: properties for the currently selected item (mesh: summary + Level of Detail settings)
+    //
+    // LOD: levels are generated on import; the inspector edits lod_settings and regenerates in the background. The
+    // preview can lock to one level (overlay selector / outliner) and draw that level's wireframe
     //
     // Both side panels are resizable via a 6px splitter handle between panels
     class mesh_editor_window : public asset_editor {
@@ -152,6 +157,7 @@ namespace GLT::editor {
         void draw_inspector_collider();
 
         void draw_mesh_summary_section();
+        void draw_lod_section();
         void draw_mesh_bounds_section();
         void draw_preview_settings_section();
         void draw_lighting_section();
@@ -183,6 +189,17 @@ namespace GLT::editor {
         void submit_debug_draws();
         void submit_collider_debug_draws();
         void submit_preview_lights();
+        void submit_preview_instance();
+
+        // level of detail ---------------------------------------------------------------------------------------------
+
+        void start_lod_generation();
+        void poll_lod_generation();
+        void set_preview_lod(i32 lod);
+        void draw_preview_lod_overlay(const ImVec2& canvas_min, const ImVec2& canvas_max);
+        void submit_wireframe_debug_draws(const GLT::asset::mesh::mesh_asset& mesh);
+        [[nodiscard]] f32 preview_screen_size(const GLT::asset::mesh::mesh_asset& mesh) const;
+        [[nodiscard]] u32 auto_lod_for(const GLT::asset::mesh::mesh_asset& mesh, f32 screen_size) const;
 
         // collider <-> asset sync -------------------------------------------------------------------------------------
         void load_colliders_from_mesh(const GLT::asset::mesh::mesh_asset& mesh);
@@ -246,6 +263,20 @@ namespace GLT::editor {
         ImGuizmo::OPERATION                                     m_collider_gizmo_operation = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE                                          m_collider_gizmo_mode = ImGuizmo::LOCAL;
         glm::vec3                                               m_gizmo_last_scale{ 1.0f };
+
+        // level of detail ---------------------------------------------------------------------------------------------
+
+        i32                                                     m_preview_lod = -1;         // -1 = automatic (screen size)
+        bool                                                    m_show_wireframe = false;
+        bool                                                    m_lod_needs_regen = false;  // generation settings changed
+        std::future<GLT::asset::mesh::lod_build_output>         m_lod_job{};
+        GLT::asset::mesh::lod_settings                          m_lod_job_settings{};
+        f64                                                     m_last_lod_build_ms = 0.0;
+
+        std::vector<glm::vec3>                                  m_wire_lines{};             // pairs, cached per (lod, revision)
+        i32                                                     m_wire_lod = -2;
+        u32                                                     m_wire_revision = 0;
+        bool                                                    m_wire_truncated = false;
 
     };
 

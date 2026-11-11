@@ -35,10 +35,12 @@ namespace GLT::renderer::vk_rasterizer {
 
     // MACROS ==========================================================================================================
 
+    // The call ALWAYS runs; only the result check is debug-only. (The release variant used to expand to nothing, which
+    // silently removed the frame-fence wait: CPU raced the GPU, reset in-flight command buffers -> black, frozen window)
     #if defined(DEBUG)
-        #define VK_SR_CHECK(expr)  ASSERT_S(expr == vk::Result::eSuccess)
+        #define VK_SR_CHECK(expr)  ASSERT_S((expr) == vk::Result::eSuccess)
     #else
-        #define VK_SR_CHECK(expr)
+        #define VK_SR_CHECK(expr)  ((void)(expr))
     #endif
 
     // TYPES ===========================================================================================================

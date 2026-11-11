@@ -27,10 +27,11 @@ namespace GLT::renderer::vk_rasterizer {
 
     // MACROS ==========================================================================================================
 
+    // The call ALWAYS runs; only the result check is debug-only (see VK_SR_CHECK in scene_renderer.cpp)
     #if defined(DEBUG)
-        #define VK_SRM_CHECK(expr)  ASSERT_S(expr == vk::Result::eSuccess)
+        #define VK_SRM_CHECK(expr)  ASSERT_S((expr) == vk::Result::eSuccess)
     #else
-        #define VK_SRM_CHECK(expr)
+        #define VK_SRM_CHECK(expr)  ((void)(expr))
     #endif
 
     // TYPES ===========================================================================================================

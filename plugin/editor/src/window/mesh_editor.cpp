@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdio>
+#include <unordered_set>
 
 #include <util/util.h>
 #include <application.h>
@@ -51,6 +52,9 @@ namespace GLT::editor {
 
     constexpr f32                                   BODY_MIN_HEIGHT = 200.0f;
 
+    // LOD wireframe overlay: edges above this are not drawn (debug lines are immediate, one virtual call each)
+    constexpr u32                                   MAX_WIREFRAME_EDGES = 100000;     // renderer MAX_DEBUG_VERTICES = 262144
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -91,6 +95,22 @@ namespace GLT::editor {
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
+    // 1234 -> "1,234", 1234567 -> "1.23M"
+    static std::string format_count(u64 value) {
+
+        char buf[32];
+        if (value >= 10'000'000ull)
+            std::snprintf(buf, sizeof(buf), "%.2fM", static_cast<f64>(value) / 1e6);
+        else if (value >= 100'000ull)
+            std::snprintf(buf, sizeof(buf), "%.1fk", static_cast<f64>(value) / 1e3);
+        else if (value >= 1'000ull)
+            std::snprintf(buf, sizeof(buf), "%llu,%03llu", static_cast<unsigned long long>(value / 1000), static_cast<unsigned long long>(value % 1000));
+        else
+            std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(value));
+        return buf;
+    }
+
 
     inline void decompose_trs(const glm::mat4& m, glm::vec3& out_t, glm::quat& out_r, glm::vec3& out_s) {
 
@@ -405,6 +425,10 @@ namespace GLT::editor {
 
     void mesh_editor_window::close_mesh() {
 
+        if (m_lod_job.valid())
+            m_lod_job.wait();                   // works on copies; just make sure no result is applied to the next mesh
+        m_lod_job = {};
+
         destroy_preview();
 
         m_asset_handle.reset();
@@ -445,6 +469,8 @@ namespace GLT::editor {
 
 
     void mesh_editor_window::update(const f32 delta_time) {
+
+        poll_lod_generation();
 
         if (!m_preview_scene)
             return;
@@ -702,6 +728,29 @@ namespace GLT::editor {
             ImGui::TreePop();
         }
 
+        // ---- LOD levels (click = lock the preview to that level, click again = automatic) ----
+        {
+            const u32 lod_count = mesh->lod_count();
+            char lod_label[48];
+            std::snprintf(lod_label, sizeof(lod_label), "LODs (%u)###lod_tree", lod_count);
+            if (ImGui::TreeNodeEx(lod_label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth)) {
+
+                for (u32 level = 0; level < lod_count; ++level) {
+
+                    ImGui::PushID(static_cast<int>(level) + 0x1000);
+                    char label[16];
+                    std::snprintf(label, sizeof(label), "LOD %u", level);
+                    const bool selected = (m_preview_lod == static_cast<i32>(level));
+                    if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_SpanAvailWidth))
+                        set_preview_lod(selected ? -1 : static_cast<i32>(level));
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s tris", format_count(mesh->lod_triangle_count(level)).c_str());
+                    ImGui::PopID();
+                }
+                ImGui::TreePop();
+            }
+        }
+
         // ---- colliders ----
         m_hovered_collider = -1;
 
@@ -832,6 +881,7 @@ namespace GLT::editor {
         ImGui::Separator();
 
         draw_mesh_summary_section();
+        draw_lod_section();
         draw_mesh_bounds_section();
         draw_preview_settings_section();
         draw_lighting_section();
@@ -1023,6 +1073,7 @@ namespace GLT::editor {
         GLT::UI::table_row("indices",   std::to_string(mesh->indices.size()));
         GLT::UI::table_row("triangles", std::to_string(mesh->indices.size() / 3));
         GLT::UI::table_row("submeshes", std::to_string(mesh->submesh_count()));
+        GLT::UI::table_row("LOD levels", std::to_string(mesh->lod_count()));
         GLT::UI::table_row("memory",    GLT::util::format_bytes(mesh->memory_usage()));
 
         GLT::UI::end_table();
@@ -1289,6 +1340,10 @@ namespace GLT::editor {
                                      * (m_preview_camera.distance * 0.0025f);
         }
 
+        // ---------- LOD selector (top-left) ----------
+        // After the camera input above: that block queries the canvas InvisibleButton as the "last item"
+        draw_preview_lod_overlay(canvas_min, canvas_max);
+
         // ---------- overlay buttons (lower-right, gizmo style) ----------
         //
         // Uses the same color ladder as world_viewport's gizmo_toggle_button
@@ -1355,11 +1410,7 @@ namespace GLT::editor {
 
         m_last_preview_size = offscreen.extent;
 
-        GLT::asset::mesh::instance inst{};
-        inst.mesh = m_asset_handle;
-        inst.transform = glm::mat4(1.0f);
-        m_preview_scene->submit_scene(std::span<const GLT::asset::mesh::instance>(&inst, 1));
-
+        submit_preview_instance();
         submit_preview_lights();
 
         const auto modes = m_preview_scene->supported_modes();
@@ -1493,6 +1544,11 @@ namespace GLT::editor {
         m_hovered_submesh = -1;
         m_selected_submesh = -1;
 
+        m_preview_lod = -1;
+        m_lod_needs_regen = false;
+        m_wire_lines.clear();
+        m_wire_lod = -2;
+
         rebuild_submesh_bounds_cache(*mesh);
         load_colliders_from_mesh(*mesh);
 
@@ -1593,6 +1649,10 @@ namespace GLT::editor {
 
         if (m_selected_submesh >= 0 && m_selected_submesh != m_hovered_submesh)
             draw_submesh_aabb(m_selected_submesh, { 1.0f, 0.45f, 0.15f, 1.0f });
+
+        // ---- LOD wireframe ----
+        if (m_show_wireframe)
+            submit_wireframe_debug_draws(*mesh);
 
         // ---- colliders ----
         submit_collider_debug_draws();
@@ -1823,6 +1883,473 @@ namespace GLT::editor {
         }
 
         return true;
+    }
+
+
+    // level of detail --------------------------------------------------------------------------------------------------
+
+    void mesh_editor_window::submit_preview_instance() {
+
+        if (!m_preview_scene)
+            return;
+
+        GLT::asset::mesh::instance inst{};
+        inst.mesh = m_asset_handle;
+        inst.transform = glm::mat4(1.0f);
+        if (m_preview_lod >= 0)
+            inst.flags = (static_cast<u32>(m_preview_lod) + 1u) & GLT::asset::mesh::INSTANCE_FLAG_FORCE_LOD_MASK;
+        m_preview_scene->submit_scene(std::span<const GLT::asset::mesh::instance>(&inst, 1));
+    }
+
+
+    void mesh_editor_window::set_preview_lod(i32 lod) {
+
+        if (lod == m_preview_lod)
+            return;
+        m_preview_lod = lod;
+        submit_preview_instance();
+    }
+
+
+    f32 mesh_editor_window::preview_screen_size(const GLT::asset::mesh::mesh_asset& mesh) const {
+
+        // Same metric as the renderer: bounding-sphere diameter / viewport height = radius * |P11| / distance
+        const GLT::world::camera_snapshot cam = build_camera_snapshot();
+        const f32 radius = GLT::asset::mesh::lod_sphere_radius(mesh.bounds);
+        const glm::vec3 center = 0.5f * (mesh.bounds.min + mesh.bounds.max);
+        const f32 dist = glm::distance(center, cam.position);
+        if (dist <= radius)
+            return 1e9f;
+        const f32 p11 = 1.0f / std::tan(glm::radians(cam.fov) * 0.5f);
+        return radius * p11 / dist;
+    }
+
+
+    u32 mesh_editor_window::auto_lod_for(const GLT::asset::mesh::mesh_asset& mesh, f32 screen_size) const {
+
+        u32 lod = 0;
+        for (u32 level = 1; level < mesh.lod_count(); ++level)
+            if (screen_size < mesh.lod.levels[level].screen_size)
+                lod = level;
+        return lod;
+    }
+
+
+    void mesh_editor_window::start_lod_generation() {
+
+        if (m_lod_job.valid())
+            return;
+
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        if (!mesh)
+            return;
+
+        GLT::asset::mesh::sanitize(mesh->lod);
+        m_lod_job_settings = mesh->lod;
+
+        // Copies: the job runs on a worker thread while the asset stays live (renderer reads it, the editor may close)
+        m_lod_job = std::async(std::launch::async,
+            [vertices = mesh->vertices, indices = mesh->indices, submeshes = mesh->submeshes, settings = m_lod_job_settings]() {
+                return GLT::asset::mesh::build_lods(vertices, indices, submeshes, settings);
+            });
+    }
+
+
+    void mesh_editor_window::poll_lod_generation() {
+
+        if (!m_lod_job.valid() || m_lod_job.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return;
+
+        GLT::asset::mesh::lod_build_output result = m_lod_job.get();
+        m_lod_job = {};
+
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        if (!mesh)
+            return;
+
+        // Settings were locked while the job ran; keep the user's live values (shadow bias, cull size) as they are
+        mesh->lods = std::move(result.lods);
+        mesh->lod_ranges = std::move(result.ranges);
+        mesh->lod_indices = std::move(result.indices);
+        if (mesh->lod.flags & GLT::asset::mesh::LOD_FLAG_AUTO_SCREEN_SIZE)
+            GLT::asset::mesh::fit_screen_sizes(mesh->lod, mesh->lods, mesh->bounds);
+        mesh->revision++;                       // renderers re-upload (shared_resource_manager::refresh_meshes)
+
+        m_last_lod_build_ms = result.build_ms;
+        m_lod_needs_regen = false;
+        m_dirty = true;
+        m_wire_lod = -2;
+
+        if (m_preview_lod >= static_cast<i32>(mesh->lod_count()))
+            m_preview_lod = static_cast<i32>(mesh->lod_count()) - 1;
+        submit_preview_instance();
+
+        LOG(info, "mesh_editor: [{}] {} of {} LOD levels in {:.1f} ms", m_mesh_name, mesh->lod_count(), result.requested,
+            result.build_ms);
+    }
+
+
+    void mesh_editor_window::draw_lod_section() {
+
+        if (!ImGui::CollapsingHeader("Level of Detail", ImGuiTreeNodeFlags_DefaultOpen))
+            return;
+
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        if (!mesh)
+            return;
+
+        using namespace GLT::asset::mesh;
+        lod_settings& lod = mesh->lod;
+        const bool busy = m_lod_job.valid();
+        bool live_changed = false;              // runtime-only values: re-upload, no regeneration
+        bool regen_changed = false;             // simplifier inputs: regeneration needed
+
+        // ---- status -------------------------------------------------------------------------------------------------
+        const u32 generated = mesh->lod_count();
+        if (busy) {
+            ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "Generating %u levels...", m_lod_job_settings.lod_count);
+        } else if (generated < lod.lod_count) {
+            ImGui::TextWrapped("%u of %u levels generated. The rest would not remove enough triangles within their error limit.",
+                generated, lod.lod_count);
+        } else {
+            ImGui::Text("%u levels generated", generated);
+        }
+        if (m_last_lod_build_ms > 0.0) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%.0f ms)", m_last_lod_build_ms);
+        }
+
+        ImGui::BeginDisabled(busy);
+
+        // ---- generation settings ------------------------------------------------------------------------------------
+        {
+            int count = static_cast<int>(lod.lod_count);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::SliderInt("##lod_count", &count, 1, static_cast<int>(MAX_LODS), "%d levels (incl. LOD 0)")) {
+                lod.lod_count = static_cast<u32>(count);
+                regen_changed = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Number of levels to generate, LOD 0 (the imported mesh) included");
+        }
+
+        auto flag_checkbox = [&](const char* label, u32 bit, const char* tooltip_text) -> bool {
+            bool value = (lod.flags & bit) != 0;
+            const bool changed = ImGui::Checkbox(label, &value);
+            if (changed)
+                lod.flags = value ? (lod.flags | bit) : (lod.flags & ~bit);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", tooltip_text);
+            return changed;
+        };
+
+        regen_changed |= flag_checkbox("Lock borders", LOD_FLAG_LOCK_BORDERS,
+            "Keep open mesh borders in place. Prevents cracks between parts that are simplified separately (submeshes),\n"
+            "but limits how far meshes made of many open plates can be reduced");
+        ImGui::SameLine();
+        regen_changed |= flag_checkbox("Prune small parts", LOD_FLAG_PRUNE,
+            "Allow removing small disconnected pieces entirely (still bounded by the level's error limit)");
+        {
+            bool keep = (lod.flags & LOD_FLAG_ALLOW_SUBMESH_REMOVAL) == 0;
+            if (ImGui::Checkbox("Keep small parts", &keep)) {
+                lod.flags = keep ? (lod.flags & ~LOD_FLAG_ALLOW_SUBMESH_REMOVAL) : (lod.flags | LOD_FLAG_ALLOW_SUBMESH_REMOVAL);
+                regen_changed = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Small submeshes are simplified relative to their own size and never removed completely.\n"
+                    "Uncheck to let coarse levels drop parts that are tiny compared to the whole mesh");
+        }
+
+        if (flag_checkbox("Auto screen sizes", LOD_FLAG_AUTO_SCREEN_SIZE,
+            "Pick each level's switch size from its measured error, so the change stays below 'Pixel error' pixels\n"
+            "(at 1080p). Uncheck to set screen sizes by hand")) {
+            if (lod.flags & LOD_FLAG_AUTO_SCREEN_SIZE) {
+                fit_screen_sizes(lod, mesh->lods, mesh->bounds);
+                live_changed = true;
+            }
+        }
+        if (lod.flags & LOD_FLAG_AUTO_SCREEN_SIZE) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::DragFloat("Pixel error", &lod.pixel_error, 0.02f, 0.1f, 16.0f, "%.2f px");
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                fit_screen_sizes(lod, mesh->lods, mesh->bounds);
+                live_changed = true;
+            }
+        }
+
+        {
+            int bias = static_cast<int>(lod.shadow_lod_bias);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::SliderInt("Shadow LOD bias", &bias, 0, 3))
+                lod.shadow_lod_bias = static_cast<u32>(bias);
+            live_changed |= ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Shadow maps use this many levels coarser than the main view would at the same size");
+
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::DragFloat("Cull below", &lod.cull_screen_size, 0.0005f, 0.0f, 0.2f, lod.cull_screen_size > 0.0f ? "%.4f" : "never");
+            live_changed |= ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Do not draw the mesh at all when it is smaller than this screen size (0 = always draw)");
+        }
+
+        if (ImGui::TreeNode("Simplifier weights")) {
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::DragFloat("Normals", &lod.normal_weight, 0.01f, 0.0f, 4.0f, "%.2f");
+            regen_changed |= ImGui::IsItemDeactivatedAfterEdit();
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::DragFloat("UVs", &lod.uv_weight, 0.01f, 0.0f, 4.0f, "%.2f");
+            regen_changed |= ImGui::IsItemDeactivatedAfterEdit();
+            ImGui::TextDisabled("Higher = keep shading / texture seams more faithfully");
+            ImGui::TreePop();
+        }
+
+        // ---- per-level table ----------------------------------------------------------------------------------------
+        //
+        // Screen size = bounding-sphere diameter / viewport height at which the level takes over (live, no regeneration)
+        // Ratio / max error = simplifier targets (regeneration needed). Right half: what the last generation achieved
+        const ImGuiTableFlags table_flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp
+            | ImGuiTableFlags_PadOuterX;
+        if (ImGui::BeginTable("##lod_levels", 6, table_flags)) {
+
+            ImGui::TableSetupColumn("LOD",         ImGuiTableColumnFlags_WidthFixed, 34.0f);
+            ImGui::TableSetupColumn("Screen",      ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("Ratio",       ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("Max err %",   ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("Triangles",   ImGuiTableColumnFlags_WidthStretch, 1.1f);
+            ImGui::TableSetupColumn("Err %",       ImGuiTableColumnFlags_WidthStretch, 0.8f);
+            ImGui::TableHeadersRow();
+
+            const bool auto_size = (lod.flags & LOD_FLAG_AUTO_SCREEN_SIZE) != 0;
+            const u32 base_tris = mesh->lod_triangle_count(0);
+
+            for (u32 level = 0; level < lod.lod_count; ++level) {
+
+                ImGui::PushID(static_cast<int>(level));
+                ImGui::TableNextRow();
+                lod_level_settings& ls = lod.levels[level];
+                const bool exists = level < generated;
+
+                // LOD (click: preview this level)
+                ImGui::TableNextColumn();
+                char label[8];
+                std::snprintf(label, sizeof(label), "%u", level);
+                if (ImGui::Selectable(label, m_preview_lod == static_cast<i32>(level), ImGuiSelectableFlags_None) && exists)
+                    set_preview_lod(m_preview_lod == static_cast<i32>(level) ? -1 : static_cast<i32>(level));
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", exists ? "Preview this level (click again for automatic)" : "Not generated");
+
+                if (level == 0) {
+                    ImGui::TableNextColumn(); ImGui::TextDisabled("full");
+                    ImGui::TableNextColumn(); ImGui::TextDisabled("1.00");
+                    ImGui::TableNextColumn(); ImGui::TextDisabled("0");
+                } else {
+                    ImGui::TableNextColumn();
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    ImGui::BeginDisabled(auto_size);
+                    ImGui::DragFloat("##screen", &ls.screen_size, 0.002f, 0.0001f, 1.0f, "%.3f");
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        sanitize(lod);
+                        live_changed = true;
+                    }
+                    ImGui::EndDisabled();
+
+                    ImGui::TableNextColumn();
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    ImGui::DragFloat("##ratio", &ls.triangle_ratio, 0.005f, 0.001f, 1.0f, "%.3f");
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        sanitize(lod);
+                        regen_changed = true;
+                    }
+
+                    ImGui::TableNextColumn();
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    f32 error_percent = ls.max_error * 100.0f;
+                    if (ImGui::DragFloat("##error", &error_percent, 0.01f, 0.0f, 100.0f, "%.2f"))
+                        ls.max_error = error_percent / 100.0f;
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        sanitize(lod);
+                        regen_changed = true;
+                    }
+                }
+
+                ImGui::TableNextColumn();
+                if (exists) {
+                    const u32 tris = mesh->lod_triangle_count(level);
+                    ImGui::TextUnformatted(format_count(tris).c_str());
+                    if (ImGui::IsItemHovered() && base_tris > 0)
+                        ImGui::SetTooltip("%u triangles, %.1f%% of LOD 0", tris, 100.0 * tris / base_tris);
+                } else {
+                    ImGui::TextDisabled("-");
+                }
+
+                ImGui::TableNextColumn();
+                if (exists && level > 0 && level < mesh->lods.size())
+                    ImGui::Text("%.3f", mesh->lods[level].error * 100.0f);
+                else
+                    ImGui::TextDisabled("-");
+
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+
+        // ---- actions ------------------------------------------------------------------------------------------------
+        if (m_lod_needs_regen) {
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 90, 255));
+            ImGui::TextWrapped("Generation settings changed - regenerate to apply");
+            ImGui::PopStyleColor();
+        }
+
+        if (ImGui::Button("Regenerate LODs", ImVec2(140.0f, 0.0f)))
+            start_lod_generation();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(mesh->lod_count() <= 1);
+        if (ImGui::Button("Fit screen sizes")) {
+            fit_screen_sizes(lod, mesh->lods, mesh->bounds);
+            live_changed = true;
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Set every level's screen size from its measured error and 'Pixel error' (once, keeps manual mode)");
+        ImGui::SameLine();
+        if (ImGui::Button("Clear")) {
+            clear_lods(*mesh);
+            set_preview_lod(-1);
+            m_dirty = true;
+            m_wire_lod = -2;
+        }
+        ImGui::EndDisabled();
+
+        ImGui::EndDisabled();   // busy
+
+        if (regen_changed) {
+            m_lod_needs_regen = true;
+            m_dirty = true;
+        }
+        if (live_changed) {
+            mesh->revision++;                   // renderer re-uploads the switch sizes / bias
+            m_dirty = true;
+        }
+    }
+
+
+    void mesh_editor_window::draw_preview_lod_overlay(const ImVec2& canvas_min, const ImVec2& /*canvas_max*/) {
+
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        if (!mesh)
+            return;
+
+        const u32 lod_count = mesh->lod_count();
+        const f32 screen_size = preview_screen_size(*mesh);
+        const u32 auto_lod = auto_lod_for(*mesh, screen_size);
+        const u32 shown = m_preview_lod >= 0 ? std::min<u32>(static_cast<u32>(m_preview_lod), lod_count - 1) : auto_lod;
+
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.10f, 0.10f, 0.70f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+
+        ImGui::SetCursorScreenPos(ImVec2(canvas_min.x + 10.0f, canvas_min.y + 10.0f));
+        char preview_label[48];
+        if (m_preview_lod < 0)
+            std::snprintf(preview_label, sizeof(preview_label), "LOD auto (%u)", auto_lod);
+        else
+            std::snprintf(preview_label, sizeof(preview_label), "LOD %u", shown);
+
+        ImGui::SetNextItemWidth(130.0f);
+        if (ImGui::BeginCombo("##preview_lod", preview_label)) {
+
+            if (ImGui::Selectable("Auto (screen size)", m_preview_lod < 0))
+                set_preview_lod(-1);
+            for (u32 level = 0; level < lod_count; ++level) {
+                char item[64];
+                std::snprintf(item, sizeof(item), "LOD %u   %s tris", level, format_count(mesh->lod_triangle_count(level)).c_str());
+                if (ImGui::Selectable(item, m_preview_lod == static_cast<i32>(level)))
+                    set_preview_lod(static_cast<i32>(level));
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Lock the preview to one level, or let the screen size pick it (mouse wheel to zoom)");
+
+        ImGui::SameLine();
+        ImGui::Checkbox("Wireframe", &m_show_wireframe);
+
+        const u32 tris = mesh->lod_triangle_count(shown);
+        const u32 base = std::max(mesh->lod_triangle_count(0), 1u);
+        ImGui::SetCursorScreenPos(ImVec2(canvas_min.x + 10.0f, canvas_min.y + 14.0f + ImGui::GetFrameHeight()));
+        if (screen_size >= 1e8f)
+            ImGui::TextDisabled("screen: inside   LOD %u   %s tris (%.0f%%)", shown, format_count(tris).c_str(), 100.0 * tris / base);
+        else
+            ImGui::TextDisabled("screen %.3f   LOD %u   %s tris (%.0f%%)", screen_size, shown, format_count(tris).c_str(), 100.0 * tris / base);
+        if (m_show_wireframe && m_wire_truncated)
+            ImGui::TextDisabled("wireframe: too many edges, showing the first %s", format_count(MAX_WIREFRAME_EDGES).c_str());
+
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
+
+
+    void mesh_editor_window::submit_wireframe_debug_draws(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        auto* debug = m_preview_scene ? m_preview_scene->get_debug_draw() : nullptr;
+        if (!debug)
+            return;
+
+        const u32 lod_count = mesh.lod_count();
+        const i32 level = m_preview_lod >= 0 ? std::min<i32>(m_preview_lod, static_cast<i32>(lod_count) - 1)
+                                             : static_cast<i32>(auto_lod_for(mesh, preview_screen_size(mesh)));
+
+        // Unique edges of the shown level, cached until the level or the geometry changes
+        if (level != m_wire_lod || mesh.revision != m_wire_revision) {
+
+            m_wire_lod = level;
+            m_wire_revision = mesh.revision;
+            m_wire_lines.clear();
+            m_wire_truncated = false;
+
+            // Lift the lines slightly off the surface (along the vertex normal) so they win the depth test
+            const f32 lift = 0.002f * std::max(GLT::asset::mesh::lod_sphere_radius(mesh.bounds), 1e-4f);
+            auto lifted = [&](u32 v) { return mesh.vertices[v].position + mesh.vertices[v].normal * lift; };
+
+            std::unordered_set<u64> seen;
+            u32 edges = 0;
+            for (u32 sm = 0; sm < mesh.submeshes.size() && !m_wire_truncated; ++sm) {
+
+                const GLT::asset::mesh::lod_range range = mesh.range(static_cast<u32>(level), sm);
+                for (u32 t = 0; t + 2 < range.index_count; t += 3) {
+
+                    const u32 tri[3] = { mesh.index_at(range.first_index + t), mesh.index_at(range.first_index + t + 1),
+                                         mesh.index_at(range.first_index + t + 2) };
+                    for (u32 e = 0; e < 3; ++e) {
+
+                        const u32 a = tri[e];
+                        const u32 b = tri[(e + 1) % 3];
+                        if (a >= mesh.vertices.size() || b >= mesh.vertices.size())
+                            continue;
+                        const u64 key = (static_cast<u64>(std::min(a, b)) << 32) | std::max(a, b);
+                        if (!seen.insert(key).second)
+                            continue;
+
+                        m_wire_lines.push_back(lifted(a));
+                        m_wire_lines.push_back(lifted(b));
+                        if (++edges >= MAX_WIREFRAME_EDGES) {
+                            m_wire_truncated = true;
+                            break;
+                        }
+                    }
+                    if (m_wire_truncated)
+                        break;
+                }
+            }
+        }
+
+        const glm::vec4 color{ 0.35f, 0.85f, 1.0f, 0.55f };
+        for (size_t i = 0; i + 1 < m_wire_lines.size(); i += 2)
+            debug->line(m_wire_lines[i], m_wire_lines[i + 1], color, 0.0f, true);
     }
 
 }

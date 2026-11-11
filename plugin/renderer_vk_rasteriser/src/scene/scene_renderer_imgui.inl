@@ -16,11 +16,8 @@ namespace GLT::renderer::vk_rasterizer {
 
     // MACROS ==========================================================================================================
 
-    #if defined(DEBUG)
-        #define VALIDATE_IMGUI_INIT                 if (!m_imgui_initialized) return;
-    #else
-        #define VALIDATE_IMGUI_INIT
-    #endif
+    // Guard in every configuration (it was debug-only)
+    #define VALIDATE_IMGUI_INIT                     if (!m_imgui_initialized) return;
 
     // TYPES ===========================================================================================================
 

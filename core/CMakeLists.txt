@@ -58,6 +58,7 @@ target_link_options(${CORE_NAME}                                        PRIVATE
 target_link_libraries(${CORE_NAME}                                      PRIVATE
     glm
     imgui
+    meshoptimizer                                                       # asset/mesh_lod.cpp (exported to plugins via -rdynamic)
 )
 if(TARGET tracy_client)
     target_link_libraries(${CORE_NAME}                                  PRIVATE tracy_client)

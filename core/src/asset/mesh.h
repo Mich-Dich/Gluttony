@@ -30,6 +30,23 @@ namespace GLT::asset::mesh {
 
     inline constexpr GLT::asset::chunk_id               CHUNK_COLLIDERS = 0x0007;       // mesh_collider[]
 
+    // Level of detail (see asset/mesh_lod.h). All optional: a mesh without them renders with its single LOD 0
+    inline constexpr GLT::asset::chunk_id               CHUNK_LOD_SETTINGS = 0x0008;    // lod_settings (one, user authored)
+
+    inline constexpr GLT::asset::chunk_id               CHUNK_LOD_LEVELS = 0x0009;      // lod_level[lod_count] (generated)
+
+    inline constexpr GLT::asset::chunk_id               CHUNK_LOD_RANGES = 0x000A;      // lod_range[lod_count * submesh_count]
+
+    inline constexpr GLT::asset::chunk_id               CHUNK_LOD_INDICES = 0x000B;     // u32[] of LOD 1..N (LOD 0 = CHUNK_INDICES)
+
+    // Hard upper bound of LOD levels per mesh, LOD 0 included. The renderer packs the per-level switch distances of
+    // this many levels into its mesh table, so raising it is a GPU layout change
+    inline constexpr u32                                MAX_LODS = 8;
+
+    // [instance::flags] bits 0..3: forced LOD + 1 (0 = automatic selection by screen size). Used by the mesh editor's
+    // LOD preview; clamped to the mesh's generated level count by the renderer
+    inline constexpr u32                                INSTANCE_FLAG_FORCE_LOD_MASK = 0xFu;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -112,6 +129,82 @@ namespace GLT::asset::mesh {
     };
     static_assert(std::is_trivially_copyable_v<mesh_collider>);
 
+    // @brief Authoring parameters of one LOD level
+    //
+    // [screen_size] is the projected size below which this level is used: bounding-sphere diameter as a fraction of the
+    // viewport height (1.0 = the mesh spans the full height). Level 0 ignores it. Changing it never needs a regeneration
+    //
+    // [triangle_ratio] / [max_error] drive the simplifier: it removes triangles until the level has
+    // [triangle_ratio] x LOD 0's triangles OR the next collapse would move the surface by more than [max_error]
+    // (relative to the mesh extent, 0.01 = 1%), whichever comes first. The error limit is what keeps the image intact
+    struct lod_level_settings {
+
+        f32                                             screen_size = 1.0f;
+        f32                                             triangle_ratio = 1.0f;
+        f32                                             max_error = 0.0f;
+        u32                                             _pad = 0;
+    };
+    static_assert(sizeof(lod_level_settings) == 16);
+
+
+    enum lod_flag_bits : u32 {
+
+        LOD_FLAG_NONE = 0,
+        LOD_FLAG_LOCK_BORDERS = 1u << 0,                // keep open borders (no cracks between separately simplified submeshes)
+        LOD_FLAG_AUTO_SCREEN_SIZE = 1u << 1,            // derive screen_size from the achieved error and [pixel_error]
+        LOD_FLAG_PRUNE = 1u << 2,                       // allow removing small disconnected parts (bounded by the error limit)
+        LOD_FLAG_ALLOW_SUBMESH_REMOVAL = 1u << 3,       // off (default): a submesh never vanishes, it keeps the previous level's geometry
+    };
+
+
+    // @brief Per-mesh LOD authoring settings (CHUNK_LOD_SETTINGS). Plain data, blitted to disk
+    struct lod_settings {
+
+        u32                                             lod_count = 4;                  // requested levels, LOD 0 included (1..MAX_LODS)
+        u32                                             flags = LOD_FLAG_LOCK_BORDERS | LOD_FLAG_AUTO_SCREEN_SIZE | LOD_FLAG_PRUNE;
+        f32                                             cull_screen_size = 0.0f;        // below this the mesh is not drawn at all (0 = never)
+        u32                                             shadow_lod_bias = 1;            // shadow passes use this many levels coarser
+        f32                                             pixel_error = 1.0f;             // AUTO_SCREEN_SIZE: allowed error in pixels at 1080p
+        f32                                             normal_weight = 0.5f;           // simplifier attribute weights
+        f32                                             uv_weight = 0.5f;
+        u32                                             _pad = 0;
+        lod_level_settings                              levels[MAX_LODS]{
+            { 1.000f, 1.000f, 0.000f, 0 },
+            { 0.300f, 0.500f, 0.005f, 0 },
+            { 0.120f, 0.250f, 0.015f, 0 },
+            { 0.050f, 0.125f, 0.040f, 0 },
+            { 0.020f, 0.060f, 0.080f, 0 },
+            { 0.010f, 0.030f, 0.150f, 0 },
+            { 0.005f, 0.015f, 0.250f, 0 },
+            { 0.002f, 0.008f, 0.400f, 0 },
+        };
+    };
+    static_assert(sizeof(lod_settings) == 32 + 16 * MAX_LODS);
+    static_assert(std::is_trivially_copyable_v<lod_settings>);
+
+
+    // @brief Result of generating one LOD level (CHUNK_LOD_LEVELS)
+    struct lod_level {
+
+        u32                                             index_count = 0;                // all submeshes of this level
+        f32                                             error = 0.0f;                   // achieved deviation, relative to the mesh extent
+        u32                                             _pad0 = 0;
+        u32                                             _pad1 = 0;
+    };
+    static_assert(sizeof(lod_level) == 16);
+
+
+    // @brief Index range of one submesh in one LOD level (CHUNK_LOD_RANGES)
+    //
+    // [first_index] addresses the concatenated index stream [indices ++ lod_indices], so LOD 0 ranges equal the submeshes
+    // and the renderer can upload both arrays back to back and use the ranges unchanged
+    struct lod_range {
+
+        u32                                             first_index = 0;
+        u32                                             index_count = 0;
+    };
+    static_assert(sizeof(lod_range) == 8);
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -138,6 +231,15 @@ namespace GLT::asset::mesh {
         std::vector<GLT::asset::mesh::mesh_collider>    colliders;    // 0..N authored colliders
         GLT::AABB                                       bounds{};
 
+        // ---- level of detail (empty lods = single level, LOD 0 is always [indices] / [submeshes]) ----
+        lod_settings                                    lod{};
+        std::vector<lod_level>                          lods;           // generated levels, [0] describes LOD 0
+        std::vector<lod_range>                          lod_ranges;     // [level * submesh_count + submesh]
+        std::vector<u32>                                lod_indices;    // index data of LOD 1..N
+
+        // Bumped by in-place edits (LOD regeneration, ...) so GPU consumers know to re-upload. Runtime only
+        u32                                             revision = 0;
+
 
         FORCE_INLINE_R u32 submesh_count() const noexcept { return static_cast<u32>(submeshes.size()); }
 
@@ -157,6 +259,43 @@ namespace GLT::asset::mesh {
         FORCE_INLINE_R u32 collider_count() const noexcept { return static_cast<u32>(colliders.size()); }
 
 
+        // @brief Number of usable LOD levels (>= 1)
+        FORCE_INLINE_R u32 lod_count() const noexcept {
+
+            const size_t submesh_n = submeshes.size();
+            if (lods.size() <= 1 || lod_ranges.size() != lods.size() * submesh_n)
+                return 1;
+            return static_cast<u32>(lods.size());
+        }
+
+
+        // @brief Index range of [submesh] in [level], in the concatenated stream [indices ++ lod_indices]
+        FORCE_INLINE_R lod_range range(u32 level, u32 submesh) const noexcept {
+
+            if (submesh >= submeshes.size())
+                return {};
+            if (level == 0 || level >= lod_count())
+                return { submeshes[submesh].first_index, submeshes[submesh].index_count };
+            return lod_ranges[static_cast<size_t>(level) * submeshes.size() + submesh];
+        }
+
+
+        // @brief Index value at [position] of the concatenated stream [indices ++ lod_indices]
+        FORCE_INLINE_R u32 index_at(u32 position) const noexcept {
+
+            return position < indices.size() ? indices[position] : lod_indices[position - indices.size()];
+        }
+
+
+        // @brief Triangles of one level (all submeshes)
+        FORCE_INLINE_R u32 lod_triangle_count(u32 level) const noexcept {
+
+            if (level == 0 || level >= lod_count())
+                return static_cast<u32>(indices.size() / 3);
+            return lods[level].index_count / 3;
+        }
+
+
         // @brief Approximate resident bytes, used by the profiler
         FORCE_INLINE_R u64 memory_usage() const noexcept override {
 
@@ -164,7 +303,10 @@ namespace GLT::asset::mesh {
                 + vertices.capacity() * sizeof(GLT::asset::mesh::vertex)
                 + indices.capacity() * sizeof(u32)
                 + submeshes.capacity() * sizeof(GLT::asset::mesh::submesh)
-                + colliders.capacity() * sizeof(GLT::asset::mesh::mesh_collider);
+                + colliders.capacity() * sizeof(GLT::asset::mesh::mesh_collider)
+                + lods.capacity() * sizeof(GLT::asset::mesh::lod_level)
+                + lod_ranges.capacity() * sizeof(GLT::asset::mesh::lod_range)
+                + lod_indices.capacity() * sizeof(u32);
         }
         
     };

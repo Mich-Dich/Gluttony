@@ -99,6 +99,37 @@ namespace GLT::asset::handler::mesh {
             }
         }
 
+        // ---- level of detail (optional) ------------------------------------------------------------------------------
+        //
+        // All four chunks or none. Anything inconsistent (ranges not matching levels x submeshes, ranges pointing past the
+        // index stream) drops the generated levels: the mesh still renders, at LOD 0
+        if (const auto settings = reader.get_as<GLT::asset::mesh::lod_settings>(GLT::asset::mesh::CHUNK_LOD_SETTINGS); settings.size() == 1)
+            asset->lod = settings[0];
+
+        {
+            const auto levels = reader.get_as<GLT::asset::mesh::lod_level>(GLT::asset::mesh::CHUNK_LOD_LEVELS);
+            const auto ranges = reader.get_as<GLT::asset::mesh::lod_range>(GLT::asset::mesh::CHUNK_LOD_RANGES);
+            const auto lod_idx = reader.get_as<u32>(GLT::asset::mesh::CHUNK_LOD_INDICES);
+
+            bool valid = levels.size() > 1 && levels.size() <= GLT::asset::mesh::MAX_LODS
+                && ranges.size() == levels.size() * asset->submeshes.size();
+
+            const u64 stream_size = asset->indices.size() + lod_idx.size();
+            for (size_t i = 0; valid && i < ranges.size(); ++i)
+                valid = static_cast<u64>(ranges[i].first_index) + ranges[i].index_count <= stream_size;
+            for (size_t i = 0; valid && i < lod_idx.size(); ++i)
+                valid = lod_idx[i] < asset->vertices.size();
+
+            if (valid) {
+                asset->lods.assign(levels.begin(), levels.end());
+                asset->lod_ranges.assign(ranges.begin(), ranges.end());
+                asset->lod_indices.assign(lod_idx.begin(), lod_idx.end());
+            } else if (!levels.empty()) {
+                LOG(warn, "[{}] LOD chunks are inconsistent ({} levels, {} ranges, {} indices) - using LOD 0 only",
+                    info.name, levels.size(), ranges.size(), lod_idx.size());
+            }
+        }
+
         // ---- bounds -------------------------------------------------------------------------------------------------
         if (const auto bound = reader.get_as<GLT::AABB>(GLT::asset::mesh::CHUNK_BOUNDS); bound.size() == 1) {
 
@@ -127,9 +158,9 @@ namespace GLT::asset::handler::mesh {
         for (size_t i = 0; i < asset->submeshes.size(); ++i)
             asset->submeshes[i].material = (i < dep_count) ? info.dependencies[i] : INVALID_HANDLE;
 
-        LOG(trace, "loaded [{}] - {} verts, {} tris, {} submeshes, {} colliders",
+        LOG(trace, "loaded [{}] - {} verts, {} tris, {} submeshes, {} colliders, {} LODs",
             info.name, asset->vertices.size(), asset->indices.size() / 3, asset->submeshes.size(),
-            asset->colliders.size());
+            asset->colliders.size(), asset->lod_count());
 
         return GLT::unique_ref<GLT::asset::i_runtime_asset>(std::move(asset));
     }
@@ -181,6 +212,18 @@ namespace GLT::asset::handler::mesh {
         if (!m.colliders.empty())
             out.write_chunk(GLT::asset::mesh::CHUNK_COLLIDERS, std::as_bytes(std::span{ m.colliders }));
 
+        // ---- level of detail ------------------------------------------------------------------------------------------
+        //
+        // Settings are always written (they are the user's authoring choice even when no levels were generated). The
+        // generated data only when consistent, otherwise deserialize() would drop it anyway
+        out.write_chunk(GLT::asset::mesh::CHUNK_LOD_SETTINGS, std::as_bytes(std::span{ &m.lod, 1 }));
+        if (m.lod_count() > 1) {
+
+            out.write_chunk(GLT::asset::mesh::CHUNK_LOD_LEVELS,  std::as_bytes(std::span{ m.lods }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_LOD_RANGES,  std::as_bytes(std::span{ m.lod_ranges }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_LOD_INDICES, std::as_bytes(std::span{ m.lod_indices }));
+        }
+
         // ---- material dependencies (one per submesh, positionally) ----------------------------------------------------
         //
         // deserialize() reads info.dependencies[i] for submesh[i].material, so save() must re-emit the exact same slot
@@ -210,8 +253,8 @@ namespace GLT::asset::handler::mesh {
         if (!info.name.empty())
             out.set_name(info.name);
 
-        LOG(trace, "serialized [{}] - {} verts, {} tris, {} submeshes, {} colliders",
-            info.name, m.vertices.size(), m.indices.size() / 3, m.submeshes.size(), m.colliders.size());
+        LOG(trace, "serialized [{}] - {} verts, {} tris, {} submeshes, {} colliders, {} LODs",
+            info.name, m.vertices.size(), m.indices.size() / 3, m.submeshes.size(), m.colliders.size(), m.lod_count());
 
         return {};
     }

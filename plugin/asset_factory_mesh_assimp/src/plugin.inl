@@ -6,6 +6,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <asset/mesh.h>
+#include <asset/mesh_lod.h>
 
 
 
@@ -49,6 +50,7 @@ namespace GLT::asset::factory::mesh_assimp {
         bool                            swap_uvs = false;
         bool                            generate_lightmap_uvs = false;                      // stub for now
         u8                              compression_quality = 85;                           // 0..100, future vertex codec hint
+        u32                             lod_count = 4;                                      // levels incl. LOD 0, 1 = no LODs
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -226,6 +228,10 @@ namespace GLT::asset::factory::mesh_assimp {
         i32 q = 85;                                 // field 9: compression_quality (integer -> i32)
         if (take(&q, sizeof(q)))
             out.compression_quality = static_cast<u8>(std::clamp(q, 0, 100));
+
+        i32 lods = 4;                               // field 10: lod_count (integer -> i32)
+        if (take(&lods, sizeof(lods)))
+            out.lod_count = static_cast<u32>(std::clamp<i32>(lods, 1, static_cast<i32>(GLT::asset::mesh::MAX_LODS)));
 
         return out;
     }
@@ -463,6 +469,14 @@ namespace GLT::asset::factory::mesh_assimp {
                 .enumeration_values = "",
                 .tooltip = "0 = smallest (most lossy), 100 = best fidelity. Reserved - consumed once vertex-data quantization is implemented.",
             },
+            {   // 10
+                .key = "lod_count",
+                .label = "LOD levels",
+                .type = desc::kind::integer,
+                .default_value = "4",
+                .enumeration_values = "",
+                .tooltip = "Levels of detail generated on import, LOD 0 included (1 = none, max 8). Each level is simplified within an error limit so the silhouette stays intact; screen sizes, ratios and limits can be tuned and regenerated in the mesh editor.",
+            },
         };
         return schema;
     }
@@ -552,12 +566,29 @@ namespace GLT::asset::factory::mesh_assimp {
             bounds.max = glm::max(bounds.max, v.position);
         }
 
+        // ---- level of detail -----------------------------------------------------------------------
+        // Generated once here with the default settings (lod_count from the import options); the mesh editor regenerates
+        // with user settings. Screen sizes are fitted to the achieved error (1 px at 1080p by default)
+        GLT::asset::mesh::lod_settings lod_settings{};
+        lod_settings.lod_count = option.lod_count;
+        GLT::asset::mesh::sanitize(lod_settings);
+
+        GLT::asset::mesh::lod_build_output lods = GLT::asset::mesh::build_lods(vertices, indices, submeshes, lod_settings);
+        if (lod_settings.flags & GLT::asset::mesh::LOD_FLAG_AUTO_SCREEN_SIZE)
+            GLT::asset::mesh::fit_screen_sizes(lod_settings, lods.lods, bounds);
+
         // ---- write the chunks. Registry owns header / string table / deps --------------------------
         out.set_name(source.stem().string());
         out.write_chunk(GLT::asset::mesh::CHUNK_VERTICES, std::as_bytes(std::span{ vertices }));
         out.write_chunk(GLT::asset::mesh::CHUNK_INDICES, std::as_bytes(std::span{ indices }));
         out.write_chunk(GLT::asset::mesh::CHUNK_SUBMESHES, std::as_bytes(std::span{ submeshes }));
         out.write_chunk(GLT::asset::mesh::CHUNK_BOUNDS, std::as_bytes(std::span{ &bounds, 1 }));
+        out.write_chunk(GLT::asset::mesh::CHUNK_LOD_SETTINGS, std::as_bytes(std::span{ &lod_settings, 1 }));
+        if (lods.lods.size() > 1) {
+            out.write_chunk(GLT::asset::mesh::CHUNK_LOD_LEVELS,  std::as_bytes(std::span{ lods.lods }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_LOD_RANGES,  std::as_bytes(std::span{ lods.ranges }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_LOD_INDICES, std::as_bytes(std::span{ lods.indices }));
+        }
 
         // Dependencies: one per submesh, in submesh order so material_slot lines up with info.dependencies[N] on load
         //
@@ -575,6 +606,7 @@ namespace GLT::asset::factory::mesh_assimp {
         u64 hash = hash_bytes(std::as_bytes(std::span{ vertices }));
         hash ^= hash_bytes(std::as_bytes(std::span{ indices }))   * 0x9E3779B97F4A7C15ull;
         hash ^= hash_bytes(std::as_bytes(std::span{ submeshes })) * 0xC2B2AE3D27D4EB4Full;
+        hash ^= hash_bytes(std::as_bytes(std::span{ lods.indices })) * 0x165667B19E3779F9ull;
 
         GLT::asset::factory::import_result result{          // result metadata
 
@@ -583,6 +615,9 @@ namespace GLT::asset::factory::mesh_assimp {
             .source_hash = hash_bytes(bytes),
             .payload_hash = hash,
         };
+
+        LOG(info, "mesh_assimp: [{}] -> {} LODs ({} -> {} tris) in {:.1f} ms", source.generic_string(), lods.lods.size(),
+            lods.lods.front().index_count / 3, lods.lods.back().index_count / 3, lods.build_ms);
 
         LOG(info, "mesh_assimp: [{}] -> {} verts, {} tris, {} submeshes [scale={}, unit={}, weld={}, opt={}, nt={}, swap_uv={}, lmuv={}, q={}]",
             source.generic_string(), vertices.size(), indices.size() / 3, submeshes.size(),
