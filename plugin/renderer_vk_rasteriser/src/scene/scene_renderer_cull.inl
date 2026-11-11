@@ -218,7 +218,11 @@ namespace GLT::renderer::vk_rasterizer {
             inst.normal_matrix = glm::mat4(glm::transpose(glm::inverse(ul)));
             inst.mesh_index = rit->second;
             inst.material_index = static_cast<u32>(m_material_table.size());     // first entry of this instance's material list
+            inst.flags = scene_instance.flags & GLT::asset::mesh::INSTANCE_FLAG_FORCE_LOD_MASK;   // forced LOD (mesh editor preview)
             m_packed_instances.push_back(inst);
+
+            // Same rule as cull.comp: forced level clamped to the uploaded levels, otherwise LOD 0
+            const u32 forced_lod = inst.flags != 0u ? std::min(inst.flags - 1u, std::max(slot->lod_count, 1u) - 1u) : 0u;
 
             // Exactly `submesh_count` entries: cull.comp loops the GPU mesh table's submesh_count, which is the same value
             const u32 submesh_count = std::min(slot->submesh_count, MAX_SUBMESHES_PER_MESH);
@@ -238,7 +242,7 @@ namespace GLT::renderer::vk_rasterizer {
                     // stay out of the depth pre-pass and shadows). They are drawn sorted in the translucent pass instead
                     if (m_shared->get_material(material).is_translucent())
                         m_translucent_candidates.push_back({ 0.f, static_cast<u32>(m_packed_instances.size() - 1), material,
-                            rit->second, sm, false });
+                            rit->second, sm, false, forced_lod });
                     else
                         m_material_draw_counts[material]++;
                 }
@@ -274,7 +278,7 @@ namespace GLT::renderer::vk_rasterizer {
             note_material(pm.material_slot);
             if (pm.material_slot < MAX_MATERIALS && m_shared->get_material(pm.material_slot).is_translucent())
                 m_translucent_candidates.push_back({ 0.f, static_cast<u32>(m_packed_instances.size() - 1), pm.material_slot,
-                    id - 1, 0u, true });
+                    id - 1, 0u, true, 0u });
         }
 
         // ---- Material refs: drop last frame's set now that this frame's set is acquired ------------

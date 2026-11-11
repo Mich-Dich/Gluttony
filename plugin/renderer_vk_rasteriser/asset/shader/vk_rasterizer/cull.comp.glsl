@@ -11,7 +11,7 @@ struct InstanceData {
     mat4 normal_matrix;
     uint mesh_index;
     uint material_index;
-    uint _pad0;
+    uint flags;         // bits 0..3: forced LOD + 1 (0 = LOD 0)
     uint _pad1;
 };
 
@@ -22,7 +22,7 @@ struct MeshData {
     uint submesh_count;
     uint vertex_offset;
     uint index_offset;
-    uint _pad0;
+    uint lod_count;     // submesh table holds lod_count x submesh_count entries, [lod][submesh]
     uint _pad1;
 };
 
@@ -109,12 +109,17 @@ void main() {
     if (!frustum_test(world_min, world_max))
         return;
 
+    // LOD: only a forced level for now (mesh editor preview), clamped to the uploaded levels; otherwise LOD 0
+    const uint forced = instance.flags & 0xFu;
+    const uint lod = forced != 0u ? min(forced - 1u, max(mesh.lod_count, 1u) - 1u) : 0u;
+    const uint first_submesh = mesh.first_submesh + lod * mesh.submesh_count;
+
     uint emitted_draws = 0u;
     uint emitted_triangles = 0u;
 
     for (uint sm = 0u; sm < mesh.submesh_count; ++sm) {
 
-        const SubmeshData submesh = submeshes[mesh.first_submesh + sm];
+        const SubmeshData submesh = submeshes[first_submesh + sm];
         if (submesh.index_count < 3u)
             continue;
 

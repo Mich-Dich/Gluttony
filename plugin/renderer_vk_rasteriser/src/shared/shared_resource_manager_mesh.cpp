@@ -79,7 +79,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_retire.retire([this, id,
             vertex_offset = slot.vertex_offset, vertex_count = slot.vertex_count,
             index_offset = slot.index_offset, index_count = slot.index_count,
-            submesh_offset = slot.submesh_offset, submesh_count = slot.submesh_count]() {
+            submesh_offset = slot.submesh_offset, submesh_count = slot.submesh_count * slot.lod_count]() {
             pool_free(m_vertex_pool, vertex_offset, vertex_count);
             pool_free(m_index_pool, index_offset, index_count);
             pool_free(m_submesh_pool, submesh_offset, submesh_count);
@@ -344,7 +344,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         compact_pool(m_submesh_pool,
             [this](u32 i) { return m_mesh_slots[i].submesh_offset; },
-            [this](u32 i) { return m_mesh_slots[i].submesh_count; },
+            [this](u32 i) { return m_mesh_slots[i].submesh_count * m_mesh_slots[i].lod_count; },
             [this](u32 i, u32 o) { m_mesh_slots[i].submesh_offset = o; });
 
         // Rewrite the SSBO entries whose offsets just changed
@@ -495,8 +495,12 @@ namespace GLT::renderer::vk_rasterizer {
             m_dev->unmap_buffer(m_vertex_buffer);
         }
         {
+            // [indices ++ lod_indices]: the LOD ranges address this concatenated stream (asset/mesh.h lod_range)
             auto* dst = static_cast<u32*>(m_dev->map_buffer(m_index_buffer));
             std::memcpy(dst + slot.index_offset, mesh.indices.data(), mesh.indices.size() * sizeof(u32));
+            if (slot.lod_count > 1 && slot.index_count > mesh.indices.size())
+                std::memcpy(dst + slot.index_offset + mesh.indices.size(), mesh.lod_indices.data(),
+                    (slot.index_count - mesh.indices.size()) * sizeof(u32));
             m_dev->unmap_buffer(m_index_buffer);
         }
     }
@@ -516,21 +520,34 @@ namespace GLT::renderer::vk_rasterizer {
         }
 
         const u32 submesh_count = slot.submesh_count;
+        const u32 lod_count = std::max(slot.lod_count, 1u);
+
+        // Acquire the new materials before releasing the old ones (a refresh usually keeps them: no unload/reload)
         std::vector<u32> material_slots(submesh_count);
         for (u32 i = 0; i < submesh_count; ++i)
             material_slots[i] = acquire_material(mesh.submeshes[i].material);
+        for (u32 old_slot : slot.material_slots)
+            release_material(old_slot);
         slot.material_slots = std::move(material_slots);
 
-        slot.submesh_ranges.resize(submesh_count);
-        for (u32 i = 0; i < submesh_count; ++i)
-            slot.submesh_ranges[i] = glm::uvec2(mesh.submeshes[i].first_index, mesh.submeshes[i].index_count);
+        // [lod][submesh]. Ranges outside the uploaded index count (corrupt asset) are dropped, never drawn
+        slot.submesh_ranges.assign(static_cast<size_t>(submesh_count) * lod_count, glm::uvec2(0u));
+        for (u32 level = 0; level < lod_count; ++level)
+            for (u32 i = 0; i < submesh_count; ++i) {
+                const GLT::asset::mesh::lod_range r = (level == 0)
+                    ? GLT::asset::mesh::lod_range{ mesh.submeshes[i].first_index, mesh.submeshes[i].index_count }
+                    : mesh.range(level, i);
+                const bool valid = static_cast<u64>(r.first_index) + r.index_count <= slot.index_count;
+                slot.submesh_ranges[static_cast<size_t>(level) * submesh_count + i] =
+                    valid ? glm::uvec2(r.first_index, r.index_count) : glm::uvec2(0u);
+            }
 
         // Submesh SSBO — write at the pool-allocated offset
         {
             auto* sub = static_cast<gpu_submesh_data*>(m_dev->map_buffer(m_submesh_data_buffer));
-            for (u32 i = 0; i < submesh_count; ++i) {
-                sub[slot.submesh_offset + i].first_index = mesh.submeshes[i].first_index;
-                sub[slot.submesh_offset + i].index_count = mesh.submeshes[i].index_count;
+            for (u32 i = 0; i < submesh_count * lod_count; ++i) {
+                sub[slot.submesh_offset + i].first_index = slot.submesh_ranges[i].x;
+                sub[slot.submesh_offset + i].index_count = slot.submesh_ranges[i].y;
             }
             m_dev->unmap_buffer(m_submesh_data_buffer);
         }
@@ -544,6 +561,7 @@ namespace GLT::renderer::vk_rasterizer {
             md.submesh_count = submesh_count;
             md.vertex_offset = slot.vertex_offset;
             md.index_offset = slot.index_offset;
+            md.lod_count = lod_count;
 
             auto* m = static_cast<gpu_mesh_data*>(m_dev->map_buffer(m_mesh_data_buffer));
             m[mesh_index] = md;
@@ -573,9 +591,9 @@ namespace GLT::renderer::vk_rasterizer {
             return INVALID_SHARED_MESH;
         }
 
-        const u32 vertex_count = static_cast<u32>(mesh->vertices.size());
-        const u32 index_count = static_cast<u32>(mesh->indices.size());
-        const u32 submesh_count = static_cast<u32>(std::min<size_t>(mesh->submeshes.size(), MAX_SUBMESHES_PER_MESH));
+        mesh_upload_layout layout = mesh_layout_of(*mesh);
+        const u32 vertex_count = layout.vertex_count;
+        const u32 submesh_count = layout.submesh_count;
 
         // Reserve a slot index up front so we know whether we're reusing
         bool reusing_slot = false;
@@ -595,7 +613,13 @@ namespace GLT::renderer::vk_rasterizer {
         }
 
         // Allocate buffer ranges (may compact / grow / fail)
-        auto alloc = allocate_mesh_ranges(vertex_count, index_count, submesh_count);
+        auto alloc = allocate_mesh_ranges(vertex_count, layout.index_count, submesh_count * layout.lod_count);
+        if (!alloc && layout.lod_count > 1) {
+            // Submesh table / index pool full: fall back to LOD 0 only
+            layout.lod_count = 1;
+            layout.index_count = static_cast<u32>(mesh->indices.size());
+            alloc = allocate_mesh_ranges(vertex_count, layout.index_count, submesh_count);
+        }
         if (!alloc) {
             // Return the slot — no ranges were allocated
             m_mesh_slots[slot_idx] = {};
@@ -610,9 +634,13 @@ namespace GLT::renderer::vk_rasterizer {
         slot.vertex_offset = alloc->vertex_offset;
         slot.vertex_count = vertex_count;
         slot.index_offset = alloc->index_offset;
-        slot.index_count = index_count;
+        slot.index_count = layout.index_count;
         slot.submesh_offset = alloc->submesh_offset;
         slot.submesh_count = submesh_count;
+        slot.lod_count = layout.lod_count;
+        slot.source = mesh;
+        slot.source_revision = mesh->revision;
+        slot.source_geometry = geometry_signature(*mesh);
         slot.alive = true;
         slot.local_min = mesh->bounds.min;
         slot.local_max = mesh->bounds.max;
@@ -627,6 +655,109 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_mesh_id_by_asset[handle] = slot_idx;
         return slot_idx;
+    }
+
+
+    shared_resource_manager::mesh_upload_layout shared_resource_manager::mesh_layout_of(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        mesh_upload_layout l{};
+        l.vertex_count = static_cast<u32>(mesh.vertices.size());
+        l.index_count = static_cast<u32>(mesh.indices.size());
+        l.submesh_count = static_cast<u32>(std::min<size_t>(mesh.submeshes.size(), MAX_SUBMESHES_PER_MESH));
+        l.lod_count = std::min(mesh.lod_count(), GLT::asset::mesh::MAX_LODS);
+        if (l.lod_count > 1) {
+            const u64 total = static_cast<u64>(mesh.indices.size()) + mesh.lod_indices.size();
+            if (total > UINT32_MAX)
+                l.lod_count = 1;
+            else
+                l.index_count = static_cast<u32>(total);
+        }
+        return l;
+    }
+
+
+    u64 shared_resource_manager::geometry_signature(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        u64 h = 0xcbf29ce484222325ull;
+        auto mix = [&h](u64 v) { h = (h ^ v) * 0x100000001b3ull; h ^= h >> 29; };
+        mix(reinterpret_cast<std::uintptr_t>(mesh.vertices.data()));    mix(mesh.vertices.size());
+        mix(reinterpret_cast<std::uintptr_t>(mesh.indices.data()));     mix(mesh.indices.size());
+        mix(reinterpret_cast<std::uintptr_t>(mesh.submeshes.data()));   mix(mesh.submeshes.size());
+        mix(reinterpret_cast<std::uintptr_t>(mesh.lod_ranges.data()));  mix(mesh.lod_ranges.size());
+        mix(reinterpret_cast<std::uintptr_t>(mesh.lod_indices.data())); mix(mesh.lod_indices.size());
+        mix(mesh.lods.size());
+        return h;
+    }
+
+
+    bool shared_resource_manager::refresh_mesh(shared_mesh_id id) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::refresh_mesh");
+
+        if (id >= m_mesh_slots.size() || !m_mesh_slots[id].alive)
+            return false;
+
+        auto registry = GLT::asset::registry::get_ref();
+        if (!registry)
+            return false;
+        auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(m_mesh_slots[id].asset);
+        if (!mesh)
+            return false;
+        if (mesh == m_mesh_slots[id].source && mesh->revision == m_mesh_slots[id].source_revision)
+            return false;
+
+        // The editor also bumps the revision for settings-only edits (LOD switch sizes, bias: every frame while a slider
+        // is dragged). The renderer does not use those, so only re-upload when the geometry arrays were replaced/resized
+        const u64 geometry = geometry_signature(*mesh);
+        if (mesh == m_mesh_slots[id].source && geometry == m_mesh_slots[id].source_geometry) {
+            m_mesh_slots[id].source_revision = mesh->revision;
+            return false;
+        }
+
+        if (mesh->vertices.size() > UINT32_MAX || mesh->indices.size() > UINT32_MAX)
+            return false;
+
+        mesh_upload_layout layout = mesh_layout_of(*mesh);
+        auto alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, layout.submesh_count * layout.lod_count);
+        if (!alloc && layout.lod_count > 1) {
+            layout.lod_count = 1;
+            layout.index_count = static_cast<u32>(mesh->indices.size());
+            alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, layout.submesh_count);
+        }
+
+        mesh_slot& slot = m_mesh_slots[id];        // after allocate: compaction may have moved this slot's ranges
+        slot.source = mesh;
+        slot.source_revision = mesh->revision;     // also on failure: don't retry every frame
+        slot.source_geometry = geometry;
+        if (!alloc) {
+            LOG(warn, "refresh_mesh: no room to re-upload mesh slot {}, keeping the previous geometry", id);
+            return false;
+        }
+
+        // In-flight frames still draw from the old ranges: free them once the GPU is done. The new data goes to fresh
+        // ranges, and the mesh table entry is rewritten last, so any frame sees either the old or the new mesh
+        m_retire.retire([this,
+            vertex_offset = slot.vertex_offset, vertex_count = slot.vertex_count,
+            index_offset = slot.index_offset, index_count = slot.index_count,
+            submesh_offset = slot.submesh_offset, submesh_count = slot.submesh_count * slot.lod_count]() {
+            pool_free(m_vertex_pool, vertex_offset, vertex_count);
+            pool_free(m_index_pool, index_offset, index_count);
+            pool_free(m_submesh_pool, submesh_offset, submesh_count);
+        });
+
+        slot.vertex_offset = alloc->vertex_offset;
+        slot.vertex_count = layout.vertex_count;
+        slot.index_offset = alloc->index_offset;
+        slot.index_count = layout.index_count;
+        slot.submesh_offset = alloc->submesh_offset;
+        slot.submesh_count = layout.submesh_count;
+        slot.lod_count = layout.lod_count;
+        slot.local_min = mesh->bounds.min;
+        slot.local_max = mesh->bounds.max;
+
+        upload_mesh_slice(slot, *mesh);
+        pack_mesh_into_ssbo(slot, *mesh);
+        LOG(trace, "refresh_mesh: slot {} re-uploaded ({} LOD levels, {} indices)", id, slot.lod_count, slot.index_count);
+        return true;
     }
 
 }

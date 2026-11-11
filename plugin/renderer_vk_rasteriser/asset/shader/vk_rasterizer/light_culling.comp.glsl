@@ -7,7 +7,8 @@
 // tested by a separate workgroup per slice. ~200k workgroups at 1080p, ~24 ms of GPU time with 2 lights.
 //
 // Now, per tile:
-//   1. 256 threads read one depth texel each (sky / cleared depth == 1 is skipped: no geometry there) -> min/max
+//   1. 256 threads read one depth texel each (sky / cleared depth == 1 is skipped: no geometry there) -> min/max,
+//      extended by the translucents' view depth span (clamped to the opaque surface)
 //   2. one thread per slice builds that slice's view-space AABB, clamped to the tile's real depth range; slices with no
 //      geometry are inactive and get no lights (fragments never land in them)
 //   3. lights are transformed to view space once per batch of 256 (shared memory), then every (active slice, light)
@@ -42,7 +43,7 @@ layout(std430, set = 0, binding = 1) readonly buffer LightBuffer { Light lights[
 layout(std430, set = 0, binding = 2) writeonly buffer LightGrid { uvec2 grid[]; } light_grid;   // { offset_into_index_list, count }
 layout(std430, set = 0, binding = 3) writeonly buffer LightIndexList { uint indices[]; } light_index_list;
 layout(std430, set = 0, binding = 4) buffer LightCounter { uint next_free; } light_counter; // global atomic cursor into light_index_list
-layout(set = 0, binding = 5) uniform LightMetaUBO { uvec4 meta; } light_meta; // x = light_count, y = index_list_capacity, z = max_per_cluster
+layout(set = 0, binding = 5) uniform LightMetaUBO { uvec4 meta; } light_meta; // x = light_count, y = index_list_capacity, z = max_per_cluster, w = translucent view depth span (half2, 0 = none)
 layout(set = 0, binding = 6) uniform sampler2D depth_texture;
 
 // Constants / shared --------------------------------------------------------------------------------------------------
@@ -53,6 +54,7 @@ const uint MASK_WORDS = (MAX_LIGHTS + 31u) / 32u;
 
 shared uint  s_min_bits;
 shared uint  s_max_bits;
+shared uint  s_has_background;                    // any texel of the tile at cleared depth (sky)
 
 shared vec3  s_aabb_min[SLICES];
 shared vec3  s_aabb_max[SLICES];
@@ -149,6 +151,7 @@ void main() {
         s_min_bits = floatBitsToUint(1e30);
         s_max_bits = 0u;
         s_active_any = 0u;
+        s_has_background = 0u;
     }
     for (uint i = tid; i < SLICES * MASK_WORDS; i += THREADS)
         s_mask[i / MASK_WORDS][i % MASK_WORDS] = 0u;
@@ -164,14 +167,30 @@ void main() {
                 const float lz = max(linearize_depth(d), 0.0);
                 atomicMin(s_min_bits, floatBitsToUint(lz));     // positive floats order like their bit patterns
                 atomicMax(s_max_bits, floatBitsToUint(lz));
+            } else {
+                s_has_background = 1u;                          // benign race: every writer stores 1
             }
         }
     }
     barrier();
 
-    const float min_linear = uintBitsToFloat(s_min_bits);
-    const float max_linear = uintBitsToFloat(s_max_bits);
-    const bool  tile_has_geometry = s_max_bits != 0u && min_linear <= max_linear;
+    float min_linear = uintBitsToFloat(s_min_bits);
+    float max_linear = uintBitsToFloat(s_max_bits);
+    bool  tile_has_geometry = s_max_bits != 0u && min_linear <= max_linear;
+
+    // Translucents are not in the depth buffer. Extend the tile's range by their (screen-global) view depth span so
+    // translucent fragments find lights. Only a tile FULLY covered by opaque geometry may cut the span at its farthest
+    // opaque texel: if any texel shows the sky, a translucent behind the opaque part is still visible through it
+    if (light_meta.meta.w != 0u) {
+        const vec2  span = unpackHalf2x16(light_meta.meta.w);
+        const float t_lo = span.x;
+        const float t_hi = (tile_has_geometry && s_has_background == 0u) ? min(span.y, max_linear) : span.y;
+        if (t_lo <= t_hi) {
+            min_linear = tile_has_geometry ? min(min_linear, t_lo) : t_lo;
+            max_linear = tile_has_geometry ? max(max_linear, t_hi) : t_hi;
+            tile_has_geometry = true;
+        }
+    }
 
     // ---- 2. per-slice AABBs -----------------------------------------------------------------------------------------
     if (tid < slices) {

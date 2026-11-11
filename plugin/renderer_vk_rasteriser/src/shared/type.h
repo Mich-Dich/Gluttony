@@ -112,10 +112,16 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         index_offset = 0;   // in indices
         u32                                                         index_count = 0;
         u32                                                         submesh_offset = 0;  // in gpu_submesh_data
-        u32                                                         submesh_count = 0;
+        u32                                                         submesh_count = 0;   // per LOD level
+        u32                                                         lod_count = 1;       // levels uploaded (>= 1)
         bool                                                        alive = false;
         std::vector<u32>                                            material_slots{};
-        std::vector<glm::uvec2>                                     submesh_ranges{};   // per submesh: {first_index, index_count} (CPU copy for direct draws)
+        // [lod * submesh_count + submesh]: {first_index, index_count} into this slot's index range (CPU copy for direct
+        // draws). The index range holds [indices ++ lod_indices] of the asset, the GPU submesh table the same layout
+        std::vector<glm::uvec2>                                     submesh_ranges{};
+        const void*                                                 source = nullptr;   // mesh_asset uploaded from (change detection only)
+        u32                                                         source_revision = 0;
+        u64                                                         source_geometry = 0; // hash of the geometry arrays' data pointers + sizes
         glm::vec3                                                   local_min{0.0f};
         glm::vec3                                                   local_max{0.0f};
         u32                                                         ref_count = 0;
@@ -198,7 +204,7 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         submesh_count = 0;
         u32                                                         vertex_offset = 0;
         u32                                                         index_offset = 0;
-        u32                                                         _pad0 = 0;
+        u32                                                         lod_count = 1;          // submesh table holds [lod][submesh_count]
         u32                                                         _pad1 = 0;
     };
     static_assert(sizeof(gpu_mesh_data) == 48, "gpu_mesh_data layout mismatch");

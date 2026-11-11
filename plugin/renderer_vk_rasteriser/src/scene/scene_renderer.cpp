@@ -14,6 +14,7 @@
 #include "modes.h"
 
 #include <debug/trace.h>
+#include <glm/packing.hpp>
 #if defined(GLT_TRACY_ENABLED)
     #include <tracy/TracyVulkan.hpp>
 #endif
@@ -305,6 +306,7 @@ namespace GLT::renderer::vk_rasterizer {
                 };
                 u64 casters = hash_words(m_packed_instances.data(), m_packed_instances.size() * sizeof(gpu_instance_data), 0xcbf29ce484222325ull);
                 casters = hash_words(&m_asset_instance_count, sizeof(m_asset_instance_count), casters);
+                casters = hash_words(&m_mesh_generation, sizeof(m_mesh_generation), casters);
 
                 if (m_shadow.active) {
                     u64 key = hash_words(&m_shadow.view_proj, sizeof(m_shadow.view_proj), casters);

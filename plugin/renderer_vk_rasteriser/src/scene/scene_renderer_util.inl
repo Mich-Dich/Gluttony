@@ -86,6 +86,13 @@ namespace GLT::renderer::vk_rasterizer {
             auto r = m_shared->ensure_mesh(h);
             if (r) m_resident_meshes.emplace(h, *r);
         }
+
+        // Pick up in-place asset edits (LOD regeneration in the mesh editor, reloads). One registry lookup per resident
+        // mesh, so only every few frames
+        if ((m_mesh_refresh_tick++ & 3u) == 0u)
+            for (const auto& [handle, id] : m_resident_meshes)
+                if (m_shared->refresh_mesh(id))
+                    ++m_mesh_generation;            // invalidates the cached shadow maps
     }
 
 
@@ -137,8 +144,12 @@ namespace GLT::renderer::vk_rasterizer {
         GLT_PROFILE_SCOPE("scene_renderer::prepare_translucent_draws");
 
         m_translucent_draws.clear();
+        m_translucent_span = glm::vec2(0.f);
         if (m_translucent_candidates.empty())
             return;
+
+        f32 span_min = std::numeric_limits<f32>::max();
+        f32 span_max = 0.f;
 
         glm::vec4 planes[6];
         extract_frustum_planes(camera_projection() * m_active_camera.view, planes);
@@ -189,8 +200,24 @@ namespace GLT::renderer::vk_rasterizer {
             if (!visible)
                 continue;
 
+            // Linear view depth range of the box, for light culling (translucents are not in the depth buffer)
+            for (u32 corner = 0; corner < 8; ++corner) {
+                const glm::vec3 world((corner & 1u) ? world_max.x : world_min.x,
+                                      (corner & 2u) ? world_max.y : world_min.y,
+                                      (corner & 4u) ? world_max.z : world_min.z);
+                const f32 depth = glm::dot(world - camera_pos, camera_forward);
+                span_min = std::min(span_min, depth);
+                span_max = std::max(span_max, depth);
+            }
+
             draw.sort_depth = glm::dot((world_min + world_max) * 0.5f - camera_pos, camera_forward);
             m_translucent_draws.push_back(draw);
+        }
+
+        if (!m_translucent_draws.empty() && span_max > 0.f) {
+            const f32 near_z = m_active_camera.near_plane;
+            const f32 far_z = m_active_camera.far_plane;
+            m_translucent_span = glm::vec2(std::clamp(span_min, near_z, far_z), std::clamp(span_max, near_z, far_z));
         }
 
         // Far -> near. Stable so submeshes of one instance (equal depth) keep their authored order

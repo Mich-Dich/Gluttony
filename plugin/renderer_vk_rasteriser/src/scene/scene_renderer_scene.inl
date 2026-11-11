@@ -275,9 +275,10 @@ namespace GLT::renderer::vk_rasterizer {
                     } else {
 
                         const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
-                        if (!slot || !slot->alive || draw.submesh >= slot->submesh_ranges.size())
+                        const size_t range_index = static_cast<size_t>(draw.lod) * (slot ? slot->submesh_count : 0u) + draw.submesh;
+                        if (!slot || !slot->alive || draw.submesh >= slot->submesh_count || range_index >= slot->submesh_ranges.size())
                             continue;
-                        const glm::uvec2 range = slot->submesh_ranges[draw.submesh];       // {first_index, index_count}
+                        const glm::uvec2 range = slot->submesh_ranges[range_index];        // {first_index, index_count}
                         if (range.y < 3)
                             continue;
 

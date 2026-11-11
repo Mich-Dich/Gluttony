@@ -7,7 +7,7 @@ struct InstanceData { mat4 model;
     mat4        normal_matrix;
     uint        mesh_index;
     uint        material_index;
-    uint        _pad0;
+    uint        flags;          // bits 0..3: forced LOD + 1 (0 = LOD 0)
     uint        _pad1;
 };
 
@@ -17,7 +17,7 @@ struct MeshData { vec3 local_min;
     uint        submesh_count;
     uint        vertex_offset;
     uint        index_offset;
-    uint        _pad0;
+    uint        lod_count;      // submesh table holds lod_count x submesh_count entries, [lod][submesh]
     uint        _pad1;
 };
 
@@ -114,9 +114,14 @@ void main() {
     if (radius < dist * view.params.x)
         return;
 
+    // Same LOD rule as cull.comp (forced level or LOD 0)
+    const uint forced = instance.flags & 0xFu;
+    const uint lod = forced != 0u ? min(forced - 1u, max(mesh.lod_count, 1u) - 1u) : 0u;
+    const uint first_submesh = mesh.first_submesh + lod * mesh.submesh_count;
+
     for (uint submesh_offset = 0u; submesh_offset < mesh.submesh_count; ++submesh_offset) {
 
-        const SubmeshData submesh = submeshes[mesh.first_submesh + submesh_offset];
+        const SubmeshData submesh = submeshes[first_submesh + submesh_offset];
         if (submesh.index_count < 3u)
             continue;
 

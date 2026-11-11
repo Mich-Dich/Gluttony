@@ -138,7 +138,15 @@ namespace GLT::renderer::vk_rasterizer {
         meta.x = m_light_count;
         meta.y = m_cluster_index_capacity;
         meta.z = MAX_LIGHTS_PER_CLUSTER;
+        // w = view depth span of the visible translucents (half2, widened by 3 % so fp16 rounding stays conservative).
+        // Translucents are not in the depth buffer; without this, clusters in front of the opaque surface of a tile
+        // (or the whole tile when only sky is behind) have no lights and translucent surfaces render unlit per tile
         meta.w = 0u;
+        if (m_translucent_span.y > 0.f) {
+            const f32 lo = m_translucent_span.x * 0.97f;
+            const f32 hi = std::min(m_translucent_span.y * 1.03f, 65000.f);
+            meta.w = glm::packHalf2x16(glm::vec2(lo, hi));
+        }
 
         void* mapped = m_plugin.get_dev()->map_buffer(m_light_meta_ubos[m_current_frame]);
         std::memcpy(mapped, &meta, sizeof(meta));

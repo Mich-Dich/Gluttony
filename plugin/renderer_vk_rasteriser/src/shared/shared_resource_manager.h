@@ -74,6 +74,11 @@ namespace GLT::renderer::vk_rasterizer {
         // Decrement ref count. When it reaches zero the mesh (and its material slots) are released to the GPU
         void release_mesh(shared_mesh_id id);
 
+        // Re-uploads the mesh if its asset was edited in place (mesh_asset::revision, e.g. LOD regeneration in the mesh
+        // editor) or replaced (reload). The slot id stays the same; old GPU ranges are retired, never overwritten while
+        // in flight. Returns true if it re-uploaded. Cheap when nothing changed (one registry lookup)
+        bool refresh_mesh(shared_mesh_id id);
+
         // True if the mesh is resident and usable
         [[nodiscard]] bool is_mesh_ready(shared_mesh_id id) const;
 
@@ -196,6 +201,16 @@ namespace GLT::renderer::vk_rasterizer {
         void upload_mesh_slice(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh);
         void pack_mesh_into_ssbo(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh);
         shared_mesh_id load_mesh_internal(GLT::asset::handle handle);
+
+        // Upload layout of a mesh asset: levels that fit, total indices ([indices ++ lod_indices]) and submesh table entries
+        struct mesh_upload_layout {
+            u32                                             vertex_count = 0;
+            u32                                             index_count = 0;
+            u32                                             submesh_count = 0;  // per level
+            u32                                             lod_count = 1;
+        };
+        [[nodiscard]] static mesh_upload_layout mesh_layout_of(const GLT::asset::mesh::mesh_asset& mesh);
+        [[nodiscard]] static u64 geometry_signature(const GLT::asset::mesh::mesh_asset& mesh);
 
         // texture internal --------------------------------------------------------------------------------------------
 

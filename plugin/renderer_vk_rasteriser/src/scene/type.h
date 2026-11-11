@@ -122,7 +122,7 @@ namespace GLT::renderer::vk_rasterizer {
         glm::mat4                                       normal_matrix{1.0f};
         u32                                             mesh_index = 0;
         u32                                             material_index = 0;
-        u32                                             _pad0 = 0;
+        u32                                             flags = 0;      // bits 0..3: forced LOD + 1 (asset::mesh::INSTANCE_FLAG_FORCE_LOD_MASK), 0 = LOD 0
         u32                                             _pad1 = 0;
     };
     static_assert(sizeof(gpu_instance_data) == 144, "gpu_instance_data layout mismatch");

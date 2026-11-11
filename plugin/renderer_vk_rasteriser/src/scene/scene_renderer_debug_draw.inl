@@ -330,6 +330,43 @@ namespace GLT::renderer::vk_rasterizer {
         frame_debug_layout& layout = m_debug_layouts[m_current_frame];
         layout = {};
 
+        // Clip lines to the view frustum on the CPU. Grid / axis lines that pass close to (or behind) the camera end up
+        // with endpoints millions of pixels off screen after the near-plane clip; lines are only clipped against the
+        // rasterizer guard band there, and the fixed-point precision loss turns them into wide, stair-stepped bands.
+        // Clip space is an affine function of world space, so the clip parameter t applies to the world endpoints too
+        {
+            GLT_PROFILE_SCOPE("Debug line frustum clip");
+            const glm::mat4 view_proj = camera_projection() * m_active_camera.view;
+            std::erase_if(pending, [&view_proj](debug_primitive_record& p) {
+                if (p.type != debug_primitive_record::kind::line)
+                    return false;
+
+                const glm::vec4 c0 = view_proj * glm::vec4(p.verts[0].position, 1.0f);
+                const glm::vec4 c1 = view_proj * glm::vec4(p.verts[1].position, 1.0f);
+                // signed distances to x=-w, x=w, y=-w, y=w, z=0 (near, ZO and NO safe), z=w (far)
+                const f32 d0[6] = { c0.w + c0.x, c0.w - c0.x, c0.w + c0.y, c0.w - c0.y, c0.z, c0.w - c0.z };
+                const f32 d1[6] = { c1.w + c1.x, c1.w - c1.x, c1.w + c1.y, c1.w - c1.y, c1.z, c1.w - c1.z };
+
+                f32 t0 = 0.0f, t1 = 1.0f;
+                for (u32 i = 0; i < 6; ++i) {
+                    if (d0[i] < 0.0f && d1[i] < 0.0f)
+                        return true;                                    // fully outside one plane
+                    if (d0[i] < 0.0f)
+                        t0 = std::max(t0, d0[i] / (d0[i] - d1[i]));
+                    else if (d1[i] < 0.0f)
+                        t1 = std::min(t1, d0[i] / (d0[i] - d1[i]));
+                }
+                if (t0 >= t1)
+                    return true;
+
+                const glm::vec3 a = p.verts[0].position;
+                const glm::vec3 b = p.verts[1].position;
+                p.verts[0].position = a + (b - a) * t0;
+                p.verts[1].position = a + (b - a) * t1;
+                return false;
+            });
+        }
+
         std::vector<debug_vertex> vertices;
         vertices.reserve(pending.size() * 3);
 

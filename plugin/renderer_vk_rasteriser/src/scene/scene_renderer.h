@@ -119,6 +119,7 @@ namespace GLT::renderer::vk_rasterizer {
             u32                                         mesh = 0;               // shared_mesh_id, or procedural slot index
             u32                                         submesh = 0;
             bool                                        procedural = false;
+            u32                                         lod = 0;                // LOD level (forced by instance flags)
         };
 
         struct cluster_grid_params {
@@ -289,6 +290,9 @@ namespace GLT::renderer::vk_rasterizer {
         std::vector<u32>                                                    m_scene_materials{};        // unique material slots drawn this frame
         std::vector<translucent_draw>                                       m_translucent_candidates{}; // from build_instance_buffer
         std::vector<translucent_draw>                                       m_translucent_draws{};      // visible, sorted far -> near
+        glm::vec2                                                           m_translucent_span{ 0.f };  // view depth [min, max] of visible translucents, max <= min: none
+        u32                                                                 m_mesh_refresh_tick = 0;
+        u64                                                                 m_mesh_generation = 0;      // bumped when a resident mesh was re-uploaded
 
         // Materials -> draw ranges. Every asset instance owns `submesh_count` consecutive entries in m_material_table
         // (gpu_instance_data::material_index = first entry). Each scene material gets an exact command range sized by the
