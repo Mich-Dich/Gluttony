@@ -27,6 +27,7 @@
 #include "util/ui/panel_collection.h"
 #include "resource_manager/icon_manager.h"
 #include "window/content_browser.h"
+#include "settings/editor_settings.h"
 
 
 
@@ -44,12 +45,11 @@ namespace GLT::editor {
         constexpr f32 TYPE_ICON_GAP = 3.f;    // space between adjacent component icons
 
         // Zebra stripe + hover
-        constexpr ImU32 ZEBRA_COLOR = IM_COL32(255, 255, 255, 8);
-        constexpr f32   HOVER_ALPHA = 0.35f;
+        constexpr ImU32 ZEBRA_COLOR = IM_COL32(255, 255, 255, 5);
+        constexpr f32   HOVER_ALPHA = 0.8f;
+        constexpr f32   ROW_ROUNDING = 4.f;
 
-        // Viewport debug highlight for selection
-        const glm::vec4 PRIMARY_HIGHLIGHT = { 1.f, 0.5f, 0.1f, 1.f };
-        const glm::vec4 SECONDARY_HIGHLIGHT = { 1.f, 0.7f, 0.3f, 0.55f };
+        editor_settings::gizmo_settings& gizmo_cfg() { return editor_settings::get().gizmo; }
     }
 
     // MACROS ==========================================================================================================
@@ -217,6 +217,24 @@ namespace GLT::editor {
                 collect_filtered_matches_rec(c, q, world, inspector, out);
         }
 
+        // True if the user did something this frame (click, release, drag, typing, Enter / Tab). World changes on frames
+        // without input are not the user's doing and are not recorded as undo steps
+        bool user_input_this_frame() {
+
+            const ImGuiIO& io = ImGui::GetIO();
+            if (ImGui::IsAnyItemActive() || ImGui::GetCurrentContext()->ActiveIdPreviousFrame != 0)
+                return true;
+
+            for (int button = 0; button < ImGuiMouseButton_COUNT; ++button)
+                if (io.MouseClicked[button] || io.MouseReleased[button])
+                    return true;
+
+            return io.InputQueueCharacters.Size > 0
+                || ImGui::IsKeyPressed(ImGuiKey_Enter, false)
+                || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)
+                || ImGui::IsKeyPressed(ImGuiKey_Tab, false);
+        }
+
         // Truncates `text` so that `text + "..."` fits within max_width. Returns "" if even the ellipsis won't fit.
         std::string ellipsize_to_fit(const std::string& text, float max_width) {
 
@@ -264,8 +282,12 @@ namespace GLT::editor {
         session->add_renderer(m_scene);
 
         make_window_name("World Viewport");
+
+        m_enable_undo_system = true;
+        m_details_edit.on_applied = [this](const undo_system::world_state& state) { select_after_undo(state); };
+        m_gizmo_edit.on_applied = [this](const undo_system::world_state& state) { select_after_undo(state); };
         m_renderer = GLT::render::renderer::get_ref();
-        m_content_browsers.push_back(GLT::editor::content_browser_window());
+        add_content_browser();
 
         m_save_sub_handle = GLT::event_bus::subscribe<GLT::save_event>(std::bind_front(&world_viewport_window::on_save_event, this), 10);
         m_save_as_sub_handle = GLT::event_bus::subscribe<save_as_request_event>(std::bind_front(&world_viewport_window::on_save_as_request_event, this));
@@ -294,8 +316,12 @@ namespace GLT::editor {
         apply_pending_dock();
 
         ImGui::SetNextWindowSizeConstraints(ImVec2(600, 400), ImVec2(std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max()));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
         ImGui::Begin(m_window_id.c_str(), &m_show_window);
+        ImGui::PopStyleVar();
         {
+            track_focus();
+            render_panel_bar();
             render_inner_dockspace();
         }
         ImGui::End();
@@ -307,9 +333,9 @@ namespace GLT::editor {
         if (m_scene)
             m_scene->set_active(m_viewport_image_drawn);
 
-        for (auto& browsers : m_content_browsers)
-            if (!browsers.should_close())
-                browsers.window(delta_time);
+        for (auto& browser : m_content_browsers)
+            if (!browser->should_close())
+                browser->window(delta_time);
 
         render_save_as_popup();
     }
@@ -317,8 +343,21 @@ namespace GLT::editor {
 
     void world_viewport_window::update(const f32 /*delta_time*/) {
 
-        if (!m_world)
-            m_world = GLT::application::get().get_game_layer_ptr()->get_primary_session()->get_world();
+        auto* game_layer = GLT::application::get().get_game_layer_ptr();
+        auto* session = game_layer ? game_layer->get_primary_session() : nullptr;
+        auto* world = session ? session->get_world() : nullptr;
+
+        if (world != m_world) {
+
+            // Another world got loaded: the history and the selection belong to the old one
+            m_details_edit.reset();
+            m_gizmo_edit.reset();
+            m_undo_stack.clear();
+            clear_selection();
+
+            m_world = world;
+            m_inspector = m_world ? m_world->as<GLT::world::i_world_inspector>() : nullptr;
+        }
 
         if (m_scene) {
 
@@ -328,7 +367,11 @@ namespace GLT::editor {
             if (m_scene->get_extent() != extent)
                 m_scene->resize(extent);
         }
+        // closed content browsers are gone for good (a new one can be opened from the "Panels" menu)
+        std::erase_if(m_content_browsers, [](const GLT::unique_ref<content_browser_window>& browser) { return browser->should_close(); });
+
         update_selection_debug_draw();
+        m_undo_stack.set_max_steps(static_cast<size_t>(editor_settings::get().history.max_steps));
 
         for (auto& ev : m_save_as_event_buffer) {
 
@@ -349,9 +392,104 @@ namespace GLT::editor {
 
     bool world_viewport_window::serialize(const std::filesystem::path& /*project_file*/, const GLT::serializer::option /*option*/) { return false; }
 
+
+    bool world_viewport_window::undo() {
+
+        flush_edits();
+        return base_window::undo();
+    }
+
+
+    bool world_viewport_window::redo() {
+
+        flush_edits();
+        return base_window::redo();
+    }
+
     // CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
+
+    void world_viewport_window::add_content_browser() { m_content_browsers.push_back(GLT::create_unique_ref<content_browser_window>()); }
+
+
+    void world_viewport_window::render_panel_bar() {
+
+        const f32 frame_h = ImGui::GetFrameHeight();
+        const f32 bar_h = frame_h + 8.f;
+        const ImVec2 bar_min = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+        draw_list->AddRectFilled(bar_min, ImVec2(bar_min.x + width, bar_min.y + bar_h), ImGui::GetColorU32(ImGuiCol_TitleBg));
+
+        // world name on the left
+        std::string world_name = "No world loaded";
+        if (m_world) {
+            const auto& asset = m_world->asset();
+            world_name = static_cast<bool>(asset) ? GLT::asset::registry::get_ref()->info(asset.get()).name : std::string("Untitled world");
+        }
+        const auto world_icon = icon_manager::get(icon_manager::icon::world);
+        const f32 icon = ImGui::GetTextLineHeight();
+        const f32 text_y = bar_min.y + (bar_h - icon) * 0.5f;
+        draw_list->AddImage(world_icon.tex_ref, ImVec2(bar_min.x + 10.f, text_y), ImVec2(bar_min.x + 10.f + icon, text_y + icon),
+            world_icon.uv0, world_icon.uv1, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+        ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+        draw_list->AddText(ImVec2(bar_min.x + 16.f + icon, text_y), ImGui::GetColorU32(ImGuiCol_Text), world_name.c_str());
+        ImGui::PopFont();
+
+        // "Panels" menu on the right
+        const char* panels_label = "Panels";
+        const f32 button_w = ImGui::CalcTextSize(panels_label).x + frame_h + 12.f;
+        ImGui::SetCursorScreenPos(ImVec2(bar_min.x + width - button_w - 6.f, bar_min.y + 4.f));
+        if (UI::subtle_button("##panels_button", ImVec2(button_w, frame_h)))
+            ImGui::OpenPopup("##panels_menu");
+        {
+            const ImVec2 min = ImGui::GetItemRectMin();
+            draw_list->AddText(ImVec2(min.x + 8.f, min.y + ImGui::GetStyle().FramePadding.y), ImGui::GetColorU32(ImGuiCol_Text), panels_label);
+            ImGui::RenderArrow(draw_list, ImVec2(min.x + button_w - frame_h * 0.75f, min.y + ImGui::GetStyle().FramePadding.y),
+                ImGui::GetColorU32(ImGuiCol_TextDisabled), ImGuiDir_Down, 0.7f);
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Show, hide and reset the panels of this window");
+
+        const ImVec2 btn_max = ImGui::GetItemRectMax();
+        ImGui::SetNextWindowPos(ImVec2(btn_max.x, btn_max.y + 4.f), ImGuiCond_Appearing, ImVec2(1.f, 0.f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.f, 8.f));
+        if (ImGui::BeginPopup("##panels_menu")) {
+            render_panels_menu();
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleVar();
+
+        ImGui::SetCursorScreenPos(ImVec2(bar_min.x, bar_min.y + bar_h));
+        ImGui::Dummy(ImVec2(0.f, 0.f));
+    }
+
+
+    void world_viewport_window::render_panels_menu() {
+
+        ImGui::TextDisabled("Panels");
+        ImGui::MenuItem("Viewport", nullptr, &m_show_viewport_panel);
+        ImGui::MenuItem("Outliner", nullptr, &m_show_outliner_panel);
+        ImGui::MenuItem("Details", nullptr, &m_show_details_panel);
+
+        for (size_t x = 0; x < m_content_browsers.size(); ++x) {
+            const std::string label = m_content_browsers.size() == 1 ? std::string("Content Browser") : std::format("Content Browser {}", x + 1);
+            bool open = true;
+            if (ImGui::MenuItem(label.c_str(), nullptr, &open) && !open)
+                m_content_browsers[x]->close_window();
+        }
+        if (ImGui::MenuItem("New Content Browser"))
+            add_content_browser();
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reset Layout"))
+            m_reset_layout = true;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Reopen every panel and put it back to its default place");
+    }
+
 
     void world_viewport_window::render_inner_dockspace() {
 
@@ -362,6 +500,9 @@ namespace GLT::editor {
         if (m_reset_layout || no_layout_yet) {
 
             m_reset_layout = false;
+            m_show_viewport_panel = m_show_outliner_panel = m_show_details_panel = true;
+            if (m_content_browsers.empty())
+                add_content_browser();
             build_default_layout(inner_id, inner_size);
         }
 
@@ -385,7 +526,7 @@ namespace GLT::editor {
         ImGui::DockBuilderDockWindow("Details",  dock_right_b);
 
         if (m_content_browsers.size() > 0)
-            ImGui::DockBuilderDockWindow(m_content_browsers[0].get_window_id().c_str(), dock_bottom);
+            ImGui::DockBuilderDockWindow(m_content_browsers[0]->get_window_id().c_str(), dock_bottom);
 
         ImGui::DockBuilderFinish(dockspace_id);
     }
@@ -397,7 +538,13 @@ namespace GLT::editor {
         ImGui::PushStyleVar(ImGuiStyleVar_ImageRounding, 0.0f);
 
         m_viewport_image_drawn = false;
-        if (ImGui::Begin("Viewport")) {
+        if (!m_show_viewport_panel) {
+            ImGui::PopStyleVar(2);
+            return;
+        }
+        const bool viewport_open = ImGui::Begin("Viewport", &m_show_viewport_panel);
+        track_focus();
+        if (viewport_open) {
 
             const ImVec2 image_min = ImGui::GetCursorScreenPos();
             const ImVec2 image_size = ImGui::GetContentRegionAvail();
@@ -417,7 +564,21 @@ namespace GLT::editor {
             const bool right_down = ImGui::IsMouseDown(ImGuiMouseButton_Right);
 
             render_gizmo_toolbar(image_min, image_size);
-            render_gizmo(image_min, image_size);
+            {
+                // One undo step per gizmo drag
+                const GLT::world::entity_id target = primary_selection();
+                const std::span<const GLT::world::entity_id> ids = target.is_valid()
+                    ? std::span<const GLT::world::entity_id>(&target, 1) : std::span<const GLT::world::entity_id>{};
+
+                m_gizmo_edit.begin(m_world, ids);
+                render_gizmo(image_min, image_size);
+
+                const bool using_gizmo = ImGuizmo::IsUsing();
+                const char* verb = m_gizmo_operation == ImGuizmo::ROTATE ? "Rotate"
+                                 : m_gizmo_operation == ImGuizmo::SCALE  ? "Scale" : "Move";
+                m_gizmo_edit.end(using_gizmo ? std::format("{} {}", verb, entity_display_name(target)) : std::string{},
+                    using_gizmo, using_gizmo);
+            }
 
             auto* game_layer = GLT::application::get().get_game_layer_ptr();
             auto* session = game_layer ? game_layer->get_primary_session() : nullptr;
@@ -459,7 +620,7 @@ namespace GLT::editor {
                 break;
             }
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f, 5.f));
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.10f, 0.10f, 0.55f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.16f, 0.16f, 0.75f));
@@ -475,7 +636,7 @@ namespace GLT::editor {
         ImGui::PopStyleVar(2);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.f, 6.f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.f, 2.f));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.08f, 0.08f, 0.08f, 0.85f));
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.20f, 0.20f, 0.70f));
@@ -525,13 +686,20 @@ namespace GLT::editor {
 
     void world_viewport_window::render_details() {
 
-        if (!ImGui::Begin("Details", nullptr, ImGuiWindowFlags_NoScrollbar)) {
+        if (!m_show_details_panel)
+            return;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f, 10.f));
+        const bool details_open = ImGui::Begin("Details", &m_show_details_panel, ImGuiWindowFlags_NoScrollbar);
+        ImGui::PopStyleVar();
+        track_focus();
+        if (!details_open) {
             ImGui::End();
             return;
         }
 
         if (!m_world || !m_inspector) {
-            ImGui::TextDisabled("Inspector unavailable");
+            UI::empty_state("Inspector unavailable", "The loaded world plugin does not offer an inspector");
             ImGui::End();
             return;
         }
@@ -540,101 +708,132 @@ namespace GLT::editor {
         const size_t sel_count = m_selected_entities.size();
 
         if (!primary.is_valid() || !m_world->alive(primary)) {
-            ImGui::TextDisabled("No entity selected");
+            UI::empty_state("Nothing selected", "Click an entity in the Outliner to see its components");
             ImGui::End();
             return;
         }
 
         if (sel_count > 1) {
-            ImGui::Text("Multiple entities selected");
-            ImGui::TextDisabled("%zu entities", sel_count);
-            ImGui::Separator();
-            ImGui::TextDisabled("Select a single entity to edit its components.");
-            ImGui::Spacing();
-            ImGui::TextDisabled("Ctrl-click to toggle; Shift-click for range.");
+            const std::string title = std::format("{} entities selected", sel_count);
+            UI::empty_state(title.c_str(), "Select a single entity to edit its components.\nCtrl-click toggles, Shift-click selects a range.");
             ImGui::End();
             return;
         }
 
         const auto id = primary;
+
+        // Everything drawn from here on may change the entity. The tracker turns each interaction into one undo step
+        m_details_edit.begin(m_world, std::span<const GLT::world::entity_id>(&id, 1));
+
         const auto& components = m_inspector->components_on(id);
-        const auto cursor_pos = ImGui::GetCursorPosX();
-        const float avail = ImGui::GetContentRegionAvail().x;
+        const bool is_world = m_world->is_world_entity(id);
+
+        // ---- header: icon, name, subtitle, add button ----
         {
-            const auto name = m_world->entity_name(id);
-            ImGui::Text(m_world->is_world_entity(id) ? "World settings:" : "Entity:");
-            if (!name.empty()) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("%.*s", static_cast<int>(name.size()), name.data());
-            }
+            const f32 frame_h = ImGui::GetFrameHeight();
+            const ImVec2 start = ImGui::GetCursorScreenPos();
+            const f32 width = ImGui::GetContentRegionAvail().x;
+            const f32 icon_size = frame_h * 1.4f;
 
-            u32 comp_count = 0;
-            for (const auto* c : components) { (void)c; ++comp_count; }
+            const auto icons = entity_component_icons(id);
+            const auto icon = icon_manager::get(is_world ? icon_manager::icon::world : (icons.empty() ? icon_manager::icon::empty : icons.front()));
+            ImGui::GetWindowDrawList()->AddRectFilled(start, ImVec2(start.x + icon_size, start.y + icon_size),
+                ImGui::GetColorU32(GLT::imgui_config::get_action_color_gray_default_ref()), 6.f);
+            const f32 inset = icon_size * 0.22f;
+            ImGui::GetWindowDrawList()->AddImage(icon.tex_ref, ImVec2(start.x + inset, start.y + inset),
+                ImVec2(start.x + icon_size - inset, start.y + icon_size - inset), icon.uv0, icon.uv1);
 
-            const char* add_label = "+ Add Component";
-            const float btn_w = ImGui::CalcTextSize(add_label).x + ImGui::GetStyle().FramePadding.x * 2.f;
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextDisabled("%u component%s", comp_count, comp_count == 1 ? "" : "s");
+            const char* add_label = "+ Add";
+            const f32 add_w = ImGui::CalcTextSize(add_label).x + ImGui::GetStyle().FramePadding.x * 4.f;
+            const f32 text_x = start.x + icon_size + 8.f;
+            const f32 text_w = std::max(20.f, start.x + width - add_w - 8.f - text_x);
 
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(cursor_pos + avail - btn_w);
+            const std::string name = is_world ? std::string("World") : entity_display_name(id);
+            ImGui::SetCursorScreenPos(ImVec2(text_x, start.y - 1.f));
+            ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+            ImGui::TextUnformatted(ellipsize_to_fit(name, text_w).c_str());
+            ImGui::PopFont();
 
-            if (ImGui::Button(add_label))
+            const std::string subtitle = std::format("{} \u00b7 {} component{}", is_world ? "World settings" : std::format("Entity {}", id.index),
+                components.size(), components.size() == 1 ? "" : "s");
+            ImGui::SetCursorScreenPos(ImVec2(text_x, ImGui::GetCursorScreenPos().y));
+            ImGui::TextDisabled("%s", ellipsize_to_fit(subtitle, text_w).c_str());
+
+            ImGui::SetCursorScreenPos(ImVec2(start.x + width - add_w, start.y + (icon_size - frame_h) * 0.5f));
+            if (UI::accent_button(add_label, ImVec2(add_w, 0.f)))
                 ImGui::OpenPopup("##add_comp");
+            const ImVec2 add_btn_max = ImGui::GetItemRectMax();
+            render_add_component_popup(id, add_btn_max);
+
+            ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + icon_size + 10.f));
+            ImGui::Dummy(ImVec2(0.f, 0.f));
         }
 
-        const ImVec2 add_btn_max = ImGui::GetItemRectMax();
-        render_add_component_popup(id, add_btn_max);
+        // ---- components, one card each ----
+        ImGui::BeginChild("##comp_list", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+        UI::begin_properties(UI::property_layout::compact);
 
-        ImGui::Separator();
-
-        ImGui::BeginChild("##comp_list", ImVec2(0, 0));
+        const f32 menu_size = ImGui::GetFrameHeight();
         for (const auto* comp : components) {
+
+            if (!comp->has || !comp->has(id))
+                continue;
 
             ImGui::PushID(static_cast<int>(comp->hash));
 
-            if (!comp->has || !comp->has(id)) {
-                ImGui::PopID();
-                continue;
-            }
-
-            const bool open = ImGui::CollapsingHeader(comp->name.data(),
-                ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20.f);
-            if (UI::transparent_button("..."))
-                ImGui::OpenPopup("##comp_ctx");
-
-            const ImVec2 ctx_btn_max = ImGui::GetItemRectMax();
-            ImGui::SetNextWindowPos(ImVec2(ctx_btn_max.x, ctx_btn_max.y + 3.f), ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
-
+            const std::string title = UI::pretty_name(comp->name);
+            const std::string summary = comp->summary ? comp->summary(id) : std::string{};
             bool removed = false;
-            if (ImGui::BeginPopup("##comp_ctx")) {
 
-                if (ImGui::MenuItem("Remove", nullptr, false, !comp->can_remove || comp->can_remove(id))) {
-                    m_inspector->remove_component(id, comp->hash);
-                    removed = true;
+            UI::card_options options{};
+            options.summary = summary.c_str();
+            options.collapsible = true;
+            options.header_actions_width = menu_size;
+            options.header_actions = [&]() {
+
+                if (UI::menu_button("##comp_menu", menu_size, "Component options"))
+                    ImGui::OpenPopup("##comp_ctx");
+
+                const ImVec2 btn_max = ImGui::GetItemRectMax();
+                ImGui::SetNextWindowPos(ImVec2(btn_max.x, btn_max.y + 3.f), ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
+                if (ImGui::BeginPopup("##comp_ctx")) {
+
+                    if (ImGui::MenuItem("Copy"))
+                        m_clipboard_component = comp->hash;
+
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Remove", nullptr, false, !comp->can_remove || comp->can_remove(id))) {
+                        m_details_edit.set_name(std::format("Remove {}", title));
+                        m_inspector->remove_component(id, comp->hash);
+                        removed = true;
+                    }
+                    ImGui::EndPopup();
                 }
+            };
 
-                if (ImGui::MenuItem("Copy"))
-                    m_clipboard_component = comp->hash;
-
-                ImGui::EndPopup();
+            if (const auto icon = component_icon(comp->name); icon.has_value()) {
+                const auto data = icon_manager::get(*icon);
+                options.icon = data.tex_ref;
+                options.icon_uv0 = data.uv0;
+                options.icon_uv1 = data.uv1;
+                options.has_icon = true;
             }
 
-            if (!removed && open) {
-                ImGui::Indent(8.f);
+            if (UI::begin_card(title.c_str(), options) && !removed) {
                 if (comp->draw)
                     comp->draw(id);
                 else
-                    ImGui::TextDisabled("(runtime-only component)");
-                ImGui::Unindent(8.f);
-                ImGui::Spacing();
+                    ImGui::TextDisabled("Runtime only, nothing to edit");
             }
+            UI::end_card();
 
             ImGui::PopID();
         }
+
+        UI::end_properties();
         ImGui::EndChild();
+
+        m_details_edit.end(std::format("Edit {}", entity_display_name(id)), ImGui::IsAnyItemActive(), user_input_this_frame());
 
         ImGui::End();
     }
@@ -680,6 +879,7 @@ namespace GLT::editor {
             any = true;
             ImGui::PushID(static_cast<int>(d.hash));
             if (ImGui::Selectable(d.name.data())) {
+                m_details_edit.set_name(std::format("Add {}", d.name));
                 m_inspector->add_component(id, d.hash);
                 ImGui::CloseCurrentPopup();
             }
@@ -699,6 +899,7 @@ namespace GLT::editor {
             if (pasted && !pasted->has(id) && component_fits(*pasted, id)) {
                 ImGui::Separator();
                 if (ImGui::Selectable(std::string("Paste: " + std::string(pasted->name)).c_str())) {
+                    m_details_edit.set_name(std::format("Paste {}", pasted->name));
                     m_inspector->add_component(id, m_clipboard_component);
                     ImGui::CloseCurrentPopup();
                 }
@@ -713,7 +914,12 @@ namespace GLT::editor {
 
     void world_viewport_window::render_outliner() {
 
-        if (!ImGui::Begin("Outliner")) {
+        if (!m_show_outliner_panel)
+            return;
+
+        const bool outliner_open = ImGui::Begin("Outliner", &m_show_outliner_panel);
+        track_focus();
+        if (!outliner_open) {
             ImGui::End();
             return;
         }
@@ -730,15 +936,19 @@ namespace GLT::editor {
         prune_dead_selection();
 
         // ---- toolbar ----
-        if (ImGui::Button("+ Entity"))
+        if (UI::accent_button("+ Add"))
             ImGui::OpenPopup("+ Entity Preset Popup");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Add an entity from a preset");
 
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(-1.f);
-        ImGui::InputTextWithHint("##outliner_filter", "Filter...", m_outliner_filter, sizeof(m_outliner_filter));
+        const ImVec2 search_min = ImGui::GetCursorScreenPos();
+        UI::search_field("##outliner_filter", m_outliner_filter, sizeof(m_outliner_filter), "Filter   (>light, !>mesh, ...)");
+        const ImVec2 search_max = ImVec2(search_min.x + ImGui::GetContentRegionAvail().x, search_min.y + ImGui::GetFrameHeight());
 
         // ---- search-bar syntax help ----
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        if (ImGui::IsMouseHoveringRect(search_min, search_max) && ImGui::IsWindowHovered()
+            && GImGui->HoveredIdTimer > 0.6f && !ImGui::IsAnyItemActive()) {
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.f);
             ImGui::TextUnformatted("Search syntax");
@@ -779,8 +989,20 @@ namespace GLT::editor {
                 }
 
                 if (ImGui::Selectable(preset.name.c_str())) {
+
+                    flush_edits();
+                    undo_system::world_change change(*m_world, {});
+
                     const auto id = m_world->spawn_preset(preset.name);
                     if (id.is_valid()) {
+
+                        std::vector<GLT::world::entity_id> spawned;
+                        collect_subtree(id, spawned);                   // presets can spawn children
+                        for (const auto e : spawned)
+                            change.created(e);
+                        change.commit(m_undo_stack, std::format("Add {}", preset.name),
+                            [this](const undo_system::world_state& state) { select_after_undo(state); });
+
                         m_selected_entities = { id };
                         m_selection_anchor = id;
                     }
@@ -795,13 +1017,10 @@ namespace GLT::editor {
             ImGui::EndPopup();
         }
 
-        ImGui::SameLine();
-        if (!m_selected_entities.empty())
-            ImGui::TextDisabled("| %zu selected", m_selected_entities.size());
-        else
-            ImGui::TextDisabled("| %s", m_inspector ? "inspector ready" : "no inspector");
+        if (m_selected_entities.size() > 1)
+            ImGui::TextDisabled("%zu selected", m_selected_entities.size());
 
-        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.f, 2.f));
 
         // ---- parse query ----
         const search_query query = parse_search(m_outliner_filter);
@@ -819,7 +1038,7 @@ namespace GLT::editor {
         }
 
         if (filter_mode && visible_order.empty()) {
-            ImGui::TextDisabled("No entities match");
+            UI::empty_state("No entities match", "Hover the filter field for the search syntax");
             ImGui::End();
             return;
         }
@@ -850,11 +1069,7 @@ namespace GLT::editor {
             && ImGui::IsKeyPressed(ImGuiKey_Delete)
             && !m_selected_entities.empty()) {
 
-            for (auto id : m_selected_entities)
-                if (m_world->alive(id) && !m_world->is_world_entity(id))
-                    m_world->despawn(id);
-
-            clear_selection();
+            delete_entities(m_selected_entities);
         }
 
         ImGui::End();
@@ -884,7 +1099,12 @@ namespace GLT::editor {
         ImGui::Image(icon_data.tex_ref, ImVec2(ROW_ICON_SIZE, ROW_ICON_SIZE), icon_data.uv0, icon_data.uv1);
         ImGui::SameLine();
 
-        if (ImGui::Selectable("World", selected, ImGuiSelectableFlags_SpanAvailWidth)) {
+        ImGui::PushStyleColor(ImGuiCol_Header, GLT::imgui_config::get_action_color00_faded_ref());
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, GLT::imgui_config::get_action_color_gray_hover_ref());
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, GLT::imgui_config::get_action_color_gray_active_ref());
+        const bool world_clicked = ImGui::Selectable("World", selected, ImGuiSelectableFlags_SpanAvailWidth);
+        ImGui::PopStyleColor(3);
+        if (world_clicked) {
             m_selected_entities = { world_id };
             m_selection_anchor = world_id;
         }
@@ -903,8 +1123,13 @@ namespace GLT::editor {
                     if (d.has(world_id) || !component_fits(d, world_id))
                         continue;
                     any = true;
-                    if (ImGui::MenuItem(d.name.data()))
+                    if (ImGui::MenuItem(d.name.data())) {
+                        flush_edits();
+                        undo_system::world_change change(*m_world, std::span<const GLT::world::entity_id>(&world_id, 1));
                         m_inspector->add_component(world_id, d.hash);
+                        change.commit(m_undo_stack, std::format("Add {} to World", d.name),
+                            [this](const undo_system::world_state& state) { select_after_undo(state); });
+                    }
                 }
                 if (!any)
                     ImGui::TextDisabled("nothing to add");
@@ -914,7 +1139,11 @@ namespace GLT::editor {
         }
 
         ImGui::PopID();
-        ImGui::Separator();
+
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, p.y + 2.f), ImVec2(p.x + ImGui::GetContentRegionAvail().x, p.y + 2.f),
+            ImGui::GetColorU32(ImGuiCol_Separator, 0.35f));
+        ImGui::Dummy(ImVec2(0.f, 5.f));
     }
 
     // ---- outliner (per-row) ---------------------------------------------------------------------------------------
@@ -950,12 +1179,19 @@ namespace GLT::editor {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const bool hovered = ImGui::IsMouseHoveringRect(row_start, row_end);
 
-        if (is_sel)
-            dl->AddRectFilled(row_start, row_end, ImGui::GetColorU32(ImGuiCol_Header));
-        else if (hovered)
-            dl->AddRectFilled(row_start, row_end, ImGui::GetColorU32(ImGuiCol_HeaderHovered, HOVER_ALPHA));
+        if (is_sel) {
+            dl->AddRectFilled(row_start, row_end, ImGui::GetColorU32(GLT::imgui_config::get_action_color00_faded_ref()), ROW_ROUNDING);
+            if (id == primary_selection())
+                dl->AddRectFilled(ImVec2(row_start.x, row_start.y + 3.f), ImVec2(row_start.x + 3.f, row_end.y - 3.f),
+                    ImGui::GetColorU32(GLT::imgui_config::get_action_color00_hover_ref()), 1.5f);
+        } else if (hovered)
+        {
+            ImVec4 hover_color = GLT::imgui_config::get_action_color_gray_hover_ref();
+            hover_color.w *= HOVER_ALPHA;
+            dl->AddRectFilled(row_start, row_end, ImGui::GetColorU32(hover_color), ROW_ROUNDING);
+        }
         else if (striped)
-            dl->AddRectFilled(row_start, row_end, ZEBRA_COLOR);
+            dl->AddRectFilled(row_start, row_end, ZEBRA_COLOR, ROW_ROUNDING);
 
         // ---- visibility toggle ----
         {
@@ -968,8 +1204,13 @@ namespace GLT::editor {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.10f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.20f));
 
-            if (ImGui::ImageButton("##vis", vis_data.tex_ref, ImVec2(ROW_ICON_SIZE, ROW_ICON_SIZE), vis_data.uv0, vis_data.uv1))
+            if (ImGui::ImageButton("##vis", vis_data.tex_ref, ImVec2(ROW_ICON_SIZE, ROW_ICON_SIZE), vis_data.uv0, vis_data.uv1)) {
+                flush_edits();
+                undo_system::world_change change(*m_world, std::span<const GLT::world::entity_id>(&id, 1));
                 m_world->set_visible(id, !visible);
+                change.commit(m_undo_stack, std::format("{} {}", visible ? "Hide" : "Show", name),
+                    [this](const undo_system::world_state& state) { select_after_undo(state); });
+            }
 
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
                 ImGui::SetTooltip(visible ? "Hide entity" : "Show entity");
@@ -990,7 +1231,10 @@ namespace GLT::editor {
                 | ImGuiTreeNodeFlags_SpanAvailWidth;
 
             ImGui::SetCursorScreenPos({ row_start.x + VIS_COL_WIDTH, row_start.y });
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.f, 0.f, 0.f, 0.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.f, 0.f, 0.f, 0.f));
             ImGui::TreeNodeEx("##node", flags);
+            ImGui::PopStyleColor(2);
             clicked = ImGui::IsItemClicked();
             content_x = ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
 
@@ -1004,7 +1248,10 @@ namespace GLT::editor {
 
             const float indent_spacing = ImGui::GetStyle().IndentSpacing;
             ImGui::SetCursorScreenPos({ row_start.x + VIS_COL_WIDTH + depth * indent_spacing, row_start.y });
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.f, 0.f, 0.f, 0.f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.f, 0.f, 0.f, 0.f));
             open = ImGui::TreeNodeEx("##node", flags);
+            ImGui::PopStyleColor(2);
             clicked = ImGui::IsItemClicked();
             content_x = ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
         }
@@ -1078,31 +1325,41 @@ namespace GLT::editor {
             m_selection_anchor = id;
         }
 
+        const auto on_applied = [this](const undo_system::world_state& state) { select_after_undo(state); };
+        const std::span<const GLT::world::entity_id> just_this(&id, 1);
+
         if (ImGui::MenuItem("Add Child Entity")) {
+            flush_edits();
+            undo_system::world_change change(*m_world, {});
             const auto child = m_world->spawn();
             m_world->set_parent(child, id);
+            change.created(child);
+            change.commit(m_undo_stack, std::format("Add Child to {}", entity_display_name(id)), on_applied);
         }
 
         if (ImGui::MenuItem("Duplicate")) {
+            flush_edits();
+            undo_system::world_change change(*m_world, {});
             const auto copy = m_world->spawn();
             if (m_inspector)
                 m_inspector->copy_components(id, copy);
             if (const auto p = m_world->parent_of(id); p.is_valid())
                 m_world->set_parent(copy, p);
+            change.created(copy);
+            change.commit(m_undo_stack, std::format("Duplicate {}", entity_display_name(id)), on_applied);
             m_selected_entities = { copy };
             m_selection_anchor = copy;
         }
 
-        if (ImGui::MenuItem(visible ? "Hide" : "Show"))
+        if (ImGui::MenuItem(visible ? "Hide" : "Show")) {
+            flush_edits();
+            undo_system::world_change change(*m_world, just_this);
             m_world->set_visible(id, !visible);
-
-        if (ImGui::MenuItem("Delete", "Del")) {
-            const auto victims = m_selected_entities;
-            clear_selection();
-            for (auto v : victims)
-                if (m_world->alive(v))
-                    m_world->despawn(v);
+            change.commit(m_undo_stack, std::format("{} {}", visible ? "Hide" : "Show", entity_display_name(id)), on_applied);
         }
+
+        if (ImGui::MenuItem("Delete", "Del"))
+            delete_entities(m_selected_entities);
 
         if (m_inspector && ImGui::BeginMenu("Add Component")) {
 
@@ -1115,8 +1372,12 @@ namespace GLT::editor {
                     for (const auto* d : list) {
                         if (d->has(id) || !component_fits(*d, id))
                             continue;
-                        if (ImGui::MenuItem(d->name.data()))
+                        if (ImGui::MenuItem(d->name.data())) {
+                            flush_edits();
+                            undo_system::world_change change(*m_world, just_this);
                             m_inspector->add_component(id, d->hash);
+                            change.commit(m_undo_stack, std::format("Add {}", d->name), on_applied);
+                        }
                     }
                     ImGui::EndMenu();
                 }
@@ -1289,6 +1550,21 @@ namespace GLT::editor {
     }
 
 
+    std::optional<icon_manager::icon_type> world_viewport_window::component_icon(std::string_view component_name) {
+
+        if (component_name == "transform")         return icon_manager::icon::transfrom_translation;
+        if (component_name == "mesh")              return icon_manager::icon::mesh_asset;
+        if (component_name == "light")             return icon_manager::icon::point_light;
+        if (component_name == "camera")            return icon_manager::icon::camera;
+        if (component_name == "audio source")      return icon_manager::icon::audio;
+        if (component_name == "hierarchy")         return icon_manager::icon::relation;
+        if (component_name == "sky")               return icon_manager::icon::world;
+        if (component_name == "ambient_light")     return icon_manager::icon::sun;
+        if (component_name == "name")              return icon_manager::icon::file;
+        return std::nullopt;
+    }
+
+
     std::vector<icon_manager::icon_type> world_viewport_window::entity_component_icons(GLT::world::entity_id id) const {
 
         std::vector<icon_manager::icon_type> icons;
@@ -1311,7 +1587,7 @@ namespace GLT::editor {
             icons.push_back(icon_manager::icon::sun);
         if (has("camera"))
             icons.push_back(icon_manager::icon::camera);
-        if (has("audio_source"))
+        if (has("audio source"))
             icons.push_back(icon_manager::icon::audio);
 
         return icons;
@@ -1509,7 +1785,7 @@ namespace GLT::editor {
 
         ImGui::SameLine(0.0f, 6.0f);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f, 5.f));
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.10f, 0.10f, 0.55f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.16f, 0.16f, 0.75f));
@@ -1524,52 +1800,61 @@ namespace GLT::editor {
         ImGui::PopStyleColor(3);
         ImGui::PopStyleVar(2);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.f, 8.f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.f);
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.08f, 0.08f, 0.08f, 0.92f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f, 10.f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.f);
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.08f, 0.08f, 0.08f, 0.94f));
 
         ImGui::SetNextWindowPos(ImVec2(btn_min.x, btn_max.y + 4.f), ImGuiCond_Appearing);
-        ImGui::SetNextWindowSize(ImVec2(400.f, 0.f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(380.f, 0.f), ImVec2(380.f, 640.f));
 
         bool open = false;
-        if (ImGui::BeginPopup("##render_settings_popup", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        if (ImGui::BeginPopup("##render_settings_popup", ImGuiWindowFlags_NoMove)) {
 
             open = true;
 
-            if (ImGui::BeginTable("##renderer_settings", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+            ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+            ImGui::TextUnformatted("Renderer");
+            ImGui::PopFont();
+            ImGui::TextDisabled("Applies to every viewport");
+            ImGui::Dummy(ImVec2(0.f, 4.f));
 
-                UI::begin_table("Renderer_settings", false);
+            // One card per category ("General" for members without one)
+            UI::begin_properties(UI::property_layout::compact);
+            std::string_view current_cat{};
+            bool card_open = false;
+            bool card_visible = false;
+            bool changed = false;
 
-                std::string_view last_cat{};
-                bool changed = false;
-                GLT::reflect::for_each_member(*type_data, data,
-                    [&](const GLT::reflect::member_descriptor& member_descriptor, void* ptr) -> bool {
+            GLT::reflect::for_each_member(*type_data, data,
+                [&](const GLT::reflect::member_descriptor& member_descriptor, void* ptr) -> bool {
 
-                        if (member_descriptor.flags & (u32)GLT::reflect::member_flags::skip)
-                            return true;
-
-                        const std::string_view cat = member_descriptor.category ? member_descriptor.category : "";
-
-                        if (!cat.empty() && cat != last_cat) {
-                            last_cat = cat;
-                            ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_Header));
-                            ImGui::TextUnformatted(cat.data());
-                            ImGui::TableSetColumnIndex(1);
-                        }
-
-                        if (draw_reflected_setting(member_descriptor, ptr))
-                            changed = true;
-
+                    if (member_descriptor.flags & (u32)GLT::reflect::member_flags::skip)
                         return true;
-                    });
 
-                UI::end_table();
+                    const std::string_view cat = (member_descriptor.category && member_descriptor.category[0])
+                        ? std::string_view(member_descriptor.category) : std::string_view("General");
 
-                if (changed)
-                    m_renderer->on_settings_changed();
-            }
+                    if (!card_open || cat != current_cat) {
+                        if (card_open)
+                            UI::end_card();
+                        current_cat = cat;
+                        const std::string title(cat);
+                        card_visible = UI::begin_card(title.c_str(), UI::card_options{ .collapsible = true });
+                        card_open = true;
+                    }
+
+                    if (card_visible && draw_reflected_setting(member_descriptor, ptr))
+                        changed = true;
+
+                    return true;
+                });
+
+            if (card_open)
+                UI::end_card();
+            UI::end_properties();
+
+            if (changed)
+                m_renderer->on_settings_changed();
 
             ImGui::EndPopup();
         }
@@ -1591,38 +1876,60 @@ namespace GLT::editor {
         const f32  lo = static_cast<f32>(md.range_min);
         const f32  hi = static_cast<f32>(md.range_max);
 
+        const std::string label_str = UI::pretty_name(label);
+        const char* text = label_str.c_str();
+        const char* desc = (md.tooltip && md.tooltip[0]) ? md.tooltip : nullptr;
+
         switch (md.kind) {
 
-            case GLT::reflect::type_kind::boolean: {
-                auto& value = *static_cast<bool*>(ptr);
-                return GLT::UI::table_row(label, value);
-            }
+            case GLT::reflect::type_kind::boolean:
+                return UI::property_toggle(text, *static_cast<bool*>(ptr), desc);
 
             case GLT::reflect::type_kind::u32: {
                 auto& value = *static_cast<u32*>(ptr);
-                return has_range ? GLT::UI::table_row<u32>(label, value, 0.2f, lo, hi) : GLT::UI::table_row<u32>(label, value);
-            }
-            case GLT::reflect::type_kind::i32: {
-                auto& value = *static_cast<i32*>(ptr);
-                return has_range ? GLT::UI::table_row<i32>(label, value, 0.2f, lo, hi) : GLT::UI::table_row<i32>(label, value);
-            }
-            case GLT::reflect::type_kind::f32: {
-                auto& value = *static_cast<f32*>(ptr);
-                return has_range ? GLT::UI::table_row<f32>(label, value, 0.1f, lo, hi) : GLT::UI::table_row<f32>(label, value);
-            }
-            case GLT::reflect::type_kind::f64: {
-                auto& value = *static_cast<f64*>(ptr);
-                return has_range ? GLT::UI::table_row<f64>(label, value, 0.1f, lo, hi) : GLT::UI::table_row<f64>(label, value);
+                i32 buffer = static_cast<i32>(value);
+                const bool changed = has_range
+                    ? UI::property_slider(text, buffer, static_cast<i32>(lo), static_cast<i32>(hi), "%d", desc)
+                    : UI::property_custom(text, [&](f32 width) {
+                        ImGui::SetNextItemWidth(width);
+                        return ImGui::DragInt("##value", &buffer, 0.2f, 0, INT32_MAX);
+                    }, desc);
+                if (changed)
+                    value = static_cast<u32>(std::max(0, buffer));
+                return changed;
             }
 
-            default: {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(label.data());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextDisabled("(unsupported)");
-                return false;
+            case GLT::reflect::type_kind::i32: {
+                auto& value = *static_cast<i32*>(ptr);
+                return has_range
+                    ? UI::property_slider(text, value, static_cast<i32>(lo), static_cast<i32>(hi), "%d", desc)
+                    : UI::property_custom(text, [&](f32 width) {
+                        ImGui::SetNextItemWidth(width);
+                        return ImGui::DragInt("##value", &value, 0.2f);
+                    }, desc);
             }
+
+            case GLT::reflect::type_kind::f32: {
+                auto& value = *static_cast<f32*>(ptr);
+                return has_range
+                    ? UI::property_slider(text, value, lo, hi, "%.3f", desc)
+                    : UI::property_drag(text, value, 0.01f, 0.f, 0.f, "%.3f", desc);
+            }
+
+            case GLT::reflect::type_kind::f64: {
+                auto& value = *static_cast<f64*>(ptr);
+                f32 buffer = static_cast<f32>(value);
+                const bool changed = has_range
+                    ? UI::property_slider(text, buffer, lo, hi, "%.3f", desc)
+                    : UI::property_drag(text, buffer, 0.01f, 0.f, 0.f, "%.3f", desc);
+                if (changed)
+                    value = static_cast<f64>(buffer);
+                return changed;
+            }
+
+            default:
+                UI::property_value(text, "(unsupported type)");
+                return false;
         }
     }
 
@@ -1662,22 +1969,23 @@ namespace GLT::editor {
             * glm::scale(glm::mat4(1.f), scale);
 
         float* snap_ptr = nullptr;
-        if (m_gizmo_snap) {
+        if (gizmo_cfg().snap) {
             switch (m_gizmo_operation) {
                 case ImGuizmo::TRANSLATE:
-                    snap_ptr = m_gizmo_snap_translate;
+                    snap_ptr = &gizmo_cfg().snap_translate.x;
                     break;
                 case ImGuizmo::ROTATE:
-                    snap_ptr = &m_gizmo_snap_rotate;
+                    snap_ptr = &gizmo_cfg().snap_rotate;
                     break;
                 case ImGuizmo::SCALE:
-                    snap_ptr = &m_gizmo_snap_scale;
+                    snap_ptr = &gizmo_cfg().snap_scale;
                     break;
                 default: break;
             }
         }
 
-        ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection), m_gizmo_operation, m_gizmo_mode,
+        ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection), m_gizmo_operation,
+            gizmo_cfg().space == gizmo_space::local ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
             glm::value_ptr(model), nullptr, snap_ptr);
 
         if (!ImGuizmo::IsUsing())
@@ -1731,7 +2039,7 @@ namespace GLT::editor {
             ImGuiChildFlags_AlwaysUseWindowPadding;
 
         auto push_card_style = [&]() {
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.f, 5.f));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.f, 4.f));
             ImGui::PushStyleColor(ImGuiCol_ChildBg, card_bg);
@@ -1771,12 +2079,12 @@ namespace GLT::editor {
             ImGui::SameLine();
             push_card_style();
             if (ImGui::BeginChild("##gizmo_space", ImVec2(0, 0), card_flags)) {
-                if (gizmo_toggle_button("Global", m_gizmo_mode == ImGuizmo::WORLD))
-                    m_gizmo_mode = ImGuizmo::WORLD;
+                if (gizmo_toggle_button("Global", gizmo_cfg().space == gizmo_space::world))
+                    gizmo_cfg().space = gizmo_space::world;
 
                 ImGui::SameLine();
-                if (gizmo_toggle_button("Local", m_gizmo_mode == ImGuizmo::LOCAL))
-                    m_gizmo_mode = ImGuizmo::LOCAL;
+                if (gizmo_toggle_button("Local", gizmo_cfg().space == gizmo_space::local))
+                    gizmo_cfg().space = gizmo_space::local;
             }
             ImGui::EndChild();
             pop_card_style();
@@ -1784,8 +2092,8 @@ namespace GLT::editor {
             ImGui::SameLine();
             push_card_style();
             if (ImGui::BeginChild("##gizmo_snap_toggle", ImVec2(0, 0), card_flags)) {
-                if (gizmo_toggle_button("Snap", m_gizmo_snap))
-                    m_gizmo_snap = !m_gizmo_snap;
+                if (gizmo_toggle_button("Snap", gizmo_cfg().snap))
+                    gizmo_cfg().snap = !gizmo_cfg().snap;
             }
             ImGui::EndChild();
             pop_card_style();
@@ -1798,7 +2106,7 @@ namespace GLT::editor {
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(4);
 
-        if (m_gizmo_snap) {
+        if (gizmo_cfg().snap) {
 
             const ImVec2 anchor = ImVec2(right_x, row1_pos.y + row1_size.y + ROW_GAP);
             ImGui::SetNextWindowPos(anchor, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
@@ -1820,21 +2128,21 @@ namespace GLT::editor {
                             ImGui::TextUnformatted("Translate snap");
                             ImGui::SameLine();
                             ImGui::SetNextItemWidth(200.f);
-                            ImGui::DragFloat3("##snap_t", &m_gizmo_snap_translate[0], .1f, 0.f, 100.f, "%.2f");
+                            ImGui::DragFloat3("##snap_t", &gizmo_cfg().snap_translate.x, .1f, 0.f, 100.f, "%.2f");
                             break;
                         case ImGuizmo::ROTATE:
                             ImGui::AlignTextToFramePadding();
                             ImGui::TextUnformatted("Rotate snap");
                             ImGui::SameLine();
                             ImGui::SetNextItemWidth(120.f);
-                            ImGui::DragFloat("##snap_r", &m_gizmo_snap_rotate, 1.f, 0.f, 100.f, "%.1f deg");
+                            ImGui::DragFloat("##snap_r", &gizmo_cfg().snap_rotate, 1.f, 0.f, 100.f, "%.1f deg");
                             break;
                         case ImGuizmo::SCALE:
                             ImGui::AlignTextToFramePadding();
                             ImGui::TextUnformatted("Scale snap");
                             ImGui::SameLine();
                             ImGui::SetNextItemWidth(120.f);
-                            ImGui::DragFloat("##snap_s", &m_gizmo_snap_scale, .1f, 0.f, 100.f, "%.2f");
+                            ImGui::DragFloat("##snap_s", &gizmo_cfg().snap_scale, .1f, 0.f, 100.f, "%.2f");
                             break;
                         default: break;
                     }
@@ -1866,7 +2174,7 @@ namespace GLT::editor {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hov);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, act);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.f, 2.f));
 
         bool clicked{};
@@ -1894,12 +2202,94 @@ namespace GLT::editor {
         for (auto id : m_selected_entities) {
             if (!m_world->alive(id))
                 continue;
-            const glm::vec4& color = (id == primary) ? PRIMARY_HIGHLIGHT : SECONDARY_HIGHLIGHT;
+            const auto& selection = editor_settings::get().selection;
+            const glm::vec4& color = (id == primary) ? selection.primary_color : selection.secondary_color;
             debug->highlight_entity(id, color, lifetime, true);
         }
     }
 
     // ---- misc -----------------------------------------------------------------------------------------------------
+
+    // ---- undo / redo ------------------------------------------------------------------------------------------------
+
+    void world_viewport_window::flush_edits() {
+
+        m_details_edit.commit();
+        m_gizmo_edit.commit();
+    }
+
+
+    void world_viewport_window::select_after_undo(const undo_system::world_state& state) {
+
+        // Select the top-most entities of what the step touched, so the user sees what changed. A step that ends in
+        // "nothing exists" (undo of a spawn) clears the selection
+        if (!editor_settings::get().history.select_after_undo) {
+            prune_dead_selection();
+            return;
+        }
+
+        m_selected_entities.clear();
+
+        if (m_world) {
+            for (const auto id : state.alive) {
+
+                if (!m_world->alive(id))
+                    continue;
+
+                const auto parent = m_world->parent_of(id);
+                if (parent.is_valid() && std::find(state.alive.begin(), state.alive.end(), parent) != state.alive.end())
+                    continue;
+
+                m_selected_entities.push_back(id);
+            }
+        }
+
+        m_selection_anchor = m_selected_entities.empty() ? GLT::world::INVALID_ENTITY : m_selected_entities.front();
+    }
+
+
+    void world_viewport_window::delete_entities(std::vector<GLT::world::entity_id> ids) {
+
+        if (!m_world)
+            return;
+
+        flush_edits();
+
+        // Delete whole subtrees: the children are part of what the user sees as "this entity"
+        std::vector<GLT::world::entity_id> victims;
+        for (const auto id : ids)
+            if (m_world->alive(id) && !m_world->is_world_entity(id)
+                && std::find(victims.begin(), victims.end(), id) == victims.end())
+                collect_subtree(id, victims);
+
+        if (victims.empty())
+            return;
+
+        const std::string name = ids.size() == 1
+            ? std::format("Delete {}", entity_display_name(ids.front()))
+            : std::format("Delete {} entities", ids.size());
+
+        undo_system::world_change change(*m_world, victims);
+
+        clear_selection();
+        for (auto it = victims.rbegin(); it != victims.rend(); ++it)        // children before their parents
+            if (m_world->alive(*it))
+                m_world->despawn(*it);
+
+        change.commit(m_undo_stack, name, [this](const undo_system::world_state& state) { select_after_undo(state); });
+    }
+
+
+    void world_viewport_window::collect_subtree(GLT::world::entity_id id, std::vector<GLT::world::entity_id>& out) const {
+
+        if (!m_world || !m_world->alive(id) || std::find(out.begin(), out.end(), id) != out.end())
+            return;
+
+        out.push_back(id);                                                  // pre-order: parent before children
+        for (const auto child : m_world->children_of(id))
+            collect_subtree(child, out);
+    }
+
 
     void world_viewport_window::set_cursor_captured(const bool captured) {
 

@@ -245,7 +245,7 @@ namespace GLT::editor {
 
         // Widths of the two side panels. The splitter handles between panels edit these directly, so they persist across frames
         f32                                                     m_outliner_width = 240.0f;
-        f32                                                     m_inspector_width = 340.0f;
+        f32                                                     m_inspector_width = 380.0f;
 
         // preview state -----------------------------------------------------------------------------------------------
 

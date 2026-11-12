@@ -95,6 +95,8 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] bool has_children(entity_id id) const noexcept override;
         void set_parent(entity_id child, entity_id parent) override;
         [[nodiscard]] entity_id parent_of(entity_id id) const noexcept override;
+        [[nodiscard]] std::vector<std::byte> snapshot_entities(std::span<const entity_id> ids) const override;
+        std::vector<entity_id> restore_entities(std::span<const std::byte> blob) override;
 
         // extension API (entity_builder, component_registry) ----------------------------------------------------------
         [[nodiscard]] entt::registry& registry() noexcept             { return m_registry; }
@@ -172,6 +174,7 @@ namespace GLT::world::world_ecs_entt {
         // Hierarchy helpers ---------------------------------------------------
         [[nodiscard]] component::hierarchy* hierarchy_of(entity_id id) noexcept;
         [[nodiscard]] const component::hierarchy* hierarchy_of(entity_id id) const noexcept;
+        void detach_from_parent(entity_id id) noexcept;                        // removes `id` from its parent's children list
 
         // Transform -----------------------------------------------------------
         [[nodiscard]] glm::mat4 world_transform_of(entity_id id) const noexcept;

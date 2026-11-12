@@ -13,6 +13,7 @@
 #include "material/material_compiler.h"
 #include "util/ui/panel_collection.h"
 #include "util/ui/asset_picker.h"
+#include "resource_manager/icon_manager.h"
 
 
 
@@ -22,13 +23,13 @@ namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr f32                                   DETAILS_PANEL_WIDTH = 430.0f;
+    constexpr f32                                   MIN_DETAILS_WIDTH = 300.0f;
 
-    constexpr f32                                   PREVIEW_MAX_SIDE = 420.0f;
+    constexpr f32                                   MIN_SOURCE_WIDTH = 320.0f;
 
-    constexpr const char*                           TABLE_NAME = "material_viewer_table";
+    constexpr f32                                   SPLITTER_WIDTH = 4.0f;
 
-    constexpr f32                                   TABLE_LABEL_RATIO = 0.38f;
+    constexpr f32                                   PREVIEW_MAX_HEIGHT = 260.0f;
 
     constexpr const char*                           DEFAULT_SLANG_SOURCE = R"slang(
 import material_contract_v0;
@@ -111,6 +112,125 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
             case bm::alpha_holdout:     return "Alpha Holdout";
             default:                    return "(unknown)";
         }
+    }
+
+
+    namespace {
+
+        // One line under the blend mode combo: what the mode does
+        const char* blend_mode_description(const GLT::asset::material::blend_mode b) {
+
+            using bm = GLT::asset::material::blend_mode;
+            switch (b) {
+                case bm::opaque:            return "Solid surface. Writes depth and casts shadows";
+                case bm::masked:            return "Solid, but pixels are cut out by the shader's alpha_test()";
+                case bm::translucent:       return "See-through. Sorted back to front, no depth write, no shadows";
+                case bm::additive:          return "Adds its color to what is behind it (fire, glow)";
+                case bm::modulate:          return "Multiplies what is behind it (stains, tinted glass)";
+                case bm::alpha_composite:   return "Premultiplied alpha, the shader outputs rgb * opacity";
+                case bm::alpha_holdout:     return "Cuts a hole into what is behind it";
+                default:                    return "";
+            }
+        }
+
+
+        // Parameter names that are edited with a color picker instead of number fields
+        bool looks_like_color(std::string_view name) {
+
+            std::string lower(name);
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            for (const char* key : { "color", "colour", "tint", "albedo", "emissive" })
+                if (lower.find(key) != std::string::npos)
+                    return true;
+            return false;
+        }
+
+
+        // Thin draggable divider. [vertical_line] = divides left | right, otherwise top / bottom.
+        // [invert] = dragging right / down makes [size] smaller (the panel sits after the splitter)
+        void splitter(const char* id, const bool vertical_line, f32& size, const f32 min_size, const f32 max_size, const f32 length,
+            const bool invert) {
+
+            if (length < 1.f)
+                return;
+
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton(id, vertical_line ? ImVec2(SPLITTER_WIDTH, length) : ImVec2(length, SPLITTER_WIDTH));
+
+            const bool hovered = ImGui::IsItemHovered();
+            const bool active = ImGui::IsItemActive();
+
+            if (active) {
+                const f32 delta = vertical_line ? ImGui::GetIO().MouseDelta.x : ImGui::GetIO().MouseDelta.y;
+                size = std::clamp(size + (invert ? -delta : delta), min_size, std::max(min_size, max_size));
+            }
+
+            if (hovered || active)
+                ImGui::SetMouseCursor(vertical_line ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            const f32 center = (vertical_line ? pos.x : pos.y) + SPLITTER_WIDTH * 0.5f;
+            const ImU32 accent = ImGui::GetColorU32(active ? GLT::imgui_config::get_action_color00_active_ref()
+                                                           : GLT::imgui_config::get_action_color00_hover_ref());
+
+            if (vertical_line) {
+                if (hovered || active)
+                    draw_list->AddRectFilled(ImVec2(center - 1.f, pos.y), ImVec2(center + 1.f, pos.y + length), accent);
+                else
+                    draw_list->AddLine(ImVec2(center, pos.y), ImVec2(center, pos.y + length), ImGui::GetColorU32(ImGuiCol_Separator));
+            } else {
+                if (hovered || active)
+                    draw_list->AddRectFilled(ImVec2(pos.x, center - 1.f), ImVec2(pos.x + length, center + 1.f), accent);
+                else
+                    draw_list->AddLine(ImVec2(pos.x, center), ImVec2(pos.x + length, center), ImGui::GetColorU32(ImGuiCol_Separator));
+            }
+        }
+
+
+        // Background band for a panel header (source / output). Returns its height
+        f32 panel_strip(const char* title, const ImVec2& min, const f32 width) {
+
+            const f32 height = ImGui::GetFrameHeight() + 8.f;
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            draw_list->AddRectFilled(min, ImVec2(min.x + width, min.y + height), ImGui::GetColorU32(ImGuiCol_TitleBg));
+            draw_list->AddLine(ImVec2(min.x, min.y + height - 1.f), ImVec2(min.x + width, min.y + height - 1.f),
+                ImGui::GetColorU32(ImGuiCol_Separator, 0.6f));
+
+            ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+            draw_list->AddText(ImVec2(min.x + 12.f, min.y + (height - ImGui::GetTextLineHeight()) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), title);
+            ImGui::PopFont();
+            return height;
+        }
+
+
+        // Small rounded label with a colored dot ("Compiled", "Failed", "Unsaved changes")
+        f32 status_pill(ImDrawList* draw_list, const ImVec2& pos, const char* text, const ImU32 dot, const ImU32 fill, const ImU32 text_color) {
+
+            const ImVec2 size = ImGui::CalcTextSize(text);
+            const ImVec2 pill_min(pos.x, pos.y - 2.f);
+            const ImVec2 pill_max(pos.x + size.x + 22.f, pos.y + size.y + 2.f);
+            draw_list->AddRectFilled(pill_min, pill_max, fill, (pill_max.y - pill_min.y) * 0.5f);
+            draw_list->AddCircleFilled(ImVec2(pos.x + 9.f, pos.y + size.y * 0.5f), 3.f, dot);
+            draw_list->AddText(ImVec2(pos.x + 16.f, pos.y), text_color, text);
+            return pill_max.x - pill_min.x;
+        }
+
+
+        void warning_text(const char* text) {
+
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 110, 255));
+            ImGui::TextWrapped("%s", text);
+            ImGui::PopStyleColor();
+        }
+
+
+        void hint_text(const char* text) {
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", text);
+            ImGui::PopStyleColor();
+        }
+
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -235,15 +355,15 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         apply_pending_dock();
         ImGui::SetNextWindowSizeConstraints(ImVec2(880.0f, 520.0f), ImVec2(std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max()));
 
-        if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+        const bool open = ImGui::Begin(m_window_id.c_str(), &m_show_window, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleVar();
 
-            GLT::UI::custom_frame(DETAILS_PANEL_WIDTH, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
-                [this]() {
-                    draw_details_panel();
-                },
-                [this]() {
-                    draw_source_panel();
-                });
+        if (open) {
+
+            handle_shortcuts();
+            draw_header_bar();
+            draw_body();
         }
         ImGui::End();
     }
@@ -374,7 +494,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         // Compile is an in-memory operation - the file on disk is still stale
         mark_dirty();
 
-        append_compile_log(compile_log_level::info, std::format("Compile succeeded - {} byte(s) bytecode, {} byte(s) reflection,"
+        append_compile_log(compile_log_level::success, std::format("Compile succeeded - {} byte(s) bytecode, {} byte(s) reflection,"
             " {} byte(s) params, compiler hash 0x{:016X}", m_bytecode_blob.size(), m_reflection_blob.size(), m_edit_params.size(),
             m_compiler_hash));
 
@@ -403,123 +523,205 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
     // CLASS PRIVATE ===================================================================================================
 
-    void material_viewer_window::draw_details_panel() {
+    // top-level layout ------------------------------------------------------------------------------------------------
 
-        // ---- header: name + path --------------------------------------------------------------------------------
-        const std::string title = m_material_name.empty() ? std::string("(no material)") : m_material_name;
-        ImGui::TextUnformatted(title.c_str());
+    // Ctrl+S saves, F7 compiles. Works while typing in the source editor too
+    void material_viewer_window::handle_shortcuts() {
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        if (m_material_path.empty())
-            ImGui::TextUnformatted("(unsaved)");
-        else
-            ImGui::TextWrapped("%s", m_material_path.generic_string().c_str());
-        ImGui::PopStyleColor();
+        if (!m_has_material || !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+            return;
 
-        ImGui::Dummy(ImVec2(0.0f, 6.0f));
-
-        // ---- action bar: always visible at the top ---------------------------------------------------------------
-
-        ImGui::BeginDisabled(!m_dirty || !m_has_material);
-
-        if (ImGui::Button("Save", ImVec2(100.0f, 0.0f)))
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyCtrl && !io.KeyAlt && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false) && m_dirty)
             save();
 
-        ImGui::SameLine();
-        if (ImGui::Button("Revert", ImVec2(100.0f, 0.0f)))
-            revert();
-
-        ImGui::EndDisabled();
-
-        // Compile stays enabled whenever a material is open, even without pending edits - it doubles as
-        // "force a recompile after the compiler hash changed", which is the primary way to recover from
-        // the yellow "bytecode does not match" warning shown in the Derived section.
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!m_has_material);
-
-        if (ImGui::Button("Compile", ImVec2(100.0f, 0.0f)))
+        if (ImGui::IsKeyPressed(ImGuiKey_F7, false))
             compile();
+    }
 
-        ImGui::EndDisabled();
 
-        if (m_dirty) {
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 90, 255));
-            ImGui::TextUnformatted("Unsaved changes");
-            ImGui::PopStyleColor();
+    // Header bar: material icon, name, unsaved marker, path | Revert, Compile, Save
+    void material_viewer_window::draw_header_bar() {
+
+        const f32 frame_h = ImGui::GetFrameHeight();
+        const f32 bar_h = frame_h + 14.f;
+        const ImVec2 bar_min = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+        draw_list->AddRectFilled(bar_min, ImVec2(bar_min.x + width, bar_min.y + bar_h), ImGui::GetColorU32(ImGuiCol_TitleBg));
+
+        // buttons on the right
+        const char* revert_label = "Revert";
+        const char* compile_label = "Compile";
+        const char* save_label = "Save";
+        const f32 pad = ImGui::GetStyle().FramePadding.x * 4.f;
+        const f32 revert_w = ImGui::CalcTextSize(revert_label).x + pad;
+        const f32 compile_w = ImGui::CalcTextSize(compile_label).x + pad;
+        const f32 save_w = ImGui::CalcTextSize(save_label).x + pad;
+        const f32 buttons_x = bar_min.x + width - (revert_w + compile_w + save_w + 12.f) - 10.f;
+
+        // icon + name + unsaved pill + path on the left
+        const f32 icon = frame_h;
+        const ImVec2 icon_min(bar_min.x + 10.f, bar_min.y + (bar_h - icon) * 0.5f);
+        const auto icon_data = icon_manager::get(icon_manager::icon::material);
+        draw_list->AddImage(icon_data.tex_ref, icon_min, ImVec2(icon_min.x + icon, icon_min.y + icon), icon_data.uv0, icon_data.uv1);
+
+        f32 x = icon_min.x + icon + 8.f;
+        const f32 text_y = bar_min.y + (bar_h - ImGui::GetTextLineHeight()) * 0.5f;
+        const std::string name = (m_has_material || m_load_failed) ? m_material_name : std::string("No material");
+        ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+        draw_list->AddText(ImVec2(x, text_y), ImGui::GetColorU32(ImGuiCol_Text), name.c_str());
+        x += ImGui::CalcTextSize(name.c_str()).x + 10.f;
+        ImGui::PopFont();
+
+        if (m_dirty)
+            x += status_pill(draw_list, ImVec2(x, text_y), "Unsaved changes", IM_COL32(230, 180, 60, 255), IM_COL32(230, 180, 60, 40),
+                IM_COL32(230, 200, 120, 255)) + 10.f;
+
+        std::string full_path;
+        if (m_has_material || m_load_failed)
+            full_path = m_material_path.empty() ? std::string("Not saved to disk yet") : m_material_path.generic_string();
+        if (!full_path.empty() && x < buttons_x - 40.f) {
+            std::string path = full_path;
+            const f32 max_w = buttons_x - 10.f - x;
+            while (path.size() > 4 && ImGui::CalcTextSize(path.c_str()).x > max_w)
+                path.erase(0, 4);
+            if (path.size() != full_path.size())
+                path = "..." + path;
+            draw_list->AddText(ImVec2(x, text_y), ImGui::GetColorU32(ImGuiCol_TextDisabled), path.c_str());
         }
 
-        // ---- state: nothing to scroll if we have no usable material ---------------------------------------------
+        ImGui::SetCursorScreenPos(ImVec2(buttons_x, bar_min.y + (bar_h - frame_h) * 0.5f));
+
+        ImGui::BeginDisabled(!m_dirty || !m_has_material);
+        if (UI::subtle_button(revert_label, ImVec2(revert_w, 0.f)))
+            revert();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Throw away all changes since the last save");
+        ImGui::EndDisabled();
+
+        // Compile stays enabled without pending edits - it doubles as "recompile after the compiler changed", the way to get
+        // rid of the "out of date" state in the Compiled Shader card
+        ImGui::SameLine(0.f, 6.f);
+        ImGui::BeginDisabled(!m_has_material);
+        if (UI::subtle_button(compile_label, ImVec2(compile_w, 0.f)))
+            compile();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Compile the Slang source (F7)");
+        ImGui::EndDisabled();
+
+        ImGui::SameLine(0.f, 6.f);
+        ImGui::BeginDisabled(!m_dirty || !m_has_material);
+        if (UI::accent_button(save_label, ImVec2(save_w, 0.f)))
+            save();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Save to disk (Ctrl+S)");
+        ImGui::EndDisabled();
+
+        ImGui::SetCursorScreenPos(ImVec2(bar_min.x, bar_min.y + bar_h));
+        ImGui::Dummy(ImVec2(0.f, 0.f));
+    }
+
+
+    // Details (preview + cards) | splitter | source editor + compile output
+    void material_viewer_window::draw_body() {
+
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        if (avail.x < MIN_DETAILS_WIDTH || avail.y < 1.f)
+            return;
+
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        const f32 max_details_w = std::max(MIN_DETAILS_WIDTH, avail.x - MIN_SOURCE_WIDTH - SPLITTER_WIDTH);
+        m_details_width = std::clamp(m_details_width, MIN_DETAILS_WIDTH, max_details_w);
+
+        // ---- details -------------------------------------------------------------------------------------------------
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f, 10.f));
+        ImGui::BeginChild("##details", ImVec2(m_details_width, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
+        draw_details_panel();
+        ImGui::EndChild();
+
+        // ---- splitter ------------------------------------------------------------------------------------------------
+        ImGui::SetCursorScreenPos(ImVec2(start.x + m_details_width, start.y));
+        splitter("##details_splitter", true, m_details_width, MIN_DETAILS_WIDTH, max_details_w, avail.y, false);
+
+        // ---- source --------------------------------------------------------------------------------------------------
+        ImGui::SetCursorScreenPos(ImVec2(start.x + m_details_width + SPLITTER_WIDTH, start.y));
+        ImGui::BeginChild("##source", ImVec2(0.f, avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        draw_source_panel();
+        ImGui::EndChild();
+    }
+
+
+    void material_viewer_window::draw_details_panel() {
+
         if (m_load_failed) {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 90, 90, 255));
-            ImGui::TextUnformatted("Failed to load material.");
-            ImGui::PopStyleColor();
+            UI::empty_state("Failed to load the material", "See the log for details");
             return;
         }
 
         if (!m_has_material) {
-            ImGui::TextDisabled("No material loaded.");
+            UI::empty_state("No material loaded", "Open a material from the Content Browser");
             return;
         }
 
-        // ---- scroll region: everything below the action bar ------------------------------------------------------
-        if (ImGui::BeginChild("##details_scroll", ImVec2(0, 0), false, ImGuiWindowFlags_None)) {
+        draw_preview_canvas();
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
-            draw_preview_canvas();
-            ImGui::Dummy(ImVec2(0.0f, 12.0f));
-
-            draw_blend_section();
-            draw_parameters_section();
-            draw_textures_section();
-            draw_derived_section();
-        }
-        ImGui::EndChild();
+        UI::begin_properties(UI::property_layout::compact);
+        draw_blend_section();
+        draw_parameters_section();
+        draw_textures_section();
+        draw_derived_section();
+        UI::end_properties();
     }
 
 
     void material_viewer_window::draw_source_panel() {
 
         if (!m_has_material) {
-            ImGui::TextDisabled("Open a .glt_material, or create a new one, to edit its Slang source here.");
+            UI::empty_state("No source to show", "Open a material, or create a new one, to edit its Slang shader here");
             return;
         }
 
-        constexpr f32 SPLITTER_THICKNESS = 6.0f;
         constexpr f32 MIN_EDITOR_HEIGHT = 120.0f;
-        constexpr f32 MIN_TERMINAL_HEIGHT = 80.0f;
+        constexpr f32 MIN_TERMINAL_HEIGHT = 90.0f;
+
+        // ---- header strip ----------------------------------------------------------------------------------------------
+        const ImVec2 strip_min = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        const f32 strip_h = panel_strip("Slang Source", strip_min, width);
+        {
+            const char* hint = "Source edits apply after a compile (F7)";
+            const ImVec2 size = ImGui::CalcTextSize(hint);
+            if (size.x + 160.f < width)
+                ImGui::GetWindowDrawList()->AddText(ImVec2(strip_min.x + width - size.x - 12.f, strip_min.y + (strip_h - size.y) * 0.5f),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
+        }
+        ImGui::Dummy(ImVec2(width, strip_h));
 
         const ImVec2 avail = ImGui::GetContentRegionAvail();
 
         // Clamp the persisted terminal height so the editor always keeps its minimum, and vice versa
-        m_terminal_height = std::clamp(m_terminal_height, MIN_TERMINAL_HEIGHT,
-            std::max(MIN_TERMINAL_HEIGHT, avail.y - MIN_EDITOR_HEIGHT - SPLITTER_THICKNESS));
+        const f32 max_terminal = std::max(MIN_TERMINAL_HEIGHT, avail.y - MIN_EDITOR_HEIGHT - SPLITTER_WIDTH);
+        m_terminal_height = std::clamp(m_terminal_height, MIN_TERMINAL_HEIGHT, max_terminal);
+        const f32 editor_height = std::max(1.f, avail.y - m_terminal_height - SPLITTER_WIDTH);
 
-        f32 editor_height = avail.y - m_terminal_height - SPLITTER_THICKNESS;
-
-        // slang editor
-
-        ImGui::BeginChild("##slang_host", ImVec2(0, editor_height), false);
-
+        // ---- editor ----------------------------------------------------------------------------------------------------
+        ImGui::BeginChild("##slang_host", ImVec2(0, editor_height), ImGuiChildFlags_None);
         ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::monospace_regular));
         m_slang_editor.Render("##slang_editor");
         ImGui::PopFont();
-
         ImGui::EndChild();
 
-        // splitter
-        {
-            const ImVec2 item_min = ImGui::GetItemRectMin();
-            const ImVec2 item_max = ImGui::GetItemRectMax();
-            ImRect bb(ImVec2(item_min.x, item_max.y), ImVec2(item_max.x, item_max.y + SPLITTER_THICKNESS));
-            ImGui::SplitterBehavior(bb, ImGui::GetID("##source_splitter"), ImGuiAxis_Y, &editor_height, &m_terminal_height,
-                MIN_EDITOR_HEIGHT, MIN_TERMINAL_HEIGHT, 2.0f, 0.0f, ImGui::GetColorU32(ImGuiCol_Separator));
-        }
+        // ---- splitter --------------------------------------------------------------------------------------------------
+        splitter("##source_splitter", false, m_terminal_height, MIN_TERMINAL_HEIGHT, max_terminal, avail.x, true);
 
-        // compile output
-
+        // ---- compile output --------------------------------------------------------------------------------------------
         draw_compile_terminal();
 
-        // Sync back to the edit buffer so mark_dirty() / revert() see the change.
+        // Sync back to the edit buffer so mark_dirty() / revert() see the change
         const std::string current = m_slang_editor.GetText();
         if (current != m_edit_slang) {
             m_edit_slang = current;
@@ -530,48 +732,95 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
     void material_viewer_window::draw_compile_terminal() {
 
-        // Fixed header: label on the left, Clear on the right
-        if (ImGui::BeginTable("##compile_terminal_header", 2, ImGuiTableFlags_SizingStretchProp)) {
+        // ---- summary ---------------------------------------------------------------------------------------------------
+        u32 errors = 0;
+        u32 warnings = 0;
+        const compile_log_entry* last_result = nullptr;         // newest error / success decides the status pill
 
-            ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("##btn",   ImGuiTableColumnFlags_WidthFixed);
-
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted("Compile Output");
-
-            ImGui::TableSetColumnIndex(1);
-            if (ImGui::SmallButton("Clear"))
-                clear_compile_log();
-
-            ImGui::EndTable();
+        for (const auto& entry : m_compile_log) {
+            if (entry.level == compile_log_level::error)
+                ++errors;
+            else if (entry.level == compile_log_level::warning)
+                ++warnings;
+            if (entry.level == compile_log_level::error || entry.level == compile_log_level::success)
+                last_result = &entry;
         }
 
-        // Scrolling log body
-        ImGui::BeginChild("##compile_terminal", ImVec2(0, 0), true);
+        // ---- header strip ----------------------------------------------------------------------------------------------
+        const ImVec2 strip_min = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        const f32 strip_h = panel_strip("Output", strip_min, width);
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+        const f32 text_y = strip_min.y + (strip_h - ImGui::GetTextLineHeight()) * 0.5f;
+        ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+        f32 x = strip_min.x + 12.f + ImGui::CalcTextSize("Output").x + 12.f;
+        ImGui::PopFont();
+
+        if (last_result) {
+            const bool failed = last_result->level == compile_log_level::error;
+            x += status_pill(draw_list, ImVec2(x, text_y), failed ? "Failed" : "Compiled",
+                failed ? IM_COL32(230, 100, 100, 255) : IM_COL32(110, 200, 120, 255),
+                failed ? IM_COL32(230, 100, 100, 40) : IM_COL32(110, 200, 120, 36),
+                failed ? IM_COL32(240, 150, 150, 255) : IM_COL32(160, 220, 165, 255)) + 10.f;
+        }
+
+        if (errors > 0 || warnings > 0) {
+            const std::string counts = std::format("{} error{}, {} warning{}", errors, errors == 1 ? "" : "s", warnings, warnings == 1 ? "" : "s");
+            draw_list->AddText(ImVec2(x, text_y), ImGui::GetColorU32(ImGuiCol_TextDisabled), counts.c_str());
+        }
+
+        const char* clear_label = "Clear";
+        const f32 clear_w = ImGui::CalcTextSize(clear_label).x + ImGui::GetStyle().FramePadding.x * 4.f;
+        ImGui::SetCursorScreenPos(ImVec2(strip_min.x + width - clear_w - 8.f, strip_min.y + (strip_h - ImGui::GetFrameHeight()) * 0.5f));
+        ImGui::BeginDisabled(m_compile_log.empty());
+        if (UI::subtle_button(clear_label, ImVec2(clear_w, 0.f)))
+            clear_compile_log();
+        ImGui::EndDisabled();
+
+        ImGui::SetCursorScreenPos(ImVec2(strip_min.x, strip_min.y + strip_h));
+
+        // ---- log -------------------------------------------------------------------------------------------------------
+        ImVec4 log_bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+        log_bg.x = std::max(0.f, log_bg.x - 0.025f);
+        log_bg.y = std::max(0.f, log_bg.y - 0.025f);
+        log_bg.z = std::max(0.f, log_bg.z - 0.025f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, log_bg);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.f, 8.f));
+        ImGui::BeginChild("##compile_terminal", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
 
         if (m_compile_log.empty()) {
 
-            ImGui::TextDisabled("No compile output yet. Press Compile to build the material.");
+            hint_text("Nothing compiled yet. Press Compile or F7 to build the material.");
+
         } else {
 
             ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::monospace_regular));
+            const f32 line_h = ImGui::GetTextLineHeight();
 
             for (const auto& entry : m_compile_log) {
 
+                ImU32 dot;
                 ImVec4 color;
-                const char* prefix;
-
                 switch (entry.level) {
-                    case compile_log_level::error:      color = ImVec4(0.90f, 0.40f, 0.40f, 1.0f); prefix = "[ERROR] "; break;
-                    case compile_log_level::warning:    color = ImVec4(0.95f, 0.75f, 0.35f, 1.0f); prefix = "[WARN]  "; break;
-                    case compile_log_level::success:    color = ImVec4(0.55f, 0.85f, 0.55f, 1.0f); prefix = "[OK]    "; break;
-                    default:                            color = ImVec4(0.70f, 0.75f, 0.70f, 1.0f); prefix = "[INFO]  "; break;
+                    case compile_log_level::error:      dot = IM_COL32(230, 100, 100, 255); color = ImVec4(0.94f, 0.55f, 0.55f, 1.0f); break;
+                    case compile_log_level::warning:    dot = IM_COL32(230, 180,  60, 255); color = ImVec4(0.95f, 0.80f, 0.45f, 1.0f); break;
+                    case compile_log_level::success:    dot = IM_COL32(110, 200, 120, 255); color = ImVec4(0.65f, 0.87f, 0.67f, 1.0f); break;
+                    default:                            dot = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                                                        color = ImGui::GetStyleColorVec4(ImGuiCol_Text); break;
                 }
 
+                // colored dot in front of the message, wrapped lines stay aligned with the first one
+                const ImVec2 pos = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(pos.x + 4.f, pos.y + line_h * 0.5f), 3.f, dot);
+                ImGui::SetCursorScreenPos(ImVec2(pos.x + 14.f, pos.y));
+
                 ImGui::PushStyleColor(ImGuiCol_Text, color);
-                ImGui::TextWrapped("%s%s", prefix, entry.text.c_str());
+                ImGui::TextWrapped("%s", entry.text.c_str());
                 ImGui::PopStyleColor();
+                ImGui::Dummy(ImVec2(0.f, 2.f));
             }
 
             ImGui::PopFont();
@@ -586,46 +835,43 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
     }
 
     // -----------------------------------------------------------------------------------------------------------------
-    // Blend section
+    // Surface card (blend mode + flags)
     // -----------------------------------------------------------------------------------------------------------------
 
     void material_viewer_window::draw_blend_section() {
 
-        if (!ImGui::CollapsingHeader("Blend", ImGuiTreeNodeFlags_DefaultOpen))
-            return;
-
         using bm = GLT::asset::material::blend_mode;
+        namespace mf = GLT::asset::material::material_flag;
 
         static constexpr const char* kBlendLabels[] = {
             "Opaque", "Masked", "Translucent", "Additive",
             "Modulate", "Alpha Composite", "Alpha Holdout"
         };
         static_assert(IM_ARRAYSIZE(kBlendLabels) == static_cast<std::size_t>(bm::count));
+        static constexpr bm kDefaultBlend = bm::opaque;
+        static constexpr bool kDefaultDoubleSided = false;
 
-        i32 current = static_cast<i32>(m_edit_blend);
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::Combo("##blend_mode", &current, kBlendLabels, IM_ARRAYSIZE(kBlendLabels))) {
-            m_edit_blend = static_cast<bm>(current);
-            push_live_render_state();
-            mark_dirty();
+        if (UI::begin_card("Surface", UI::card_options{ .summary = blend_mode_label(m_edit_blend) })) {
+
+            if (UI::property_combo("Blend mode", m_edit_blend, kBlendLabels, "How the surface is combined with what is behind it",
+                &kDefaultBlend)) {
+                push_live_render_state();
+                mark_dirty();
+            }
+
+            // what the selected mode does, right under the combo
+            hint_text(blend_mode_description(m_edit_blend));
+            ImGui::Dummy(ImVec2(0.f, 2.f));
+
+            bool double_sided = (m_edit_flags & mf::double_sided) != 0;
+            if (UI::property_toggle("Double sided", double_sided, "Render back faces too (no back-face culling, back faces get a flipped normal)",
+                &kDefaultDoubleSided)) {
+                m_edit_flags = double_sided ? (m_edit_flags | mf::double_sided) : (m_edit_flags & ~mf::double_sided);
+                push_live_render_state();
+                mark_dirty();
+            }
         }
-
-        if (m_edit_blend == bm::masked)
-            ImGui::TextDisabled("Masked materials must declare alpha_test().");
-        else if (m_edit_blend == bm::alpha_composite)
-            ImGui::TextDisabled("Alpha Composite expects premultiplied colour (rgb * opacity).");
-        else if (m_edit_blend != bm::opaque)
-            ImGui::TextDisabled("Translucent: sorted back-to-front, no depth write, no shadows.");
-
-        namespace mf = GLT::asset::material::material_flag;
-        bool double_sided = (m_edit_flags & mf::double_sided) != 0;
-        if (ImGui::Checkbox("Double sided", &double_sided)) {
-            m_edit_flags = double_sided ? (m_edit_flags | mf::double_sided) : (m_edit_flags & ~mf::double_sided);
-            push_live_render_state();
-            mark_dirty();
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Render back faces too (no back-face culling, back faces get a flipped normal)");
+        UI::end_card();
     }
 
 
@@ -644,255 +890,230 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         }
     }
 
-
     // -----------------------------------------------------------------------------------------------------------------
-    // Parameters section
+    // Parameters card
     // -----------------------------------------------------------------------------------------------------------------
 
     void material_viewer_window::draw_parameters_section() {
 
-        if (!ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen))
-            return;
-
         using namespace GLT::asset::material;
 
-        if (m_reflection_blob.size() < sizeof(reflection_header)) {
-            ImGui::TextDisabled("No reflection schema yet.");
-            ImGui::TextDisabled("Save once so material_compiler can produce one.");
-            return;
-        }
+        const reflection_header* hdr = m_reflection_blob.size() >= sizeof(reflection_header)
+            ? reinterpret_cast<const reflection_header*>(m_reflection_blob.data()) : nullptr;
+        const bool valid = hdr && hdr->magic == REFLECT_SCHEMA_MAGIC;
 
-        const auto* hdr = reinterpret_cast<const reflection_header*>(m_reflection_blob.data());
-        if (hdr->magic != REFLECT_SCHEMA_MAGIC) {
-            ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f),
-                "Reflection schema has bad magic (0x%08X).", hdr->magic);
-            return;
-        }
+        std::string summary;
+        if (valid)
+            summary = std::to_string(hdr->param_count);
 
-        if (hdr->contract_version != MATERIAL_CONTRACT_VERSION) {
-            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f),
-                "Reflection was compiled against contract v%u; engine expects v%u.",
-                hdr->contract_version, MATERIAL_CONTRACT_VERSION);
-        }
+        UI::card_options options{};
+        options.description = "Fields of material_params. Changes show up live, no compile needed";
+        options.summary = summary.empty() ? nullptr : summary.c_str();
 
-        if (hdr->param_count == 0) {
-            ImGui::TextDisabled("This material declares no parameters.");
-            return;
-        }
+        if (UI::begin_card("Parameters", options)) {
 
-        if (m_edit_params.size() != hdr->packed_param_size) {
-            ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f),
-                "Param buffer mismatch (%zu vs %u) - material is not editable.",
-                m_edit_params.size(), hdr->packed_param_size);
-            return;
-        }
+            if (!hdr) {
+                hint_text("No parameters yet. Compile the material (F7) to read them from the source.");
 
-        const auto* params = reinterpret_cast<const reflection_param*>(m_reflection_blob.data() + hdr->param_table_offset);
-        const auto* strtab = reinterpret_cast<const char*>(m_reflection_blob.data() + hdr->string_table_offset);
+            } else if (!valid) {
+                warning_text(std::format("The parameter list is damaged (bad magic 0x{:08X}). Compile the material again.", hdr->magic).c_str());
 
-        if (!GLT::UI::begin_table(TABLE_NAME, false, ImVec2(0, 0), 0.0f, true, TABLE_LABEL_RATIO))
-            return;
+            } else {
 
-        for (u32 i = 0; i < hdr->param_count; ++i) {
+                if (hdr->contract_version != MATERIAL_CONTRACT_VERSION)
+                    warning_text(std::format("Compiled against material contract v{}, the engine expects v{}. Compile again.",
+                        hdr->contract_version, MATERIAL_CONTRACT_VERSION).c_str());
 
-            const auto& p = params[i];
-            const char* name = strtab + p.name_offset;
+                if (hdr->param_count == 0) {
+                    hint_text("material_params has no fields.");
 
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(name);
+                } else if (m_edit_params.size() != hdr->packed_param_size) {
+                    warning_text(std::format("Parameter buffer does not match the source ({} vs {} bytes). Compile the material again.",
+                        m_edit_params.size(), hdr->packed_param_size).c_str());
 
-            ImGui::TableSetColumnIndex(1);
-            ImGui::PushID(static_cast<int>(i));
-            if (draw_param_widget("##v", p)) {
-                mark_dirty();
-                push_live_params();
+                } else {
+
+                    const auto* params = reinterpret_cast<const reflection_param*>(m_reflection_blob.data() + hdr->param_table_offset);
+                    const auto* strtab = reinterpret_cast<const char*>(m_reflection_blob.data() + hdr->string_table_offset);
+
+                    for (u32 i = 0; i < hdr->param_count; ++i) {
+
+                        ImGui::PushID(static_cast<int>(i));
+                        if (draw_param_widget(strtab + params[i].name_offset, params[i])) {
+                            mark_dirty();
+                            push_live_params();
+                        }
+                        ImGui::PopID();
+                    }
+                }
             }
-            ImGui::PopID();
         }
-
-        GLT::UI::end_table();
-
-        ImGui::Dummy(ImVec2(0.0f, 6.0f));
-        ImGui::TextDisabled("Editing the source or the parameter list requires a recompile.");
+        UI::end_card();
     }
 
 
-    bool material_viewer_window::draw_param_widget(const char* label, const GLT::asset::material::reflection_param& p) {
+    // One property row per parameter. [name] is the field name from the source; the row shows it prettified
+    // ("base_color" -> "Base Color") with the original as tooltip. The reset arrow goes back to the saved value
+    bool material_viewer_window::draw_param_widget(const char* name, const GLT::asset::material::reflection_param& p) {
 
         using pt = GLT::asset::material::param_type;
+
+        const std::string label = UI::pretty_name(name);
+        const bool has_saved = m_baseline_params.size() == m_edit_params.size();
+        const u32 offset = p.byte_offset;
         bool changed = false;
 
-        ImGui::SetNextItemWidth(-1.0f);
+        // reads value + saved value, draws [row], writes back on change
+        auto edit = [&]<typename T>(std::type_identity<T>, auto&& row) {
+            T value = read_packed<T>(m_edit_params, offset);
+            const T saved = has_saved ? read_packed<T>(m_baseline_params, offset) : value;
+            if (row(value, has_saved ? &saved : nullptr)) {
+                write_packed<T>(m_edit_params, offset, value);
+                changed = true;
+            }
+        };
 
         switch (p.type) {
 
-            case pt::f32: {
-                f32 v = read_packed<f32>(m_edit_params, p.byte_offset);
-                if (ImGui::DragFloat(label, &v, 0.01f)) {
-                    write_packed<f32>(m_edit_params, p.byte_offset, v);
-                    changed = true;
-                }
+            case pt::f32:
+                edit(std::type_identity<f32>{}, [&](f32& v, const f32* d) {
+                    return UI::property_drag(label.c_str(), v, 0.01f, 0.f, 0.f, "%.3f", name, d); });
                 break;
-            }
 
-            case pt::f32x2: {
-                f32 v[2];
-                std::memcpy(v, m_edit_params.data() + p.byte_offset, sizeof(v));
-                if (ImGui::DragFloat2(label, v, 0.01f)) {
-                    std::memcpy(m_edit_params.data() + p.byte_offset, v, sizeof(v));
-                    changed = true;
-                }
+            case pt::f32x2:
+                edit(std::type_identity<glm::vec2>{}, [&](glm::vec2& v, const glm::vec2* d) {
+                    return UI::property_drag(label.c_str(), v, 0.01f, 0.f, 0.f, "%.3f", name, d); });
                 break;
-            }
 
-            case pt::f32x3: {
-                f32 v[3];
-                std::memcpy(v, m_edit_params.data() + p.byte_offset, sizeof(v));
-                if (ImGui::ColorEdit3(label, v, ImGuiColorEditFlags_Float)) {
-                    std::memcpy(m_edit_params.data() + p.byte_offset, v, sizeof(v));
-                    changed = true;
-                }
+            case pt::f32x3:
+                edit(std::type_identity<glm::vec3>{}, [&](glm::vec3& v, const glm::vec3* d) {
+                    return looks_like_color(name) ? UI::property_color(label.c_str(), v, name, d)
+                                                  : UI::property_drag(label.c_str(), v, 0.01f, 0.f, 0.f, "%.3f", name, d); });
                 break;
-            }
 
-            case pt::f32x4: {
-                f32 v[4];
-                std::memcpy(v, m_edit_params.data() + p.byte_offset, sizeof(v));
-                if (ImGui::ColorEdit4(label, v, ImGuiColorEditFlags_Float)) {
-                    std::memcpy(m_edit_params.data() + p.byte_offset, v, sizeof(v));
-                    changed = true;
-                }
+            case pt::f32x4:
+                edit(std::type_identity<glm::vec4>{}, [&](glm::vec4& v, const glm::vec4* d) {
+                    if (looks_like_color(name))
+                        return UI::property_color(label.c_str(), v, true, name, d);
+                    return UI::property_custom(label.c_str(), [&v](const f32 width) {
+                            return UI::drag_axes("##v", &v.x, 4, 0.01f, 0.f, 0.f, "%.3f", width);
+                        }, name, !d || *d == v, [&v, d]() { if (d) v = *d; });
+                });
                 break;
-            }
 
-            case pt::i32: {
-                i32 v = read_packed<i32>(m_edit_params, p.byte_offset);
-                if (ImGui::DragInt(label, &v)) {
-                    write_packed<i32>(m_edit_params, p.byte_offset, v);
-                    changed = true;
-                }
+            case pt::i32:
+                edit(std::type_identity<i32>{}, [&](i32& v, const i32* d) {
+                    return UI::property_custom(label.c_str(), [&v](const f32 width) {
+                            ImGui::SetNextItemWidth(width);
+                            return ImGui::DragInt("##v", &v);
+                        }, name, !d || *d == v, [&v, d]() { if (d) v = *d; });
+                });
                 break;
-            }
 
-            case pt::u32: {
-                u32 v = read_packed<u32>(m_edit_params, p.byte_offset);
-                if (ImGui::DragScalar(label, ImGuiDataType_U32, &v)) {
-                    write_packed<u32>(m_edit_params, p.byte_offset, v);
-                    changed = true;
-                }
+            case pt::u32:
+                edit(std::type_identity<u32>{}, [&](u32& v, const u32* d) {
+                    return UI::property_custom(label.c_str(), [&v](const f32 width) {
+                            ImGui::SetNextItemWidth(width);
+                            return ImGui::DragScalar("##v", ImGuiDataType_U32, &v);
+                        }, name, !d || *d == v, [&v, d]() { if (d) v = *d; });
+                });
                 break;
-            }
 
-            case pt::boolean: {
-                u32 raw = read_packed<u32>(m_edit_params, p.byte_offset);
-                bool b = raw != 0;
-                if (ImGui::Checkbox(label, &b)) {
-                    write_packed<u32>(m_edit_params, p.byte_offset, b ? 1u : 0u);
-                    changed = true;
-                }
+            case pt::boolean:
+                edit(std::type_identity<u32>{}, [&](u32& raw, const u32* d) {
+                    bool value = raw != 0;
+                    const bool saved = d ? (*d != 0) : value;
+                    if (!UI::property_toggle(label.c_str(), value, name, d ? &saved : nullptr))
+                        return false;
+                    raw = value ? 1u : 0u;
+                    return true;
+                });
                 break;
-            }
 
-            default: {
-                ImGui::TextDisabled("(matrix types are not editable here yet)");
+            default:
+                UI::property_value(label.c_str(), "Matrix, not editable here yet", name);
                 break;
-            }
         }
 
         return changed;
     }
 
-
     // -----------------------------------------------------------------------------------------------------------------
-    // Textures section
+    // Textures card
     // -----------------------------------------------------------------------------------------------------------------
 
     void material_viewer_window::draw_textures_section() {
 
-        if (!ImGui::CollapsingHeader("Textures", ImGuiTreeNodeFlags_DefaultOpen))
-            return;
-
         using slot = GLT::asset::material::texture_slot;
 
-        if (!GLT::UI::begin_table(TABLE_NAME, false, ImVec2(0, 0), 0.0f, true, TABLE_LABEL_RATIO))
-            return;
-
-        struct row { const char* label; slot s; };
-        constexpr row rows[] = {
-            { "Base color",         slot::base_color},
-            { "Metallic/Roughness", slot::metallic_roughness},
-            { "Normal",             slot::normal},
-            { "Emissive",           slot::emissive},
-            { "Occlusion",          slot::occlusion},
-            { "Height",             slot::height},
+        struct row { const char* label; slot s; const char* desc; };
+        static constexpr row rows[] = {
+            { "Base color",         slot::base_color,           "Albedo, the surface color" },
+            { "Metal / Rough",      slot::metallic_roughness,   "Metallic and roughness packed into one texture" },
+            { "Normal",             slot::normal,               "Tangent space normal map for small surface detail" },
+            { "Emissive",           slot::emissive,             "Light the surface gives off by itself" },
+            { "Occlusion",          slot::occlusion,            "Ambient occlusion, darkens creases and corners" },
+            { "Height",             slot::height,               "Height / displacement map" },
         };
 
-        for (const auto& r : rows) {
-            auto& h = m_edit_textures[static_cast<std::size_t>(r.s)];
-            if (GLT::UI::table_row_asset_picker(r.label, h, GLT::asset::core_types::texture2d))
-                mark_dirty();
-        }
+        u32 assigned = 0;
+        for (const auto& h : m_edit_textures)
+            if (h != INVALID_HANDLE)
+                ++assigned;
+        const std::string summary = std::format("{} of {}", assigned, TEXTURE_SLOT_COUNT);
 
-        GLT::UI::end_table();
+        if (UI::begin_card("Textures", UI::card_options{ .description = "Pick a texture per channel, or leave it empty",
+            .summary = summary.c_str() })) {
+
+            for (const auto& r : rows) {
+
+                auto& handle = m_edit_textures[static_cast<std::size_t>(r.s)];
+                const auto saved = m_baseline_textures[static_cast<std::size_t>(r.s)];
+
+                const bool changed = UI::property_custom(r.label, [&](const f32 width) {
+                        return UI::asset_picker_widget({ .label = r.label, .filter = GLT::asset::core_types::texture2d }, handle, width);
+                    }, r.desc, handle == saved, [&]() { handle = saved; });
+
+                if (changed)
+                    mark_dirty();
+            }
+        }
+        UI::end_card();
     }
 
     // -----------------------------------------------------------------------------------------------------------------
-    // Derived section (read-only)
+    // Compiled shader card (read-only)
     // -----------------------------------------------------------------------------------------------------------------
 
     void material_viewer_window::draw_derived_section() {
 
-        if (!ImGui::CollapsingHeader("Derived"))
-            return;
-
         using namespace GLT::asset::material;
 
-        if (!GLT::UI::begin_table(TABLE_NAME, false, ImVec2(0, 0), 0.0f, true, TABLE_LABEL_RATIO))
-            return;
+        const char* summary = m_bytecode_blob.empty() ? "Not compiled" : (m_compiler_hash_matches ? "Up to date" : "Out of date");
 
-        char buf[64];
+        if (UI::begin_card("Compiled Shader", UI::card_options{ .summary = summary, .collapsible = true, .default_open = false })) {
 
-        std::snprintf(buf, sizeof(buf), "0x%016llX", static_cast<unsigned long long>(m_compiler_hash));
-        GLT::UI::table_row("compiler hash", std::string_view{ buf });
+            if (!m_compiler_hash_matches) {
+                warning_text("Compiled with a different compiler than the active renderer uses. The renderer recompiles "
+                             "from the Slang source on the next load, press Compile to update the asset now.");
+                ImGui::Dummy(ImVec2(0.f, 4.f));
+            }
 
-        std::snprintf(buf, sizeof(buf), "%zu bytes", m_bytecode_blob.size());
-        GLT::UI::table_row("bytecode", std::string_view{ buf });
+            UI::property_value("Compiler hash", std::format("0x{:016X}", m_compiler_hash), "Identifies the shader compiler the bytecode was built with");
+            UI::property_value("Bytecode", std::format("{} bytes", m_bytecode_blob.size()));
+            UI::property_value("Reflection", std::format("{} bytes", m_reflection_blob.size()), "Parameter layout read from the source");
 
-        std::snprintf(buf, sizeof(buf), "%zu bytes", m_reflection_blob.size());
-        GLT::UI::table_row("reflection", std::string_view{ buf });
+            if (m_reflection_blob.size() >= sizeof(reflection_header)) {
 
-        if (m_reflection_blob.size() >= sizeof(reflection_header)) {
-
-            const auto* hdr = reinterpret_cast<const reflection_header*>(m_reflection_blob.data());
-            if (hdr->magic == REFLECT_SCHEMA_MAGIC) {
-
-                std::snprintf(buf, sizeof(buf), "%u", hdr->schema_version);
-                GLT::UI::table_row("schema version", std::string_view{ buf });
-
-                std::snprintf(buf, sizeof(buf), "%u", hdr->contract_version);
-                GLT::UI::table_row("contract version", std::string_view{ buf });
-
-                std::snprintf(buf, sizeof(buf), "%u", hdr->param_count);
-                GLT::UI::table_row("parameters", std::string_view{ buf });
+                const auto* hdr = reinterpret_cast<const reflection_header*>(m_reflection_blob.data());
+                if (hdr->magic == REFLECT_SCHEMA_MAGIC) {
+                    UI::property_value("Schema version", std::to_string(hdr->schema_version));
+                    UI::property_value("Contract version", std::to_string(hdr->contract_version));
+                    UI::property_value("Parameters", std::to_string(hdr->param_count));
+                }
             }
         }
-
-        GLT::UI::end_table();
-
-        ImGui::Dummy(ImVec2(0.0f, 6.0f));
-
-        if (m_compiler_hash_matches) {
-            ImGui::TextDisabled("Bytecode matches the active renderer's compiler.");
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 90, 255));
-            ImGui::TextWrapped("Bytecode does not match the active compiler. "
-                               "The renderer will recompile from the Slang source on the next load.");
-            ImGui::PopStyleColor();
-        }
-
-        ImGui::Dummy(ImVec2(0.0f, 6.0f));
-        ImGui::TextDisabled("Blend: %s", blend_mode_label(m_edit_blend));
+        UI::end_card();
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -901,13 +1122,14 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
 
     void material_viewer_window::draw_preview_canvas() {
 
-        const ImVec2 avail = ImGui::GetContentRegionAvail();
-        const f32 preview_side = std::min(avail.x, PREVIEW_MAX_SIDE);
+        const f32 width = std::max(1.f, ImGui::GetContentRegionAvail().x);
+        const f32 height = std::clamp(width * 0.75f, 120.f, PREVIEW_MAX_HEIGHT);
 
         const ImVec2 canvas_min = ImGui::GetCursorScreenPos();
-        const ImVec2 canvas_max(canvas_min.x + preview_side, canvas_min.y + preview_side);
+        const ImVec2 canvas_max(canvas_min.x + width, canvas_min.y + height);
 
-        ImGui::InvisibleButton("##mat_preview", ImVec2(preview_side, preview_side));
+        ImGui::InvisibleButton("##mat_preview", ImVec2(width, height));
+        const bool hovered = ImGui::IsItemHovered();
         handle_preview_input();
 
         ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -920,16 +1142,23 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         // }
         //
         // if (tex) {
-        //     draw->AddImage(reinterpret_cast<ImTextureID>(tex), canvas_min, canvas_max, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
-        //     draw->AddRect(canvas_min, canvas_max, IM_COL32(60, 60, 70, 255), 0.0f, 0, 1.0f);
+        //     draw->AddImageRounded(reinterpret_cast<ImTextureID>(tex), canvas_min, canvas_max, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 6.f);
         // } else {
         //     draw_preview_fallback(draw, canvas_min, canvas_max);
         // }
 
         draw_preview_fallback(draw, canvas_min, canvas_max);
 
-        draw->AddText(ImVec2(canvas_min.x + 10.0f, canvas_max.y - 20.0f), IM_COL32(180, 180, 190, 150),
-            "drag = translate     scroll = zoom     double-click = reset");
+        // controls hint only while the mouse is over the preview
+        if (hovered) {
+            const char* hint = "Drag to pan   Scroll to zoom   Double-click to reset";
+            const ImVec2 size = ImGui::CalcTextSize(hint);
+            if (size.x + 20.f < width) {
+                const ImVec2 pos(canvas_min.x + (width - size.x) * 0.5f, canvas_max.y - size.y - 10.f);
+                draw->AddRectFilled(ImVec2(pos.x - 8.f, pos.y - 3.f), ImVec2(pos.x + size.x + 8.f, pos.y + size.y + 3.f), IM_COL32(0, 0, 0, 120), 4.f);
+                draw->AddText(pos, IM_COL32(220, 220, 225, 220), hint);
+            }
+        }
     }
 
 
@@ -1084,14 +1313,94 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
     }
 
 
+    // Until the renderer can draw a material preview: a shaded sphere tinted with the material's "base_color" parameter and
+    // a highlight that gets sharper with lower "roughness" / stronger with "metallic". Zooming scales the sphere
     void material_viewer_window::draw_preview_fallback(ImDrawList* draw, const ImVec2& min, const ImVec2& max) {
 
-        draw->AddRectFilled(min, max, IM_COL32(28, 28, 32, 255));
-        draw->AddRect(min, max, IM_COL32(80, 80, 90, 255), 0.0f, 0, 1.0f);
+        using namespace GLT::asset::material;
 
-        const char* msg = m_has_material ? "Preview unavailable (renderer hook not wired)" : "No material loaded";
-        const ImVec2 s = ImGui::CalcTextSize(msg);
-        draw->AddText(ImVec2((min.x + max.x - s.x) * 0.5f, (min.y + max.y - s.y) * 0.5f), IM_COL32(180, 180, 180, 220), msg);
+        // background
+        ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+        bg.x = std::max(0.f, bg.x - 0.04f);
+        bg.y = std::max(0.f, bg.y - 0.04f);
+        bg.z = std::max(0.f, bg.z - 0.04f);
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(bg), 6.f);
+        draw->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border, 0.6f), 6.f);
+
+        if (!m_has_material)
+            return;
+
+        // read the few parameters the approximation cares about (only when the parameter buffer is usable)
+        glm::vec3 base_color{ 0.8f };
+        f32 roughness = 0.5f;
+        f32 metallic = 0.f;
+
+        if (m_reflection_blob.size() >= sizeof(reflection_header)) {
+
+            const auto* hdr = reinterpret_cast<const reflection_header*>(m_reflection_blob.data());
+            if (hdr->magic == REFLECT_SCHEMA_MAGIC && m_edit_params.size() == hdr->packed_param_size) {
+
+                const auto* params = reinterpret_cast<const reflection_param*>(m_reflection_blob.data() + hdr->param_table_offset);
+                const auto* strtab = reinterpret_cast<const char*>(m_reflection_blob.data() + hdr->string_table_offset);
+
+                for (u32 i = 0; i < hdr->param_count; ++i) {
+
+                    const std::string_view name = strtab + params[i].name_offset;
+                    const auto type = params[i].type;
+                    if (name == "base_color" && (type == param_type::f32x3 || type == param_type::f32x4))
+                        base_color = read_packed<glm::vec3>(m_edit_params, params[i].byte_offset);
+                    else if (name == "roughness" && type == param_type::f32)
+                        roughness = read_packed<f32>(m_edit_params, params[i].byte_offset);
+                    else if (name == "metallic" && type == param_type::f32)
+                        metallic = read_packed<f32>(m_edit_params, params[i].byte_offset);
+                }
+            }
+        }
+
+        base_color = glm::clamp(base_color, glm::vec3(0.f), glm::vec3(1.f));
+        roughness = std::clamp(roughness, 0.f, 1.f);
+        metallic = std::clamp(metallic, 0.f, 1.f);
+
+        // sphere: stacked circles from the dark rim towards the lit top-left
+        const f32 distance = std::max(0.5f, glm::length(m_preview_camera_pos));
+        const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+        const f32 radius = std::min(max.x - min.x, max.y - min.y) * 0.34f * (3.f / distance);
+        const ImVec2 light_dir(-0.35f, -0.4f);
+
+        draw->PushClipRect(min, max, true);
+
+        // soft contact shadow under the sphere
+        for (int i = 0; i < 4; ++i) {
+            const f32 s = 1.f - static_cast<f32>(i) * 0.2f;
+            draw->AddEllipseFilled(ImVec2(center.x, center.y + radius * 1.04f), ImVec2(radius * 0.85f * s, radius * 0.14f * s), IM_COL32(0, 0, 0, 28), 0.f, 48);
+        }
+
+        constexpr int STEPS = 24;
+        for (int i = 0; i < STEPS; ++i) {
+
+            const f32 t = static_cast<f32>(i) / static_cast<f32>(STEPS - 1);
+            const f32 r = radius * (1.f - t * 0.82f);
+            const ImVec2 c(center.x + light_dir.x * radius * t * 0.8f, center.y + light_dir.y * radius * t * 0.8f);
+            const f32 light = 0.18f + 0.82f * std::pow(t, 0.8f);
+            const glm::vec3 color = glm::clamp(base_color * light * (1.f - metallic * 0.35f), glm::vec3(0.f), glm::vec3(1.f));
+            draw->AddCircleFilled(c, r, ImGui::GetColorU32(ImVec4(color.x, color.y, color.z, 1.f)), 48);
+        }
+
+        // highlight: small + bright when smooth, wide + faint when rough. Metals tint it with the base color
+        const f32 spec_radius = radius * (0.08f + roughness * 0.35f);
+        const f32 spec_alpha = (1.f - roughness) * 0.85f + 0.08f;
+        const glm::vec3 spec = glm::mix(glm::vec3(1.f), base_color, metallic);
+        const ImVec2 spec_center(center.x + light_dir.x * radius * 0.9f, center.y + light_dir.y * radius * 0.9f);
+        for (int i = 0; i < 6; ++i) {
+            const f32 t = static_cast<f32>(i) / 5.f;
+            draw->AddCircleFilled(spec_center, spec_radius * (1.f - t * 0.7f), ImGui::GetColorU32(ImVec4(spec.x, spec.y, spec.z, spec_alpha * 0.25f)), 32);
+        }
+
+        draw->PopClipRect();
+
+        // be honest about what this is
+        const char* label = "Approximate preview";
+        draw->AddText(ImVec2(min.x + 10.f, min.y + 8.f), ImGui::GetColorU32(ImGuiCol_TextDisabled), label);
     }
 
 

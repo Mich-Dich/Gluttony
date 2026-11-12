@@ -532,6 +532,9 @@ namespace GLT::world::world_ecs_entt {
 
         if (id.is_valid() && id == m_world_entity)
             return;                             // the world entity lives as long as the world
+
+        if (alive(id))
+            detach_from_parent(id);             // don't leave a dead id in the parent's children list
         release_slot(id);
     }
 
@@ -915,6 +918,130 @@ namespace GLT::world::world_ecs_entt {
         if (const component::hierarchy* h = hierarchy_of(id))
             return h->parent;
         return INVALID_ENTITY;
+    }
+
+    // snapshots (editor undo / redo) ----------------------------------------------------------------------------------
+
+    std::vector<std::byte> ecs_world::snapshot_entities(std::span<const entity_id> ids) const {
+
+        std::vector<entt::entity> handles;
+        std::vector<entity_id> alive_ids;
+        handles.reserve(ids.size());
+        alive_ids.reserve(ids.size());
+
+        for (const entity_id id : ids) {
+            if (!alive(id) || std::find(alive_ids.begin(), alive_ids.end(), id) != alive_ids.end())
+                continue;
+            handles.push_back(entt_of(id));
+            alive_ids.push_back(id);
+        }
+
+        std::vector<std::byte> blob;
+        if (handles.empty())
+            return blob;
+
+        // We already know every id, so resolve with the small local table instead of the O(slots) entity_id_for()
+        m_codec.save(m_registry, std::span<const entt::entity>(handles),
+            [&](entt::entity e) {
+                for (size_t i = 0; i < handles.size(); ++i)
+                    if (handles[i] == e)
+                        return alive_ids[i];
+                return INVALID_ENTITY;
+            }, blob);
+
+        return blob;
+    }
+
+
+    std::vector<entity_id> ecs_world::restore_entities(std::span<const std::byte> blob) {
+
+        if (blob.empty())
+            return {};
+
+        // Links of the entities we are about to replace. Kept so an undo doesn't reshuffle the outliner order
+        struct old_links {
+            entity_id                               parent{ INVALID_ENTITY };
+            std::vector<entity_id>                  children;
+        };
+        std::unordered_map<entity_id, old_links> previous;
+
+        // The codec asks for an entity per stored id. Throw away the current version (if any) and hand out the
+        // very same id again. allocate_for_load() honours the stored id because the slot was just released
+        const std::vector<entity_id> restored = m_codec.load(m_registry, blob, [this, &previous](entity_id saved) {
+
+            if (alive(saved)) {
+                if (const auto* h = hierarchy_of(saved))
+                    previous[saved] = { h->parent, h->children };
+                release_slot(saved);                // destroys the entt entity, the physics observer frees the body
+            }
+
+            auto result = allocate_for_load(saved);
+            if (result.first != saved)
+                LOG(warn, "restore_entities: slot {} is used by another entity, restored as {}:{}",
+                    saved.index, result.first.index, result.first.generation);
+            return result;
+        });
+
+        // The codec stores only the parent link; children lists are derived. Collect the current children of every
+        // restored entity (they may be restored too, or may have stayed alive the whole time)
+        std::unordered_map<entity_id, std::vector<entity_id>> found;
+        for (const auto [entity, h] : m_registry.view<component::hierarchy>().each()) {
+
+            if (!h.parent.is_valid())
+                continue;
+            if (std::find(restored.begin(), restored.end(), h.parent) == restored.end())
+                continue;
+
+            if (const entity_id child = id_of(entity); child.is_valid())
+                found[h.parent].push_back(child);
+        }
+
+        for (const entity_id id : restored) {
+
+            const entt::entity e = entt_of(id);
+            if (e == entt::null)
+                continue;
+
+            const old_links* old = nullptr;
+            if (auto it = previous.find(id); it != previous.end())
+                old = &it->second;
+
+            // children: keep the previous order, append whatever is new
+            if (auto it = found.find(id); it != found.end()) {
+
+                std::vector<entity_id> ordered;
+                ordered.reserve(it->second.size());
+                if (old)
+                    for (const entity_id c : old->children)
+                        if (std::find(it->second.begin(), it->second.end(), c) != it->second.end())
+                            ordered.push_back(c);
+                for (const entity_id c : it->second)
+                    if (std::find(ordered.begin(), ordered.end(), c) == ordered.end())
+                        ordered.push_back(c);
+
+                m_registry.get_or_emplace<component::hierarchy>(e).children = std::move(ordered);
+            }
+
+            // parent: leave the old parent's list alone if nothing changed (keeps the sibling order)
+            const auto* h = m_registry.try_get<component::hierarchy>(e);
+            const entity_id new_parent = h ? h->parent : INVALID_ENTITY;
+
+            if (old && old->parent.is_valid() && old->parent != new_parent)
+                if (auto* old_parent = hierarchy_of(old->parent))
+                    std::erase(old_parent->children, id);
+
+            if (new_parent.is_valid())
+                if (auto* parent = hierarchy_of(new_parent))
+                    if (std::find(parent->children.begin(), parent->children.end(), id) == parent->children.end())
+                        parent->children.push_back(id);
+
+            if (id != m_world_entity)
+                assign_entity_to_cell(id);
+
+            create_physics_body_for(id);
+        }
+
+        return restored;
     }
 
     // ECS internals (used by entity_builder) --------------------------------------------------------------------------
@@ -1690,6 +1817,17 @@ namespace GLT::world::world_ecs_entt {
         if (e == entt::null)
             return nullptr;
         return m_registry.try_get<component::hierarchy>(e);
+    }
+
+
+    void ecs_world::detach_from_parent(entity_id id) noexcept {
+
+        const component::hierarchy* h = hierarchy_of(id);
+        if (!h || !h->parent.is_valid())
+            return;
+
+        if (component::hierarchy* parent = hierarchy_of(h->parent))
+            std::erase(parent->children, id);
     }
 
 

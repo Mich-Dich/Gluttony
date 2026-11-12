@@ -3,6 +3,7 @@
 #include "content_browser.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <application.h>
 #include <config/imgui_config.h>
@@ -27,14 +28,15 @@ namespace GLT::editor {
 
     constexpr f32                                                   LEFT_PANEL_MAX_WIDTH = 600.0f;
 
-    constexpr f32                                                   ICON_RENDER_SIZE = 56.0f;
+    constexpr f32                                                   ICON_SIZE_MIN = 32.0f;     // grid zoom range
+    constexpr f32                                                   ICON_SIZE_MAX = 128.0f;
 
     constexpr f32                                                   ICON_TOP_MARGIN = 8.0f;
 
-    constexpr f32                                                   CELL_WIDTH = ICON_RENDER_SIZE + (ICON_TOP_MARGIN * 2);
+
 
     // Cell height reserves a name field below the 56px icon: 2px gap above it, 4px pad below, leaving 28px of usable height
-    constexpr f32                                                   CELL_HEIGHT = CELL_WIDTH + (29.f);
+    constexpr f32                                                   CELL_NAME_HEIGHT = 29.f;   // two lines of file name below the icon
 
     // constexpr f32                                                   LABEL_BOTTOM_MARGIN = 20.0f;
 
@@ -471,20 +473,46 @@ namespace GLT::editor {
         if (m_entries_dirty)
             refresh_directory_entries();
 
-        if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
-    
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+        const bool open = ImGui::Begin(m_window_id.c_str(), &m_show_window);
+        ImGui::PopStyleVar();
+
+        if (open) {
+
+            // ---- folder sidebar (resizable) ----
+            ImVec4 sidebar_bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+            sidebar_bg.x = std::max(0.f, sidebar_bg.x - 0.03f);
+            sidebar_bg.y = std::max(0.f, sidebar_bg.y - 0.03f);
+            sidebar_bg.z = std::max(0.f, sidebar_bg.z - 0.03f);
+
             ImGui::SetNextWindowSizeConstraints(ImVec2(LEFT_PANEL_MIN_WIDTH, 0), ImVec2(LEFT_PANEL_MAX_WIDTH, std::numeric_limits<f32>::max()));
-            UI::custom_frame(200, true, ImGui::GetColorU32(GLT::imgui_config::get_default_gray1_ref()),
-                [this]() { 
-                    draw_directory_tree();
-                },
-                [this]() {
-                    draw_toolbar();
-                    ImGui::BeginChild("##view_of_dir", ImVec2(0, 0));
-                    draw_file_view();
-                    ImGui::EndChild();
-                });
-    
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, sidebar_bg);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.f, 8.f));
+            ImGui::BeginChild("##folders", ImVec2(200.f, 0.f), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_ResizeX);
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+            draw_directory_tree();
+            ImGui::EndChild();
+
+            // ---- toolbar, grid, status bar ----
+            ImGui::SameLine(0.f, 0.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f, 8.f));
+            ImGui::BeginChild("##browser_main", ImVec2(0.f, 0.f), ImGuiChildFlags_AlwaysUseWindowPadding,
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::PopStyleVar();
+
+            draw_toolbar();
+            ImGui::Dummy(ImVec2(0.f, 2.f));
+
+            // divider (4) + one frame-high row, plus the item spacing in between
+            const f32 status_h = ImGui::GetFrameHeight() + 4.f + ImGui::GetStyle().ItemSpacing.y * 2.f;
+            ImGui::BeginChild("##view_of_dir", ImVec2(0.f, -status_h), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+            m_shown_items = draw_file_view();
+            ImGui::EndChild();
+
+            draw_status_bar(m_shown_items);
+            ImGui::EndChild();
+
             draw_popups();
         }
 
@@ -585,47 +613,76 @@ namespace GLT::editor {
 
     // toolbar & breadcrumbs -------------------------------------------------------------------------------------------
 
+    namespace {
+
+        // Square button with an arrow, for back / forward / up
+        bool nav_button(const char* id, const ImGuiDir dir, const bool enabled, const char* tooltip) {
+
+            const f32 size = ImGui::GetFrameHeight();
+            ImGui::BeginDisabled(!enabled);
+            const bool clicked = GLT::UI::subtle_button(id, ImVec2(size, size));
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const f32 font = ImGui::GetFontSize() * 0.7f;
+            ImGui::RenderArrow(ImGui::GetWindowDrawList(), ImVec2(min.x + (size - font) * 0.5f, min.y + (size - font) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_Text), dir, 0.7f);
+            ImGui::EndDisabled();
+
+            if (enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", tooltip);
+            return clicked;
+        }
+
+    }
+
+
     void content_browser_window::draw_toolbar() {
 
         const bool can_back = m_history_index > 0;
         const bool can_fwd = m_history_index >= 0 && (m_history_index + 1) < m_history_size;
         const bool can_up = !m_current_dir.empty() && !paths_equal(m_current_dir, m_content_dir);
 
-        ImGui::BeginDisabled(!can_back);
+        const f32 frame_h = ImGui::GetFrameHeight();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const f32 start_x = ImGui::GetCursorPosX();
+        const f32 width = ImGui::GetContentRegionAvail().x;
 
-        if (UI::gray_button("<##cb_back"))      navigate_back();
-        ImGui::EndDisabled();
+        if (nav_button("##cb_back", ImGuiDir_Left, can_back, "Back"))       navigate_back();
+        ImGui::SameLine(0.f, 2.f);
+        if (nav_button("##cb_fwd", ImGuiDir_Right, can_fwd, "Forward"))     navigate_forward();
+        ImGui::SameLine(0.f, 2.f);
+        if (nav_button("##cb_up", ImGuiDir_Up, can_up, "Parent folder"))    navigate_up();
+
+        // right side, laid out from the right edge: [search][refresh][Import]
+        const char* import_label = "Import";
+        const f32 import_w = ImGui::CalcTextSize(import_label).x + style.FramePadding.x * 4.f;
+        const f32 search_w = std::clamp(width * 0.28f, 120.f, 240.f);
+        const f32 right_w = search_w + frame_h + import_w + style.ItemSpacing.x * 2.f;
+
+        // breadcrumbs fill the space in between
+        ImGui::SameLine(0.f, 10.f);
+        const f32 crumbs_w = std::max(1.f, start_x + width - right_w - ImGui::GetCursorPosX() - 10.f);     // 0 would mean "fill"
+        ImGui::BeginChild("##crumbs", ImVec2(crumbs_w, frame_h), ImGuiChildFlags_None,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
+        draw_breadcrumbs();
+        ImGui::EndChild();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!can_fwd);
-        if (UI::gray_button(">##cb_fwd"))       navigate_forward();
-        ImGui::EndDisabled();
+        ImGui::SetCursorPosX(start_x + width - right_w);
+        UI::search_field("##cb_search", m_search_buffer, sizeof(m_search_buffer), "Search", search_w);
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!can_up);
-        if (UI::gray_button("^##cb_up"))        navigate_up();
-        ImGui::EndDisabled();
+        if (UI::reset_button("##cb_refresh", frame_h, "Refresh"))
+            m_entries_dirty = true;
 
         ImGui::SameLine();
-        if (ImGui::Button("Import##content_browser_import")) {
+        if (UI::accent_button(import_label, ImVec2(import_w, 0.f))) {
 
             const auto import_paths = GLT::editor::io::file_dialog_multi("Import asset", POSSIBLE_IMPORT_TILE_TYPES);
-            if (!import_paths.empty()) {
-
+            if (!import_paths.empty())
                 GLT::event_bus::post(GLT::editor::asset_import_request_event(import_paths, m_current_dir));
-            }
         }
-
-        ImGui::SameLine();
-        draw_breadcrumbs();
-
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(180.0f);
-        ImGui::InputTextWithHint("##cb_search", "Search...", m_search_buffer, sizeof(m_search_buffer));
-
-        ImGui::SameLine();
-        if (ImGui::Button("Refresh")) 
-            m_entries_dirty = true;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Import files into this folder");
     }
 
 
@@ -642,30 +699,71 @@ namespace GLT::editor {
         }
         std::reverse(crumbs.begin(), crumbs.end());
 
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.f, 0.f, 0.f, 0.f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.f, 0.f, 0.f, 0.f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.f, 0.f, 0.f, 0.f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.f, 0.f));
+        auto crumb_label = [&](const size_t i) {
+            const std::string name = crumbs[i].filename().string();
+            return i == 0 ? std::string("Content") : (name.empty() ? std::string("<root>") : name);
+        };
+
+        // Too long? Drop folders from the left (after the root) and show "..." instead
+        const f32 avail = ImGui::GetContentRegionAvail().x;
+        const f32 sep_w = ImGui::GetFontSize() * 0.9f;
+        auto width_from = [&](const size_t first) {
+            f32 w = ImGui::CalcTextSize(crumb_label(0).c_str()).x + 12.f;
+            for (size_t i = first; i < crumbs.size(); ++i)
+                w += sep_w + ImGui::CalcTextSize(crumb_label(i).c_str()).x + 12.f;
+            return w;
+        };
+        size_t first = 1;
+        while (first + 1 < crumbs.size() && width_from(first) > avail)
+            ++first;
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.f, 0.f, 0.f, 0.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, GLT::imgui_config::get_action_color_gray_hover_ref());
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, GLT::imgui_config::get_action_color_gray_active_ref());
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.f, ImGui::GetStyle().FramePadding.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, 0.f));
+
+        auto separator = [&](const bool ellipsis) {
+            ImGui::SameLine();
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const f32 h = ImGui::GetFrameHeight();
+            if (ellipsis) {
+                ImGui::TextDisabled("...");
+                ImGui::SameLine();
+            }
+            const ImVec2 arrow_pos = ImGui::GetCursorScreenPos();
+            ImGui::RenderArrow(ImGui::GetWindowDrawList(), ImVec2(arrow_pos.x + 2.f, pos.y + (h - ImGui::GetFontSize() * 0.6f) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_TextDisabled), ImGuiDir_Right, 0.6f);
+            ImGui::Dummy(ImVec2(sep_w, h));
+            ImGui::SameLine();
+        };
 
         for (size_t i = 0; i < crumbs.size(); ++i) {
-            if (i > 0) {
-                ImGui::SameLine();
-                ImGui::TextUnformatted("/");
-                ImGui::SameLine();
-            }
+
+            if (i > 0 && i < first)
+                continue;
+            if (i > 0)
+                separator(i == first && first > 1);
 
             ImGui::PushID(static_cast<int>(i));
-            const std::string label = crumbs[i].filename().string();
-            if (ImGui::SmallButton(label.empty() ? "<root>" : label.c_str())) {
+            const bool is_last = i + 1 == crumbs.size();
+            if (is_last)
+                ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+            const bool clicked = ImGui::Button(crumb_label(i).c_str());
+            if (is_last)
+                ImGui::PopFont();
+            ImGui::PopID();
+
+            if (clicked) {
                 navigate_to(crumbs[i]);
-                ImGui::PopID();
                 break;
             }
-            ImGui::PopID();
         }
-		ImGui::PopStyleVar();
-		ImGui::PopStyleColor(3);
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
     }
+
 
     // directory tree --------------------------------------------------------------------------------------------------
 
@@ -674,22 +772,35 @@ namespace GLT::editor {
         if (m_content_dir.empty())
             return;
 
-        // --- Collapse All button, right-aligned on its own row ----------------
-        constexpr const char* COLLAPSE_LABEL = "Collapse All";
-        const f32 collapse_w = ImGui::CalcTextSize(COLLAPSE_LABEL).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-        const f32 gap = ImGui::GetContentRegionAvail().x - collapse_w;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(gap, 0.0f));
-        const bool force_collapse = ImGui::Button(COLLAPSE_LABEL);
+        // --- header: "FOLDERS" + collapse button --------------------------------
+        ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::small));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("FOLDERS");
+        ImGui::PopFont();
 
-        // --- Tree, starting on the next row -----------------------------------
-        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 10.0f);
-        const auto subdirs = list_subdirectories(m_content_dir);
-        if (subdirs.empty())
-            ImGui::TextDisabled("(empty)");
-        else
-            for (const auto& sub : subdirs)
-                draw_directory_tree_recursive(sub, force_collapse);
-        ImGui::PopStyleVar();
+        constexpr const char* COLLAPSE_LABEL = "Collapse";
+        const f32 collapse_w = ImGui::CalcTextSize(COLLAPSE_LABEL).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ImGui::GetContentRegionAvail().x - collapse_w));
+        const bool force_collapse = UI::subtle_button(COLLAPSE_LABEL);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Collapse all folders");
+
+        ImGui::Dummy(ImVec2(0.f, 2.f));
+
+        // --- tree, the content root is the top node -------------------------------
+        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 12.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.f, 3.f));
+        ImGui::PushStyleColor(ImGuiCol_Header, GLT::imgui_config::get_action_color00_faded_ref());
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, GLT::imgui_config::get_action_color_gray_hover_ref());
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, GLT::imgui_config::get_action_color_gray_active_ref());
+
+        if (!force_collapse)
+            ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+        draw_directory_tree_recursive(m_content_dir, force_collapse);
+
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(2);
     }
 
 
@@ -698,7 +809,9 @@ namespace GLT::editor {
         // TODO: cache per-node subdirectory lists - right now we re-scan the
         //       filesystem on every frame for every visible tree node.
         const auto subdirs = list_subdirectories(dir);
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        const bool is_root = paths_equal(dir, m_content_dir);
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick
+            | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_FramePadding;
 
         if (paths_equal(dir, m_current_dir))
             flags |= ImGuiTreeNodeFlags_Selected;
@@ -706,17 +819,37 @@ namespace GLT::editor {
         if (subdirs.empty())
             flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
-        if (collapse_tree)                                          // Force this node closed while the collapse flag is live.
+        if (collapse_tree && !is_root)                              // Force this node closed while the collapse flag is live.
             ImGui::SetNextItemOpen(false, ImGuiCond_Always);
-            
+
         ImGui::PushID(dir.string().c_str());
 
-        const std::string label = dir.filename().empty() ? dir.string() : dir.filename().string();
+        // leading spaces make room for the folder icon, drawn on top afterwards
+        const f32 icon = ImGui::GetTextLineHeight();
+        const int pad = static_cast<int>(std::ceil((icon + 5.f) / std::max(1.f, ImGui::CalcTextSize(" ").x)));
+        const std::string name = is_root ? std::string("Content") : (dir.filename().empty() ? dir.string() : dir.filename().string());
+        const std::string label = std::string(static_cast<size_t>(pad), ' ') + name;
         const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
 
         // Only respond to clicks on the label area, not on the expand arrow.
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
             navigate_to(dir);
+
+        // folder icon
+        {
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const f32 x = min.x + ImGui::GetTreeNodeToLabelSpacing();
+            const f32 y = min.y + ImGui::GetStyle().FramePadding.y;
+            const auto icon_data = icon_manager::get((open && !subdirs.empty()) ? icon_manager::icon::folder_open : icon_manager::icon::folder);
+            ImGui::GetWindowDrawList()->AddImage(icon_data.tex_ref, ImVec2(x, y), ImVec2(x + icon, y + icon), icon_data.uv0, icon_data.uv1);
+        }
+
+        // drop assets on a folder in the tree to move them there
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(GLT::UI::ASSET_DRAG_PAYLOAD))
+                move_assets_to(parse_drag_payload_impl(payload), dir);
+            ImGui::EndDragDropTarget();
+        }
 
         if (open && !subdirs.empty()) {
             for (const auto& sub : subdirs)
@@ -728,24 +861,58 @@ namespace GLT::editor {
         ImGui::PopID();
     }
 
+    // status bar ------------------------------------------------------------------------------------------------------
+
+    void content_browser_window::draw_status_bar(const u32 shown_items) {
+
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        ImGui::GetWindowDrawList()->AddLine(start, ImVec2(start.x + width, start.y), ImGui::GetColorU32(ImGuiCol_Separator, 0.6f));
+        ImGui::Dummy(ImVec2(0.f, 4.f));
+
+        ImGui::AlignTextToFramePadding();
+        if (m_selected_paths.empty())
+            ImGui::TextDisabled("%u item%s", shown_items, shown_items == 1 ? "" : "s");
+        else
+            ImGui::TextDisabled("%u item%s  \u00b7  %zu selected", shown_items, shown_items == 1 ? "" : "s", m_selected_paths.size());
+
+        constexpr f32 SLIDER_W = 110.f;
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ImGui::GetContentRegionAvail().x - SLIDER_W));
+        ImGui::SetNextItemWidth(SLIDER_W);
+        ImGui::SliderFloat("##cb_zoom", &m_icon_size, ICON_SIZE_MIN, ICON_SIZE_MAX, "", ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Icon size");
+    }
+
     // file grid -------------------------------------------------------------------------------------------------------
 
-    void content_browser_window::draw_file_view() {
+    u32 content_browser_window::draw_file_view() {
 
         m_any_item_drop_target_active = false;
-        const std::string filter = m_search_buffer;
+
+        // case insensitive search
+        std::string filter = m_search_buffer;
+        std::transform(filter.begin(), filter.end(), filter.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        const f32 cell_w = m_icon_size + ICON_TOP_MARGIN * 2.f;
+        const f32 spacing = ImGui::GetStyle().ItemSpacing.x;
         const f32 avail = ImGui::GetContentRegionAvail().x;
-        const i32 columns = std::max(1, static_cast<i32>(std::floor(avail / CELL_WIDTH) - 1));
+        const i32 columns = std::max(1, static_cast<i32>(std::floor((avail + spacing) / (cell_w + spacing))));
         i32  col = 0;
-        bool any = false;
+        u32  shown = 0;
 
         for (const auto& entry : m_entries) {
 
-            if (!filter.empty() && entry.name.find(filter) == std::string::npos)
-                continue;
+            if (!filter.empty()) {
+                std::string name = entry.name;
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (name.find(filter) == std::string::npos)
+                    continue;
+            }
 
             draw_file_item(entry);
-            any = true;
+            ++shown;
 
             if (++col < columns)
                 ImGui::SameLine();
@@ -753,8 +920,12 @@ namespace GLT::editor {
                 col = 0;
         }
 
-        if (!any)
-            ImGui::TextDisabled(filter.empty() ? "(empty)" : "(no matches)");
+        if (shown == 0) {
+            if (filter.empty())
+                UI::empty_state("This folder is empty", "Drop files here, use Import or right-click to create something");
+            else
+                UI::empty_state("Nothing matches your search", "Search looks at the names in this folder only");
+        }
 
         // Background drop target. We allocate the item only while a drag is in flight, so normal clicks fall through to the grid and
         // the "click on empty space clears selection" path below still works
@@ -793,6 +964,8 @@ namespace GLT::editor {
             draw_background_context_menu();
             ImGui::EndPopup();
         }
+
+        return shown;
     }
 
 
@@ -800,7 +973,8 @@ namespace GLT::editor {
 
         ImGui::PushID(entry.path.string().c_str());
 
-        const ImVec2 cell_size(CELL_WIDTH, CELL_HEIGHT);
+        const f32 icon_size = m_icon_size;
+        const ImVec2 cell_size(icon_size + ICON_TOP_MARGIN * 2.f, icon_size + ICON_TOP_MARGIN * 2.f + CELL_NAME_HEIGHT);
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const bool selected = is_selected(entry.path);
         const bool button = ImGui::InvisibleButton("##cell", cell_size);
@@ -849,24 +1023,30 @@ namespace GLT::editor {
         ImDrawList* draw = ImGui::GetWindowDrawList();
         const ImVec2 cell_max(origin.x + cell_size.x, origin.y + cell_size.y);
 
-        if (selected)
-            draw->AddRectFilled(origin, cell_max, ImGui::GetColorU32(GLT::imgui_config::get_main_color_ref()), 4.0f);
+        constexpr f32 CELL_ROUNDING = 6.f;
+        if (selected) {
+            draw->AddRectFilled(origin, cell_max, ImGui::GetColorU32(GLT::imgui_config::get_action_color00_faded_ref()), CELL_ROUNDING);
+            draw->AddRect(origin, cell_max, ImGui::GetColorU32(GLT::imgui_config::get_action_color00_hover_ref()), CELL_ROUNDING, 0, 1.5f);
+        } else if (interaction == UI::mouse_interation::hovered)
+            draw->AddRectFilled(origin, cell_max, ImGui::GetColorU32(GLT::imgui_config::get_action_color_gray_hover_ref()), CELL_ROUNDING);
 
-        else if (interaction == UI::mouse_interation::hovered)
-            draw->AddRectFilled(origin, cell_max, IM_COL32(90, 90, 90, 120), 4.0f);
+        // icon tile behind files (folders stand on their own)
+        if (!entry.is_directory) {
+            const ImVec2 tile_min(origin.x + ICON_TOP_MARGIN * 0.5f, origin.y + ICON_TOP_MARGIN * 0.5f);
+            const ImVec2 tile_max(cell_max.x - ICON_TOP_MARGIN * 0.5f, origin.y + ICON_TOP_MARGIN * 1.5f + icon_size);
+            draw->AddRectFilled(tile_min, tile_max, ImGui::GetColorU32(GLT::imgui_config::get_action_color_gray_default_ref()), CELL_ROUNDING - 2.f);
+        }
 
         // file type accent --------------------------------------------------------------------------------------------
         if (!entry.is_directory) {
 
             const ImU32 accent = type_to_color(resolve_entry_type(entry.extension));
 
-            constexpr f32 STRIP_HEIGHT = 2.f;
-            constexpr f32 STRIP_INSET_X = 6.f;
-            constexpr f32 STRIP_OFFSET_Y = 32.f;
-
-            const ImVec2 strip_min(origin.x + STRIP_INSET_X, cell_max.y - STRIP_OFFSET_Y - STRIP_HEIGHT);
-            const ImVec2 strip_max(cell_max.x - STRIP_INSET_X, cell_max.y - STRIP_OFFSET_Y);
-            draw->AddRectFilled(strip_min, strip_max, accent, STRIP_HEIGHT * 0.5f);
+            constexpr f32 STRIP_HEIGHT = 3.f;
+            const f32 tile_bottom = origin.y + ICON_TOP_MARGIN * 1.5f + icon_size;
+            const ImVec2 strip_min(origin.x + ICON_TOP_MARGIN * 0.5f, tile_bottom - STRIP_HEIGHT);
+            const ImVec2 strip_max(cell_max.x - ICON_TOP_MARGIN * 0.5f, tile_bottom);
+            draw->AddRectFilled(strip_min, strip_max, accent, CELL_ROUNDING - 2.f, ImDrawFlags_RoundCornersBottom);
         }
 
         // icon / thumbnail --------------------------------------------------------------------------------------------
@@ -886,11 +1066,11 @@ namespace GLT::editor {
                 const auto thumb = icon_manager::get_thumbnail(entry.path);
                 if (thumb.state == icon_manager::thumbnail_state::ready && thumb.image_size.x > 0.0f) {
 
-                    const f32 scale = std::min(ICON_RENDER_SIZE / thumb.image_size.x, ICON_RENDER_SIZE / thumb.image_size.y);
+                    const f32 scale = std::min(icon_size / thumb.image_size.x, icon_size / thumb.image_size.y);
                     const f32 draw_w = thumb.image_size.x * scale;
                     const f32 draw_h = thumb.image_size.y * scale;
                     const ImVec2 t_min(origin.x + (cell_size.x - draw_w) * 0.5f, 
-                        origin.y + ICON_TOP_MARGIN + (ICON_RENDER_SIZE - draw_h) * 0.5f);
+                        origin.y + ICON_TOP_MARGIN + (icon_size - draw_h) * 0.5f);
                     const ImVec2 t_max(t_min.x + draw_w, t_min.y + draw_h);
 
                     draw->AddImage(thumb.tex_ref, t_min, t_max, thumb.uv0, thumb.uv1);
@@ -905,8 +1085,8 @@ namespace GLT::editor {
                 entry.is_directory ? icon_manager::icon::folder_big : extension_to_icon(entry.extension));
             if (icon.image_size.x > 0.0f) {
 
-                const ImVec2 icon_min(origin.x + (cell_size.x - ICON_RENDER_SIZE) * 0.5f, origin.y + ICON_TOP_MARGIN);
-                const ImVec2 icon_max(icon_min.x + ICON_RENDER_SIZE, icon_min.y + ICON_RENDER_SIZE);
+                const ImVec2 icon_min(origin.x + (cell_size.x - icon_size) * 0.5f, origin.y + ICON_TOP_MARGIN);
+                const ImVec2 icon_max(icon_min.x + icon_size, icon_min.y + icon_size);
                 draw->AddImage(icon.tex_ref, icon_min, icon_max, icon.uv0, icon.uv1, ImGui::GetColorU32(ImVec4(1.f, 1.f, 1.f, .75f)));
             }
         }
@@ -924,7 +1104,7 @@ namespace GLT::editor {
         const f32 name_max_w = cell_size.x - 2.0f * NAME_PAD_X;
         const f32 line_h = ImGui::GetTextLineHeight();
         const f32 line_advance = line_h - NAME_LINE_TIGHTEN;
-        const f32 field_top = origin.y + ICON_TOP_MARGIN + ICON_RENDER_SIZE + NAME_FIELD_GAP_ABOVE;
+        const f32 field_top = origin.y + ICON_TOP_MARGIN + icon_size + NAME_FIELD_GAP_ABOVE;
         const f32 field_bottom = cell_max.y - NAME_FIELD_GAP_BELOW;
         const f32 field_height = std::max(0.0f, field_bottom - field_top);
 

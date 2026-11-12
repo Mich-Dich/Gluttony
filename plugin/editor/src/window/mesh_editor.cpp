@@ -22,6 +22,7 @@
 
 #include "util/ui/panel_collection.h"
 #include "util/ui/asset_picker.h"
+#include "resource_manager/icon_manager.h"
 
 
 
@@ -42,7 +43,7 @@ namespace GLT::editor {
     constexpr const char*                           DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
 
     // Panel layout defaults for the three-column body
-    constexpr f32                                   SPLITTER_WIDTH = 6.0f;
+    constexpr f32                                   SPLITTER_WIDTH = 4.0f;
 
     constexpr f32                                   MIN_OUTLINER_WIDTH = 150.0f;
 
@@ -216,16 +217,13 @@ namespace GLT::editor {
         if (hovered || active)
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
 
-        // Draw a 2px visual bar centered in the splitter zone
-        const ImU32 col = (hovered || active)
-            ? IM_COL32(200, 200, 200, 220)
-            : IM_COL32(100, 100, 100, 100);
-
+        // Thin line, accent colored while hovered / dragged
         const f32 cx = cursor.x + SPLITTER_WIDTH * 0.5f;
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            ImVec2(cx - 1.0f, cursor.y + 4.0f),
-            ImVec2(cx + 1.0f, cursor.y + height - 4.0f),
-            col);
+        if (hovered || active)
+            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(cx - 1.0f, cursor.y), ImVec2(cx + 1.0f, cursor.y + height),
+                ImGui::GetColorU32(active ? GLT::imgui_config::get_action_color00_active_ref() : GLT::imgui_config::get_action_color00_hover_ref()));
+        else
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(cx, cursor.y), ImVec2(cx, cursor.y + height), ImGui::GetColorU32(ImGuiCol_Separator));
     }
 
 
@@ -457,11 +455,14 @@ namespace GLT::editor {
         ImGui::SetNextWindowSizeConstraints(ImVec2(880.0f, 520.0f), ImVec2(std::numeric_limits<f32>::max(),
             std::numeric_limits<f32>::max()));
 
-        if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+        const bool open = ImGui::Begin(m_window_id.c_str(), &m_show_window);
+        ImGui::PopStyleVar();
+
+        if (open) {
 
             handle_drag_drop();
             draw_toolbar();
-            ImGui::Separator();
             draw_body();
         }
         ImGui::End();
@@ -523,63 +524,75 @@ namespace GLT::editor {
 
     // top-level panels -------------------------------------------------------------------------------------------------
 
+    // Header bar: mesh icon, name, path, unsaved marker | Reload, Save
     void mesh_editor_window::draw_toolbar() {
 
-        ImGui::BeginDisabled(!m_has_mesh);
+        const f32 frame_h = ImGui::GetFrameHeight();
+        const f32 bar_h = frame_h + 14.f;
+        const ImVec2 bar_min = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-        if (ImGui::Button("Reload", ImVec2(80.0f, 0.0f)))
-            open(m_mesh_path);
+        draw_list->AddRectFilled(bar_min, ImVec2(bar_min.x + width, bar_min.y + bar_h), ImGui::GetColorU32(ImGuiCol_TitleBg));
 
-        ImGui::SameLine();
-        if (ImGui::Button("Save", ImVec2(80.0f, 0.0f)))
-            save();
+        // buttons on the right
+        const char* save_label = "Save";
+        const char* reload_label = "Reload";
+        const f32 pad = ImGui::GetStyle().FramePadding.x * 4.f;
+        const f32 save_w = ImGui::CalcTextSize(save_label).x + pad;
+        const f32 reload_w = ImGui::CalcTextSize(reload_label).x + pad;
+        const f32 buttons_w = save_w + reload_w + 6.f;
+        const f32 buttons_x = bar_min.x + width - buttons_w - 10.f;
 
-        ImGui::EndDisabled();
+        // icon + name + path on the left
+        const f32 icon = frame_h;
+        const ImVec2 icon_min(bar_min.x + 10.f, bar_min.y + (bar_h - icon) * 0.5f);
+        const auto icon_data = icon_manager::get(icon_manager::icon::mesh_asset);
+        draw_list->AddImage(icon_data.tex_ref, icon_min, ImVec2(icon_min.x + icon, icon_min.y + icon), icon_data.uv0, icon_data.uv1);
+
+        f32 x = icon_min.x + icon + 8.f;
+        const f32 text_y = bar_min.y + (bar_h - ImGui::GetTextLineHeight()) * 0.5f;
+        const std::string name = m_has_mesh ? m_mesh_name : std::string("No mesh");
+        ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+        draw_list->AddText(ImVec2(x, text_y), ImGui::GetColorU32(ImGuiCol_Text), name.c_str());
+        x += ImGui::CalcTextSize(name.c_str()).x + 10.f;
+        ImGui::PopFont();
 
         if (m_dirty) {
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 90, 255));
-            ImGui::TextUnformatted("Unsaved changes");
-            ImGui::PopStyleColor();
+            // amber "unsaved" pill
+            const char* unsaved = "Unsaved changes";
+            const ImVec2 size = ImGui::CalcTextSize(unsaved);
+            const ImVec2 pill_min(x, text_y - 2.f);
+            const ImVec2 pill_max(x + size.x + 22.f, text_y + size.y + 2.f);
+            draw_list->AddRectFilled(pill_min, pill_max, IM_COL32(230, 180, 60, 40), (pill_max.y - pill_min.y) * 0.5f);
+            draw_list->AddCircleFilled(ImVec2(x + 9.f, text_y + size.y * 0.5f), 3.f, IM_COL32(230, 180, 60, 255));
+            draw_list->AddText(ImVec2(x + 16.f, text_y), IM_COL32(230, 200, 120, 255), unsaved);
+            x = pill_max.x + 10.f;
         }
 
-        ImGui::SameLine(0.0f, 24.0f);
-
-        ImGui::Checkbox("Grid", &m_show_grid);
-        ImGui::SameLine();
-        ImGui::Checkbox("Origin", &m_show_origin);
-        ImGui::SameLine();
-        ImGui::Checkbox("Colliders", &m_show_colliders_in_preview);
-        draw_collider_gizmo_toolbar();
-
-        if (m_preview_scene) {
-
-            ImGui::SameLine(0.0f, 24.0f);
-
-            const auto modes = m_preview_scene->supported_modes();
-            const u32 current_id = m_preview_scene->get_render_mode();
-
-            i32 current_index = -1;
-            for (u32 i = 0; i < modes.size(); ++i)
-                if (modes[i].id == current_id) { current_index = i; break; }
-
-            const std::string preview_label = (current_index >= 0)
-                ? std::string(modes[current_index].key) : std::string("(unknown)");
-
-            ImGui::SetNextItemWidth(160.0f);
-            if (ImGui::BeginCombo("##render_mode", preview_label.c_str())) {
-                for (u32 i = 0; i < modes.size(); ++i) {
-                    const bool selected = (modes[i].id == current_id);
-                    if (ImGui::Selectable(std::string(modes[i].key).c_str(), selected)) {
-                        m_current_mode_id = modes[i].id;
-                        m_preview_scene->set_render_mode(modes[i].id);
-                    }
-                    if (selected)
-                        ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndCombo();
-            }
+        if (!m_mesh_path.empty() && x < buttons_x - 40.f) {
+            std::string path = m_mesh_path.generic_string();
+            const f32 max_w = buttons_x - 10.f - x;
+            while (path.size() > 4 && ImGui::CalcTextSize(path.c_str()).x > max_w)
+                path.erase(0, 4);
+            if (path.size() != m_mesh_path.generic_string().size())
+                path = "..." + path;
+            draw_list->AddText(ImVec2(x, text_y), ImGui::GetColorU32(ImGuiCol_TextDisabled), path.c_str());
         }
+
+        ImGui::SetCursorScreenPos(ImVec2(buttons_x, bar_min.y + (bar_h - frame_h) * 0.5f));
+        ImGui::BeginDisabled(!m_has_mesh);
+        if (UI::subtle_button(reload_label, ImVec2(reload_w, 0.f)))
+            open(m_mesh_path);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Discard unsaved changes and load the asset again");
+        ImGui::SameLine(0.f, 6.f);
+        if (UI::accent_button(save_label, ImVec2(save_w, 0.f)))
+            save();
+        ImGui::EndDisabled();
+
+        ImGui::SetCursorScreenPos(ImVec2(bar_min.x, bar_min.y + bar_h));
+        ImGui::Dummy(ImVec2(0.f, 0.f));
     }
 
 
@@ -617,9 +630,19 @@ namespace GLT::editor {
 
         // ---- outliner ----------------------------------------------------------------------------------------------
         ImGui::SetCursorScreenPos(start_pos);
-        ImGui::BeginChild("##outliner", ImVec2(m_outliner_width, total_h), true);
-        draw_outliner_panel();
-        ImGui::EndChild();
+        {
+            ImVec4 sidebar_bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+            sidebar_bg.x = std::max(0.f, sidebar_bg.x - 0.03f);
+            sidebar_bg.y = std::max(0.f, sidebar_bg.y - 0.03f);
+            sidebar_bg.z = std::max(0.f, sidebar_bg.z - 0.03f);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, sidebar_bg);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.f, 8.f));
+            ImGui::BeginChild("##outliner", ImVec2(m_outliner_width, total_h), ImGuiChildFlags_AlwaysUseWindowPadding);
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+            draw_outliner_panel();
+            ImGui::EndChild();
+        }
 
         // ---- left splitter -----------------------------------------------------------------------------------------
         ImGui::SetCursorScreenPos(ImVec2(start_pos.x + m_outliner_width, start_pos.y));
@@ -643,7 +666,9 @@ namespace GLT::editor {
 
         // ---- inspector ---------------------------------------------------------------------------------------------
         ImGui::SetCursorScreenPos(ImVec2(preview_x + preview_w + SPLITTER_WIDTH, start_pos.y));
-        ImGui::BeginChild("##inspector", ImVec2(0.0f, total_h), true);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f, 10.f));
+        ImGui::BeginChild("##inspector", ImVec2(0.0f, total_h), ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
         draw_inspector_panel();
         ImGui::EndChild();
     }
@@ -651,17 +676,174 @@ namespace GLT::editor {
 
     // outliner --------------------------------------------------------------------------------------------------------
 
+    namespace {
+
+        constexpr f32 ROW_ROUNDING = 4.f;
+
+        // Small caps section title with an item count; returns true if the optional "+" button was clicked
+        bool outliner_section(const char* title, const u32 count, const char* add_tooltip = nullptr) {
+
+            ImGui::Dummy(ImVec2(0.f, 6.f));
+            ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::small));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", title);
+            ImGui::SameLine(0.f, 6.f);
+            ImGui::TextDisabled("%u", count);
+            ImGui::PopFont();
+
+            if (!add_tooltip)
+                return false;
+
+            const f32 size = ImGui::GetFrameHeight();
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ImGui::GetContentRegionAvail().x - size));
+            const bool clicked = GLT::UI::subtle_button("+##section_add", ImVec2(size, size));
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", add_tooltip);
+            return clicked;
+        }
+
+
+        struct row_options {
+
+            const char*                         right_text = nullptr;   // dim, right aligned
+            const icon_manager::icon_data*      icon = nullptr;
+            ImU32                               dot_color = 0;          // colored dot instead of an icon
+            bool                                bold = false;
+            bool                                dimmed = false;
+            f32                                 right_reserved = 0.f;   // space for extra buttons drawn by the caller
+        };
+
+        // Rounded, full width list row. Returns true when clicked; [out_hovered] reports hover
+        bool outliner_row(const char* id, const char* label, const bool selected, const row_options& opts, bool* out_hovered = nullptr) {
+
+            const f32 row_h = ImGui::GetFrameHeight();
+            const f32 width = ImGui::GetContentRegionAvail().x;
+            const ImVec2 min = ImGui::GetCursorScreenPos();
+            const ImVec2 max(min.x + width, min.y + row_h);
+
+            ImGui::SetNextItemAllowOverlap();
+            const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, row_h));
+            const bool hovered = ImGui::IsItemHovered();
+            if (out_hovered)
+                *out_hovered = hovered;
+
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            if (selected) {
+                draw_list->AddRectFilled(min, max, ImGui::GetColorU32(GLT::imgui_config::get_action_color00_faded_ref()), ROW_ROUNDING);
+                draw_list->AddRectFilled(ImVec2(min.x, min.y + 4.f), ImVec2(min.x + 3.f, max.y - 4.f),
+                    ImGui::GetColorU32(GLT::imgui_config::get_action_color00_hover_ref()), 1.5f);
+            } else if (hovered)
+                draw_list->AddRectFilled(min, max, ImGui::GetColorU32(GLT::imgui_config::get_action_color_gray_hover_ref()), ROW_ROUNDING);
+
+            f32 x = min.x + 8.f;
+            const f32 line_h = ImGui::GetTextLineHeight();
+            const f32 text_y = min.y + (row_h - line_h) * 0.5f;
+
+            if (opts.dot_color != 0) {
+                draw_list->AddCircleFilled(ImVec2(x + 4.f, min.y + row_h * 0.5f), 4.f, opts.dot_color);
+                x += 14.f;
+            } else if (opts.icon && opts.icon->image_size.x > 0.f) {
+                draw_list->AddImage(opts.icon->tex_ref, ImVec2(x, text_y), ImVec2(x + line_h, text_y + line_h), opts.icon->uv0, opts.icon->uv1);
+                x += line_h + 6.f;
+            }
+
+            f32 right_x = max.x - 8.f - opts.right_reserved;
+            if (opts.right_text && *opts.right_text) {
+                const f32 w = ImGui::CalcTextSize(opts.right_text).x;
+                right_x -= w;
+                draw_list->AddText(ImVec2(right_x, text_y), ImGui::GetColorU32(ImGuiCol_TextDisabled), opts.right_text);
+                right_x -= 8.f;
+            }
+
+            if (opts.bold)
+                ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+            draw_list->PushClipRect(ImVec2(x, min.y), ImVec2(std::max(x, right_x), max.y), true);
+            draw_list->AddText(ImVec2(x, text_y), ImGui::GetColorU32(opts.dimmed ? ImGuiCol_TextDisabled : ImGuiCol_Text), label);
+            draw_list->PopClipRect();
+            if (opts.bold)
+                ImGui::PopFont();
+
+            return clicked;
+        }
+
+
+        // Icon tile + title + subtitle at the top of the inspector
+        void inspector_header(const icon_manager::icon_type icon, const char* title, const std::string& subtitle) {
+
+            const f32 frame_h = ImGui::GetFrameHeight();
+            const ImVec2 start = ImGui::GetCursorScreenPos();
+            const f32 tile = frame_h * 1.4f;
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+            draw_list->AddRectFilled(start, ImVec2(start.x + tile, start.y + tile),
+                ImGui::GetColorU32(GLT::imgui_config::get_action_color_gray_default_ref()), 6.f);
+            const auto data = icon_manager::get(icon);
+            const f32 inset = tile * 0.22f;
+            draw_list->AddImage(data.tex_ref, ImVec2(start.x + inset, start.y + inset), ImVec2(start.x + tile - inset, start.y + tile - inset),
+                data.uv0, data.uv1);
+
+            ImGui::SetCursorScreenPos(ImVec2(start.x + tile + 8.f, start.y - 1.f));
+            ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+            ImGui::TextUnformatted(title);
+            ImGui::PopFont();
+            ImGui::SetCursorScreenPos(ImVec2(start.x + tile + 8.f, ImGui::GetCursorScreenPos().y));
+            ImGui::TextDisabled("%s", subtitle.c_str());
+
+            ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + tile + 10.f));
+            ImGui::Dummy(ImVec2(0.f, 0.f));
+        }
+
+
+        // Red full-width button for destructive actions
+        bool danger_button(const char* label) {
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(120, 40, 40, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(160, 50, 50, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(190, 60, 60, 255));
+            const bool clicked = ImGui::Button(label, ImVec2(-FLT_MIN, 0.f));
+            ImGui::PopStyleColor(3);
+            ImGui::PopStyleVar(2);
+            return clicked;
+        }
+
+
+        // Translucent pill button for preview overlays, accent filled while [active]
+        bool overlay_toggle(const char* label, const bool active) {
+
+            if (active) {
+                ImGui::PushStyleColor(ImGuiCol_Button, GLT::imgui_config::get_action_color00_default_ref());
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, GLT::imgui_config::get_action_color00_hover_ref());
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, GLT::imgui_config::get_action_color00_active_ref());
+            }
+            const bool clicked = ImGui::Button(label);
+            if (active)
+                ImGui::PopStyleColor(3);
+            return clicked;
+        }
+
+
+        void warning_text(const char* text) {
+
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 110, 255));
+            ImGui::TextWrapped("%s", text);
+            ImGui::PopStyleColor();
+        }
+
+    }
+
+
     void mesh_editor_window::draw_outliner_panel() {
 
         if (m_load_failed) {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 90, 90, 255));
-            ImGui::TextUnformatted("Failed to load mesh.");
-            ImGui::PopStyleColor();
+            UI::empty_state("Failed to load the mesh", "See the log for details");
             return;
         }
 
         if (!m_has_mesh) {
-            ImGui::TextDisabled("No mesh loaded.");
+            UI::empty_state("No mesh loaded", "Drop a mesh asset here");
             return;
         }
 
@@ -675,106 +857,75 @@ namespace GLT::editor {
 
         // ---- mesh root row ----
         {
-            const bool mesh_selected = (m_inspector_target == inspector_target::mesh);
-            if (ImGui::Selectable(m_mesh_name.c_str(), mesh_selected, ImGuiSelectableFlags_SpanAvailWidth))
+            const auto icon = icon_manager::get(icon_manager::icon::mesh_asset);
+            const std::string tris = format_count(mesh->indices.size() / 3) + " tris";
+            if (outliner_row("##mesh_root", m_mesh_name.c_str(), m_inspector_target == inspector_target::mesh,
+                row_options{ .right_text = tris.c_str(), .icon = &icon, .bold = true }))
                 select_mesh();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("Mesh settings: summary, level of detail, preview");
         }
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        if (m_mesh_path.empty())
-            ImGui::TextUnformatted("  (unsaved)");
-        else
-            ImGui::TextWrapped("  %s", m_mesh_path.generic_string().c_str());
-        ImGui::PopStyleColor();
-
-        ImGui::Separator();
-
-        i32 new_hovered_sub = -1;
-
-        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 12.0f);
-
         // ---- submeshes ----
-        if (ImGui::TreeNodeEx("Submeshes", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth)) {
-
-            if (mesh->submeshes.empty()) {
-                ImGui::TextDisabled("(none)");
-            }
-
+        i32 new_hovered_sub = -1;
+        outliner_section("SUBMESHES", mesh->submesh_count());
+        {
+            const auto icon = icon_manager::get(icon_manager::icon::material);
             for (u32 i = 0; i < mesh->submesh_count(); ++i) {
 
                 ImGui::PushID(static_cast<int>(i));
-
-                const bool selected =
-                    (m_inspector_target == inspector_target::submesh && m_selected_submesh == static_cast<i32>(i));
-
-                char label[32];
-                std::snprintf(label, sizeof(label), "%u", i);
-
-                if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_SpanAvailWidth)) {
+                const bool selected = (m_inspector_target == inspector_target::submesh && m_selected_submesh == static_cast<i32>(i));
+                const std::string label = std::format("Submesh {}", i);
+                const std::string tris = format_count(mesh->submeshes[i].index_count / 3) + " tris";
+                bool hovered = false;
+                if (outliner_row("##submesh", label.c_str(), selected, row_options{ .right_text = tris.c_str(), .icon = &icon }, &hovered)) {
                     if (selected) select_mesh();
                     else          select_submesh(static_cast<i32>(i));
                 }
-
-                if (ImGui::IsItemHovered())
+                if (hovered)
                     new_hovered_sub = static_cast<i32>(i);
-
-                ImGui::SameLine();
-                ImGui::TextDisabled("[%u..%u]", mesh->submeshes[i].first_index,
-                    mesh->submeshes[i].first_index + mesh->submeshes[i].index_count);
-
                 ImGui::PopID();
             }
-
-            ImGui::TreePop();
+            if (mesh->submeshes.empty())
+                ImGui::TextDisabled("  none");
         }
 
         // ---- LOD levels (click = lock the preview to that level, click again = automatic) ----
+        outliner_section("LEVELS OF DETAIL", mesh->lod_count());
         {
-            const u32 lod_count = mesh->lod_count();
-            char lod_label[48];
-            std::snprintf(lod_label, sizeof(lod_label), "LODs (%u)###lod_tree", lod_count);
-            if (ImGui::TreeNodeEx(lod_label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth)) {
+            if (outliner_row("##lod_auto", "Automatic", m_preview_lod < 0, row_options{ .right_text = "by screen size", .dimmed = m_preview_lod >= 0 }))
+                set_preview_lod(-1);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("The preview picks the level from its size on screen (zoom with the mouse wheel)");
 
-                for (u32 level = 0; level < lod_count; ++level) {
+            for (u32 level = 0; level < mesh->lod_count(); ++level) {
 
-                    ImGui::PushID(static_cast<int>(level) + 0x1000);
-                    char label[16];
-                    std::snprintf(label, sizeof(label), "LOD %u", level);
-                    const bool selected = (m_preview_lod == static_cast<i32>(level));
-                    if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_SpanAvailWidth))
-                        set_preview_lod(selected ? -1 : static_cast<i32>(level));
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s tris", format_count(mesh->lod_triangle_count(level)).c_str());
-                    ImGui::PopID();
-                }
-                ImGui::TreePop();
+                ImGui::PushID(static_cast<int>(level) + 0x1000);
+                const std::string label = std::format("LOD {}", level);
+                const std::string tris = format_count(mesh->lod_triangle_count(level)) + " tris";
+                const bool selected = (m_preview_lod == static_cast<i32>(level));
+                if (outliner_row("##lod", label.c_str(), selected, row_options{ .right_text = tris.c_str() }))
+                    set_preview_lod(selected ? -1 : static_cast<i32>(level));
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                    ImGui::SetTooltip("Lock the preview to this level (click again for automatic)");
+                ImGui::PopID();
             }
         }
 
         // ---- colliders ----
         m_hovered_collider = -1;
+        if (outliner_section("COLLIDERS", static_cast<u32>(m_colliders.size()), "Add a collider"))
+            ImGui::OpenPopup("add_collider_popup");
+        draw_add_collider_popup();
 
-        const bool colliders_open =
-            ImGui::TreeNodeEx("Colliders", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
-
-        if (colliders_open) {
-
-            if (ImGui::Button("+ Add collider", ImVec2(-1.0f, 0.0f)))
-                ImGui::OpenPopup("add_collider_popup");
-
-            draw_add_collider_popup();
-
-            if (m_colliders.empty()) {
-                ImGui::TextDisabled("(none)");
-            } else {
-                for (i32 i = 0; i < static_cast<i32>(m_colliders.size()); ++i)
-                    draw_collider_row(i);
-            }
-
-            ImGui::TreePop();
+        if (m_colliders.empty()) {
+            ImGui::PushTextWrapPos(0.f);
+            ImGui::TextDisabled("No colliders yet. Use + to add a box, sphere, capsule or a shape built from the mesh.");
+            ImGui::PopTextWrapPos();
+        } else {
+            for (i32 i = 0; i < static_cast<i32>(m_colliders.size()); ++i)
+                draw_collider_row(i);
         }
-
-        ImGui::PopStyleVar();
 
         m_hovered_submesh = new_hovered_sub;
 
@@ -792,35 +943,53 @@ namespace GLT::editor {
 
         ImGui::PushID(static_cast<int>(item.id));
 
-        const bool selected =
-            (m_inspector_target == inspector_target::collider && m_selected_collider == index);
+        const bool selected = (m_inspector_target == inspector_target::collider && m_selected_collider == index);
+        const f32 eye = ImGui::GetFrameHeight();
+        const ImVec2 row_min = ImGui::GetCursorScreenPos();
 
-        char label[192];
-        std::snprintf(label, sizeof(label), "%s%s  [%s]",
-            item.visible ? "" : "(hidden) ",
-            item.name.c_str(),
-            collider_shape_kind_name(item.kind));
-
-        if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_SpanAvailWidth)) {
+        bool hovered = false;
+        row_options opts{};
+        opts.right_text = collider_shape_kind_name(item.kind);
+        opts.dot_color = ImGui::GetColorU32(ImVec4(item.color.x, item.color.y, item.color.z, 1.f));
+        opts.dimmed = !item.visible;
+        opts.right_reserved = eye;
+        if (outliner_row("##collider", item.name.c_str(), selected, opts, &hovered)) {
             if (selected) select_mesh();
             else          select_collider(index);
         }
-
-        if (ImGui::IsItemHovered())
+        if (hovered)
             m_hovered_collider = index;
 
-        if (ImGui::BeginPopupContextItem()) {
+        if (ImGui::BeginPopupContextItem("##collider_ctx")) {
 
             if (ImGui::MenuItem(item.visible ? "Hide" : "Show"))
                 item.visible = !item.visible;
 
             ImGui::Separator();
-
             if (ImGui::MenuItem("Delete"))
                 m_pending_delete_collider = index;
 
             ImGui::EndPopup();
         }
+
+        // visibility toggle on the right edge of the row
+        const ImVec2 next = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorScreenPos(ImVec2(row_min.x + width - eye, row_min.y));
+        if (ImGui::InvisibleButton("##visible", ImVec2(eye, eye)))
+            item.visible = !item.visible;
+        {
+            const bool eye_hovered = ImGui::IsItemHovered();
+            const auto icon = icon_manager::get(item.visible ? icon_manager::icon::show : icon_manager::icon::hide);
+            const f32 inset = eye * 0.22f;
+            ImGui::GetWindowDrawList()->AddImage(icon.tex_ref, ImVec2(row_min.x + width - eye + inset, row_min.y + inset),
+                ImVec2(row_min.x + width - inset, row_min.y + eye - inset), icon.uv0, icon.uv1,
+                ImGui::GetColorU32(eye_hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled));
+            if (eye_hovered)
+                ImGui::SetTooltip(item.visible ? "Hide in the preview" : "Show in the preview");
+        }
+        ImGui::SetCursorScreenPos(next);
+        ImGui::Dummy(ImVec2(0.f, 0.f));
 
         ImGui::PopID();
     }
@@ -852,33 +1021,33 @@ namespace GLT::editor {
     void mesh_editor_window::draw_inspector_panel() {
 
         if (m_load_failed) {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 90, 90, 255));
-            ImGui::TextUnformatted("Failed to load mesh.");
-            ImGui::PopStyleColor();
+            UI::empty_state("Failed to load the mesh", "See the log for details");
             return;
         }
 
         if (!m_has_mesh) {
-            ImGui::TextDisabled("No mesh loaded.");
+            UI::empty_state("No mesh loaded", "Drop a mesh asset from the Content Browser into this window");
             return;
         }
 
-        if (ImGui::BeginChild("##inspector_scroll", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_None)) {
-
-            switch (m_inspector_target) {
-                case inspector_target::mesh:        draw_inspector_mesh();       break;
-                case inspector_target::submesh:     draw_inspector_submesh();    break;
-                case inspector_target::collider:    draw_inspector_collider();   break;
-            }
+        UI::begin_properties(UI::property_layout::compact);
+        switch (m_inspector_target) {
+            case inspector_target::mesh:        draw_inspector_mesh();       break;
+            case inspector_target::submesh:     draw_inspector_submesh();    break;
+            case inspector_target::collider:    draw_inspector_collider();   break;
         }
-        ImGui::EndChild();
+        UI::end_properties();
     }
 
 
     void mesh_editor_window::draw_inspector_mesh() {
 
-        ImGui::TextUnformatted("Mesh");
-        ImGui::Separator();
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        const std::string subtitle = mesh
+            ? std::format("Mesh · {} triangles · {} LODs", format_count(mesh->indices.size() / 3), mesh->lod_count())
+            : std::string("Mesh");
+        inspector_header(icon_manager::icon::mesh_asset, m_mesh_name.c_str(), subtitle);
 
         draw_mesh_summary_section();
         draw_lod_section();
@@ -905,52 +1074,47 @@ namespace GLT::editor {
         }
 
         auto& sm = mesh->submeshes[static_cast<size_t>(m_selected_submesh)];
+        const std::string title = std::format("Submesh {}", m_selected_submesh);
+        inspector_header(icon_manager::icon::material, title.c_str(),
+            std::format("Submesh · {} triangles", format_count(sm.index_count / 3)));
 
-        ImGui::Text("Submesh %d", m_selected_submesh);
-        ImGui::Separator();
+        if (UI::begin_card("Material", UI::card_options{ .description = "The material this part of the mesh is drawn with" })) {
 
-        if (GLT::UI::begin_table("submesh_info_table", false, ImVec2(0, 0), 0.0f, true, 0.42f)) {
+            const auto old_handle = sm.material;
+            const bool changed = UI::property_custom("Material", [&](f32 width) {
+                return GLT::UI::asset_picker_widget({
+                        .label = "##submesh_mat",
+                        .filter = GLT::asset::core_types::material,
+                        .allow_clear = true,
+                        .placeholder = "(none)"
+                    }, sm.material, width);
+            });
 
-            GLT::UI::table_row("index range",
-                std::to_string(sm.first_index) + ".." + std::to_string(sm.first_index + sm.index_count));
-
-            if (m_selected_submesh < static_cast<i32>(m_submesh_bounds_cache.size())) {
-
-                const auto& b = m_submesh_bounds_cache[static_cast<size_t>(m_selected_submesh)];
-                const glm::vec3 sz = b.max - b.min;
-
-                char buf[64];
-                std::snprintf(buf, sizeof(buf), "%.3f, %.3f, %.3f", sz.x, sz.y, sz.z);
-                GLT::UI::table_row("size", std::string_view{ buf });
+            if (changed) {
+                if (old_handle != INVALID_HANDLE && old_handle != sm.material)
+                    registry->release(old_handle);
+                if (sm.material != INVALID_HANDLE)
+                    registry->add_dependency(m_asset_handle, sm.material);
+                m_dirty = true;
             }
 
-            GLT::UI::end_table();
+            if (m_dirty)
+                warning_text("Material changes are preview-only for now.");
         }
+        UI::end_card();
 
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        ImGui::TextUnformatted("Material");
+        if (UI::begin_card("Geometry")) {
 
-        const auto old_handle = sm.material;
-        if (GLT::UI::asset_picker_widget({
-                .label = "##submesh_mat",
-                .filter = GLT::asset::core_types::material,
-                .allow_clear = true,
-                .placeholder = "(none)"
-            }, sm.material, ImGui::GetContentRegionAvail().x)) {
+            UI::property_value("Triangles", format_count(sm.index_count / 3));
+            UI::property_value("Index range", std::format("{} .. {}", sm.first_index, sm.first_index + sm.index_count));
 
-            if (old_handle != INVALID_HANDLE && old_handle != sm.material)
-                registry->release(old_handle);
-            if (sm.material != INVALID_HANDLE)
-                registry->add_dependency(m_asset_handle, sm.material);
-
-            m_dirty = true;
+            if (m_selected_submesh < static_cast<i32>(m_submesh_bounds_cache.size())) {
+                const auto& b = m_submesh_bounds_cache[static_cast<size_t>(m_selected_submesh)];
+                const glm::vec3 sz = b.max - b.min;
+                UI::property_value("Size", std::format("{:.3f} x {:.3f} x {:.3f}", sz.x, sz.y, sz.z), "Bounding box, X x Y x Z");
+            }
         }
-
-        if (m_dirty) {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 90, 255));
-            ImGui::TextWrapped("Material changes are preview-only.");
-            ImGui::PopStyleColor();
-        }
+        UI::end_card();
     }
 
 
@@ -962,92 +1126,85 @@ namespace GLT::editor {
         }
 
         auto& item = m_colliders[static_cast<size_t>(m_selected_collider)];
-
-        ImGui::TextUnformatted("Collider");
-        ImGui::Separator();
-
-        // ---- identity ----
-        {
-            char name_buf[128];
-            std::snprintf(name_buf, sizeof(name_buf), "%s", item.name.c_str());
-            if (ImGui::InputText("Name", name_buf, sizeof(name_buf)))
-                item.name = name_buf;
-        }
-
-        ImGui::TextDisabled("Type: %s", collider_shape_kind_name(item.kind));
-
-        ImGui::Checkbox("Visible", &item.visible);
-        ImGui::SameLine();
-        ImGui::ColorEdit4("##collider_color", &item.color.x,
-            ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
-
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        // ---- transform ----
-        ImGui::TextUnformatted("Transform");
+        static const collider_editor_item defaults{};
         bool changed = false;
 
-        changed |= ImGui::DragFloat3("Position", &item.position.x, 0.01f);
+        inspector_header(icon_manager::icon::mesh_mini, item.name.c_str(),
+            std::format("{} collider", collider_shape_kind_name(item.kind)));
 
-        glm::vec3 euler = glm::degrees(glm::eulerAngles(item.rotation));
-        if (ImGui::DragFloat3("Rotation", &euler.x, 0.5f)) {
-            item.rotation = glm::quat(glm::radians(euler));
-            changed = true;
+        // ---- general ----
+        if (UI::begin_card("General")) {
+            changed |= UI::property_text("Name", item.name, nullptr, "Collider name");
+            UI::property_toggle("Show in preview", item.visible);
+            UI::property_color("Preview color", item.color, true, "Color of the wireframe in the preview", &defaults.color);
         }
+        UI::end_card();
 
-        ImGui::Spacing(); ImGui::Separator();
-        ImGui::TextUnformatted("Shape");
+        // ---- transform ----
+        if (UI::begin_card("Transform", UI::card_options{ .description = "Relative to the mesh origin. The gizmo in the preview edits the same values" })) {
 
-        switch (item.kind) {
-            case collider_shape_kind::box:
-                changed |= ImGui::DragFloat3("Half Extents", &item.box_half_extents.x, 0.01f, 0.001f, 10000.0f);
-                break;
-            case collider_shape_kind::sphere:
-                changed |= ImGui::DragFloat("Radius", &item.sphere_radius, 0.01f, 0.001f, 10000.0f);
-                break;
-            case collider_shape_kind::capsule:
-                changed |= ImGui::DragFloat("Radius",      &item.capsule_radius,      0.01f, 0.001f, 10000.0f);
-                changed |= ImGui::DragFloat("Half Height", &item.capsule_half_height, 0.01f, 0.0f,   10000.0f);
-                break;
-            case collider_shape_kind::cylinder:
-                changed |= ImGui::DragFloat("Radius",      &item.cylinder_radius,      0.01f, 0.001f, 10000.0f);
-                changed |= ImGui::DragFloat("Half Height", &item.cylinder_half_height, 0.01f, 0.001f, 10000.0f);
-                break;
-            case collider_shape_kind::convex_hull:
-                ImGui::TextDisabled("Auto-generated from mesh vertices.");
-                ImGui::TextColored(ImVec4(1.f, 0.7f, 0.3f, 1.f),
-                    "Not yet supported by the runtime format - will be skipped on save.");
-                break;
-            case collider_shape_kind::triangle_mesh:
-                ImGui::TextDisabled("Auto-generated from mesh triangle soup.");
-                break;
+            static const glm::vec3 zero{ 0.f };
+            changed |= UI::property_drag("Position", item.position, 0.01f, 0.f, 0.f, "%.3f", nullptr, &zero);
+
+            glm::vec3 euler = glm::degrees(glm::eulerAngles(item.rotation));
+            const bool is_identity = std::abs(item.rotation.w) > 0.99999f;
+            if (UI::property_custom("Rotation", [&](f32 width) {
+                    return UI::drag_axes("##rotation", &euler.x, 3, 0.5f, 0.f, 0.f, "%.1f", width);
+                }, "Euler angles in degrees", is_identity, [&]() { euler = glm::vec3(0.f); })) {
+                item.rotation = glm::quat(glm::radians(euler));
+                changed = true;
+            }
         }
+        UI::end_card();
 
-        ImGui::Spacing(); ImGui::Separator();
-        ImGui::TextUnformatted("Material");
+        // ---- shape ----
+        if (UI::begin_card("Shape", UI::card_options{ .summary = collider_shape_kind_name(item.kind) })) {
 
-        changed |= ImGui::SliderFloat("Friction",    &item.material.friction,    0.0f, 1.0f, "%.2f");
-        changed |= ImGui::SliderFloat("Restitution", &item.material.restitution, 0.0f, 1.0f, "%.2f");
-        changed |= ImGui::DragFloat ("Density",      &item.material.density,     10.0f, 0.0f, 30000.0f, "%.0f kg/m³");
+            switch (item.kind) {
+                case collider_shape_kind::box:
+                    changed |= UI::property_drag("Half extents", item.box_half_extents, 0.01f, 0.001f, 10000.f, "%.3f",
+                        "Half of the box size along each axis", &defaults.box_half_extents);
+                    break;
+                case collider_shape_kind::sphere:
+                    changed |= UI::property_drag("Radius", item.sphere_radius, 0.01f, 0.001f, 10000.f, "%.3f", nullptr, &defaults.sphere_radius);
+                    break;
+                case collider_shape_kind::capsule:
+                    changed |= UI::property_drag("Radius", item.capsule_radius, 0.01f, 0.001f, 10000.f, "%.3f", nullptr, &defaults.capsule_radius);
+                    changed |= UI::property_drag("Half height", item.capsule_half_height, 0.01f, 0.f, 10000.f, "%.3f",
+                        "Half the length of the straight part, without the caps", &defaults.capsule_half_height);
+                    break;
+                case collider_shape_kind::cylinder:
+                    changed |= UI::property_drag("Radius", item.cylinder_radius, 0.01f, 0.001f, 10000.f, "%.3f", nullptr, &defaults.cylinder_radius);
+                    changed |= UI::property_drag("Half height", item.cylinder_half_height, 0.01f, 0.001f, 10000.f, "%.3f", nullptr, &defaults.cylinder_half_height);
+                    break;
+                case collider_shape_kind::convex_hull:
+                    ImGui::TextDisabled("Built from the mesh vertices.");
+                    warning_text("Not supported by the runtime format yet - skipped on save.");
+                    break;
+                case collider_shape_kind::triangle_mesh:
+                    ImGui::TextDisabled("Uses the mesh triangles directly. Best for static geometry.");
+                    break;
+            }
+        }
+        UI::end_card();
+
+        // ---- physics material ----
+        if (UI::begin_card("Physics Material")) {
+            changed |= UI::property_slider("Friction", item.material.friction, 0.f, 1.f, "%.2f",
+                "0 = ice, 1 = rubber", &defaults.material.friction);
+            changed |= UI::property_slider("Restitution", item.material.restitution, 0.f, 1.f, "%.2f",
+                "Bounciness: 0 = no bounce, 1 = perfect bounce", &defaults.material.restitution);
+            changed |= UI::property_drag("Density", item.material.density, 10.f, 0.f, 30000.f, "%.0f kg/m3",
+                "Mass per volume (water = 1000)", &defaults.material.density);
+        }
+        UI::end_card();
 
         if (changed)
             m_dirty = true;
 
-        ImGui::Spacing(); ImGui::Separator();
-
-        // ---- actions ----
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(140, 40, 40, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(180, 50, 50, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(200, 60, 60, 255));
-
-        if (ImGui::Button("Delete collider", ImVec2(-1.0f, 0.0f)))
+        ImGui::Dummy(ImVec2(0.f, 4.f));
+        if (danger_button("Delete Collider"))
             m_pending_delete_collider = m_selected_collider;
-
-        ImGui::PopStyleColor(3);
-
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        ImGui::TextDisabled("Collider editing is not yet saved with the asset.");
     }
 
 
@@ -1055,41 +1212,26 @@ namespace GLT::editor {
 
     void mesh_editor_window::draw_mesh_summary_section() {
 
-        if (!ImGui::CollapsingHeader("Summary", ImGuiTreeNodeFlags_DefaultOpen))
-            return;
-
         auto registry = GLT::asset::registry::get_ref();
-        if (!registry)
-            return;
-
-        auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle);
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
         if (!mesh)
             return;
 
-        if (!GLT::UI::begin_table("mesh_summary_table", false, ImVec2(0, 0), 0.0f, true, 0.42f))
-            return;
-
-        GLT::UI::table_row("vertices",  std::to_string(mesh->vertices.size()));
-        GLT::UI::table_row("indices",   std::to_string(mesh->indices.size()));
-        GLT::UI::table_row("triangles", std::to_string(mesh->indices.size() / 3));
-        GLT::UI::table_row("submeshes", std::to_string(mesh->submesh_count()));
-        GLT::UI::table_row("LOD levels", std::to_string(mesh->lod_count()));
-        GLT::UI::table_row("memory",    GLT::util::format_bytes(mesh->memory_usage()));
-
-        GLT::UI::end_table();
+        if (UI::begin_card("Summary", UI::card_options{ .collapsible = true })) {
+            UI::property_value("Triangles", format_count(mesh->indices.size() / 3));
+            UI::property_value("Vertices", format_count(mesh->vertices.size()));
+            UI::property_value("Submeshes", std::to_string(mesh->submesh_count()));
+            UI::property_value("LOD levels", std::to_string(mesh->lod_count()));
+            UI::property_value("Memory", GLT::util::format_bytes(mesh->memory_usage()), "CPU side, all levels");
+        }
+        UI::end_card();
     }
 
 
     void mesh_editor_window::draw_mesh_bounds_section() {
 
-        if (!ImGui::CollapsingHeader("Bounds"))
-            return;
-
         auto registry = GLT::asset::registry::get_ref();
-        if (!registry)
-            return;
-
-        auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle);
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
         if (!mesh)
             return;
 
@@ -1097,68 +1239,59 @@ namespace GLT::editor {
         compute_mesh_bounds(*mesh, mn, mx);
         const glm::vec3 size = mx - mn;
 
-        if (!GLT::UI::begin_table("mesh_bounds_table", false, ImVec2(0, 0), 0.0f, true, 0.42f))
-            return;
-
-        char buf[128];
-
-        std::snprintf(buf, sizeof(buf), "%.3f, %.3f, %.3f", mn.x, mn.y, mn.z);
-        GLT::UI::table_row("min", std::string_view{ buf });
-
-        std::snprintf(buf, sizeof(buf), "%.3f, %.3f, %.3f", mx.x, mx.y, mx.z);
-        GLT::UI::table_row("max", std::string_view{ buf });
-
-        std::snprintf(buf, sizeof(buf), "%.3f, %.3f, %.3f", size.x, size.y, size.z);
-        GLT::UI::table_row("size", std::string_view{ buf });
-
-        GLT::UI::end_table();
+        const std::string summary = std::format("{:.2f} x {:.2f} x {:.2f}", size.x, size.y, size.z);
+        if (UI::begin_card("Bounds", UI::card_options{ .summary = summary.c_str(), .collapsible = true, .default_open = false })) {
+            UI::property_value("Size", std::format("{:.3f} x {:.3f} x {:.3f}", size.x, size.y, size.z));
+            UI::property_value("Min", std::format("{:.3f}, {:.3f}, {:.3f}", mn.x, mn.y, mn.z));
+            UI::property_value("Max", std::format("{:.3f}, {:.3f}, {:.3f}", mx.x, mx.y, mx.z));
+        }
+        UI::end_card();
     }
 
 
     void mesh_editor_window::draw_preview_settings_section() {
 
-        if (!ImGui::CollapsingHeader("Preview"))
-            return;
+        if (UI::begin_card("Preview", UI::card_options{ .description = "Only affects this window, not the asset", .collapsible = true, .default_open = false })) {
 
-        if (ImGui::ColorEdit4("Background", &m_background_color.x,
-                ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
-            // m_preview_scene->set_clear_color(m_background_color);
+            static const glm::vec4 default_background{ 0.09f, 0.09f, 0.09f, 1.0f };
+            static const bool off = false;
+            UI::property_color("Background", m_background_color, false, nullptr, &default_background);
+            UI::property_toggle("Auto rotate", m_auto_rotate, "Slowly orbit around the mesh", &off);
+            if (m_auto_rotate)
+                UI::property_slider("Rotate speed", m_auto_rotate_speed, 0.01f, 100.f, "%.2f %%", nullptr, nullptr, ImGuiSliderFlags_Logarithmic);
         }
-
-        ImGui::Checkbox("Auto-rotate", &m_auto_rotate);
-        if (m_auto_rotate) {
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGui::SliderFloat("##auto_rotate_speed", &m_auto_rotate_speed, 0.01f, 100.f, "%.2f %%");
-        }
+        UI::end_card();
     }
 
 
     void mesh_editor_window::draw_camera_section() {
 
-        if (!ImGui::CollapsingHeader("Camera"))
-            return;
+        if (UI::begin_card("Camera", UI::card_options{ .description = "LMB orbit, MMB pan, wheel zoom", .collapsible = true, .default_open = false })) {
 
-        if (ImGui::Button("Reset to fit", ImVec2(-1.0f, 0.0f)))
-            reset_camera_to_fit();
+            static const preview_camera_state defaults{};
+            UI::property_slider("Distance", m_preview_camera.distance, MIN_CAM_DISTANCE, MAX_CAM_DISTANCE, "%.2f", nullptr, nullptr,
+                ImGuiSliderFlags_Logarithmic);
+            UI::property_slider("Field of view", m_preview_camera.fov_deg, 15.0f, 110.0f, "%.0f deg", nullptr, &defaults.fov_deg);
+            UI::property_drag("Target", m_preview_camera.target, 0.01f, 0.f, 0.f, "%.2f", "The point the camera orbits around");
 
-        ImGui::SliderFloat("Distance", &m_preview_camera.distance, MIN_CAM_DISTANCE, MAX_CAM_DISTANCE, "%.2f");
-        ImGui::SliderFloat("FOV",      &m_preview_camera.fov_deg, 15.0f, 110.0f, "%.0f deg");
-        ImGui::DragFloat3("Target",    &m_preview_camera.target.x, 0.01f);
-        ImGui::DragFloat("Yaw",        &m_preview_camera.yaw_rad,   0.01f);
-        ImGui::DragFloat("Pitch",      &m_preview_camera.pitch_rad, 0.01f);
+            if (UI::subtle_button("Fit mesh in view", ImVec2(-FLT_MIN, 0.f)))
+                reset_camera_to_fit();
+        }
+        UI::end_card();
     }
 
 
     void mesh_editor_window::draw_lighting_section() {
 
-        if (!ImGui::CollapsingHeader("Lighting"))
-            return;
+        if (UI::begin_card("Lighting", UI::card_options{ .description = "Preview lights, not saved with the asset", .collapsible = true, .default_open = false })) {
 
-        ImGui::SliderFloat("Key",  &m_preview_lighting.key_intensity,  0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Fill", &m_preview_lighting.fill_intensity, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Rim",  &m_preview_lighting.rim_intensity,  0.0f, 1.0f, "%.2f");
-
-        ImGui::Checkbox("Headlight (key follows camera)", &m_preview_lighting.headlight);
+            static const preview_lighting_state defaults{};
+            UI::property_slider("Key light", m_preview_lighting.key_intensity, 0.0f, 1.0f, "%.2f", "Main light", &defaults.key_intensity);
+            UI::property_slider("Fill light", m_preview_lighting.fill_intensity, 0.0f, 1.0f, "%.2f", "Softens the shadow side", &defaults.fill_intensity);
+            UI::property_slider("Rim light", m_preview_lighting.rim_intensity, 0.0f, 1.0f, "%.2f", "Outlines the silhouette from behind", &defaults.rim_intensity);
+            UI::property_toggle("Headlight", m_preview_lighting.headlight, "The key light follows the camera", &defaults.headlight);
+        }
+        UI::end_card();
     }
 
     // collider state helpers -------------------------------------------------------------------------------------------
@@ -1271,12 +1404,12 @@ namespace GLT::editor {
     void mesh_editor_window::draw_preview_panel() {
 
         if (!m_has_mesh) {
-            ImGui::TextDisabled("Open a mesh asset to preview it.");
+            UI::empty_state("No mesh loaded", "Drop a mesh asset from the Content Browser here");
             return;
         }
 
         if (!m_preview_scene) {
-            ImGui::TextDisabled("Preview target unavailable.");
+            UI::empty_state("Preview unavailable", "The renderer could not create a preview target");
             return;
         }
 
@@ -1305,7 +1438,6 @@ namespace GLT::editor {
             ImDrawList* draw = ImGui::GetWindowDrawList();
             draw->AddImage(reinterpret_cast<ImTextureID>(tex), canvas_min, canvas_max);
             m_preview_image_drawn = ImGui::IsItemVisible();
-            draw->AddRect(canvas_min, canvas_max, IM_COL32(60, 60, 70, 255));
         } else {
             ImGui::GetWindowDrawList()->AddRectFilled(canvas_min, canvas_max, IM_COL32(24, 24, 28, 255));
         }
@@ -1340,54 +1472,142 @@ namespace GLT::editor {
                                      * (m_preview_camera.distance * 0.0025f);
         }
 
-        // ---------- LOD selector (top-left) ----------
+        // ---------- overlays ----------
         // After the camera input above: that block queries the canvas InvisibleButton as the "last item"
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 5.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 4.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.10f, 0.10f, 0.55f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.16f, 0.16f, 0.80f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.22f, 0.22f, 0.22f, 0.90f));
+
+        constexpr f32 INSET = 10.0f;
+
+        // top-left: render mode + LOD
+        ImGui::SetCursorScreenPos(ImVec2(canvas_min.x + INSET, canvas_min.y + INSET));
+        if (const auto modes = m_preview_scene->supported_modes(); !modes.empty()) {
+
+            const u32 current_id = m_preview_scene->get_render_mode();
+            const char* current_label = "Render mode";
+            for (const auto& mode : modes)
+                if (mode.id == current_id)
+                    current_label = mode.display_name;
+
+            if (ImGui::Button(current_label))
+                ImGui::OpenPopup("##preview_render_mode");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("Render mode of the preview");
+
+            const ImVec2 btn_min = ImGui::GetItemRectMin();
+            const ImVec2 btn_max = ImGui::GetItemRectMax();
+            ImGui::SetNextWindowPos(ImVec2(btn_min.x, btn_max.y + 4.0f), ImGuiCond_Appearing);
+            if (ImGui::BeginPopup("##preview_render_mode")) {
+                const char* last_category = nullptr;
+                for (const auto& mode : modes) {
+                    if (mode.has_category() && (last_category == nullptr || std::strcmp(last_category, mode.category) != 0)) {
+                        last_category = mode.category;
+                        ImGui::SeparatorText(mode.category);
+                    }
+                    if (ImGui::Selectable(mode.display_name, mode.id == current_id)) {
+                        m_current_mode_id = mode.id;
+                        m_preview_scene->set_render_mode(mode.id);
+                    }
+                    if (mode.has_tooltip() && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", mode.tooltip);
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::SameLine();
+        }
         draw_preview_lod_overlay(canvas_min, canvas_max);
 
-        // ---------- overlay buttons (lower-right, gizmo style) ----------
-        //
-        // Uses the same color ladder as world_viewport's gizmo_toggle_button
-        // so the two surfaces read as the same UI family.
+        // top-right: what to show + collider gizmo
         {
-            const ImVec4& c_weak   = ImVec4(0.10f, 0.10f, 0.10f, 0.55f);
-            const ImVec4& c_hover  = GLT::imgui_config::get_action_color00_default_ref();
-            const ImVec4& c_active = GLT::imgui_config::get_action_color00_hover_ref();
+            struct toggle { const char* label; bool* value; const char* tooltip; };
+            const toggle toggles[] = {
+                { "Grid",      &m_show_grid,                 "Ground grid" },
+                { "Origin",    &m_show_origin,               "Axes at the mesh origin" },
+                { "Colliders", &m_show_colliders_in_preview, "Collider wireframes" },
+                { "Wireframe", &m_show_wireframe,            "Triangle edges of the shown level" },
+            };
 
-            ImGui::PushStyleColor(ImGuiCol_Button,        c_weak);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c_hover);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  c_active);
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,  ImVec2(8.0f, 4.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(4.0f, 4.0f));
+            const f32 pad = ImGui::GetStyle().FramePadding.x * 2.0f;
+            f32 total_w = ImGui::GetStyle().ItemSpacing.x * static_cast<f32>(std::size(toggles) - 1);
+            for (const auto& t : toggles)
+                total_w += ImGui::CalcTextSize(t.label).x + pad;
 
-            // Measure the total width of the four buttons so we can right-align
+            ImGui::SetCursorScreenPos(ImVec2(canvas_max.x - total_w - INSET, canvas_min.y + INSET));
+            bool first = true;
+            for (const auto& t : toggles) {
+                if (!first)
+                    ImGui::SameLine();
+                first = false;
+                if (overlay_toggle(t.label, *t.value))
+                    *t.value = !*t.value;
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                    ImGui::SetTooltip("%s", t.tooltip);
+            }
+
+            ImGui::SetCursorScreenPos(ImVec2(canvas_max.x - INSET, canvas_min.y + INSET + ImGui::GetFrameHeight() + 6.0f));
+            draw_collider_gizmo_toolbar();
+        }
+
+        // bottom-right: camera presets
+        {
             const char* labels[] = { "Fit", "Front", "Top", "Side" };
-            const f32   frame_pad_x = ImGui::GetStyle().FramePadding.x * 2.0f;
-            const f32   item_gap    = ImGui::GetStyle().ItemSpacing.x;
-            f32         total_w     = item_gap * 3.0f;
+            const f32 pad = ImGui::GetStyle().FramePadding.x * 2.0f;
+            f32 total_w = ImGui::GetStyle().ItemSpacing.x * 3.0f;
             for (const char* l : labels)
-                total_w += ImGui::CalcTextSize(l).x + frame_pad_x;
+                total_w += ImGui::CalcTextSize(l).x + pad;
 
-            const f32 x = canvas_max.x - total_w - 10.0f;
-            const f32 y = canvas_max.y - ImGui::GetFrameHeight() - 10.0f;
-            ImGui::SetCursorScreenPos(ImVec2(x, y));
-
+            ImGui::SetCursorScreenPos(ImVec2(canvas_max.x - total_w - INSET, canvas_max.y - ImGui::GetFrameHeight() - INSET));
             if (ImGui::Button("Fit"))   reset_camera_to_fit();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Frame the whole mesh");
             ImGui::SameLine();
             if (ImGui::Button("Front")) { m_preview_camera.yaw_rad = 0.0f; m_preview_camera.pitch_rad = 0.0f; }
             ImGui::SameLine();
             if (ImGui::Button("Top"))   { m_preview_camera.yaw_rad = 0.0f; m_preview_camera.pitch_rad = 1.4f; }
             ImGui::SameLine();
             if (ImGui::Button("Side"))  { m_preview_camera.yaw_rad = glm::half_pi<f32>(); m_preview_camera.pitch_rad = 0.0f; }
-
-            ImGui::PopStyleVar(3);
-            ImGui::PopStyleColor(3);
         }
 
-        // ---------- hint text (lower-left) ----------
-        ImGui::SetCursorScreenPos(ImVec2(canvas_min.x + 10.0f, canvas_max.y - ImGui::GetFrameHeight() - 10.0f));
-        ImGui::TextDisabled("LMB orbit   MMB pan   wheel zoom");
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(4);
+
+        // bottom-left: what is on screen + controls hint
+        {
+            auto registry = GLT::asset::registry::get_ref();
+            auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+            const f32 line = ImGui::GetTextLineHeightWithSpacing();
+            f32 y = canvas_max.y - INSET - line;
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            const ImU32 dim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+
+            draw_list->AddText(ImVec2(canvas_min.x + INSET, y), dim, "LMB orbit  ·  MMB pan  ·  Wheel zoom");
+
+            if (mesh && mesh->lod_count() > 0) {
+                const u32 lod_count = mesh->lod_count();
+                const f32 screen_size = preview_screen_size(*mesh);
+                const u32 shown = m_preview_lod >= 0 ? std::min<u32>(static_cast<u32>(m_preview_lod), lod_count - 1) : auto_lod_for(*mesh, screen_size);
+                const u32 tris = mesh->lod_triangle_count(shown);
+                const u32 base = std::max(mesh->lod_triangle_count(0), 1u);
+
+                const std::string stats = screen_size >= 1e8f
+                    ? std::format("LOD {}  ·  {} tris ({:.0f}%)  ·  camera inside", shown, format_count(tris), 100.0 * tris / base)
+                    : std::format("LOD {}  ·  {} tris ({:.0f}%)  ·  screen {:.3f}", shown, format_count(tris), 100.0 * tris / base, screen_size);
+                y -= line;
+                draw_list->AddText(ImVec2(canvas_min.x + INSET, y), ImGui::GetColorU32(ImGuiCol_Text), stats.c_str());
+
+                if (m_show_wireframe && m_wire_truncated) {
+                    y -= line;
+                    const std::string note = std::format("Wireframe: too many edges, showing the first {}", format_count(MAX_WIREFRAME_EDGES));
+                    draw_list->AddText(ImVec2(canvas_min.x + INSET, y), IM_COL32(230, 200, 110, 255), note.c_str());
+                }
+            }
+        }
     }
+
 
     // preview plumbing -------------------------------------------------------------------------------------------------
 
@@ -1747,38 +1967,50 @@ namespace GLT::editor {
     }
 
 
+    // Collider gizmo row, right aligned at the cursor x (only while a collider is selected)
     void mesh_editor_window::draw_collider_gizmo_toolbar() {
 
         if (m_inspector_target != inspector_target::collider || m_selected_collider < 0)
             return;
 
-        auto toggle = [](const char* label, bool active) {
-            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.50f, 0.80f, 1.0f));
-            const bool clicked = ImGui::Button(label);
-            if (active) ImGui::PopStyleColor();
-            return clicked;
+        struct entry { const char* label; bool active; const char* tooltip; };
+        const entry ops[] = {
+            { "Move",   m_collider_gizmo_operation == ImGuizmo::TRANSLATE, "Move the collider" },
+            { "Rotate", m_collider_gizmo_operation == ImGuizmo::ROTATE,    "Rotate the collider" },
+            { "Scale",  m_collider_gizmo_operation == ImGuizmo::SCALE,     "Resize the collider shape" },
+        };
+        const entry spaces[] = {
+            { "World", m_collider_gizmo_mode == ImGuizmo::WORLD, "Gizmo aligned to the mesh axes" },
+            { "Local", m_collider_gizmo_mode == ImGuizmo::LOCAL, "Gizmo aligned to the collider" },
         };
 
-        ImGui::SameLine(0.0f, 24.0f);
-        ImGui::TextUnformatted("Gizmo:");
-        ImGui::SameLine();
-        if (toggle("T", m_collider_gizmo_operation == ImGuizmo::TRANSLATE))
-            m_collider_gizmo_operation = ImGuizmo::TRANSLATE;
-        ImGui::SameLine();
-        if (toggle("R", m_collider_gizmo_operation == ImGuizmo::ROTATE))
-            m_collider_gizmo_operation = ImGuizmo::ROTATE;
-        ImGui::SameLine();
-        if (toggle("S", m_collider_gizmo_operation == ImGuizmo::SCALE))
-            m_collider_gizmo_operation = ImGuizmo::SCALE;
+        const f32 pad = ImGui::GetStyle().FramePadding.x * 2.0f;
+        const f32 spacing = ImGui::GetStyle().ItemSpacing.x;
+        f32 total_w = spacing * 3.0f + 10.0f;
+        for (const auto& e : ops)    total_w += ImGui::CalcTextSize(e.label).x + pad;
+        for (const auto& e : spaces) total_w += ImGui::CalcTextSize(e.label).x + pad;
 
-        ImGui::SameLine(0.0f, 16.0f);
-        ImGui::TextUnformatted("Space:");
-        ImGui::SameLine();
-        if (toggle("World", m_collider_gizmo_mode == ImGuizmo::WORLD))
-            m_collider_gizmo_mode = ImGuizmo::WORLD;
-        ImGui::SameLine();
-        if (toggle("Local", m_collider_gizmo_mode == ImGuizmo::LOCAL))
-            m_collider_gizmo_mode = ImGuizmo::LOCAL;
+        const ImVec2 anchor = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(ImVec2(anchor.x - total_w, anchor.y));
+
+        for (int x = 0; x < 3; ++x) {
+            if (x > 0)
+                ImGui::SameLine();
+            if (overlay_toggle(ops[x].label, ops[x].active))
+                m_collider_gizmo_operation = x == 0 ? ImGuizmo::TRANSLATE : (x == 1 ? ImGuizmo::ROTATE : ImGuizmo::SCALE);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", ops[x].tooltip);
+        }
+
+        ImGui::SameLine(0.0f, spacing + 10.0f);
+        for (int x = 0; x < 2; ++x) {
+            if (x > 0)
+                ImGui::SameLine();
+            if (overlay_toggle(spaces[x].label, spaces[x].active))
+                m_collider_gizmo_mode = x == 0 ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", spaces[x].tooltip);
+        }
     }
 
 
@@ -1994,9 +2226,6 @@ namespace GLT::editor {
 
     void mesh_editor_window::draw_lod_section() {
 
-        if (!ImGui::CollapsingHeader("Level of Detail", ImGuiTreeNodeFlags_DefaultOpen))
-            return;
-
         auto registry = GLT::asset::registry::get_ref();
         auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
         if (!mesh)
@@ -2007,250 +2236,264 @@ namespace GLT::editor {
         const bool busy = m_lod_job.valid();
         bool live_changed = false;              // runtime-only values: re-upload, no regeneration
         bool regen_changed = false;             // simplifier inputs: regeneration needed
-
-        // ---- status -------------------------------------------------------------------------------------------------
         const u32 generated = mesh->lod_count();
-        if (busy) {
-            ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "Generating %u levels...", m_lod_job_settings.lod_count);
-        } else if (generated < lod.lod_count) {
-            ImGui::TextWrapped("%u of %u levels generated. The rest would not remove enough triangles within their error limit.",
-                generated, lod.lod_count);
-        } else {
-            ImGui::Text("%u levels generated", generated);
-        }
-        if (m_last_lod_build_ms > 0.0) {
+
+        // ======== overview: status, levels table, actions ===========================================================
+        const std::string lod_summary = std::format("{} of {} generated", generated, lod.lod_count);
+        if (UI::begin_card("Level of Detail", UI::card_options{ .summary = lod_summary.c_str(), .collapsible = true })) {
+
+            // ---- status ----
+            if (busy)
+                ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "Generating %u levels...", m_lod_job_settings.lod_count);
+            else if (generated < lod.lod_count)
+                ImGui::TextWrapped("%u of %u levels generated. The others would not remove enough triangles within their error limit.",
+                    generated, lod.lod_count);
+            else {
+                ImGui::Text("%u levels generated", generated);
+                if (m_last_lod_build_ms > 0.0) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("in %.0f ms", m_last_lod_build_ms);
+                }
+            }
+            ImGui::Dummy(ImVec2(0.f, 2.f));
+
+            // ---- per-level table ----
+            //
+            // Screen size = bounding-sphere diameter / viewport height at which the level takes over (live, no regeneration)
+            // Ratio / max error = simplifier targets (regeneration needed). Right half: what the last generation achieved
+            ImGui::BeginDisabled(busy);
+            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4.f, 3.f));
+            const ImGuiTableFlags table_flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
+            if (ImGui::BeginTable("##lod_levels", 6, table_flags)) {
+
+                ImGui::TableSetupColumn("LOD",       ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("LOD").x + 6.f);
+                ImGui::TableSetupColumn("Screen",    ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("Ratio",     ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("Error %",   ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("Tris",      ImGuiTableColumnFlags_WidthStretch, 1.1f);
+                ImGui::TableSetupColumn("Got %",     ImGuiTableColumnFlags_WidthStretch, 0.8f);
+
+                // dim header row with tooltips
+                ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+                static constexpr const char* HEADER_TIPS[6] = {
+                    "Level. Click a level to lock the preview to it",
+                    "Switch to this level when the mesh is smaller than this fraction of the screen height (applies immediately)",
+                    "Target share of LOD 0's triangles (needs regeneration)",
+                    "Maximum allowed deviation, in % of the mesh size (needs regeneration)",
+                    "Triangles the level actually has",
+                    "Deviation the level actually has, in % of the mesh size",
+                };
+                for (int column = 0; column < 6; ++column) {
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::TextDisabled("%s", ImGui::TableGetColumnName(column));
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                        ImGui::SetTooltip("%s", HEADER_TIPS[column]);
+                }
+
+                const bool auto_size = (lod.flags & LOD_FLAG_AUTO_SCREEN_SIZE) != 0;
+                const u32 base_tris = mesh->lod_triangle_count(0);
+
+                for (u32 level = 0; level < lod.lod_count; ++level) {
+
+                    ImGui::PushID(static_cast<int>(level));
+                    ImGui::TableNextRow();
+                    lod_level_settings& ls = lod.levels[level];
+                    const bool exists = level < generated;
+
+                    // LOD (click: preview this level)
+                    ImGui::TableNextColumn();
+                    char label[8];
+                    std::snprintf(label, sizeof(label), "%u", level);
+                    if (ImGui::Selectable(label, m_preview_lod == static_cast<i32>(level), ImGuiSelectableFlags_None) && exists)
+                        set_preview_lod(m_preview_lod == static_cast<i32>(level) ? -1 : static_cast<i32>(level));
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", exists ? "Preview this level (click again for automatic)" : "Not generated");
+
+                    if (level == 0) {
+                        ImGui::TableNextColumn(); ImGui::TextDisabled("full");
+                        ImGui::TableNextColumn(); ImGui::TextDisabled("1.00");
+                        ImGui::TableNextColumn(); ImGui::TextDisabled("0");
+                    } else {
+                        ImGui::TableNextColumn();
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        ImGui::BeginDisabled(auto_size);
+                        ImGui::DragFloat("##screen", &ls.screen_size, 0.002f, 0.0001f, 1.0f, "%.3f");
+                        if (ImGui::IsItemDeactivatedAfterEdit()) {
+                            sanitize(lod);
+                            live_changed = true;
+                        }
+                        ImGui::EndDisabled();
+                        if (auto_size && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                            ImGui::SetTooltip("Set automatically (see 'Switching'). Turn off 'Auto screen sizes' to edit");
+
+                        ImGui::TableNextColumn();
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        ImGui::DragFloat("##ratio", &ls.triangle_ratio, 0.005f, 0.001f, 1.0f, "%.3f");
+                        if (ImGui::IsItemDeactivatedAfterEdit()) {
+                            sanitize(lod);
+                            regen_changed = true;
+                        }
+
+                        ImGui::TableNextColumn();
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        f32 error_percent = ls.max_error * 100.0f;
+                        if (ImGui::DragFloat("##error", &error_percent, 0.01f, 0.0f, 100.0f, "%.2f"))
+                            ls.max_error = error_percent / 100.0f;
+                        if (ImGui::IsItemDeactivatedAfterEdit()) {
+                            sanitize(lod);
+                            regen_changed = true;
+                        }
+                    }
+
+                    ImGui::TableNextColumn();
+                    if (exists) {
+                        const u32 tris = mesh->lod_triangle_count(level);
+                        ImGui::TextUnformatted(format_count(tris).c_str());
+                        if (ImGui::IsItemHovered() && base_tris > 0)
+                            ImGui::SetTooltip("%u triangles, %.1f%% of LOD 0", tris, 100.0 * tris / base_tris);
+                    } else {
+                        ImGui::TextDisabled("-");
+                    }
+
+                    ImGui::TableNextColumn();
+                    if (exists && level > 0 && level < mesh->lods.size())
+                        ImGui::Text("%.3f", mesh->lods[level].error * 100.0f);
+                    else
+                        ImGui::TextDisabled("-");
+
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
+            ImGui::PopStyleVar();
+            ImGui::EndDisabled();
+
+            // ---- actions ----
+            ImGui::Dummy(ImVec2(0.f, 4.f));
+            if (m_lod_needs_regen)
+                warning_text("Generation settings changed - regenerate to apply them.");
+
+            ImGui::BeginDisabled(busy);
+            if (UI::accent_button(busy ? "Generating..." : "Regenerate LODs", ImVec2(-FLT_MIN, 0.f)))
+                start_lod_generation();
+
+            const f32 half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            ImGui::BeginDisabled(generated <= 1);
+            if (UI::subtle_button("Fit screen sizes", ImVec2(half, 0.f))) {
+                fit_screen_sizes(lod, mesh->lods, mesh->bounds);
+                live_changed = true;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Set every level's screen size once from its measured error and 'Pixel error'");
             ImGui::SameLine();
-            ImGui::TextDisabled("(%.0f ms)", m_last_lod_build_ms);
+            if (UI::subtle_button("Remove LODs", ImVec2(-FLT_MIN, 0.f))) {
+                clear_lods(*mesh);
+                set_preview_lod(-1);
+                m_dirty = true;
+                m_wire_lod = -2;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Delete every generated level, only LOD 0 stays");
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
         }
+        UI::end_card();
 
         ImGui::BeginDisabled(busy);
 
-        // ---- generation settings ------------------------------------------------------------------------------------
-        {
-            int count = static_cast<int>(lod.lod_count);
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (ImGui::SliderInt("##lod_count", &count, 1, static_cast<int>(MAX_LODS), "%d levels (incl. LOD 0)")) {
+        // ======== generation (needs regeneration) ===================================================================
+        if (UI::begin_card("LOD Generation", UI::card_options{ .description = "Changes here apply when you regenerate", .collapsible = true })) {
+
+            static const lod_settings defaults{};
+
+            i32 count = static_cast<i32>(lod.lod_count);
+            const i32 default_count = static_cast<i32>(defaults.lod_count);
+            if (UI::property_slider("Levels", count, 1, static_cast<i32>(MAX_LODS), "%d", "Number of levels, LOD 0 (the imported mesh) included",
+                &default_count)) {
                 lod.lod_count = static_cast<u32>(count);
                 regen_changed = true;
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Number of levels to generate, LOD 0 (the imported mesh) included");
-        }
 
-        auto flag_checkbox = [&](const char* label, u32 bit, const char* tooltip_text) -> bool {
-            bool value = (lod.flags & bit) != 0;
-            const bool changed = ImGui::Checkbox(label, &value);
-            if (changed)
-                lod.flags = value ? (lod.flags | bit) : (lod.flags & ~bit);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", tooltip_text);
-            return changed;
-        };
-
-        regen_changed |= flag_checkbox("Lock borders", LOD_FLAG_LOCK_BORDERS,
-            "Keep open mesh borders in place. Prevents cracks between parts that are simplified separately (submeshes),\n"
-            "but limits how far meshes made of many open plates can be reduced");
-        ImGui::SameLine();
-        regen_changed |= flag_checkbox("Prune small parts", LOD_FLAG_PRUNE,
-            "Allow removing small disconnected pieces entirely (still bounded by the level's error limit)");
-        {
-            bool keep = (lod.flags & LOD_FLAG_ALLOW_SUBMESH_REMOVAL) == 0;
-            if (ImGui::Checkbox("Keep small parts", &keep)) {
-                lod.flags = keep ? (lod.flags & ~LOD_FLAG_ALLOW_SUBMESH_REMOVAL) : (lod.flags | LOD_FLAG_ALLOW_SUBMESH_REMOVAL);
-                regen_changed = true;
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Small submeshes are simplified relative to their own size and never removed completely.\n"
-                    "Uncheck to let coarse levels drop parts that are tiny compared to the whole mesh");
-        }
-
-        // ---- normals of the generated levels -------------------------------------------------------------------------
-        {
             static constexpr const char* NORMAL_MODES[] = { "Keep source", "Flat", "Auto smooth", "Smooth" };
-            int mode = static_cast<int>((lod.flags & LOD_FLAG_NORMALS_MASK) >> LOD_FLAG_NORMALS_SHIFT);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::Combo("Normals##lod_normals", &mode, NORMAL_MODES, IM_ARRAYSIZE(NORMAL_MODES))) {
+            i32 mode = static_cast<i32>((lod.flags & LOD_FLAG_NORMALS_MASK) >> LOD_FLAG_NORMALS_SHIFT);
+            const i32 default_mode = static_cast<i32>((defaults.flags & LOD_FLAG_NORMALS_MASK) >> LOD_FLAG_NORMALS_SHIFT);
+            if (UI::property_combo("Normals", mode, NORMAL_MODES,
+                "Normals of LOD 1+. Keep source reuses LOD 0's normals (can smear on coarse levels), Flat = one per face, "
+                "Auto smooth = hard edges above the angle, Smooth = smooth everywhere", &default_mode)) {
                 lod.flags = (lod.flags & ~static_cast<u32>(LOD_FLAG_NORMALS_MASK))
                     | ((static_cast<u32>(mode) << LOD_FLAG_NORMALS_SHIFT) & LOD_FLAG_NORMALS_MASK);
                 regen_changed = true;
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Normals of LOD 1+. Simplified triangles reuse LOD 0's vertices, whose normals describe the\n"
-                    "original, finer surface (dark / light smears on coarse levels).\n"
-                    "Keep source: reuse them (no extra vertices)\n"
-                    "Flat: one normal per face\n"
-                    "Auto smooth: smooth across edges flatter than the angle, hard edges above it\n"
-                    "Smooth: smooth everywhere");
-            if (mode == static_cast<int>(lod_normals_mode::auto_smooth)) {
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(90.0f);
-                ImGui::DragFloat("Angle##lod_smooth_angle", &lod.smooth_angle, 0.5f, 0.0f, 180.0f, "%.0f deg");
-                regen_changed |= ImGui::IsItemDeactivatedAfterEdit();
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Edges between faces bent more than this stay hard");
-            }
-        }
+            if (mode == static_cast<i32>(lod_normals_mode::auto_smooth))
+                regen_changed |= UI::property_drag("Smooth angle", lod.smooth_angle, 0.5f, 0.0f, 180.0f, "%.0f deg",
+                    "Edges between faces bent more than this stay hard", &defaults.smooth_angle);
 
-        if (flag_checkbox("Auto screen sizes", LOD_FLAG_AUTO_SCREEN_SIZE,
-            "Pick each level's switch size from its measured error, so the change stays below 'Pixel error' pixels\n"
-            "(at 1080p). Uncheck to set screen sizes by hand")) {
-            if (lod.flags & LOD_FLAG_AUTO_SCREEN_SIZE) {
+            auto flag_toggle = [&](const char* label, const u32 bit, const bool inverted, const char* desc) {
+                bool value = ((lod.flags & bit) != 0) != inverted;
+                const bool default_value = ((defaults.flags & bit) != 0) != inverted;
+                if (!UI::property_toggle(label, value, desc, &default_value))
+                    return;
+                const bool set_bit = value != inverted;
+                lod.flags = set_bit ? (lod.flags | bit) : (lod.flags & ~bit);
+                regen_changed = true;
+            };
+
+            flag_toggle("Lock borders", LOD_FLAG_LOCK_BORDERS, false,
+                "Keep open mesh borders in place. Prevents cracks between separately simplified parts, "
+                "but limits how far meshes made of many open plates can be reduced");
+            flag_toggle("Prune small parts", LOD_FLAG_PRUNE, false,
+                "Allow removing small disconnected pieces entirely (still bounded by the level's error limit)");
+            flag_toggle("Keep small parts", LOD_FLAG_ALLOW_SUBMESH_REMOVAL, true,
+                "Small submeshes are simplified relative to their own size and never removed completely. "
+                "Off: coarse levels may drop parts that are tiny compared to the whole mesh");
+        }
+        UI::end_card();
+
+        // ======== switching (applies immediately) ===================================================================
+        if (UI::begin_card("LOD Switching", UI::card_options{ .description = "When each level is used. Applies immediately", .collapsible = true })) {
+
+            static const lod_settings defaults{};
+
+            bool auto_sizes = (lod.flags & LOD_FLAG_AUTO_SCREEN_SIZE) != 0;
+            const bool default_auto = (defaults.flags & LOD_FLAG_AUTO_SCREEN_SIZE) != 0;
+            if (UI::property_toggle("Auto screen sizes", auto_sizes,
+                "Pick each level's switch size from its measured error, so the change stays below 'Pixel error' pixels (at 1080p). "
+                "Off: set the screen sizes by hand in the table", &default_auto)) {
+                lod.flags = auto_sizes ? (lod.flags | LOD_FLAG_AUTO_SCREEN_SIZE) : (lod.flags & ~LOD_FLAG_AUTO_SCREEN_SIZE);
+                if (auto_sizes)
+                    fit_screen_sizes(lod, mesh->lods, mesh->bounds);
+                live_changed = true;
+            }
+
+            if (auto_sizes && UI::property_drag("Pixel error", lod.pixel_error, 0.02f, 0.1f, 16.0f, "%.2f px",
+                "How many pixels a level switch may change on screen", &defaults.pixel_error)) {
                 fit_screen_sizes(lod, mesh->lods, mesh->bounds);
                 live_changed = true;
             }
-        }
-        if (lod.flags & LOD_FLAG_AUTO_SCREEN_SIZE) {
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(90.0f);
-            ImGui::DragFloat("Pixel error", &lod.pixel_error, 0.02f, 0.1f, 16.0f, "%.2f px");
-            if (ImGui::IsItemDeactivatedAfterEdit()) {
-                fit_screen_sizes(lod, mesh->lods, mesh->bounds);
-                live_changed = true;
-            }
-        }
 
-        {
-            int bias = static_cast<int>(lod.shadow_lod_bias);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::SliderInt("Shadow LOD bias", &bias, 0, 3))
+            i32 bias = static_cast<i32>(lod.shadow_lod_bias);
+            const i32 default_bias = static_cast<i32>(defaults.shadow_lod_bias);
+            if (UI::property_slider("Shadow LOD bias", bias, 0, 3, "%d",
+                "Shadow maps use this many levels coarser than the main view would at the same size", &default_bias)) {
                 lod.shadow_lod_bias = static_cast<u32>(bias);
-            live_changed |= ImGui::IsItemDeactivatedAfterEdit();
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Shadow maps use this many levels coarser than the main view would at the same size");
-
-            ImGui::SetNextItemWidth(120.0f);
-            ImGui::DragFloat("Cull below", &lod.cull_screen_size, 0.0005f, 0.0f, 0.2f, lod.cull_screen_size > 0.0f ? "%.4f" : "never");
-            live_changed |= ImGui::IsItemDeactivatedAfterEdit();
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Do not draw the mesh at all when it is smaller than this screen size (0 = always draw)");
-        }
-
-        if (ImGui::TreeNode("Simplifier weights")) {
-            ImGui::SetNextItemWidth(120.0f);
-            ImGui::DragFloat("Normals", &lod.normal_weight, 0.01f, 0.0f, 4.0f, "%.2f");
-            regen_changed |= ImGui::IsItemDeactivatedAfterEdit();
-            ImGui::SetNextItemWidth(120.0f);
-            ImGui::DragFloat("UVs", &lod.uv_weight, 0.01f, 0.0f, 4.0f, "%.2f");
-            regen_changed |= ImGui::IsItemDeactivatedAfterEdit();
-            ImGui::TextDisabled("Higher = keep shading / texture seams more faithfully");
-            ImGui::TreePop();
-        }
-
-        // ---- per-level table ----------------------------------------------------------------------------------------
-        //
-        // Screen size = bounding-sphere diameter / viewport height at which the level takes over (live, no regeneration)
-        // Ratio / max error = simplifier targets (regeneration needed). Right half: what the last generation achieved
-        const ImGuiTableFlags table_flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp
-            | ImGuiTableFlags_PadOuterX;
-        if (ImGui::BeginTable("##lod_levels", 6, table_flags)) {
-
-            ImGui::TableSetupColumn("LOD",         ImGuiTableColumnFlags_WidthFixed, 34.0f);
-            ImGui::TableSetupColumn("Screen",      ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("Ratio",       ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("Max err %",   ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("Triangles",   ImGuiTableColumnFlags_WidthStretch, 1.1f);
-            ImGui::TableSetupColumn("Err %",       ImGuiTableColumnFlags_WidthStretch, 0.8f);
-            ImGui::TableHeadersRow();
-
-            const bool auto_size = (lod.flags & LOD_FLAG_AUTO_SCREEN_SIZE) != 0;
-            const u32 base_tris = mesh->lod_triangle_count(0);
-
-            for (u32 level = 0; level < lod.lod_count; ++level) {
-
-                ImGui::PushID(static_cast<int>(level));
-                ImGui::TableNextRow();
-                lod_level_settings& ls = lod.levels[level];
-                const bool exists = level < generated;
-
-                // LOD (click: preview this level)
-                ImGui::TableNextColumn();
-                char label[8];
-                std::snprintf(label, sizeof(label), "%u", level);
-                if (ImGui::Selectable(label, m_preview_lod == static_cast<i32>(level), ImGuiSelectableFlags_None) && exists)
-                    set_preview_lod(m_preview_lod == static_cast<i32>(level) ? -1 : static_cast<i32>(level));
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", exists ? "Preview this level (click again for automatic)" : "Not generated");
-
-                if (level == 0) {
-                    ImGui::TableNextColumn(); ImGui::TextDisabled("full");
-                    ImGui::TableNextColumn(); ImGui::TextDisabled("1.00");
-                    ImGui::TableNextColumn(); ImGui::TextDisabled("0");
-                } else {
-                    ImGui::TableNextColumn();
-                    ImGui::SetNextItemWidth(-FLT_MIN);
-                    ImGui::BeginDisabled(auto_size);
-                    ImGui::DragFloat("##screen", &ls.screen_size, 0.002f, 0.0001f, 1.0f, "%.3f");
-                    if (ImGui::IsItemDeactivatedAfterEdit()) {
-                        sanitize(lod);
-                        live_changed = true;
-                    }
-                    ImGui::EndDisabled();
-
-                    ImGui::TableNextColumn();
-                    ImGui::SetNextItemWidth(-FLT_MIN);
-                    ImGui::DragFloat("##ratio", &ls.triangle_ratio, 0.005f, 0.001f, 1.0f, "%.3f");
-                    if (ImGui::IsItemDeactivatedAfterEdit()) {
-                        sanitize(lod);
-                        regen_changed = true;
-                    }
-
-                    ImGui::TableNextColumn();
-                    ImGui::SetNextItemWidth(-FLT_MIN);
-                    f32 error_percent = ls.max_error * 100.0f;
-                    if (ImGui::DragFloat("##error", &error_percent, 0.01f, 0.0f, 100.0f, "%.2f"))
-                        ls.max_error = error_percent / 100.0f;
-                    if (ImGui::IsItemDeactivatedAfterEdit()) {
-                        sanitize(lod);
-                        regen_changed = true;
-                    }
-                }
-
-                ImGui::TableNextColumn();
-                if (exists) {
-                    const u32 tris = mesh->lod_triangle_count(level);
-                    ImGui::TextUnformatted(format_count(tris).c_str());
-                    if (ImGui::IsItemHovered() && base_tris > 0)
-                        ImGui::SetTooltip("%u triangles, %.1f%% of LOD 0", tris, 100.0 * tris / base_tris);
-                } else {
-                    ImGui::TextDisabled("-");
-                }
-
-                ImGui::TableNextColumn();
-                if (exists && level > 0 && level < mesh->lods.size())
-                    ImGui::Text("%.3f", mesh->lods[level].error * 100.0f);
-                else
-                    ImGui::TextDisabled("-");
-
-                ImGui::PopID();
+                live_changed = true;
             }
-            ImGui::EndTable();
-        }
 
-        // ---- actions ------------------------------------------------------------------------------------------------
-        if (m_lod_needs_regen) {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 200, 90, 255));
-            ImGui::TextWrapped("Generation settings changed - regenerate to apply");
-            ImGui::PopStyleColor();
+            live_changed |= UI::property_drag("Cull below", lod.cull_screen_size, 0.0005f, 0.0f, 0.2f,
+                lod.cull_screen_size > 0.0f ? "%.4f" : "never",
+                "Don't draw the mesh at all when it is smaller than this screen size (0 = always draw)", &defaults.cull_screen_size);
         }
+        UI::end_card();
 
-        if (ImGui::Button("Regenerate LODs", ImVec2(140.0f, 0.0f)))
-            start_lod_generation();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(mesh->lod_count() <= 1);
-        if (ImGui::Button("Fit screen sizes")) {
-            fit_screen_sizes(lod, mesh->lods, mesh->bounds);
-            live_changed = true;
+        // ======== simplifier weights (advanced) =====================================================================
+        if (UI::begin_card("Simplifier Weights", UI::card_options{ .description = "Higher = keep shading / texture seams more faithfully",
+            .collapsible = true, .default_open = false })) {
+
+            static const lod_settings defaults{};
+            regen_changed |= UI::property_drag("Normals", lod.normal_weight, 0.01f, 0.0f, 4.0f, "%.2f", nullptr, &defaults.normal_weight);
+            regen_changed |= UI::property_drag("UVs", lod.uv_weight, 0.01f, 0.0f, 4.0f, "%.2f", nullptr, &defaults.uv_weight);
         }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Set every level's screen size from its measured error and 'Pixel error' (once, keeps manual mode)");
-        ImGui::SameLine();
-        if (ImGui::Button("Clear")) {
-            clear_lods(*mesh);
-            set_preview_lod(-1);
-            m_dirty = true;
-            m_wire_lod = -2;
-        }
-        ImGui::EndDisabled();
+        UI::end_card();
 
         ImGui::EndDisabled();   // busy
 
@@ -2265,59 +2508,41 @@ namespace GLT::editor {
     }
 
 
-    void mesh_editor_window::draw_preview_lod_overlay(const ImVec2& canvas_min, const ImVec2& /*canvas_max*/) {
+    // LOD pill + popup at the cursor (top-left overlay of the preview)
+    void mesh_editor_window::draw_preview_lod_overlay(const ImVec2& /*canvas_min*/, const ImVec2& /*canvas_max*/) {
 
         auto registry = GLT::asset::registry::get_ref();
         auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
-        if (!mesh)
+        if (!mesh || mesh->lod_count() == 0)
             return;
 
         const u32 lod_count = mesh->lod_count();
-        const f32 screen_size = preview_screen_size(*mesh);
-        const u32 auto_lod = auto_lod_for(*mesh, screen_size);
+        const u32 auto_lod = auto_lod_for(*mesh, preview_screen_size(*mesh));
         const u32 shown = m_preview_lod >= 0 ? std::min<u32>(static_cast<u32>(m_preview_lod), lod_count - 1) : auto_lod;
 
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.10f, 0.10f, 0.70f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        const std::string label = m_preview_lod < 0 ? std::format("LOD auto ({})", auto_lod) : std::format("LOD {}", shown);
+        if (ImGui::Button(label.c_str()))
+            ImGui::OpenPopup("##preview_lod_popup");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Lock the preview to one level, or let its size on screen pick it");
 
-        ImGui::SetCursorScreenPos(ImVec2(canvas_min.x + 10.0f, canvas_min.y + 10.0f));
-        char preview_label[48];
-        if (m_preview_lod < 0)
-            std::snprintf(preview_label, sizeof(preview_label), "LOD auto (%u)", auto_lod);
-        else
-            std::snprintf(preview_label, sizeof(preview_label), "LOD %u", shown);
+        const ImVec2 btn_min = ImGui::GetItemRectMin();
+        const ImVec2 btn_max = ImGui::GetItemRectMax();
+        ImGui::SetNextWindowPos(ImVec2(btn_min.x, btn_max.y + 4.0f), ImGuiCond_Appearing);
+        if (ImGui::BeginPopup("##preview_lod_popup")) {
 
-        ImGui::SetNextItemWidth(130.0f);
-        if (ImGui::BeginCombo("##preview_lod", preview_label)) {
-
-            if (ImGui::Selectable("Auto (screen size)", m_preview_lod < 0))
+            if (ImGui::Selectable("Automatic (screen size)", m_preview_lod < 0))
                 set_preview_lod(-1);
+            ImGui::Separator();
             for (u32 level = 0; level < lod_count; ++level) {
-                char item[64];
-                std::snprintf(item, sizeof(item), "LOD %u   %s tris", level, format_count(mesh->lod_triangle_count(level)).c_str());
-                if (ImGui::Selectable(item, m_preview_lod == static_cast<i32>(level)))
+                const std::string item = std::format("LOD {}", level);
+                if (ImGui::Selectable(item.c_str(), m_preview_lod == static_cast<i32>(level)))
                     set_preview_lod(static_cast<i32>(level));
+                ImGui::SameLine(110.0f);
+                ImGui::TextDisabled("%s tris", format_count(mesh->lod_triangle_count(level)).c_str());
             }
-            ImGui::EndCombo();
+            ImGui::EndPopup();
         }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Lock the preview to one level, or let the screen size pick it (mouse wheel to zoom)");
-
-        ImGui::SameLine();
-        ImGui::Checkbox("Wireframe", &m_show_wireframe);
-
-        const u32 tris = mesh->lod_triangle_count(shown);
-        const u32 base = std::max(mesh->lod_triangle_count(0), 1u);
-        ImGui::SetCursorScreenPos(ImVec2(canvas_min.x + 10.0f, canvas_min.y + 14.0f + ImGui::GetFrameHeight()));
-        if (screen_size >= 1e8f)
-            ImGui::TextDisabled("screen: inside   LOD %u   %s tris (%.0f%%)", shown, format_count(tris).c_str(), 100.0 * tris / base);
-        else
-            ImGui::TextDisabled("screen %.3f   LOD %u   %s tris (%.0f%%)", screen_size, shown, format_count(tris).c_str(), 100.0 * tris / base);
-        if (m_show_wireframe && m_wire_truncated)
-            ImGui::TextDisabled("wireframe: too many edges, showing the first %s", format_count(MAX_WIREFRAME_EDGES).c_str());
-
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
     }
 
 

@@ -11,6 +11,7 @@
 #include "util/event/asset_event.h"
 #include "window/base/base_window.h"
 #include "window/content_browser.h"
+#include "undo_system/world_change.h"
 
 
 
@@ -57,6 +58,11 @@ namespace GLT::editor {
 
         bool serialize(const std::filesystem::path& project_file, const GLT::serializer::option option) override;
 
+
+        // Closes in-progress edits (open gizmo drag, focused text field) before stepping through the history
+        bool undo() override;
+        bool redo() override;
+
     private:
 
         struct pending_save_request {
@@ -69,6 +75,9 @@ namespace GLT::editor {
 
         // ---- rendering ----
         void render_inner_dockspace();
+        void render_panel_bar();                                // slim bar above the dockspace: world name + "Panels" menu
+        void render_panels_menu();
+        void add_content_browser();
         void build_default_layout(ImGuiID dockspace_id, const ImVec2& size);
         void render_viewport();
         bool render_mode_selector_overlay(const ImVec2& image_min);
@@ -97,6 +106,7 @@ namespace GLT::editor {
 
         [[nodiscard]] std::string entity_display_name(GLT::world::entity_id id) const;
         [[nodiscard]] std::vector<icon_manager::icon_type> entity_component_icons(GLT::world::entity_id id) const;
+        [[nodiscard]] static std::optional<icon_manager::icon_type> component_icon(std::string_view component_name);
 
         // ---- saving ----
         void on_save_event(const GLT::save_event& event);
@@ -118,13 +128,25 @@ namespace GLT::editor {
 
         void update_selection_debug_draw();
 
+        // ---- undo / redo ----
+        void flush_edits();                                                     // commit open tracker edits
+        void select_after_undo(const undo_system::world_state& state);          // undo/redo selects what it touched
+        void delete_entities(std::vector<GLT::world::entity_id> ids);           // undoable, deletes whole subtrees
+        void collect_subtree(GLT::world::entity_id id, std::vector<GLT::world::entity_id>& out) const;
+
         // ---- data ----
         GLT::render::i_scene_renderer*                  m_scene = nullptr;
         bool                                            m_viewport_image_drawn = false;
-        std::vector<content_browser_window>             m_content_browsers{};
+        // unique_ref: browsers subscribe to events with their [this] pointer, so they must never move in memory
+        std::vector<GLT::unique_ref<content_browser_window>> m_content_browsers{};
         GLT::ref<GLT::render::i_renderer_plugin>        m_renderer{};
         ImVec2                                          m_viewport_size{100, 60};
         bool                                            m_reset_layout = true;
+
+        // sub-panels of the inner dockspace (closable, reopened from the "Panels" menu)
+        bool                                            m_show_viewport_panel = true;
+        bool                                            m_show_outliner_panel = true;
+        bool                                            m_show_details_panel = true;
         bool                                            m_cursor_captured = false;
 
         GLT::world::i_world*                            m_world{};
@@ -143,11 +165,11 @@ namespace GLT::editor {
         bool                                            m_save_as_open{ false };
 
         ImGuizmo::OPERATION                             m_gizmo_operation = ImGuizmo::TRANSLATE;
-        ImGuizmo::MODE                                  m_gizmo_mode = ImGuizmo::WORLD;
-        bool                                            m_gizmo_snap = false;
-        f32                                             m_gizmo_snap_translate[3] = { 1.f, 1.f, 1.f };
-        f32                                             m_gizmo_snap_rotate = 15.f;   // degrees
-        f32                                             m_gizmo_snap_scale = 0.1f;
+        // gizmo space + snapping live in editor_settings (persisted, also editable in the settings window)
+
+        // undo / redo: one tracker per UI region that edits entities "freely" (see world_edit_tracker)
+        undo_system::world_edit_tracker                 m_details_edit{ m_undo_stack };
+        undo_system::world_edit_tracker                 m_gizmo_edit{ m_undo_stack };
 
     };
 

@@ -61,6 +61,15 @@ namespace GLT::imgui_config {
 
 	ImGuiContext* get_context_imgui();
 
+	// Accent color the editor ships with (for "reset to default")
+	[[nodiscard]] ImVec4 get_default_main_color();
+
+	[[nodiscard]] theme_selection get_ui_theme_selection();
+
+	// Global UI scale (ImGuiStyle::FontScaleMain). Safe to change at any time, fonts are dynamic since ImGui 1.92
+	[[nodiscard]] f32 get_font_scale();
+	void set_font_scale(const f32 scale);
+
 
 	void init(const bool enable_multi_viewport = true);
 
@@ -81,9 +90,10 @@ namespace GLT::imgui_config {
 	void update_ui_theme();
 
 
-	// Updates the main UI color and saves the change to config.
+	// Updates the main UI color and (optionally) saves the change to config.
 	// @param new_color New main color to apply.
-	void update_ui_colors(const ImVec4 new_color);
+	// @param save      False while the user is still dragging a picker, save once at the end
+	void update_ui_colors(const ImVec4 new_color, const bool save = true);
 
 
 	// Retrieves a font by name.

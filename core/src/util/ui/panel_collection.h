@@ -396,6 +396,215 @@ namespace GLT::UI {
 	bool table_row_drag_scalar(std::string_view label, T& value, const char* format, T min_value = (T)0, T max_value = (T)1, 
 	f32 draw_speed = 0.2f, ImGuiInputTextFlags flags = ImGuiInputTextFlags_None);
 
+	// ---- modern controls ----------------------------------------------------------------------------------------------
+
+	// Pill shaped on/off switch (animated). Returns true when toggled
+	bool toggle_switch(const char* id, bool& value);
+
+
+	// Row of mutually exclusive buttons ("Dark | Light"). [width] <= 0 uses SetNextItemWidth / the available width
+	bool segmented_control(const char* id, i32& index, std::span<const char* const> options, f32 width = 0.f);
+
+
+	// Grid of preset colors; clicking one assigns it to [color] (alpha is kept). Returns true on change
+	bool color_palette(ImVec4& color);
+
+
+	// Small circular-arrow button (used by settings rows to reset a value)
+	bool reset_button(const char* id, const f32 size, const char* tooltip = "Reset to default");
+
+	// Accent-colored button for the main action of a panel ("+ Add Component")
+	bool accent_button(const char* label, const ImVec2& size = { 0, 0 });
+
+
+	// Quiet gray button for secondary actions ("Reset", "Clear")
+	bool subtle_button(const char* label, const ImVec2& size = { 0, 0 });
+
+
+	// Rounded search box with a magnifier and a clear button. Returns true when the text changed. [width] <= 0 = available width
+	bool search_field(const char* id, char* buffer, const size_t buffer_size, const char* hint = "Search", f32 width = 0.f);
+
+
+	// X / Y / Z / W drag fields side by side, each marked with its axis color. [width] <= 0 uses CalcItemWidth()
+	bool drag_axes(const char* id, f32* values, const int components, const f32 speed, const f32 min_value = 0.f, const f32 max_value = 0.f,
+		const char* format = "%.2f", f32 width = 0.f);
+
+
+	// Round "..." button for per-item menus. Returns true when clicked
+	bool menu_button(const char* id, const f32 size = 0.f, const char* tooltip = nullptr);
+
+
+	// Centered hint for empty panels ("No entity selected")
+	void empty_state(const char* title, const char* hint = nullptr);
+
+
+	// "ambient_light" / "audio source" -> "Ambient Light" / "Audio Source"
+	[[nodiscard]] std::string pretty_name(std::string_view identifier);
+
+	// ---- cards --------------------------------------------------------------------------------------------------------
+	//
+	// A card is a rounded panel that groups related content. Always pair begin_card() with end_card(), even when
+	// begin_card() returns false (collapsed).
+	//
+	//      UI::card_options options{ .collapsible = true, .summary = "3 overrides" };
+	//      if (UI::begin_card("Mesh", options)) {
+	//          UI::property_toggle("Visible", mesh.visible);
+	//      }
+	//      UI::end_card();
+
+	struct card_options {
+
+		const char*							description = nullptr;		// dim line under the title
+		const char*							summary = nullptr;			// dim text right of the title (useful when collapsed)
+		bool								collapsible = false;		// header toggles the content, state is remembered
+		bool								default_open = true;
+		bool								title_above = false;		// title + description above the card instead of in a header
+		ImTextureRef						icon{};						// optional icon in the header (has_icon = true)
+		ImVec2								icon_uv0{ 0.f, 0.f };
+		ImVec2								icon_uv1{ 1.f, 1.f };
+		bool								has_icon = false;
+		f32									header_actions_width = 0.f;	// space reserved on the right of the header
+		std::function<void()>				header_actions{};			// draws buttons into that space ("...")
+	};
+
+	// @return true if the content is visible (not collapsed)
+	bool begin_card(const char* title, const card_options& options = {});
+	void end_card();
+
+	// ---- property rows ------------------------------------------------------------------------------------------------
+	//
+	// One row = label + control. Two layouts:
+	//
+	//   compact    (default, inspectors / popups)      | Label      [ control                    ] |
+	//                                                  description shows as tooltip on the label
+	//
+	//   described  (settings pages)                    | Label                    (reset) [ control ] |
+	//                                                  | Description, dimmer and wrapped            |
+	//
+	// Every row takes an optional default value. When the value differs from it the row gets an accent marker and a
+	// reset arrow, and reset_properties() puts it back. Rows work anywhere; begin_properties() only changes the layout /
+	// adds a search filter for the rows until end_properties().
+
+	enum class property_layout : u8 {
+		compact = 0,
+		described,
+	};
+
+	void begin_properties(const property_layout layout = property_layout::compact, std::string_view filter = {});
+
+	// @return number of rows that were drawn (rows hidden by the filter don't count)
+	u32 end_properties();
+
+	// Every row drawn until end_properties() is set back to its default value (rows report this as a change)
+	void reset_properties();
+
+
+	bool property_toggle(const char* label, bool& value, const char* desc = nullptr, const bool* default_value = nullptr);
+
+	bool property_slider(const char* label, f32& value, const f32 min_value, const f32 max_value, const char* format = "%.2f",
+		const char* desc = nullptr, const f32* default_value = nullptr, ImGuiSliderFlags flags = ImGuiSliderFlags_None);
+
+	bool property_slider(const char* label, i32& value, const i32 min_value, const i32 max_value, const char* format = "%d",
+		const char* desc = nullptr, const i32* default_value = nullptr, ImGuiSliderFlags flags = ImGuiSliderFlags_None);
+
+	// min == max = unbounded
+	bool property_drag(const char* label, f32& value, const f32 speed = 0.1f, const f32 min_value = 0.f, const f32 max_value = 0.f,
+		const char* format = "%.2f", const char* desc = nullptr, const f32* default_value = nullptr);
+
+	bool property_drag(const char* label, glm::vec2& value, const f32 speed = 0.1f, const f32 min_value = 0.f, const f32 max_value = 0.f,
+		const char* format = "%.2f", const char* desc = nullptr, const glm::vec2* default_value = nullptr);
+
+	bool property_drag(const char* label, glm::vec3& value, const f32 speed = 0.1f, const f32 min_value = 0.f, const f32 max_value = 0.f,
+		const char* format = "%.2f", const char* desc = nullptr, const glm::vec3* default_value = nullptr);
+
+	bool property_combo(const char* label, i32& index, std::span<const char* const> options, const char* desc = nullptr,
+		const i32* default_index = nullptr);
+
+	// Best for 2-4 short options
+	bool property_segmented(const char* label, i32& index, std::span<const char* const> options, const char* desc = nullptr,
+		const i32* default_index = nullptr);
+
+	// Swatch with hex code; click opens a picker + palette
+	bool property_color(const char* label, ImVec4& color, const bool alpha = false, const char* desc = nullptr, const ImVec4* default_color = nullptr);
+	bool property_color(const char* label, glm::vec4& color, const bool alpha = false, const char* desc = nullptr, const glm::vec4* default_color = nullptr);
+	bool property_color(const char* label, glm::vec3& color, const char* desc = nullptr, const glm::vec3* default_color = nullptr);
+
+	bool property_text(const char* label, std::string& value, const char* desc = nullptr, const char* hint = nullptr);
+
+	// Read-only value
+	void property_value(const char* label, std::string_view value, const char* desc = nullptr);
+
+	// Anything else: [control] draws ONE widget group of the given width and returns true on change
+	bool property_custom(const char* label, const std::function<bool(f32 width)>& control, const char* desc = nullptr,
+		const bool is_default = true, const std::function<void()>& reset = {});
+
+	// Enum combo with prettified enumerator names ("static_body" -> "Static Body")
+	template<typename E> requires std::is_enum_v<E>
+	bool property_enum(const char* label, E& value, const char* desc = nullptr, const E* default_value = nullptr);
+
+	template<typename E> requires std::is_enum_v<E>
+	bool property_combo(const char* label, E& value, std::span<const char* const> options, const char* desc = nullptr, const E* default_value = nullptr);
+
+	template<typename E> requires std::is_enum_v<E>
+	bool property_segmented(const char* label, E& value, std::span<const char* const> options, const char* desc = nullptr, const E* default_value = nullptr);
+
+	// ---- settings pages -----------------------------------------------------------------------------------------------
+	//
+	// Thin layer over cards + described property rows, with search over pages and sections:
+	//
+	//      UI::settings_begin_page("Viewport", filter, "How the 3D viewport behaves");
+	//          UI::settings_begin_section("Camera");
+	//              changed |= UI::settings_slider("Fly speed", "Units per frame", cfg.speed, defaults.speed, 0.01f, 5.f);
+	//          UI::settings_end_section();
+	//      const u32 hits = UI::settings_end_page();
+	//
+	// Sections only appear when one of their rows passes the filter.
+
+	// [title] null = no page header (e.g. settings drawn inside a popup)
+	void settings_begin_page(const char* title, std::string_view filter = {}, const char* description = nullptr);
+
+	// @return number of rows that were drawn
+	u32 settings_end_page();
+
+	void settings_reset_page();
+
+	void settings_begin_section(const char* title, const char* description = nullptr);
+	void settings_end_section();
+
+	bool settings_toggle(const char* label, const char* desc, bool& value, const bool default_value);
+
+	bool settings_slider(const char* label, const char* desc, f32& value, const f32 default_value, const f32 min_value, const f32 max_value,
+		const char* format = "%.2f", ImGuiSliderFlags flags = ImGuiSliderFlags_None);
+
+	bool settings_slider(const char* label, const char* desc, i32& value, const i32 default_value, const i32 min_value, const i32 max_value,
+		const char* format = "%d", ImGuiSliderFlags flags = ImGuiSliderFlags_None);
+
+	bool settings_drag(const char* label, const char* desc, f32& value, const f32 default_value, const f32 speed,
+		const f32 min_value = 0.f, const f32 max_value = 0.f, const char* format = "%.2f");
+
+	bool settings_drag(const char* label, const char* desc, glm::vec2& value, const glm::vec2& default_value, const f32 speed,
+		const f32 min_value = 0.f, const f32 max_value = 0.f, const char* format = "%.2f");
+
+	bool settings_drag(const char* label, const char* desc, glm::vec3& value, const glm::vec3& default_value, const f32 speed,
+		const f32 min_value = 0.f, const f32 max_value = 0.f, const char* format = "%.2f");
+
+	bool settings_combo(const char* label, const char* desc, i32& index, const i32 default_index, std::span<const char* const> options);
+
+	bool settings_segmented(const char* label, const char* desc, i32& index, const i32 default_index, std::span<const char* const> options);
+
+	bool settings_color(const char* label, const char* desc, ImVec4& color, const ImVec4& default_color, const bool alpha = false);
+
+	bool settings_color(const char* label, const char* desc, glm::vec4& color, const glm::vec4& default_color, const bool alpha = false);
+
+	bool settings_custom(const char* label, const char* desc, const bool is_default, const std::function<void()>& reset,
+		const std::function<bool()>& control);
+
+	template<typename E> requires std::is_enum_v<E>
+	bool settings_combo(const char* label, const char* desc, E& value, const E default_value, std::span<const char* const> options);
+
+	template<typename E> requires std::is_enum_v<E>
+	bool settings_segmented(const char* label, const char* desc, E& value, const E default_value, std::span<const char* const> options);
+
 	// CLASS DECLARATION ===============================================================================================
 
 }

@@ -99,6 +99,9 @@ namespace GLT::editor {
 
         // panels -----------------------------------------------------------------------------------------------------
 
+        void handle_shortcuts();        // Ctrl+S save, F7 compile
+        void draw_header_bar();
+        void draw_body();               // details | splitter | source
         void draw_details_panel();
 
         void draw_source_panel();
@@ -165,6 +168,9 @@ namespace GLT::editor {
         // Persisted height (px) of the terminal section. The editor takes whatever is left. Never reset on
         // material close - it's a UI preference, not material state
         f32                                                     m_terminal_height{ 160.0f };
+
+        // Persisted width (px) of the details panel on the left, UI preference like m_terminal_height
+        f32                                                     m_details_width{ 400.0f };
 
         // Edit buffers. The window edits these, never the asset directly.
         std::string                                             m_edit_slang{};

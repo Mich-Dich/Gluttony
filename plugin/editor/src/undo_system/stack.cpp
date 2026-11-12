@@ -31,56 +31,140 @@ namespace GLT::undo_system {
 
     // CLASS PUBLIC ====================================================================================================
 
-    void stack::push(step undo_step) {
+    stack::stack(const size_t max_steps)
+        : m_max_steps(std::max<size_t>(1, max_steps)) {}
 
-        if (undo_step.can_combine && m_cursor > 0) {
-            step& top = m_steps[m_cursor - 1];
-            if (top.is_compact() && undo_step.is_compact()
-                && top.id == undo_step.id && top.can_combine) {
 
-                top.merge(undo_step);
-                return;
-            }
+    void stack::push(step new_step) {
+
+        if (m_replaying) {
+            LOG(warn, "undo_system: ignored push of [{}] while undo/redo is running", new_step.name);
+            return;
         }
 
-        m_size = m_cursor;
-        if (m_size == max_steps) {
-            std::move(m_steps.begin() + 1, m_steps.end(), m_steps.begin());
-            m_steps[max_steps - 1] = std::move(undo_step);
-        } else
-            m_steps[m_size++] = std::move(undo_step);
+        VALIDATE(new_step.valid(), return, "", "undo_system: step [{}] has no undo or redo callback", (new_step.name))
 
-        m_cursor = m_size;
+        if (m_group_depth > 0) {
+            m_group_steps.push_back(std::move(new_step));
+            return;
+        }
+
+        m_steps.resize(m_cursor);                               // a new operation drops the redo branch
+        m_steps.push_back(std::move(new_step));
+
+        if (m_steps.size() > m_max_steps)
+            m_steps.erase(m_steps.begin(), m_steps.begin() + static_cast<std::ptrdiff_t>(m_steps.size() - m_max_steps));
+
+        m_cursor = m_steps.size();
     }
 
 
-    bool stack::undo() { 
-        
-        if (m_cursor == 0)
-            return false; 
-        
-        m_steps[--m_cursor].revert(); 
-        return true; 
+    bool stack::undo() {
+
+        if (!can_undo() || m_replaying)
+            return false;
+
+        m_replaying = true;
+        m_steps[--m_cursor].undo();
+        m_replaying = false;
+        return true;
     }
 
 
     bool stack::redo() {
 
-        if (m_cursor == m_size) 
-            return false; 
-            
-        m_steps[m_cursor++].apply();  
-        return true; 
+        if (!can_redo() || m_replaying)
+            return false;
+
+        m_replaying = true;
+        m_steps[m_cursor++].redo();
+        m_replaying = false;
+        return true;
     }
 
 
-    bool stack::can_undo() const noexcept       { return m_cursor > 0; }
+    bool stack::can_undo() const noexcept               { return m_cursor > 0 && m_group_depth == 0; }
 
 
-    bool stack::can_redo() const noexcept       { return m_cursor < m_size; }
+    bool stack::can_redo() const noexcept               { return m_cursor < m_steps.size() && m_group_depth == 0; }
 
 
-    void stack::clear()        noexcept         { m_size = m_cursor = 0; }
+    std::string_view stack::undo_name() const noexcept  { return can_undo() ? std::string_view(m_steps[m_cursor - 1].name) : std::string_view{}; }
+
+
+    std::string_view stack::redo_name() const noexcept  { return can_redo() ? std::string_view(m_steps[m_cursor].name) : std::string_view{}; }
+
+
+    void stack::begin_group(std::string name) {
+
+        if (m_group_depth++ == 0) {
+            m_group_name = std::move(name);
+            m_group_steps.clear();
+        }
+    }
+
+
+    void stack::end_group() {
+
+        VALIDATE(m_group_depth > 0, return, "", "undo_system: end_group() without begin_group()")
+
+        if (--m_group_depth > 0)
+            return;
+
+        if (m_group_steps.empty())
+            return;
+
+        if (m_group_steps.size() == 1) {
+            step single = std::move(m_group_steps.front());
+            single.name = std::move(m_group_name);
+            m_group_steps.clear();
+            push(std::move(single));
+            return;
+        }
+
+        // Shared so the two callbacks don't each copy every child step
+        auto children = std::make_shared<std::vector<step>>(std::move(m_group_steps));
+        m_group_steps.clear();
+
+        step group;
+        group.name = std::move(m_group_name);
+        group.undo = [children]() {
+            for (auto it = children->rbegin(); it != children->rend(); ++it)
+                it->undo();
+        };
+        group.redo = [children]() {
+            for (auto& child : *children)
+                child.redo();
+        };
+        push(std::move(group));
+    }
+
+
+    void stack::clear() noexcept {
+
+        m_steps.clear();
+        m_cursor = 0;
+        m_group_depth = 0;
+        m_group_steps.clear();
+    }
+
+
+    void stack::set_max_steps(const size_t max_steps) {
+
+        m_max_steps = std::max<size_t>(1, max_steps);
+        if (m_steps.size() <= m_max_steps)
+            return;
+
+        const size_t drop = m_steps.size() - m_max_steps;
+        m_steps.erase(m_steps.begin(), m_steps.begin() + static_cast<std::ptrdiff_t>(drop));
+        m_cursor = m_cursor > drop ? m_cursor - drop : 0;
+    }
+
+
+    bool stack::is_replaying() const noexcept           { return m_replaying; }
+
+
+    size_t stack::size() const noexcept                 { return m_steps.size(); }
 
     // CLASS PROTECTED =================================================================================================
 

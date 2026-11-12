@@ -30,6 +30,7 @@ namespace GLT::config {
 		plugin,
 		project,
 		launcher,
+		editor,			// Editor preferences (per user, not per project)
 	};
 
 

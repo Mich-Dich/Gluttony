@@ -142,6 +142,16 @@ namespace GLT::world {
         virtual void set_parent(entity_id /*child*/, entity_id /*parent*/) {}
         [[nodiscard]] virtual entity_id parent_of(entity_id /*id*/) const noexcept { return INVALID_ENTITY; }
 
+        // snapshots (editor undo / redo) ------------------------------------------------------------------------------
+        // An entity snapshot is an opaque blob holding every persisted component of the given entities (incl. their parent
+        // link). Dead ids are skipped. Worlds that don't support it return an empty blob (= the editor can't undo world edits)
+        [[nodiscard]] virtual std::vector<std::byte> snapshot_entities(std::span<const entity_id> /*ids*/) const { return {}; }
+
+        // Puts every entity stored in `blob` back into exactly the stored state. Alive entities are replaced, despawned
+        // ones are re-created under the SAME entity_id, so anything else that references them stays valid. Parent/child
+        // links, region membership and physics bodies are rebuilt. Returns the restored ids
+        virtual std::vector<entity_id> restore_entities(std::span<const std::byte> /*blob*/) { return {}; }
+
         // Type-erased access. Returns the storage for `hash` in *this world,
         // creating it lazily on first call. Null if no such type is registered.
         [[nodiscard]] virtual component::i_storage* storage_for(u64 hash) = 0;

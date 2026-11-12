@@ -9,6 +9,7 @@
 #include <platform/i_window.h>
 
 #include "window/base/base_window.h"
+#include "settings/settings_registry.h"
 #include "util/event/asset_event.h"
 
 
@@ -117,6 +118,27 @@ namespace GLT::editor {
 	    base_window* find_window_by_name(const std::string& name);
 
 
+        // The undo-enabled window the user worked in most recently (receives Ctrl+Z / Ctrl+Y and the Edit menu). May be null
+        [[nodiscard]] base_window* undo_target();
+
+
+        // Ctrl+Z = undo, Ctrl+Y / Ctrl+Shift+Z = redo. Text fields keep their own Ctrl+Z, simulation blocks both
+        void handle_undo_shortcuts();
+
+
+        // Edit menu entries ("Undo Move Cube", "Redo ...")
+        void render_undo_menu_items();
+
+
+        // Opens (or focuses) the editor settings window, optionally on a specific page ("Appearance", ...)
+        void open_settings_window(std::string_view page = {});
+
+
+        // Rows of the "Play in Editor" settings page, also used by the simulation settings popup in the toolbar.
+        // Returns true if something changed
+        bool render_simulation_settings();
+
+
         void render_toolbar();
 
 
@@ -207,6 +229,7 @@ namespace GLT::editor {
 
 
         GLT::unique_ref<GLT::render::image>             m_logo{};
+        settings_registry                               m_editor_settings_pages{};      // declared before m_windows: the settings window references it
         std::vector<GLT::unique_ref<base_window>>       m_windows{};
 
         bool                                            m_show_stats_window = false;

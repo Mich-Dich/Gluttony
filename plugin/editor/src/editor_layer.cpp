@@ -36,6 +36,8 @@
 #include "window/mesh_editor.h"
 #include "window/world_topdown_editor.h"
 #include "window/plugin_manager.h"
+#include "window/settings_window.h"
+#include "settings/editor_settings.h"
 #include "util/asset_editor_registry.h"
 #include "util/file_watcher.h"
 #include "input/editor_controller.h"
@@ -50,7 +52,7 @@ namespace GLT::editor {
 
     constexpr const char*                   MAIN_MENU_BAR_POPUP = "MAIN_MENU_BAR_POPUP";
         
-    constexpr size_t                        MAX_NOTIFICATIONS = 6;
+    constexpr const char*                   EDITOR_SETTINGS_TITLE = "Editor Settings";
 
     // MACROS ==========================================================================================================
 
@@ -170,6 +172,17 @@ namespace GLT::editor {
 
         load_simulation_settings();
 
+        // editor settings: values first, then the pages that edit them
+        editor_settings::get().serialize(GLT::serializer::option::load);
+        register_editor_settings_pages(m_editor_settings_pages);
+        m_editor_settings_pages.add({
+            .group = "Simulation",
+            .name = "Play in Editor",
+            .description = "Where and how the game runs when you press Play (saved with the project)",
+            .draw = [this]() { return render_simulation_settings(); },
+            .save = [this]() { save_simulation_settings(); },
+        });
+
         // load the editor world
         const auto& editor_world_path = GLT::application::get().get_project().editor_start_world;
         if (!editor_world_path.empty()) {
@@ -257,6 +270,10 @@ namespace GLT::editor {
 
         {
             GLT_PROFILE_SCOPE("Editor toolbar + dockspace");
+            handle_undo_shortcuts();            // before any window draws, so trackers see the result as the new baseline
+
+            if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Comma, false))
+                open_settings_window();
             render_toolbar();
             render_dockspace();
         }
@@ -294,6 +311,66 @@ namespace GLT::editor {
         }
 
         return nullptr;
+    }
+
+
+    base_window* editor_layer::undo_target() {
+
+        base_window* best = nullptr;
+        for (auto& window : m_windows) {
+
+            if (!window || window->should_close() || !window->get_undo_stack())
+                continue;
+
+            if (!best || window->get_last_focus_frame() > best->get_last_focus_frame())
+                best = window.get();
+        }
+        return best;
+    }
+
+
+    void editor_layer::handle_undo_shortcuts() {
+
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!io.KeyCtrl || io.KeyAlt || io.WantTextInput)                   // a focused text field handles Ctrl+Z itself
+            return;
+
+        if (m_simulation_state != GLT::system_state::idle)
+            return;
+
+        const bool undo_pressed = ImGui::IsKeyPressed(ImGuiKey_Z) && !io.KeyShift;
+        const bool redo_pressed = ImGui::IsKeyPressed(ImGuiKey_Y) || (ImGui::IsKeyPressed(ImGuiKey_Z) && io.KeyShift);
+        if (!undo_pressed && !redo_pressed)
+            return;
+
+        base_window* target = undo_target();
+        if (!target)
+            return;
+
+        if (undo_pressed)
+            target->undo();
+        else
+            target->redo();
+    }
+
+
+    void editor_layer::render_undo_menu_items() {
+
+        base_window* target = undo_target();
+        undo_system::stack* history = target ? target->get_undo_stack() : nullptr;
+        const bool idle = m_simulation_state == GLT::system_state::idle;
+
+        const bool can_undo = idle && history && history->can_undo();
+        const bool can_redo = idle && history && history->can_redo();
+
+        const std::string undo_label = can_undo ? std::format("Undo {}", history->undo_name()) : std::string("Undo");
+        const std::string redo_label = can_redo ? std::format("Redo {}", history->redo_name()) : std::string("Redo");
+
+        if (ImGui::MenuItem(undo_label.c_str(), "Ctrl + Z", false, can_undo))
+            target->undo();
+
+        if (ImGui::MenuItem(redo_label.c_str(), "Ctrl + Y", false, can_redo))
+            target->redo();
     }
 
 
@@ -345,11 +422,11 @@ namespace GLT::editor {
 
             ImGui::SameLine();
             ImGui::SetCursorPosY(win_pad + (logo_side - menu_h) * 0.5f);
-            toolbar_menu("Edit", MAIN_MENU_BAR_POPUP, []{
-                if (ImGui::MenuItem("Undo", "Ctrl + Z"))                { /* TODO */ }
-                if (ImGui::MenuItem("Redo", "Ctrl + Y"))                { /* TODO */ }
+            toolbar_menu("Edit", MAIN_MENU_BAR_POPUP, [this]{
+                render_undo_menu_items();
                 ImGui::Separator();
-                if (ImGui::MenuItem("Preferences"))                     { /* TODO */ }
+                if (ImGui::MenuItem("Editor Settings...", "Ctrl + ,"))
+                    open_settings_window();
             });
 
             ImGui::SameLine();
@@ -395,70 +472,9 @@ namespace GLT::editor {
                 if (ImGui::MenuItem("Reset Layout"))
                     m_reset_layout = true;
                                 
-                ImGui::SeparatorText("Main color");
-                static ImVec4 backup_color;
-                static bool saved_palette_init = true;
-                static ImVec4 saved_palette[35] = {};
-
-                ImGui::Text("change main-color");
-                if (saved_palette_init) {
-                    for (size_t n = 0; n < ARRAY_SIZE(saved_palette); n++) {
-
-                        ImGui::ColorConvertHSVtoRGB((n / 34.f), .8f, .8f, saved_palette[n].x, saved_palette[n].y, saved_palette[n].z);
-                        saved_palette[n].w = 1.0f; // Alpha
-                    }
-                    saved_palette_init = false;
-                }
-
-                if (ImGui::ColorPicker4("##picker", (float*)&GLT::imgui_config::get_main_color_ref(), ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_NoSmallPreview))
-                    GLT::imgui_config::update_ui_colors(GLT::imgui_config::get_main_color_ref());
-
-                ImGui::SameLine();
-                ImGui::BeginGroup();
-                {
-                    ImGui::BeginGroup();
-                    {
-                        ImGui::Text("Current");
-                        ImGui::ColorButton("##current", GLT::imgui_config::get_main_color_ref(), ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_AlphaPreviewHalf, ImVec2(60, 40));
-                    }
-                    ImGui::EndGroup();
-                    ImGui::SameLine();
-                    ImGui::BeginGroup();
-                    {
-                        ImGui::Text("Previous");
-                        if (ImGui::ColorButton("##previous", backup_color, ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_AlphaPreviewHalf, ImVec2(60, 40)))
-                            GLT::imgui_config::update_ui_colors(backup_color);
-                    }
-                    ImGui::EndGroup();
-
-                    ImGui::Separator();
-                    ImGui::Text("Palette");
-                    for (size_t n = 0; n < ARRAY_SIZE(saved_palette); n++) {
-                        ImGui::PushID(n);
-                        if ((n % 5) != 0)
-                            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.y);
-
-                        ImGuiColorEditFlags palette_button_flags = ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoTooltip;
-                        if (ImGui::ColorButton("##palette", saved_palette[n], palette_button_flags, ImVec2(21, 21)))
-                            GLT::imgui_config::update_ui_colors(ImVec4(saved_palette[n].x, saved_palette[n].y, saved_palette[n].z, GLT::imgui_config::get_main_color_ref().w));
-
-                        // Allow user to drop colors into each palette entry. Note that ColorButton() is already a
-                        // drag source by default, unless specifying the ImGuiColorEditFlags_NoDragDrop flag
-                        if (ImGui::BeginDragDropTarget()) {
-
-                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(IMGUI_PAYLOAD_TYPE_COLOR_3F))
-                                memcpy((float*)&saved_palette[n], payload->Data, sizeof(float) * 3);
-
-                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(IMGUI_PAYLOAD_TYPE_COLOR_4F))
-                                memcpy((float*)&saved_palette[n], payload->Data, sizeof(float) * 4);
-
-                            ImGui::EndDragDropTarget();
-                        }
-
-                        ImGui::PopID();
-                    }
-                }
-                ImGui::EndGroup();
+                ImGui::SeparatorText("Appearance");
+                if (ImGui::MenuItem("Theme & Accent Color..."))
+                    open_settings_window("Appearance");
 
                 #if defined(DEBUG)
                     ImGui::SeparatorText("Debug");
@@ -615,69 +631,105 @@ namespace GLT::editor {
 
         ImGui::PopStyleVar();   // outer FramePadding
 
-        // Settings popup
-        if (idle && settings_btn_drawn) {
+        // Settings popup (same rows as the "Play in Editor" settings page)
+        constexpr f32 POPUP_W = 460.f;
+        if (idle && settings_btn_drawn)
             ImGui::SetNextWindowPos(ImVec2(settings_btn_min.x, settings_btn_max.y + 4.f), ImGuiCond_Appearing);
-            ImGui::SetNextWindowSizeConstraints(ImVec2(440.f, 180.f), ImVec2(FLT_MAX, FLT_MAX));
-        }
+        ImGui::SetNextWindowSizeConstraints(ImVec2(POPUP_W, 0.f), ImVec2(POPUP_W, FLT_MAX));
 
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.f, 10.f));
         if (ImGui::BeginPopup("##sim_settings_popup", ImGuiWindowFlags_AlwaysAutoResize)) {
 
             if (!idle)
                 ImGui::CloseCurrentPopup();
-
             else {
+                UI::settings_begin_page(nullptr);
+                if (render_simulation_settings())
+                    save_simulation_settings();
+                UI::settings_end_page();
 
-                // Fixed table width flips begin_table() into its fixed/stretch column mode - without this, ImGui's default SizingFixedFit
-                // collapses both columns to content width and the combo never gets room to grow
-                constexpr f32 TABLE_W = 420.f;
-                if (UI::begin_table("##sim_settings_tbl", false, ImVec2(TABLE_W, 0.f))) {
-
-                    const std::vector<std::string> mode_options = {
-                        "In current viewport",
-                        "In a new window",
-                    };
-                    int mode_idx = static_cast<int>(m_simulation_mode);
-                    if (UI::table_row("Mode", mode_idx, mode_options))
-                        m_simulation_mode = static_cast<simulation_mode>(mode_idx);
-
-                    // window count
-                    if (m_simulation_mode != simulation_mode::current_viewport) {
-                        int count = static_cast<int>(m_sim_window_count);
-                        if (UI::table_row_slider_int("Window count", count, 1, 4))
-                            m_sim_window_count = static_cast<u32>(count);
-                    }
-
-                    // ---- per-window config ----
-                    if (m_simulation_mode != simulation_mode::current_viewport) {
-
-                        auto& layout = m_sim_layouts[m_sim_window_count - 1];
-                        for (u32 index = 0; index < m_sim_window_count; index++) {
-
-                            auto& cfg = layout.windows[index];
-                            ImGui::PushID(static_cast<int>(index));
-
-                            ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::TextDisabled("Window %u", index + 1);
-                            ImGui::TableSetColumnIndex(1);
-                            ImGui::Separator();
-
-                            UI::table_row("Position", cfg.position, 1.f, 0.f, 8000.f);
-                            UI::table_row("Size", cfg.size, 1.f, 100.f, 8000.f);
-                            UI::table_row("Maximized", cfg.maximized);
-                            UI::table_row("VSync", cfg.vsync);
-
-                            ImGui::PopID();
-                        }
-                    }
-
-                    UI::end_table();
-                }
+                if (ImGui::Button("More settings..."))
+                    open_settings_window("Play in Editor");
             }
 
             ImGui::EndPopup();
         }
+        ImGui::PopStyleVar();
+    }
+
+
+    bool editor_layer::render_simulation_settings() {
+
+        static constexpr const char* MODES[] = { "Current viewport", "Separate windows" };
+        const sim_window_config default_window{};
+        bool changed = false;
+
+        UI::settings_begin_section("Where to play");
+        changed |= UI::settings_segmented("Run in", "The viewport you edit in, or one or more standalone game windows",
+            m_simulation_mode, simulation_mode::current_viewport, MODES);
+
+        if (m_simulation_mode == simulation_mode::new_window) {
+            i32 count = static_cast<i32>(m_sim_window_count);
+            if (UI::settings_slider("Window count", "For local multiplayer tests. Every count remembers its own layout", count, 1, 1, 4)) {
+                m_sim_window_count = static_cast<u32>(count);
+                changed = true;
+            }
+        }
+        UI::settings_end_section();
+
+        if (m_simulation_mode != simulation_mode::new_window)
+            return changed;
+
+        auto& layout = m_sim_layouts[m_sim_window_count - 1];
+        for (u32 index = 0; index < m_sim_window_count; index++) {
+
+            auto& cfg = layout.windows[index];
+            ImGui::PushID(static_cast<int>(index));
+
+            const std::string title = std::format("Window {}", index + 1);
+            UI::settings_begin_section(title.c_str());
+
+            glm::vec2 position{ cfg.position.x, cfg.position.y };
+            if (UI::settings_drag("Position", "Top left corner on the desktop, in pixels", position,
+                glm::vec2(default_window.position.x, default_window.position.y), 1.f, 0.f, 8000.f, "%.0f")) {
+                cfg.position = ImVec2(position.x, position.y);
+                changed = true;
+            }
+
+            glm::vec2 size{ cfg.size.x, cfg.size.y };
+            if (UI::settings_drag("Size", "In pixels", size, glm::vec2(default_window.size.x, default_window.size.y), 1.f, 100.f, 8000.f, "%.0f")) {
+                cfg.size = ImVec2(size.x, size.y);
+                changed = true;
+            }
+
+            changed |= UI::settings_toggle("Fullscreen", "Borderless window covering the whole monitor", cfg.maximized, default_window.maximized);
+            changed |= UI::settings_toggle("VSync", "Limit the frame rate to the monitor refresh rate", cfg.vsync, default_window.vsync);
+
+            UI::settings_end_section();
+            ImGui::PopID();
+        }
+
+        return changed;
+    }
+
+
+    void editor_layer::open_settings_window(std::string_view page) {
+
+        settings_window* window = nullptr;
+        for (auto& existing : m_windows)
+            if (!existing->should_close() && existing->get_window_title() == EDITOR_SETTINGS_TITLE)
+                window = static_cast<settings_window*>(existing.get());
+
+        if (!window) {
+            // Not via add_window(): settings open as a floating window instead of docking into the main dockspace
+            auto created = GLT::create_unique_ref<settings_window>(EDITOR_SETTINGS_TITLE, m_editor_settings_pages);
+            window = created.get();
+            m_windows.push_back(std::move(created));
+        } else
+            window->focus_window();
+
+        if (!page.empty())
+            window->select_page(page);
     }
 
 
@@ -847,6 +899,7 @@ namespace GLT::editor {
 
         GLT::application::get().get_project_ref().serialize_projects_data(GLT::serializer::option::save);
         save_simulation_settings();
+        editor_settings::get().serialize(GLT::serializer::option::save);
     }
 
 
@@ -890,20 +943,26 @@ namespace GLT::editor {
 
     void editor_layer::add_notification(const notification_event& event) {
 
+        const auto& cfg = editor_settings::get().notifications;
+        if (!cfg.enabled)
+            return;
+
+        const f32 lifetime = display_time_for(event.get_severity());       // < 0 => persistent
         notification notif{
             .title = event.get_title(),
             .description = event.get_description(),
             .severity = event.get_severity(),
-            .lifetime = display_time_for(notif.severity),      // < 0 => persistent
-            .initial_lifetime = notif.lifetime,
+            .lifetime = lifetime,
+            .initial_lifetime = lifetime,
             .id = m_next_notification_id++,
             .dismissed = false,
         };
         m_notifications.push_back(std::move(notif));
 
         // Hard cap the visible stack - drop the oldest first (front of the vector)
-        if (m_notifications.size() > MAX_NOTIFICATIONS)
-            m_notifications.erase(m_notifications.begin(), m_notifications.begin() + (m_notifications.size() - MAX_NOTIFICATIONS));
+        const size_t max_visible = static_cast<size_t>(std::max(1, cfg.max_visible));
+        if (m_notifications.size() > max_visible)
+            m_notifications.erase(m_notifications.begin(), m_notifications.begin() + static_cast<std::ptrdiff_t>(m_notifications.size() - max_visible));
     }
 
 
@@ -1022,15 +1081,16 @@ namespace GLT::editor {
 
     f32 editor_layer::display_time_for(GLT::logger::severity sev) {
 
+        const auto& cfg = editor_settings::get().notifications;
         using sev_t = GLT::logger::severity;
         switch (sev) {
-            case sev_t::trace:      return  2.0f;
-            case sev_t::debug:      return  3.0f;
-            case sev_t::info:       return  4.5f;
-            case sev_t::warn:       return  6.5f;
-            case sev_t::error:      return  9.0f;
+            case sev_t::trace:      return cfg.info_seconds * 0.5f;
+            case sev_t::debug:      return cfg.info_seconds * 0.66f;
+            case sev_t::info:       return cfg.info_seconds;
+            case sev_t::warn:       return cfg.warning_seconds;
+            case sev_t::error:      return cfg.keep_errors ? -1.0f : cfg.error_seconds;
             case sev_t::fatal:      return -1.0f;   // never auto-dismiss
-            default:                return  4.5f;
+            default:                return cfg.info_seconds;
         }
     }
 
@@ -1122,7 +1182,7 @@ namespace GLT::editor {
         // an out-of-range enum value
         i32 mode_int = static_cast<i32>(m_simulation_mode);
         cfg.entry("mode", mode_int);
-        m_simulation_mode = static_cast<simulation_mode>(std::clamp<i32>(mode_int, 0, 2));
+        m_simulation_mode = static_cast<simulation_mode>(std::clamp<i32>(mode_int, 0, 1));
 
         i32 count_int = static_cast<i32>(m_sim_window_count);
         cfg.entry("window_count", count_int);
@@ -1197,7 +1257,7 @@ namespace GLT::editor {
         // The asset the primary session is running. Empty if nothing is loaded
         const auto world_asset = primary->world_asset();
 
-        const u32 count = (m_simulation_mode == simulation_mode::new_window) ? 1u : m_sim_window_count;
+        const u32 count = std::clamp<u32>(m_sim_window_count, 1u, 4u);
         const auto& layout = m_sim_layouts[count - 1];
         m_simulation_instances.reserve(count);
 

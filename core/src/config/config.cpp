@@ -13,7 +13,7 @@ namespace GLT::config {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr std::array<std::string_view, static_cast<size_t>(type::launcher) +1> s_file_type_names = {
+    constexpr std::array<std::string_view, static_cast<size_t>(type::editor) +1> s_file_type_names = {
         "ui",
         "imgui",
         "input",
@@ -21,6 +21,7 @@ namespace GLT::config {
         "plugin",
         "project",
         "launcher",
+        "editor",
     };
 
     // MACROS ==========================================================================================================
@@ -50,7 +51,7 @@ namespace GLT::config {
         VALIDATE(!error, return false, "", "Failed to create config dir [{}]: [{}]", (config_path.generic_string(), error.message()))
 
         bool success = true;
-        for (int index = 0; index <= static_cast<int>(type::launcher); index++) {
+        for (int index = 0; index <= static_cast<int>(type::editor); index++) {
 
             std::filesystem::path file_path = config_path / (file_type_to_string(static_cast<type>(index)) + FILE_EXTENSION_CONFIG);
             std::error_code error{};

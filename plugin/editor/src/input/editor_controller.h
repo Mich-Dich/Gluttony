@@ -41,8 +41,7 @@ namespace GLT::editor::input {
 
     private:
 
-        f32                                             m_move_speed = 0.15f;                       // scroll-adjustable
-        f32                                             m_look_sensitivity = 0.01f;                 // degrees per input unit
+        // speed / sensitivity / inversion come from editor_settings::camera (the scroll wheel changes the stored speed)
         handle                                          m_move_action_handle = INVALID_HANDLE;
         handle                                          m_look_action_handle = INVALID_HANDLE;
         handle                                          m_scroll_action_handle = INVALID_HANDLE;

@@ -55,7 +55,23 @@ namespace GLT::editor {
         m_window_state_cache.panding = true;
     }
 
+
+    undo_system::stack* base_window::get_undo_stack() noexcept  { return m_enable_undo_system ? &m_undo_stack : nullptr; }
+
+
+    bool base_window::undo()                                    { return m_enable_undo_system && m_undo_stack.undo(); }
+
+
+    bool base_window::redo()                                    { return m_enable_undo_system && m_undo_stack.redo(); }
+
     // CLASS PROTECTED =================================================================================================
+
+    void base_window::track_focus() {
+
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+            m_last_focus_frame = ImGui::GetFrameCount();
+    }
+
 
     void base_window::apply_pending_dock(const bool force) {
 

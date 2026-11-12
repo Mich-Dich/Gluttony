@@ -73,6 +73,21 @@ namespace GLT::world::world_ecs_entt::component {
     ecs_world* as_entt(i_world& world) { return static_cast<ecs_world*>(&world); }
 
 
+    // Angle stored in radians, edited in degrees
+    bool property_angle(const char* label, f32& radians, const f32 max_degrees, const char* desc = nullptr, const f32* default_radians = nullptr) {
+
+        const bool is_default = !default_radians || radians == *default_radians;
+        return GLT::UI::property_custom(label, [&](f32 width) {
+            f32 degrees = glm::degrees(radians);
+            ImGui::SetNextItemWidth(width);
+            if (!ImGui::DragFloat("##angle", &degrees, 0.25f, 0.f, max_degrees, "%.1f deg", ImGuiSliderFlags_AlwaysClamp))
+                return false;
+            radians = glm::radians(degrees);
+            return true;
+        }, desc, is_default, [&]() { radians = *default_radians; });
+    }
+
+
     // Copies the light and the entity's WORLD rotation onto the world entity, then removes the light from [id]
     void move_light_to_world(i_world& world, entity_id id) {
 
@@ -106,13 +121,21 @@ namespace GLT::world::world_ecs_entt::component {
                 [](i_world& world, entity_id id) {
                     auto* t = fetch<component::transform>(world, id);
                     if (!t) return;
+                    static const component::transform defaults{};
+
                     ImGui::PushID("transform_component");
-                    if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
-                        GLT::UI::table_row("position", t->position);
-                        GLT::UI::table_row("rotation", t->rotation);
-                        GLT::UI::table_row("scale",    t->scale);
-                        GLT::UI::end_table();
-                    }
+                    GLT::UI::property_drag("Position", t->position, 0.05f, 0.f, 0.f, "%.2f", "Relative to the parent", &defaults.position);
+
+                    // stored as radians, edited in degrees
+                    glm::vec3 degrees = glm::degrees(t->rotation);
+                    const bool rotation_default = t->rotation == defaults.rotation;
+                    const bool rotated = GLT::UI::property_custom("Rotation", [&](f32 width) {
+                        return GLT::UI::drag_axes("##rotation", &degrees.x, 3, 0.5f, 0.f, 0.f, "%.1f", width);
+                    }, "Euler angles in degrees", rotation_default, [&]() { degrees = glm::vec3(0.f); });
+                    if (rotated)
+                        t->rotation = glm::radians(degrees);
+
+                    GLT::UI::property_drag("Scale", t->scale, 0.01f, 0.f, 0.f, "%.2f", nullptr, &defaults.scale);
                     ImGui::PopID();
                 },
 
@@ -138,15 +161,16 @@ namespace GLT::world::world_ecs_entt::component {
                     if (!mr) return;
 
                     auto* entt = as_entt(world);
+                    // component::mesh holds asset refs, so no static default instance: plain values instead
+                    static const bool                       default_visible = true;
+                    static const physics::motion_type       default_motion = physics::motion_type::static_body;
+                    static const bool                       default_use_mesh_material = true;
+                    static const physics::physics_material  default_material{};
 
                     ImGui::PushID("mesh_component");
-                    if (!GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
-                        ImGui::PopID();
-                        return;
-                    }
 
                     const GLT::asset::handle old_mesh_handle = mr->mesh.get();
-                    GLT::UI::table_row_asset_picker("Mesh", mr->mesh, GLT::asset::core_types::static_mesh);
+                    GLT::UI::property_asset("Mesh", mr->mesh, GLT::asset::core_types::static_mesh);
                     const bool mesh_changed = mr->mesh.get() != old_mesh_handle;
 
                     u32  submesh_count = 0;
@@ -158,7 +182,7 @@ namespace GLT::world::world_ecs_entt::component {
                         }
                     }
 
-                    GLT::UI::table_row("visible", mr->visible);
+                    GLT::UI::property_toggle("Visible", mr->visible, nullptr, &default_visible);
 
                     if (submesh_count > 0) {
                         if (!mr->material_overrides.empty() && !mr->overrides_match(submesh_count))
@@ -166,7 +190,8 @@ namespace GLT::world::world_ecs_entt::component {
 
                         if (mr->material_overrides.empty()) {
                             auto new_material = GLT::asset::asset_ref{};
-                            if (GLT::UI::table_row_asset_picker("Material Override", new_material, GLT::asset::core_types::material)) {
+                            if (GLT::UI::property_asset("Material", new_material, GLT::asset::core_types::material,
+                                "Override the material of every submesh. Empty = materials of the mesh asset")) {
                                 mr->begin_override(submesh_count);
                                 for (auto& slot : mr->material_overrides)
                                     slot = new_material;
@@ -175,16 +200,16 @@ namespace GLT::world::world_ecs_entt::component {
                             for (u32 i = 0; i < submesh_count; ++i) {
                                 ImGui::PushID(static_cast<int>(i));
                                 char label[24];
-                                std::snprintf(label, sizeof(label), "Material [%u]", i);
-                                GLT::UI::table_row_asset_picker(label, mr->material_overrides[i], GLT::asset::core_types::material);
+                                std::snprintf(label, sizeof(label), "Material %u", i);
+                                GLT::UI::property_asset(label, mr->material_overrides[i], GLT::asset::core_types::material);
                                 ImGui::PopID();
                             }
-                            if (GLT::UI::gray_button("Reset material overrides"))
+                            if (GLT::UI::subtle_button("Use the mesh's materials", ImVec2(-FLT_MIN, 0.f)))
                                 mr->material_overrides.clear();
                         }
                     } else if (!mr->material_overrides.empty()) {
-                        ImGui::TextDisabled("(%zu pending override slot(s) - mesh asset not loaded)", mr->material_overrides.size());
-                        if (GLT::UI::gray_button("Clear material overrides"))
+                        ImGui::TextDisabled("%zu override slot(s) waiting for the mesh asset to load", mr->material_overrides.size());
+                        if (GLT::UI::subtle_button("Clear material overrides", ImVec2(-FLT_MIN, 0.f)))
                             mr->material_overrides.clear();
                     }
 
@@ -193,13 +218,15 @@ namespace GLT::world::world_ecs_entt::component {
                         const physics::physics_material old_material = mr->physics_material;
                         const bool                      old_use_mesh = mr->use_mesh_material;
 
-                        GLT::UI::table_row("mobility",          mr->motion, GLT::util::enum_values<physics::motion_type>);
-                        GLT::UI::table_row("use mesh material", mr->use_mesh_material);
+                        GLT::UI::property_enum("Mobility", mr->motion, "Static never moves, kinematic is moved by code, dynamic by physics",
+                            &default_motion);
+                        GLT::UI::property_toggle("Mesh material", mr->use_mesh_material, "Use the physics material authored on the mesh asset",
+                            &default_use_mesh_material);
 
                         if (!mr->use_mesh_material) {
-                            GLT::UI::table_row("friction",    mr->physics_material.friction,    0.01f, 0.f, 10.f);
-                            GLT::UI::table_row("restitution", mr->physics_material.restitution, 0.01f, 0.f, 1.f);
-                            GLT::UI::table_row("density",     mr->physics_material.density,     1.f,   1.f, 100000.f);
+                            GLT::UI::property_drag("Friction",    mr->physics_material.friction,    0.01f, 0.f, 10.f, "%.2f", nullptr, &default_material.friction);
+                            GLT::UI::property_drag("Restitution", mr->physics_material.restitution, 0.01f, 0.f, 1.f,  "%.2f", "Bounciness", &default_material.restitution);
+                            GLT::UI::property_drag("Density",     mr->physics_material.density,     1.f,   1.f, 100000.f, "%.0f", "kg / m^3", &default_material.density);
                         }
 
                         const bool motion_changed = mr->motion != old_motion;
@@ -212,7 +239,6 @@ namespace GLT::world::world_ecs_entt::component {
                             entt->rebuild_physics_body(id);
                     }
 
-                    GLT::UI::end_table();
                     ImGui::PopID();
                 },
 
@@ -248,11 +274,9 @@ namespace GLT::world::world_ecs_entt::component {
                 [](i_world& world, entity_id id) {
                     auto* n = fetch<component::name>(world, id);
                     if (!n) return;
-                    static bool enable_input = false;
-                    if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
-                        GLT::UI::table_row("name", n->name, enable_input);
-                        GLT::UI::end_table();
-                    }
+                    ImGui::PushID("name_component");
+                    GLT::UI::property_text("Name", n->name, "Shown in the Outliner", "Unnamed");
+                    ImGui::PopID();
                 },
                 {}, {}));
     }
@@ -267,12 +291,17 @@ namespace GLT::world::world_ecs_entt::component {
                 [](i_world& world, entity_id id) {
                     const auto parent = world.parent_of(id);
                     const auto kids   = world.children_of(id);
-                    const auto start_pos = ImGui::GetCursorPosX();
-                    const float avail = ImGui::GetContentRegionAvail().x;
-                    ImGui::TextDisabled("Parent: %s", parent.is_valid() ? "(set)" : "(none)");
-                    ImGui::SameLine();
-                    ImGui::SetCursorPosX(start_pos + avail / 2);
-                    ImGui::TextDisabled("Children: %zu", kids.size());
+
+                    std::string parent_name = "None";
+                    if (parent.is_valid()) {
+                        const auto name = world.entity_name(parent);
+                        parent_name = name.empty() ? std::format("Entity {}", parent.index) : std::string(name);
+                    }
+
+                    ImGui::PushID("hierarchy_component");
+                    GLT::UI::property_value("Parent", parent_name, "Change it by dragging in the Outliner");
+                    GLT::UI::property_value("Children", std::to_string(kids.size()));
+                    ImGui::PopID();
                 },
                 {}, {}));
     }
@@ -288,22 +317,25 @@ namespace GLT::world::world_ecs_entt::component {
                     auto* audio = fetch<component::audio_source>(world, id);
                     if (!audio) return;
 
+                    static const GLT::asset::audio::source_config defaults{};
+                    static const bool default_autoplay = false;
+
                     ImGui::PushID("audio_source");
-                    if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
-                        GLT::UI::table_row_asset_picker("clip", audio->clip, GLT::asset::core_types::audio);
-                        GLT::UI::table_row("autop play",   audio->autoplay);
-                        GLT::UI::table_row("volume",       audio->config.volume);
-                        GLT::UI::table_row("pan",          audio->config.pan, 0.01f, -1.f, 1.f);
-                        GLT::UI::table_row("loop",         audio->config.loop);
-                        GLT::UI::table_row("play speed",   audio->config.play_speed);
-                        GLT::UI::table_row("is 3d",        audio->config.is_3d);
-                        GLT::UI::table_row_slider("position", audio->config.position);
-                        GLT::UI::table_row_slider("velocity", audio->config.velocity);
-                        GLT::UI::table_row("min distance",      audio->config.min_distance,      0.01f, 0.f, 1000.f);
-                        GLT::UI::table_row("max distance",      audio->config.max_distance,      0.01f, 0.f, 1000.f);
-                        GLT::UI::table_row("rolloff factor",    audio->config.rolloff_factor,    0.01f, 0.f, 1000.f);
-                        GLT::UI::table_row("attenuation factor", audio->config.attenuation, GLT::util::enum_values<GLT::asset::audio::attenuation_model>);
-                        GLT::UI::end_table();
+                    GLT::UI::property_asset("Clip", audio->clip, GLT::asset::core_types::audio);
+                    GLT::UI::property_toggle("Play on start", audio->autoplay, "Starts playing when the simulation starts", &default_autoplay);
+                    GLT::UI::property_toggle("Loop", audio->config.loop, nullptr, &defaults.loop);
+                    GLT::UI::property_slider("Volume", audio->config.volume, 0.f, 2.f, "%.2f", nullptr, &defaults.volume);
+                    GLT::UI::property_slider("Pan", audio->config.pan, -1.f, 1.f, "%.2f", "-1 left, 1 right (2D only)", &defaults.pan);
+                    GLT::UI::property_drag("Speed", audio->config.play_speed, 0.01f, 0.01f, 10.f, "%.2fx", "Playback speed, also changes the pitch", &defaults.play_speed);
+
+                    GLT::UI::property_toggle("3D", audio->config.is_3d, "Volume and panning depend on the listener position", &defaults.is_3d);
+                    if (audio->config.is_3d) {
+                        GLT::UI::property_drag("Position", audio->config.position, 0.05f, 0.f, 0.f, "%.2f", nullptr, &defaults.position);
+                        GLT::UI::property_drag("Velocity", audio->config.velocity, 0.05f, 0.f, 0.f, "%.2f", "For the doppler effect", &defaults.velocity);
+                        GLT::UI::property_drag("Min distance", audio->config.min_distance, 0.01f, 0.f, 1000.f, "%.2f", "Full volume inside", &defaults.min_distance);
+                        GLT::UI::property_drag("Max distance", audio->config.max_distance, 0.01f, 0.f, 1000.f, "%.2f", "Silent beyond", &defaults.max_distance);
+                        GLT::UI::property_drag("Rolloff", audio->config.rolloff_factor, 0.01f, 0.f, 1000.f, "%.2f", "How fast the volume falls off", &defaults.rolloff_factor);
+                        GLT::UI::property_enum("Attenuation", audio->config.attenuation, nullptr, &defaults.attenuation);
                     }
                     ImGui::PopID();
 
@@ -326,19 +358,17 @@ namespace GLT::world::world_ecs_entt::component {
                     auto* cam = fetch<component::camera>(world, id);
                     if (!cam) return;
 
+                    static const component::camera defaults{};
+
                     ImGui::PushID("camera_component");
-                    if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
-                        GLT::UI::table_row("fov",        cam->fov,        0.5f,  1.f,     179.f);
-                        GLT::UI::table_row("near plane", cam->near_plane, 0.01f, 0.001f,  100.f);
-                        GLT::UI::table_row("far plane",  cam->far_plane,  1.f,   0.01f,   100000.f);
+                    GLT::UI::property_slider("Field of view", cam->fov, 1.f, 179.f, "%.0f deg", "Vertical opening angle", &defaults.fov);
+                    GLT::UI::property_drag("Near plane", cam->near_plane, 0.01f, 0.001f, 100.f, "%.3f", "Closer things are cut off", &defaults.near_plane);
+                    GLT::UI::property_drag("Far plane", cam->far_plane, 1.f, 0.01f, 100000.f, "%.0f", "Farther things are cut off", &defaults.far_plane);
 
-                        auto* primary_session = GLT::application::get().get_game_layer_ptr()->get_primary_session();
-                        bool is_active = (primary_session->get_editor_camera() == id);
-                        if (GLT::UI::table_row("active camera", is_active))
-                            primary_session->set_editor_camera(is_active ? id : INVALID_ENTITY);
-
-                        GLT::UI::end_table();
-                    }
+                    auto* primary_session = GLT::application::get().get_game_layer_ptr()->get_primary_session();
+                    bool is_active = (primary_session->get_editor_camera() == id);
+                    if (GLT::UI::property_toggle("Viewport camera", is_active, "The editor viewport looks through this camera"))
+                        primary_session->set_editor_camera(is_active ? id : INVALID_ENTITY);
                     ImGui::PopID();
 
                     cam->near_plane = GLT::math::clamp(cam->near_plane, 0.001f, cam->far_plane);
@@ -366,22 +396,20 @@ namespace GLT::world::world_ecs_entt::component {
                     auto* light = fetch<component::light>(world, id);
                     if (!light) return;
 
+                    static const component::light defaults{};
+
                     ImGui::PushID("light_component");
-                    if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
-                        GLT::UI::table_row("type",      light->type, GLT::util::enum_values<GLT::world::light_type>);
-                        GLT::UI::table_row("color",     light->color);
-                        GLT::UI::table_row("intensity", light->intensity, 0.01f, 0.f, 1000.f);
+                    GLT::UI::property_enum("Type", light->type, "Directional = sun, point = bulb, spot = cone", &defaults.type);
+                    GLT::UI::property_color("Color", light->color, "Linear RGB", &defaults.color);
+                    GLT::UI::property_drag("Intensity", light->intensity, 0.01f, 0.f, 1000.f, "%.2f", nullptr, &defaults.intensity);
 
-                        if (light->type != GLT::world::light_type::directional)
-                            GLT::UI::table_row("radius", light->radius, 0.1f, 0.01f, 100000.f);
+                    if (light->type != GLT::world::light_type::directional)
+                        GLT::UI::property_drag("Radius", light->radius, 0.1f, 0.01f, 100000.f, "%.1f", "Light reaches up to this distance", &defaults.radius);
 
-                        if (light->type == GLT::world::light_type::spot) {
-                            GLT::UI::table_row("inner cone", light->inner_cone_angle, 0.005f, 0.f, glm::pi<f32>());
-                            GLT::UI::table_row("outer cone", light->outer_cone_angle, 0.005f, 0.f, glm::pi<f32>());
-                            light->inner_cone_angle = GLT::math::clamp(light->inner_cone_angle, 0.f, light->outer_cone_angle);
-                        }
-
-                        GLT::UI::end_table();
+                    if (light->type == GLT::world::light_type::spot) {
+                        property_angle("Inner cone", light->inner_cone_angle, 180.f, "Full brightness inside", &defaults.inner_cone_angle);
+                        property_angle("Outer cone", light->outer_cone_angle, 180.f, "Fades out towards this angle", &defaults.outer_cone_angle);
+                        light->inner_cone_angle = GLT::math::clamp(light->inner_cone_angle, 0.f, light->outer_cone_angle);
                     }
 
                     // A sun on a normal entity can be streamed out with its region. Offer to move it to the world entity
@@ -390,7 +418,7 @@ namespace GLT::world::world_ecs_entt::component {
 
                         ImGui::Spacing();
                         ImGui::TextDisabled("This sun disappears when its region streams out.");
-                        if (ImGui::Button("Move to World")) {
+                        if (GLT::UI::subtle_button("Move to World", ImVec2(-FLT_MIN, 0.f))) {
                             move_light_to_world(world, id);
                             ImGui::PopID();
                             return;                                         // [light] no longer exists on this entity
@@ -439,14 +467,13 @@ namespace GLT::world::world_ecs_entt::component {
                     auto* sky = fetch<component::sky>(world, id);
                     if (!sky) return;
 
+                    static const component::sky defaults{};
+
                     ImGui::PushID("sky_component");
-                    if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
-                        GLT::UI::table_row("intensity",     sky->intensity,     0.01f, 0.f, 10.f);
-                        GLT::UI::table_row("haze",          sky->haze,          0.01f, 0.f, 10.f);
-                        GLT::UI::table_row("ground albedo", sky->ground_albedo, 0.005f, 0.f, 1.f);
-                        GLT::UI::table_row("sun disk size", sky->sun_disk_size, 0.01f, 0.f, 5.f);
-                        GLT::UI::end_table();
-                    }
+                    GLT::UI::property_drag("Intensity", sky->intensity, 0.01f, 0.f, 10.f, "%.2f", "Sky brightness relative to the sun", &defaults.intensity);
+                    GLT::UI::property_drag("Haze", sky->haze, 0.01f, 0.f, 10.f, "%.2f", "Dust and moisture in the air", &defaults.haze);
+                    GLT::UI::property_slider("Ground albedo", sky->ground_albedo, 0.f, 1.f, "%.2f", "How much light the ground below the horizon reflects", &defaults.ground_albedo);
+                    GLT::UI::property_drag("Sun disk size", sky->sun_disk_size, 0.01f, 0.f, 5.f, "%.2f deg", "0 hides the sun disk", &defaults.sun_disk_size);
                     ImGui::TextDisabled("Driven by the world's directional light (rotate the World to move the sun).");
                     ImGui::PopID();
                 },
@@ -473,15 +500,13 @@ namespace GLT::world::world_ecs_entt::component {
                     auto* ambient = fetch<component::ambient_light>(world, id);
                     if (!ambient) return;
 
+                    static const component::ambient_light defaults{};
+
                     ImGui::PushID("ambient_light_component");
-                    if (GLT::UI::begin_table(GLT::asset::COMPONENT_DATA_TABLE_NAME, false)) {
-                        GLT::UI::table_row("intensity", ambient->intensity, 0.01f, 0.f, 20.f);
-                        const bool has_sky = fetch<component::sky>(world, id) != nullptr;
-                        if (!has_sky) {
-                            GLT::UI::table_row_color("sky colour",    ambient->sky_color);
-                            GLT::UI::table_row_color("ground colour", ambient->ground_color);
-                        }
-                        GLT::UI::end_table();
+                    GLT::UI::property_drag("Intensity", ambient->intensity, 0.01f, 0.f, 20.f, "%.2f", nullptr, &defaults.intensity);
+                    if (fetch<component::sky>(world, id) == nullptr) {
+                        GLT::UI::property_color("Sky color", ambient->sky_color, "Light from above", &defaults.sky_color);
+                        GLT::UI::property_color("Ground color", ambient->ground_color, "Light from below", &defaults.ground_color);
                     }
                     if (fetch<component::sky>(world, id))
                         ImGui::TextDisabled("Scales the image based lighting from the sky.");

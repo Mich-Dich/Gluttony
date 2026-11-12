@@ -24,30 +24,23 @@ namespace GLT::undo_system {
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     template <typename T>
-    FORCE_INLINE_R step make_value_step(undo_id id, void* obj, step::setter_fn setter, const T& before, const T& after, 
-        bool can_combine, f32 now) {
+    step make_value_step(std::string name, T* target, T before, T after, std::function<void()> on_change) {
 
-        static_assert(std::is_trivially_copyable_v<T> && sizeof(T) <= 16, "Use the callback path for non-POD or > 16 byte values");
-        step s;
-        s.id = id; s.object = obj; s.setter = setter;
-        s.size = (u8)sizeof(T);
-        std::memcpy(s.before, &before, sizeof(T));
-        std::memcpy(s.after,  &after,  sizeof(T));
-        s.can_combine = can_combine;
-        s.timestamp = now;
-        return s;
-    }
+        static_assert(std::is_copy_constructible_v<T> && std::is_copy_assignable_v<T>, "make_value_step needs a copyable value");
 
-    template <typename Do, typename Undo>
-    FORCE_INLINE_R step make_callback_step(undo_id id, Do&& d, Undo&& u, f32 now) {
-        
-        step s;
-        s.id = id;
-        s.do_fn = std::forward<Do>(d);
-        s.undo_fn = std::forward<Undo>(u);
-        s.can_combine = false;   // callbacks never merge
-        s.timestamp = now;
-        return s;
+        step result;
+        result.name = std::move(name);
+        result.undo = [target, value = std::move(before), on_change]() {
+            *target = value;
+            if (on_change)
+                on_change();
+        };
+        result.redo = [target, value = std::move(after), on_change]() {
+            *target = value;
+            if (on_change)
+                on_change();
+        };
+        return result;
     }
 
     // TEMPLATE CLASS IMPLEMENTATION ===================================================================================
