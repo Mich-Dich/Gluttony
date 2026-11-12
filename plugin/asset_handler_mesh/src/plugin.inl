@@ -1,6 +1,7 @@
 #pragma once
 
 #include <asset/i_asset_registry.h>
+#include <asset/mesh_cluster.h>
 
 
 
@@ -195,6 +196,32 @@ namespace GLT::asset::handler::mesh {
             }
         }
 
+        // ---- virtual geometry (optional) ----------------------------------------------------------------------------
+        //
+        // A mesh uses discrete LODs or virtual geometry, never both (asset::mesh::detail_mode): the settings say which,
+        // and cluster data is only kept for a mesh in virtual geometry mode. Settings alone are fine (clusters not built
+        // yet). The three generated chunks come together or not at all; anything that could make the renderer read
+        // outside the mesh drops them, and the mesh renders with its discrete LODs
+        if (const auto settings = reader.get_as<GLT::asset::mesh::cluster_settings>(GLT::asset::mesh::CHUNK_CLUSTER_SETTINGS); settings.size() == 1) {
+            asset->virtual_geometry = settings[0];
+            GLT::asset::mesh::sanitize(asset->virtual_geometry);
+        }
+
+        if (asset->detail() == GLT::asset::mesh::detail_mode::virtual_geometry) {
+            const auto clusters = reader.get_as<GLT::asset::mesh::cluster>(GLT::asset::mesh::CHUNK_CLUSTERS);
+            const auto cluster_idx = reader.get_as<u32>(GLT::asset::mesh::CHUNK_CLUSTER_INDICES);
+            const auto cluster_subs = reader.get_as<GLT::asset::mesh::cluster_submesh>(GLT::asset::mesh::CHUNK_CLUSTER_SUBMESHES);
+
+            if (GLT::asset::mesh::validate_clusters(clusters, cluster_idx, cluster_subs, asset->vertices.size(), asset->submeshes.size())) {
+                asset->clusters.assign(clusters.begin(), clusters.end());
+                asset->cluster_indices.assign(cluster_idx.begin(), cluster_idx.end());
+                asset->cluster_submeshes.assign(cluster_subs.begin(), cluster_subs.end());
+            } else if (!clusters.empty()) {
+                LOG(warn, "[{}] virtual geometry chunks are inconsistent ({} clusters, {} indices, {} submesh entries) - using the LODs",
+                    info.name, clusters.size(), cluster_idx.size(), cluster_subs.size());
+            }
+        }
+
         // ---- bounds -------------------------------------------------------------------------------------------------
         if (const auto bound = reader.get_as<GLT::AABB>(GLT::asset::mesh::CHUNK_BOUNDS); bound.size() == 1) {
 
@@ -223,9 +250,9 @@ namespace GLT::asset::handler::mesh {
         for (size_t i = 0; i < asset->submeshes.size(); ++i)
             asset->submeshes[i].material = (i < dep_count) ? info.dependencies[i] : INVALID_HANDLE;
 
-        LOG(trace, "loaded [{}] - {} verts, {} tris, {} submeshes, {} colliders, {} LODs",
+        LOG(trace, "loaded [{}] - {} verts, {} tris, {} submeshes, {} colliders, {} LODs, {} clusters",
             info.name, asset->vertices.size(), asset->indices.size() / 3, asset->submeshes.size(),
-            asset->colliders.size(), asset->lod_count());
+            asset->colliders.size(), asset->lod_count(), asset->clusters.size());
 
         return GLT::unique_ref<GLT::asset::i_runtime_asset>(std::move(asset));
     }
@@ -291,6 +318,19 @@ namespace GLT::asset::handler::mesh {
                 out.write_chunk(GLT::asset::mesh::CHUNK_LOD_VERTICES, std::as_bytes(std::span{ m.lod_vertices }));
         }
 
+        // ---- virtual geometry -----------------------------------------------------------------------------------------
+        //
+        // Same rule as the LODs: settings always, generated data only when deserialize() would accept it (the mesh is in
+        // virtual geometry mode and the hierarchy is consistent)
+        out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_SETTINGS, std::as_bytes(std::span{ &m.virtual_geometry, 1 }));
+        if (m.detail() == GLT::asset::mesh::detail_mode::virtual_geometry && m.has_clusters()
+            && GLT::asset::mesh::validate_clusters(m.clusters, m.cluster_indices, m.cluster_submeshes, m.vertices.size(), m.submeshes.size())) {
+
+            out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTERS,          std::as_bytes(std::span{ m.clusters }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_INDICES,   std::as_bytes(std::span{ m.cluster_indices }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_SUBMESHES, std::as_bytes(std::span{ m.cluster_submeshes }));
+        }
+
         // ---- material dependencies (one per submesh, positionally) ----------------------------------------------------
         //
         // deserialize() reads info.dependencies[i] for submesh[i].material, so save() must re-emit the exact same slot
@@ -320,8 +360,9 @@ namespace GLT::asset::handler::mesh {
         if (!info.name.empty())
             out.set_name(info.name);
 
-        LOG(trace, "serialized [{}] - {} verts, {} tris, {} submeshes, {} colliders, {} LODs",
-            info.name, m.vertices.size(), m.indices.size() / 3, m.submeshes.size(), m.colliders.size(), m.lod_count());
+        LOG(trace, "serialized [{}] - {} verts, {} tris, {} submeshes, {} colliders, {} LODs, {} clusters",
+            info.name, m.vertices.size(), m.indices.size() / 3, m.submeshes.size(), m.colliders.size(), m.lod_count(),
+            m.has_clusters() ? m.clusters.size() : size_t{ 0 });
 
         return {};
     }

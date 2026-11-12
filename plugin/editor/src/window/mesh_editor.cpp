@@ -4,8 +4,10 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstring>
 #include <unordered_set>
 
 #include <util/util.h>
@@ -55,6 +57,17 @@ namespace GLT::editor {
 
     // LOD wireframe overlay: edges above this are not drawn (debug lines are immediate, one virtual call each)
     constexpr u32                                   MAX_WIREFRAME_EDGES = 100000;     // renderer MAX_DEBUG_VERTICES = 262144
+
+    // m_wire_lod while the wireframe cache holds the triangles of a cluster selection instead of a discrete level
+    constexpr i32                                   WIRE_LEVEL_CLUSTERS = -3;
+
+    // Cluster bounds overlay: one wire sphere (3 circles of CLUSTER_BOUNDS_SEGMENTS lines) per selected cluster, the
+    // nearest ones first
+    constexpr u32                                   MAX_CLUSTER_BOUNDS = 1000;
+    constexpr u32                                   CLUSTER_BOUNDS_SEGMENTS = 16;
+
+    // Render modes of this category are the renderer's virtual geometry debug views (the editor only knows the name)
+    constexpr const char*                           VIRTUAL_GEOMETRY_MODE_CATEGORY = "Virtual Geometry";
 
     // MACROS ==========================================================================================================
 
@@ -426,6 +439,9 @@ namespace GLT::editor {
         if (m_lod_job.valid())
             m_lod_job.wait();                   // works on copies; just make sure no result is applied to the next mesh
         m_lod_job = {};
+        if (m_cluster_job.valid())
+            m_cluster_job.wait();               // same for a running cluster build
+        m_cluster_job = {};
 
         destroy_preview();
 
@@ -472,6 +488,7 @@ namespace GLT::editor {
     void mesh_editor_window::update(const f32 delta_time) {
 
         poll_lod_generation();
+        poll_cluster_build();
 
         if (!m_preview_scene)
             return;
@@ -863,7 +880,7 @@ namespace GLT::editor {
                 row_options{ .right_text = tris.c_str(), .icon = &icon, .bold = true }))
                 select_mesh();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-                ImGui::SetTooltip("Mesh settings: summary, level of detail, preview");
+                ImGui::SetTooltip("Mesh settings: summary, geometry detail (LODs or virtual geometry), preview");
         }
 
         // ---- submeshes ----
@@ -890,24 +907,41 @@ namespace GLT::editor {
                 ImGui::TextDisabled("  none");
         }
 
-        // ---- LOD levels (click = lock the preview to that level, click again = automatic) ----
-        outliner_section("LEVELS OF DETAIL", mesh->lod_count());
-        {
+        // ---- geometry detail: the levels of the active mode (click = lock the preview to that level, click again =
+        //      automatic). Virtual geometry: the discrete levels are the fallback ----
+        const bool virtual_mode = mesh->detail() == GLT::asset::mesh::detail_mode::virtual_geometry;
+        if (virtual_mode) {
+
+            outliner_section("VIRTUAL GEOMETRY", static_cast<u32>(mesh->clusters.size()));
+            const std::string clusters = m_cluster_job.valid() ? std::string("building...")
+                : (mesh->has_clusters() ? format_count(mesh->clusters.size()) + " clusters" : std::string("not built"));
+            if (outliner_row("##vg_auto", "Clusters", m_preview_lod < 0, row_options{ .right_text = clusters.c_str(), .dimmed = m_preview_lod >= 0 }))
+                set_preview_lod(-1);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("The preview draws the clusters its camera selects (zoom with the mouse wheel)");
+
+            outliner_section("FALLBACK LEVELS", mesh->lod_count());
+        } else {
+
+            outliner_section("LEVELS OF DETAIL", mesh->lod_count());
             if (outliner_row("##lod_auto", "Automatic", m_preview_lod < 0, row_options{ .right_text = "by screen size", .dimmed = m_preview_lod >= 0 }))
                 set_preview_lod(-1);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
                 ImGui::SetTooltip("The preview picks the level from its size on screen (zoom with the mouse wheel)");
-
+        }
+        {
             for (u32 level = 0; level < mesh->lod_count(); ++level) {
 
                 ImGui::PushID(static_cast<int>(level) + 0x1000);
                 const std::string label = std::format("LOD {}", level);
                 const std::string tris = format_count(mesh->lod_triangle_count(level)) + " tris";
                 const bool selected = (m_preview_lod == static_cast<i32>(level));
-                if (outliner_row("##lod", label.c_str(), selected, row_options{ .right_text = tris.c_str() }))
+                if (outliner_row("##lod", label.c_str(), selected, row_options{ .right_text = tris.c_str(), .dimmed = virtual_mode && !selected }))
                     set_preview_lod(selected ? -1 : static_cast<i32>(level));
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-                    ImGui::SetTooltip("Lock the preview to this level (click again for automatic)");
+                    ImGui::SetTooltip("%s", virtual_mode
+                        ? "Lock the preview to this fallback level (click again to see the clusters)"
+                        : "Lock the preview to this level (click again for automatic)");
                 ImGui::PopID();
             }
         }
@@ -1044,13 +1078,23 @@ namespace GLT::editor {
 
         auto registry = GLT::asset::registry::get_ref();
         auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
-        const std::string subtitle = mesh
-            ? std::format("Mesh · {} triangles · {} LODs", format_count(mesh->indices.size() / 3), mesh->lod_count())
-            : std::string("Mesh");
+        using GLT::asset::mesh::detail_mode;
+        const std::string subtitle = !mesh ? std::string("Mesh")
+            : (mesh->detail() == detail_mode::virtual_geometry
+                ? std::format("Mesh · {} triangles · Virtual geometry", format_count(mesh->indices.size() / 3))
+                : std::format("Mesh · {} triangles · {} LODs", format_count(mesh->indices.size() / 3), mesh->lod_count()));
         inspector_header(icon_manager::icon::mesh_asset, m_mesh_name.c_str(), subtitle);
 
         draw_mesh_summary_section();
-        draw_lod_section();
+
+        // One detail system per mesh: the switch, then only the cards of the mode it is in (the switch may change it)
+        draw_detail_mode_section();
+        if (mesh && mesh->detail() == detail_mode::virtual_geometry) {
+            draw_virtual_geometry_section();
+            draw_virtual_geometry_debug_section();
+        } else {
+            draw_lod_section();
+        }
         draw_mesh_bounds_section();
         draw_preview_settings_section();
         draw_lighting_section();
@@ -1221,8 +1265,17 @@ namespace GLT::editor {
             UI::property_value("Triangles", format_count(mesh->indices.size() / 3));
             UI::property_value("Vertices", format_count(mesh->vertices.size()));
             UI::property_value("Submeshes", std::to_string(mesh->submesh_count()));
-            UI::property_value("LOD levels", std::to_string(mesh->lod_count()));
-            UI::property_value("Memory", GLT::util::format_bytes(mesh->memory_usage()), "CPU side, all levels");
+            if (mesh->detail() == GLT::asset::mesh::detail_mode::virtual_geometry) {
+                UI::property_value("Detail", mesh->has_clusters()
+                    ? "Virtual geometry, " + format_count(mesh->clusters.size()) + " clusters"
+                    : std::string(m_cluster_job.valid() ? "Virtual geometry (building...)" : "Virtual geometry (not built)"),
+                    "This mesh is drawn as clusters picked per frame. See 'Geometry Detail'");
+                UI::property_value("Fallback levels", std::to_string(mesh->lod_count()), "Discrete levels used where clusters are not (shadows, translucent materials)");
+            } else {
+                UI::property_value("Detail", std::format("Discrete LODs, {} levels", mesh->lod_count()),
+                    "This mesh switches between whole-mesh levels. See 'Geometry Detail'");
+            }
+            UI::property_value("Memory", GLT::util::format_bytes(mesh->memory_usage()), "CPU side, all levels and clusters");
         }
         UI::end_card();
     }
@@ -1509,10 +1562,8 @@ namespace GLT::editor {
                         last_category = mode.category;
                         ImGui::SeparatorText(mode.category);
                     }
-                    if (ImGui::Selectable(mode.display_name, mode.id == current_id)) {
-                        m_current_mode_id = mode.id;
-                        m_preview_scene->set_render_mode(mode.id);
-                    }
+                    if (ImGui::Selectable(mode.display_name, mode.id == current_id))
+                        set_preview_render_mode(mode.id);
                     if (mode.has_tooltip() && ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s", mode.tooltip);
                 }
@@ -1529,7 +1580,7 @@ namespace GLT::editor {
                 { "Grid",      &m_show_grid,                 "Ground grid" },
                 { "Origin",    &m_show_origin,               "Axes at the mesh origin" },
                 { "Colliders", &m_show_colliders_in_preview, "Collider wireframes" },
-                { "Wireframe", &m_show_wireframe,            "Triangle edges of the shown level" },
+                { "Wireframe", &m_show_wireframe,            "Triangle edges of what is shown: the level, or the clusters the camera selects" },
             };
 
             const f32 pad = ImGui::GetStyle().FramePadding.x * 2.0f;
@@ -1593,15 +1644,31 @@ namespace GLT::editor {
                 const u32 tris = mesh->lod_triangle_count(shown);
                 const u32 base = std::max(mesh->lod_triangle_count(0), 1u);
 
-                const std::string stats = screen_size >= 1e8f
+                std::string stats = screen_size >= 1e8f
                     ? std::format("LOD {}  ·  {} tris ({:.0f}%)  ·  camera inside", shown, format_count(tris), 100.0 * tris / base)
                     : std::format("LOD {}  ·  {} tris ({:.0f}%)  ·  screen {:.3f}", shown, format_count(tris), 100.0 * tris / base, screen_size);
+
+                // Virtual geometry draws clusters instead of a level (unless the preview is locked to a fallback level)
+                if (preview_uses_virtual_geometry(*mesh)) {
+                    const GLT::asset::mesh::cluster_cut cut = preview_cluster_cut(*mesh);
+                    stats = std::format("Virtual geometry  ·  {} clusters  ·  {} tris ({:.0f}%)  ·  levels 0-{}", format_count(cut.clusters),
+                        format_count(cut.triangles), 100.0 * cut.triangles / base, cut.deepest_level);
+                } else if (mesh->detail() == GLT::asset::mesh::detail_mode::virtual_geometry) {
+                    stats = m_preview_lod >= 0
+                        ? std::format("Fallback LOD {}  ·  {} tris ({:.0f}%)", shown, format_count(tris), 100.0 * tris / base)
+                        : std::format("Virtual geometry not built yet  ·  fallback LOD {}  ·  {} tris", shown, format_count(tris));
+                }
                 y -= line;
                 draw_list->AddText(ImVec2(canvas_min.x + INSET, y), ImGui::GetColorU32(ImGuiCol_Text), stats.c_str());
 
                 if (m_show_wireframe && m_wire_truncated) {
                     y -= line;
                     const std::string note = std::format("Wireframe: too many edges, showing the first {}", format_count(MAX_WIREFRAME_EDGES));
+                    draw_list->AddText(ImVec2(canvas_min.x + INSET, y), IM_COL32(230, 200, 110, 255), note.c_str());
+                }
+                if (m_show_cluster_bounds && m_cluster_bounds_truncated) {
+                    y -= line;
+                    const std::string note = std::format("Cluster bounds: showing the nearest {}", format_count(MAX_CLUSTER_BOUNDS));
                     draw_list->AddText(ImVec2(canvas_min.x + INSET, y), IM_COL32(230, 200, 110, 255), note.c_str());
                 }
             }
@@ -1633,11 +1700,29 @@ namespace GLT::editor {
         submit_preview_instance();
         submit_preview_lights();
 
+        if (!m_preview_scene->supported_modes().empty())
+            set_preview_render_mode(default_preview_render_mode());
+    }
+
+
+    // The renderer's default mode ("Lit"), or its first one
+    u32 mesh_editor_window::default_preview_render_mode() const {
+
+        if (!m_preview_scene)
+            return 0;
         const auto modes = m_preview_scene->supported_modes();
-        if (!modes.empty()) {
-            m_current_mode_id = modes.front().id;
-            m_preview_scene->set_render_mode(m_current_mode_id);
-        }
+        for (const auto& mode : modes)
+            if (mode.is_default)
+                return mode.id;
+        return modes.empty() ? 0u : modes.front().id;
+    }
+
+
+    void mesh_editor_window::set_preview_render_mode(const u32 mode_id) {
+
+        m_current_mode_id = mode_id;
+        if (m_preview_scene)
+            m_preview_scene->set_render_mode(mode_id);
     }
 
 
@@ -1766,6 +1851,8 @@ namespace GLT::editor {
 
         m_preview_lod = -1;
         m_lod_needs_regen = false;
+        m_clusters_need_rebuild = false;
+        m_last_cluster_build_ms = 0.0;
         m_wire_lines.clear();
         m_wire_lod = -2;
 
@@ -1870,9 +1957,14 @@ namespace GLT::editor {
         if (m_selected_submesh >= 0 && m_selected_submesh != m_hovered_submesh)
             draw_submesh_aabb(m_selected_submesh, { 1.0f, 0.45f, 0.15f, 1.0f });
 
-        // ---- LOD wireframe ----
+        // ---- wireframe of the shown level / the selected clusters ----
         if (m_show_wireframe)
             submit_wireframe_debug_draws(*mesh);
+
+        // ---- virtual geometry: bounds of the selected clusters ----
+        m_cluster_bounds_truncated = false;
+        if (m_show_cluster_bounds && preview_uses_virtual_geometry(*mesh))
+            submit_cluster_bounds_debug_draws(*mesh);
 
         // ---- colliders ----
         submit_collider_debug_draws();
@@ -2508,7 +2600,397 @@ namespace GLT::editor {
     }
 
 
-    // LOD pill + popup at the cursor (top-left overlay of the preview)
+    // geometry detail: discrete LODs or virtual geometry ---------------------------------------------------------------
+
+    // The switch between the two detail systems. A mesh uses exactly one: the inspector shows only that one's cards
+    void mesh_editor_window::draw_detail_mode_section() {
+
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        if (!mesh)
+            return;
+
+        using namespace GLT::asset::mesh;
+        const bool virtual_mode = mesh->detail() == detail_mode::virtual_geometry;
+
+        if (UI::begin_card("Geometry Detail", UI::card_options{ .description = "How the mesh gets cheaper with distance. A mesh uses one of the two",
+            .summary = virtual_mode ? "Virtual Geometry" : "Discrete LODs", .collapsible = true })) {
+
+            static constexpr const char* MODES[] = { "Discrete LODs", "Virtual Geometry" };
+            i32 index = virtual_mode ? 1 : 0;
+            if (UI::property_segmented("Mode", index, MODES,
+                "Discrete LODs: the whole mesh switches between a few simplified levels. "
+                "Virtual Geometry: the mesh is split into clusters and the detail is picked per cluster and per frame. "
+                "Switching to Discrete LODs removes the clusters (they are rebuilt when you switch back)"))
+                apply_detail_mode(index == 1 ? detail_mode::virtual_geometry : detail_mode::discrete_lods);
+
+            ImGui::Dummy(ImVec2(0.f, 2.f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", mesh->detail() == detail_mode::virtual_geometry
+                ? "Drawn as clusters: close parts at full detail, far parts coarse, hidden clusters not at all. For dense meshes "
+                  "seen from near and far. Shadows and translucent materials use the fallback levels."
+                : "Drawn as one of a few whole-mesh levels, picked by the mesh's size on screen. For small and medium meshes, "
+                  "and anything seen at one distance.");
+            ImGui::PopStyleColor();
+        }
+        UI::end_card();
+    }
+
+
+    // Switches the mesh between the two systems and brings the editor in line: builds what the new mode needs, drops the
+    // preview state that belonged to the old one
+    void mesh_editor_window::apply_detail_mode(const GLT::asset::mesh::detail_mode mode) {
+
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        if (!mesh || !GLT::asset::mesh::set_detail_mode(*mesh, mode))       // discrete LODs: removes the cluster hierarchy
+            return;
+
+        m_dirty = true;
+        m_clusters_need_rebuild = false;
+        m_wire_lod = -2;
+        m_preview_lod = -1;
+
+        if (mode == GLT::asset::mesh::detail_mode::virtual_geometry) {
+
+            start_cluster_build();
+
+            // The discrete levels are the fallback now. A mesh that has none yet gets them with its current LOD settings
+            if (mesh->lod_count() <= 1 && mesh->lod.lod_count > 1)
+                start_lod_generation();
+        } else {
+
+            m_last_cluster_build_ms = 0.0;
+            m_show_cluster_bounds = false;
+
+            // The virtual geometry debug views would only show a grey mesh now
+            if (m_preview_scene) {
+                const u32 current = m_preview_scene->get_render_mode();
+                for (const auto& render_mode : m_preview_scene->supported_modes())
+                    if (render_mode.id == current && render_mode.has_category()
+                        && std::strcmp(render_mode.category, VIRTUAL_GEOMETRY_MODE_CATEGORY) == 0)
+                        set_preview_render_mode(default_preview_render_mode());
+            }
+        }
+        submit_preview_instance();
+
+        LOG(info, "mesh_editor: [{}] geometry detail -> {}", m_mesh_name,
+            mode == GLT::asset::mesh::detail_mode::virtual_geometry ? "virtual geometry" : "discrete LODs");
+    }
+
+
+    // virtual geometry -------------------------------------------------------------------------------------------------
+
+    // True if the renderer draws the preview instance per cluster: the mesh is in virtual geometry mode, its clusters
+    // exist and no fallback level is forced (the renderer setting "Virtual geometry" can still switch the path off)
+    bool mesh_editor_window::preview_uses_virtual_geometry(const GLT::asset::mesh::mesh_asset& mesh) const {
+
+        return m_preview_lod < 0 && mesh.uses_virtual_geometry();
+    }
+
+
+    // The preview camera as the cluster selection sees it, with the renderer's default error of one pixel
+    GLT::asset::mesh::cluster_view mesh_editor_window::preview_cluster_view(const GLT::asset::mesh::mesh_asset& mesh) const {
+
+        const GLT::world::camera_snapshot cam = build_camera_snapshot();
+
+        GLT::asset::mesh::cluster_view view{};
+        view.model = glm::mat4(1.0f);
+        view.camera_position = cam.position;
+        view.projection = 1.0f / std::tan(glm::radians(cam.fov) * 0.5f);
+        view.near_plane = cam.near_plane;
+        view.viewport_height = static_cast<f32>(std::max(m_last_preview_size.y, 1u));
+        view.pixel_error = 1.0f;
+        view.error_scale = mesh.virtual_geometry.error_scale;
+        return view;
+    }
+
+
+    // What the preview camera selects. Same rule as the GPU pass, without its frustum / backface culling
+    GLT::asset::mesh::cluster_cut mesh_editor_window::preview_cluster_cut(const GLT::asset::mesh::mesh_asset& mesh) const {
+
+        return GLT::asset::mesh::measure_cut(mesh.clusters, preview_cluster_view(mesh));
+    }
+
+
+    void mesh_editor_window::start_cluster_build() {
+
+        if (m_cluster_job.valid())
+            return;
+
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        if (!mesh)
+            return;
+
+        GLT::asset::mesh::sanitize(mesh->virtual_geometry);
+
+        // Copies: the job runs on a worker thread while the asset stays live (renderer reads it, the editor may close)
+        m_cluster_job = std::async(std::launch::async,
+            [vertices = mesh->vertices, indices = mesh->indices, submeshes = mesh->submeshes, settings = mesh->virtual_geometry]() {
+                return GLT::asset::mesh::build_clusters(vertices, indices, submeshes, settings);
+            });
+    }
+
+
+    void mesh_editor_window::poll_cluster_build() {
+
+        if (!m_cluster_job.valid() || m_cluster_job.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return;
+
+        GLT::asset::mesh::cluster_build_output result = m_cluster_job.get();
+        m_cluster_job = {};
+
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        if (!mesh)
+            return;
+
+        // The mode was switched back to discrete LODs while the job ran: such a mesh carries no clusters
+        if (mesh->detail() != GLT::asset::mesh::detail_mode::virtual_geometry)
+            return;
+
+        // The job worked on a copy of the geometry. Only accept a result that fits the mesh as it is now
+        if (!GLT::asset::mesh::validate_clusters(result.clusters, result.indices, result.submeshes, mesh->vertices.size(),
+            mesh->submeshes.size())) {
+
+            LOG(warn, "mesh_editor: [{}] cluster build produced no usable hierarchy - the mesh keeps using its fallback levels", m_mesh_name);
+            m_clusters_need_rebuild = false;
+            return;
+        }
+
+        mesh->clusters = std::move(result.clusters);
+        mesh->cluster_indices = std::move(result.indices);
+        mesh->cluster_submeshes = std::move(result.submeshes);
+        mesh->revision++;                       // renderers re-upload (shared_resource_manager::refresh_mesh)
+
+        m_last_cluster_build_ms = result.build_ms;
+        m_clusters_need_rebuild = false;
+        m_dirty = true;
+        m_wire_lod = -2;
+
+        LOG(info, "mesh_editor: [{}] {} clusters in {} levels in {:.1f} ms (coarsest selection {} of {} triangles)", m_mesh_name,
+            mesh->clusters.size(), result.level_count, result.build_ms, result.coarsest_triangles, result.source_triangles);
+    }
+
+
+    // Shown instead of the LOD cards while the mesh is in virtual geometry mode
+    void mesh_editor_window::draw_virtual_geometry_section() {
+
+        auto registry = GLT::asset::registry::get_ref();
+        auto* mesh = registry ? registry->data_as<GLT::asset::mesh::mesh_asset>(m_asset_handle) : nullptr;
+        if (!mesh)
+            return;
+
+        using namespace GLT::asset::mesh;
+        cluster_settings& settings = mesh->virtual_geometry;
+        static const cluster_settings defaults{};
+        static const lod_settings lod_defaults{};
+
+        const bool busy = m_cluster_job.valid();
+        const bool built = mesh->has_clusters();
+        bool live_changed = false;              // renderer re-uploads, no rebuild
+        bool rebuild_changed = false;           // cluster build inputs: rebuild needed
+
+        // ======== hierarchy: status, statistics, rebuild ============================================================
+        const std::string summary = busy ? std::string("building...")
+            : (built ? std::format("{} clusters", format_count(mesh->clusters.size())) : std::string("not built"));
+        if (UI::begin_card("Virtual Geometry", UI::card_options{ .summary = summary.c_str(), .collapsible = true })) {
+
+            // ---- status ----
+            if (busy)
+                ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "Building the cluster hierarchy...");
+            else if (!built)
+                warning_text("No clusters yet - the mesh is drawn with its fallback levels until they are built.");
+            else {
+
+                u32 source_clusters = 0, source_triangles = 0, coarsest_triangles = 0, levels = 0;
+                for (const cluster& c : mesh->clusters) {
+                    levels = std::max(levels, c.depth + 1u);
+                    if (c.depth == 0) {
+                        source_clusters++;
+                        source_triangles += c.index_count / 3;
+                    }
+                    if (c.parent_error >= CLUSTER_ERROR_NONE)
+                        coarsest_triangles += c.index_count / 3;
+                }
+                const u64 bytes = mesh->clusters.size() * sizeof(cluster) + mesh->cluster_indices.size() * sizeof(u32)
+                    + mesh->cluster_submeshes.size() * sizeof(cluster_submesh);
+
+                UI::property_value("Clusters", std::format("{} ({} at full detail)", format_count(mesh->clusters.size()),
+                    format_count(source_clusters)), "All hierarchy levels / the clusters holding the source triangles");
+                UI::property_value("Levels", std::to_string(levels), "Depth of the hierarchy: each level has about half the triangles of the one below");
+                UI::property_value("Triangles", std::format("{} .. {}", format_count(coarsest_triangles), format_count(source_triangles)),
+                    "Fewest (far away) and most (close up) triangles the mesh can be drawn with");
+                UI::property_value("Memory", GLT::util::format_bytes(bytes), "Cluster records + their index data, CPU side. The GPU holds the same");
+                if (m_last_cluster_build_ms > 0.0)
+                    UI::property_value("Built in", std::format("{:.0f} ms", m_last_cluster_build_ms));
+
+                const cluster_cut cut = preview_cluster_cut(*mesh);
+                UI::property_value("Preview draws", std::format("{} clusters, {} tris", format_count(cut.clusters), format_count(cut.triangles)),
+                    m_preview_lod >= 0
+                        ? "What the preview camera would select at 1 pixel error. The preview is locked to a fallback level right now"
+                        : "What the preview camera selects at 1 pixel error (before frustum and backface culling)");
+            }
+
+            // ---- actions ----
+            ImGui::Dummy(ImVec2(0.f, 4.f));
+            if (m_clusters_need_rebuild && built)
+                warning_text("Build settings changed - rebuild to apply them.");
+
+            ImGui::BeginDisabled(busy);
+            if (UI::accent_button(busy ? "Building..." : (built ? "Rebuild clusters" : "Build clusters"), ImVec2(-FLT_MIN, 0.f)))
+                start_cluster_build();
+            ImGui::EndDisabled();
+        }
+        UI::end_card();
+
+        // ======== detail (applies immediately) ======================================================================
+        if (UI::begin_card("Cluster Detail", UI::card_options{ .description = "How much detail is drawn. Applies immediately", .collapsible = true })) {
+
+            if (UI::property_drag("Detail scale", settings.error_scale, 0.01f, 0.25f, 4.0f, "%.2f x",
+                "Scales the error of every cluster of this mesh. Above 1 switches to coarser clusters later (more triangles), "
+                "below 1 earlier. The renderer setting 'Pixel error' does the same for all meshes", &defaults.error_scale))
+                live_changed = true;
+
+            live_changed |= UI::property_drag("Cull below", mesh->lod.cull_screen_size, 0.0005f, 0.0f, 0.2f,
+                mesh->lod.cull_screen_size > 0.0f ? "%.4f" : "never",
+                "Don't draw the mesh at all when it is smaller than this screen size (0 = always draw)", &lod_defaults.cull_screen_size);
+        }
+        UI::end_card();
+
+        // ======== build settings (need a rebuild) ===================================================================
+        ImGui::BeginDisabled(busy);
+        if (UI::begin_card("Cluster Build", UI::card_options{ .description = "Changes here apply when you rebuild", .collapsible = true,
+            .default_open = false })) {
+
+            i32 cluster_size = static_cast<i32>(settings.cluster_triangles);
+            const i32 default_size = static_cast<i32>(defaults.cluster_triangles);
+            if (UI::property_slider("Cluster size", cluster_size, static_cast<i32>(MIN_CLUSTER_TRIANGLES), static_cast<i32>(MAX_CLUSTER_TRIANGLES),
+                "%d tris", "Most triangles per cluster. Smaller clusters follow the needed detail more closely but mean more "
+                "draw commands; larger ones the opposite", &default_size)) {
+                settings.cluster_triangles = static_cast<u32>(cluster_size);
+                rebuild_changed = true;
+            }
+
+            bool lock_seams = (settings.flags & CLUSTER_FLAG_LOCK_SEAMS) != 0;
+            const bool default_lock = (defaults.flags & CLUSTER_FLAG_LOCK_SEAMS) != 0;
+            if (UI::property_toggle("Lock material seams", lock_seams,
+                "Keep the vertices where two submeshes (materials) meet in place, so no cracks can open between them. "
+                "Costs triangles along those seams at a distance", &default_lock)) {
+                settings.flags = lock_seams ? (settings.flags | CLUSTER_FLAG_LOCK_SEAMS) : (settings.flags & ~static_cast<u32>(CLUSTER_FLAG_LOCK_SEAMS));
+                rebuild_changed = true;
+            }
+
+            rebuild_changed |= UI::property_drag("Normal weight", settings.normal_weight, 0.01f, 0.0f, 4.0f, "%.2f",
+                "How strongly the simplifier preserves shading", &defaults.normal_weight);
+            rebuild_changed |= UI::property_drag("UV weight", settings.uv_weight, 0.01f, 0.0f, 4.0f, "%.2f",
+                "How strongly the simplifier preserves texture coordinates", &defaults.uv_weight);
+        }
+        UI::end_card();
+        ImGui::EndDisabled();   // busy
+
+        // ======== fallback: the discrete levels, read-only in this mode ==============================================
+        const u32 fallback_levels = mesh->lod_count();
+        const bool fallback_busy = m_lod_job.valid();
+        const std::string fallback_summary = fallback_busy ? std::string("generating...")
+            : (fallback_levels > 1 ? std::format("{} levels", fallback_levels) : std::string("full detail only"));
+        if (UI::begin_card("Fallback Levels", UI::card_options{
+            .description = "Discrete levels drawn where clusters are not: shadows, translucent materials, virtual geometry switched off",
+            .summary = fallback_summary.c_str(), .collapsible = true, .default_open = false })) {
+
+            if (fallback_busy)
+                ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "Generating the fallback levels...");
+            else if (fallback_levels > 1)
+                UI::property_value("Levels", std::format("{}, {} .. {} tris", fallback_levels,
+                    format_count(mesh->lod_triangle_count(fallback_levels - 1)), format_count(mesh->lod_triangle_count(0))),
+                    "Click a level in the outliner to look at it. To change how they are made, switch the mode to Discrete LODs, "
+                    "edit, and switch back");
+            else
+                ImGui::TextWrapped("None: the fallback is the full-detail mesh, which is expensive for dense meshes.");
+
+            ImGui::BeginDisabled(fallback_busy);
+            if (UI::subtle_button(fallback_levels > 1 ? "Regenerate fallback levels" : "Generate fallback levels", ImVec2(-FLT_MIN, 0.f))) {
+                if (mesh->lod.lod_count <= 1)
+                    mesh->lod.lod_count = lod_defaults.lod_count;
+                start_lod_generation();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Simplify the mesh into whole-mesh levels with its LOD settings");
+            ImGui::EndDisabled();
+        }
+        UI::end_card();
+
+        if (rebuild_changed) {
+            sanitize(settings);
+            m_clusters_need_rebuild = true;
+            m_dirty = true;
+        }
+        if (live_changed) {
+            sanitize(settings);
+            sanitize(mesh->lod);
+            mesh->revision++;                   // renderer picks up the detail scale / the cull size
+            m_dirty = true;
+        }
+    }
+
+
+    // Debug views of the preview: the renderer's render modes of the category "Virtual Geometry" (the same ones every
+    // viewport offers), plus overlays the editor draws from the CPU twin of the selection
+    void mesh_editor_window::draw_virtual_geometry_debug_section() {
+
+        if (!m_preview_scene)
+            return;
+
+        if (UI::begin_card("Debug Views", UI::card_options{ .description = "Only affects this preview, not the asset", .collapsible = true })) {
+
+            std::vector<const GLT::render::render_mode_info*> views;
+            for (const auto& render_mode : m_preview_scene->supported_modes())
+                if (render_mode.has_category() && std::strcmp(render_mode.category, VIRTUAL_GEOMETRY_MODE_CATEGORY) == 0)
+                    views.push_back(&render_mode);
+
+            if (views.empty()) {
+                ImGui::TextDisabled("This renderer has no virtual geometry views");
+            } else {
+
+                std::vector<const char*> names;
+                names.reserve(views.size() + 1);
+                names.push_back("Off");
+                i32 index = 0;
+                const u32 current = m_preview_scene->get_render_mode();
+                for (size_t i = 0; i < views.size(); ++i) {
+                    names.push_back(views[i]->display_name);
+                    if (views[i]->id == current)
+                        index = static_cast<i32>(i) + 1;
+                }
+
+                static const i32 off = 0;
+                if (UI::property_combo("View", index, std::span<const char* const>(names.data(), names.size()),
+                    "Colour the preview by cluster, hierarchy level, triangle or screen error instead of shading it. "
+                    "The same views are in the render mode menu of every viewport", &off))
+                    set_preview_render_mode(index > 0 && static_cast<size_t>(index) <= views.size()
+                        ? views[static_cast<size_t>(index) - 1]->id : default_preview_render_mode());
+
+                if (index > 0 && static_cast<size_t>(index) <= views.size() && views[static_cast<size_t>(index) - 1]->has_tooltip()) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                    ImGui::TextWrapped("%s", views[static_cast<size_t>(index) - 1]->tooltip);
+                    ImGui::PopStyleColor();
+                    ImGui::Dummy(ImVec2(0.f, 2.f));
+                }
+            }
+
+            static const bool hidden = false;
+            UI::property_toggle("Cluster bounds", m_show_cluster_bounds,
+                "Bounding sphere of every cluster the preview camera selects, in the cluster's colour of the 'Geometry Clusters' view", &hidden);
+            UI::property_toggle("Wireframe", m_show_wireframe,
+                "Edges of the triangles the preview camera selects (same as the Wireframe button of the preview)", &hidden);
+        }
+        UI::end_card();
+    }
+
+
+    // Detail pill + popup at the cursor (top-left overlay of the preview): what the preview shows, and locking it to
+    // one discrete level
     void mesh_editor_window::draw_preview_lod_overlay(const ImVec2& /*canvas_min*/, const ImVec2& /*canvas_max*/) {
 
         auto registry = GLT::asset::registry::get_ref();
@@ -2516,29 +2998,34 @@ namespace GLT::editor {
         if (!mesh || mesh->lod_count() == 0)
             return;
 
+        const bool virtual_mode = mesh->detail() == GLT::asset::mesh::detail_mode::virtual_geometry;
         const u32 lod_count = mesh->lod_count();
         const u32 auto_lod = auto_lod_for(*mesh, preview_screen_size(*mesh));
         const u32 shown = m_preview_lod >= 0 ? std::min<u32>(static_cast<u32>(m_preview_lod), lod_count - 1) : auto_lod;
 
-        const std::string label = m_preview_lod < 0 ? std::format("LOD auto ({})", auto_lod) : std::format("LOD {}", shown);
+        const std::string label = virtual_mode
+            ? (m_preview_lod < 0 ? std::string("Virtual geometry") : std::format("Fallback LOD {}", shown))
+            : (m_preview_lod < 0 ? std::format("LOD auto ({})", auto_lod) : std::format("LOD {}", shown));
         if (ImGui::Button(label.c_str()))
             ImGui::OpenPopup("##preview_lod_popup");
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-            ImGui::SetTooltip("Lock the preview to one level, or let its size on screen pick it");
+            ImGui::SetTooltip("%s", virtual_mode
+                ? "Show the clusters the camera selects, or lock the preview to one fallback level"
+                : "Lock the preview to one level, or let its size on screen pick it");
 
         const ImVec2 btn_min = ImGui::GetItemRectMin();
         const ImVec2 btn_max = ImGui::GetItemRectMax();
         ImGui::SetNextWindowPos(ImVec2(btn_min.x, btn_max.y + 4.0f), ImGuiCond_Appearing);
         if (ImGui::BeginPopup("##preview_lod_popup")) {
 
-            if (ImGui::Selectable("Automatic (screen size)", m_preview_lod < 0))
+            if (ImGui::Selectable(virtual_mode ? "Virtual geometry (clusters)" : "Automatic (screen size)", m_preview_lod < 0))
                 set_preview_lod(-1);
             ImGui::Separator();
             for (u32 level = 0; level < lod_count; ++level) {
-                const std::string item = std::format("LOD {}", level);
+                const std::string item = virtual_mode ? std::format("Fallback LOD {}", level) : std::format("LOD {}", level);
                 if (ImGui::Selectable(item.c_str(), m_preview_lod == static_cast<i32>(level)))
                     set_preview_lod(static_cast<i32>(level));
-                ImGui::SameLine(110.0f);
+                ImGui::SameLine(virtual_mode ? 150.0f : 110.0f);
                 ImGui::TextDisabled("%s tris", format_count(mesh->lod_triangle_count(level)).c_str());
             }
             ImGui::EndPopup();
@@ -2552,49 +3039,81 @@ namespace GLT::editor {
         if (!debug)
             return;
 
-        const u32 lod_count = mesh.lod_count();
-        const i32 level = m_preview_lod >= 0 ? std::min<i32>(m_preview_lod, static_cast<i32>(lod_count) - 1)
-                                             : static_cast<i32>(auto_lod_for(mesh, preview_screen_size(mesh)));
+        // Lift the lines slightly off the surface (along the vertex normal) so they win the depth test
+        const f32 lift = 0.002f * std::max(GLT::asset::mesh::lod_sphere_radius(mesh.bounds), 1e-4f);
+        auto lifted = [&](u32 v) { const auto& vx = mesh.vertex_at(v); return vx.position + vx.normal * lift; };
 
-        // Unique edges of the shown level, cached until the level or the geometry changes
-        if (level != m_wire_lod || mesh.revision != m_wire_revision) {
+        // Unique edges of a triangle list, into m_wire_lines. Returns false once the edge budget is used up
+        std::unordered_set<u64> seen;
+        u32 edges = 0;
+        auto add_triangles = [&](auto&& index_at, const u32 first, const u32 count) {
 
-            m_wire_lod = level;
-            m_wire_revision = mesh.revision;
-            m_wire_lines.clear();
-            m_wire_truncated = false;
+            for (u32 t = 0; t + 2 < count; t += 3) {
 
-            // Lift the lines slightly off the surface (along the vertex normal) so they win the depth test
-            const f32 lift = 0.002f * std::max(GLT::asset::mesh::lod_sphere_radius(mesh.bounds), 1e-4f);
-            auto lifted = [&](u32 v) { const auto& vx = mesh.vertex_at(v); return vx.position + vx.normal * lift; };
+                const u32 tri[3] = { index_at(first + t), index_at(first + t + 1), index_at(first + t + 2) };
+                for (u32 e = 0; e < 3; ++e) {
 
-            std::unordered_set<u64> seen;
-            u32 edges = 0;
-            for (u32 sm = 0; sm < mesh.submeshes.size() && !m_wire_truncated; ++sm) {
+                    const u32 a = tri[e];
+                    const u32 b = tri[(e + 1) % 3];
+                    if (a >= mesh.total_vertex_count() || b >= mesh.total_vertex_count())
+                        continue;
+                    const u64 key = (static_cast<u64>(std::min(a, b)) << 32) | std::max(a, b);
+                    if (!seen.insert(key).second)
+                        continue;
 
-                const GLT::asset::mesh::lod_range range = mesh.range(static_cast<u32>(level), sm);
-                for (u32 t = 0; t + 2 < range.index_count; t += 3) {
-
-                    const u32 tri[3] = { mesh.index_at(range.first_index + t), mesh.index_at(range.first_index + t + 1),
-                                         mesh.index_at(range.first_index + t + 2) };
-                    for (u32 e = 0; e < 3; ++e) {
-
-                        const u32 a = tri[e];
-                        const u32 b = tri[(e + 1) % 3];
-                        if (a >= mesh.total_vertex_count() || b >= mesh.total_vertex_count())
-                            continue;
-                        const u64 key = (static_cast<u64>(std::min(a, b)) << 32) | std::max(a, b);
-                        if (!seen.insert(key).second)
-                            continue;
-
-                        m_wire_lines.push_back(lifted(a));
-                        m_wire_lines.push_back(lifted(b));
-                        if (++edges >= MAX_WIREFRAME_EDGES) {
-                            m_wire_truncated = true;
-                            break;
-                        }
+                    m_wire_lines.push_back(lifted(a));
+                    m_wire_lines.push_back(lifted(b));
+                    if (++edges >= MAX_WIREFRAME_EDGES) {
+                        m_wire_truncated = true;
+                        return false;
                     }
-                    if (m_wire_truncated)
+                }
+            }
+            return true;
+        };
+
+        if (preview_uses_virtual_geometry(mesh)) {
+
+            // Virtual geometry: the triangles of the clusters the preview camera selects (what the renderer draws, before
+            // its frustum / backface culling). The selection changes with the camera; rebuild the lines only when it does
+            GLT::asset::mesh::collect_cut(mesh.clusters, preview_cluster_view(mesh), m_cut_scratch);
+            u64 signature = 0xcbf29ce484222325ull;
+            for (const u32 index : m_cut_scratch)
+                signature = (signature ^ index) * 0x100000001b3ull;
+
+            if (m_wire_lod != WIRE_LEVEL_CLUSTERS || mesh.revision != m_wire_revision || signature != m_wire_cut_signature) {
+
+                m_wire_lod = WIRE_LEVEL_CLUSTERS;
+                m_wire_revision = mesh.revision;
+                m_wire_cut_signature = signature;
+                m_wire_lines.clear();
+                m_wire_truncated = false;
+
+                auto cluster_index_at = [&](u32 i) { return i < mesh.cluster_indices.size() ? mesh.cluster_indices[i] : ~0u; };
+                for (const u32 index : m_cut_scratch) {
+                    const GLT::asset::mesh::cluster& c = mesh.clusters[index];
+                    if (!add_triangles(cluster_index_at, c.first_index, c.index_count))
+                        break;
+                }
+            }
+        } else {
+
+            const u32 lod_count = mesh.lod_count();
+            const i32 level = m_preview_lod >= 0 ? std::min<i32>(m_preview_lod, static_cast<i32>(lod_count) - 1)
+                                                 : static_cast<i32>(auto_lod_for(mesh, preview_screen_size(mesh)));
+
+            // Unique edges of the shown level, cached until the level or the geometry changes
+            if (level != m_wire_lod || mesh.revision != m_wire_revision) {
+
+                m_wire_lod = level;
+                m_wire_revision = mesh.revision;
+                m_wire_lines.clear();
+                m_wire_truncated = false;
+
+                auto level_index_at = [&](u32 i) { return mesh.index_at(i); };
+                for (u32 sm = 0; sm < mesh.submeshes.size(); ++sm) {
+                    const GLT::asset::mesh::lod_range range = mesh.range(static_cast<u32>(level), sm);
+                    if (!add_triangles(level_index_at, range.first_index, range.index_count))
                         break;
                 }
             }
@@ -2603,6 +3122,37 @@ namespace GLT::editor {
         const glm::vec4 color{ 0.35f, 0.85f, 1.0f, 0.55f };
         for (size_t i = 0; i + 1 < m_wire_lines.size(); i += 2)
             debug->line(m_wire_lines[i], m_wire_lines[i + 1], color, 0.0f, true);
+    }
+
+
+    // Bounding spheres (the ones the renderer culls with) of the clusters the preview camera selects, each in its
+    // cluster's colour of the "Geometry Clusters" view. Limited to the nearest MAX_CLUSTER_BOUNDS
+    void mesh_editor_window::submit_cluster_bounds_debug_draws(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        auto* debug = m_preview_scene ? m_preview_scene->get_debug_draw() : nullptr;
+        if (!debug)
+            return;
+
+        const GLT::asset::mesh::cluster_view view = preview_cluster_view(mesh);
+        GLT::asset::mesh::collect_cut(mesh.clusters, view, m_cut_scratch);
+
+        if (m_cut_scratch.size() > MAX_CLUSTER_BOUNDS) {
+
+            auto distance_of = [&](const u32 index) {
+                const glm::vec4& sphere = mesh.clusters[index].bounds;
+                return glm::distance(glm::vec3(sphere), view.camera_position) - sphere.w;
+            };
+            std::partial_sort(m_cut_scratch.begin(), m_cut_scratch.begin() + MAX_CLUSTER_BOUNDS, m_cut_scratch.end(),
+                [&](const u32 a, const u32 b) { return distance_of(a) < distance_of(b); });
+            m_cut_scratch.resize(MAX_CLUSTER_BOUNDS);
+            m_cluster_bounds_truncated = true;
+        }
+
+        for (const u32 index : m_cut_scratch) {
+            const GLT::asset::mesh::cluster& c = mesh.clusters[index];
+            debug->sphere(glm::vec3(c.bounds), c.bounds.w, glm::vec4(GLT::asset::mesh::cluster_debug_color(index), 0.85f), 0.0f, true,
+                CLUSTER_BOUNDS_SEGMENTS);
+        }
     }
 
 }

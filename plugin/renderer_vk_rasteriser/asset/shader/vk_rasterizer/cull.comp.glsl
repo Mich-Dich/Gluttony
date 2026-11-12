@@ -11,7 +11,7 @@ struct InstanceData {
     mat4 normal_matrix;
     uint mesh_index;
     uint material_index;
-    uint flags;         // bits 0..3: forced LOD + 1 (0 = LOD 0)
+    uint flags;         // bits 0..3: forced LOD + 1 (0 = LOD 0), bit 4: virtual geometry instance
     uint _pad1;
 };
 
@@ -61,6 +61,9 @@ layout(set = 0, binding = 5) uniform CameraUBO {
 const uint INSTANCE_INDEX_MASK = 0xFFFFFu;
 const uint INSTANCE_LOD_SHIFT  = 20u;           // 4 bits: LOD level
 const uint INSTANCE_HAS_LODS   = 1u << 24u;     // the mesh has generated levels (debug colouring)
+// gpu_instance_data::flags bit 4 (scene/type.h INSTANCE_FLAG_VIRTUAL): in the main view this instance is drawn cluster by
+// cluster by virtual_geometry_cull.comp.glsl. Shadow views (camera.flags.y == 0) still draw its discrete levels here
+const uint INSTANCE_FLAG_VIRTUAL = 1u << 4u;
 // Compact per-instance material list: instance.material_index is the offset of the instance's first submesh entry
 layout(std430, set = 0, binding = 6) readonly buffer MaterialTable { uint material_table[]; };
 // Per material slot: x = first command of the material's range, y = range capacity (CPU-computed upper bound of draws)
@@ -103,6 +106,9 @@ void main() {
         return;
 
     const InstanceData instance = instances[instance_index];
+    if (camera.flags.y != 0u && (instance.flags & INSTANCE_FLAG_VIRTUAL) != 0u)
+        return;                                         // main view: handled by the virtual geometry pass
+
     const MeshData mesh = meshes[instance.mesh_index];
     if (mesh.submesh_count == 0u)
         return;

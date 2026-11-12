@@ -361,6 +361,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         note(missing_optional, enable_10(&VkPhysicalDeviceFeatures::textureCompressionBC), "textureCompressionBC");        // BC1-7 texture assets
         note(missing_optional, enable_13(&VkPhysicalDeviceVulkan13Features::shaderDemoteToHelperInvocation), "shaderDemoteToHelperInvocation");
         note(missing_optional, enable_13(&VkPhysicalDeviceVulkan13Features::maintenance4), "maintenance4");
+        note(missing_optional, enable_10(&VkPhysicalDeviceFeatures::geometryShader), "geometryShader");                    // gl_PrimitiveID in a fragment shader (render mode "Triangles")
 
         // Enabled since the first version of this builder; the rasteriser has no descriptor arrays, so they are optional
         note(missing_optional, enable_12(&VkPhysicalDeviceVulkan12Features::descriptorIndexing), "descriptorIndexing");

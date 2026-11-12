@@ -7,6 +7,7 @@
 #include <asset/asset_ref.h>
 #include <asset/mesh.h>
 #include <asset/mesh_lod.h>
+#include <asset/mesh_cluster.h>
 #include <future>
 #include <render/i_renderer.h>
 #include <render/i_debug_draw.h>
@@ -82,8 +83,17 @@ namespace GLT::editor {
     //   - Preview : 3D viewport with camera controls and collider wireframes
     //   - Inspector: properties for the currently selected item (mesh: summary + Level of Detail settings)
     //
-    // LOD: levels are generated on import; the inspector edits lod_settings and regenerates in the background. The
-    // preview can lock to one level (overlay selector / outliner) and draw that level's wireframe
+    // Geometry detail: a mesh uses discrete LODs or virtual geometry, never both (asset::mesh::detail_mode). The card
+    // "Geometry Detail" switches the mode, and the inspector, the outliner and the preview overlay only show the active
+    // mode's controls.
+    //
+    // Discrete LODs: levels are generated on import; the inspector edits lod_settings and regenerates in the background.
+    // The preview can lock to one level (overlay selector / outliner) and draw that level's wireframe
+    //
+    // Virtual geometry: the cluster hierarchy is built in the background when the mode is chosen. The discrete levels
+    // stay as a read-only fallback (shadows, translucent materials); locking the preview to one shows it. Debug views:
+    // the renderer's "Virtual Geometry" render modes (clusters, levels, triangles, error), cluster bounds, and a
+    // wireframe of the triangles the preview camera selects
     //
     // Both side panels are resizable via a 6px splitter handle between panels
     class mesh_editor_window : public asset_editor {
@@ -157,7 +167,10 @@ namespace GLT::editor {
         void draw_inspector_collider();
 
         void draw_mesh_summary_section();
+        void draw_detail_mode_section();
         void draw_lod_section();
+        void draw_virtual_geometry_section();
+        void draw_virtual_geometry_debug_section();
         void draw_mesh_bounds_section();
         void draw_preview_settings_section();
         void draw_lighting_section();
@@ -200,6 +213,18 @@ namespace GLT::editor {
         void submit_wireframe_debug_draws(const GLT::asset::mesh::mesh_asset& mesh);
         [[nodiscard]] f32 preview_screen_size(const GLT::asset::mesh::mesh_asset& mesh) const;
         [[nodiscard]] u32 auto_lod_for(const GLT::asset::mesh::mesh_asset& mesh, f32 screen_size) const;
+
+        // virtual geometry --------------------------------------------------------------------------------------------
+
+        void apply_detail_mode(GLT::asset::mesh::detail_mode mode);
+        void start_cluster_build();
+        void poll_cluster_build();
+        [[nodiscard]] bool preview_uses_virtual_geometry(const GLT::asset::mesh::mesh_asset& mesh) const;
+        [[nodiscard]] GLT::asset::mesh::cluster_view preview_cluster_view(const GLT::asset::mesh::mesh_asset& mesh) const;
+        [[nodiscard]] GLT::asset::mesh::cluster_cut preview_cluster_cut(const GLT::asset::mesh::mesh_asset& mesh) const;
+        void submit_cluster_bounds_debug_draws(const GLT::asset::mesh::mesh_asset& mesh);
+        void set_preview_render_mode(u32 mode_id);
+        [[nodiscard]] u32 default_preview_render_mode() const;
 
         // collider <-> asset sync -------------------------------------------------------------------------------------
         void load_colliders_from_mesh(const GLT::asset::mesh::mesh_asset& mesh);
@@ -273,8 +298,18 @@ namespace GLT::editor {
         GLT::asset::mesh::lod_settings                          m_lod_job_settings{};
         f64                                                     m_last_lod_build_ms = 0.0;
 
-        std::vector<glm::vec3>                                  m_wire_lines{};             // pairs, cached per (lod, revision)
-        i32                                                     m_wire_lod = -2;
+        // virtual geometry --------------------------------------------------------------------------------------------
+
+        bool                                                    m_clusters_need_rebuild = false;    // build settings changed
+        std::future<GLT::asset::mesh::cluster_build_output>     m_cluster_job{};
+        f64                                                     m_last_cluster_build_ms = 0.0;
+        bool                                                    m_show_cluster_bounds = false;      // debug: bounding spheres of the selected clusters
+        bool                                                    m_cluster_bounds_truncated = false; // more selected clusters than spheres drawn
+        std::vector<u32>                                        m_cut_scratch{};                    // clusters the preview camera selects (reused per frame)
+
+        std::vector<glm::vec3>                                  m_wire_lines{};             // pairs, cached per (lod, revision) or per cluster selection
+        i32                                                     m_wire_lod = -2;            // WIRE_LEVEL_CLUSTERS: the cache holds a cluster selection
+        u64                                                     m_wire_cut_signature = 0;   // hash of that selection
         u32                                                     m_wire_revision = 0;
         bool                                                    m_wire_truncated = false;
 

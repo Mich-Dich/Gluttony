@@ -212,6 +212,14 @@ namespace GLT::renderer::vk_rasterizer {
             m_dev->destroy_buffer(m_submesh_data_buffer);
             m_submesh_data_buffer = {}; 
         }
+        if (m_cluster_data_buffer.buffer) {                 // virtual geometry
+            m_dev->destroy_buffer(m_cluster_data_buffer);
+            m_cluster_data_buffer = {};
+        }
+        if (m_mesh_cluster_buffer.buffer) {
+            m_dev->destroy_buffer(m_mesh_cluster_buffer);
+            m_mesh_cluster_buffer = {};
+        }
 
         destroy_depth_only_fragment_module();
         destroy_layouts();
@@ -222,6 +230,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_vertex_pool = {};
         m_index_pool = {};
         m_submesh_pool = {};
+        m_cluster_pool = {};
         m_live_buffer_count = 0;
         m_live_pipeline_count = 0;
         m_live_descriptor_set_count = 0;
@@ -715,6 +724,8 @@ namespace GLT::renderer::vk_rasterizer {
         m_accum_gpu_stats.render_passes += report.render_passes;
         m_accum_gpu_stats.draw_calls += report.draw_calls;
         m_accum_gpu_stats.triangles += report.triangles;
+        m_accum_gpu_stats.virtual_clusters += report.virtual_clusters;
+        m_accum_gpu_stats.virtual_triangles += report.virtual_triangles;
 
         // Merge by pass name so several scene renderers (editor viewports) sum up instead of producing duplicate rows
         for (const auto& [name, ms] : report.pass_times_ms) {

@@ -169,6 +169,8 @@ namespace GLT::renderer::vk_rasterizer {
         void update_light_cull_descriptors();
         void update_mesh_descriptors();
         void ensure_draw_buffers();                 // grow this frame's indirect command buffers to the scene's draw count
+        void ensure_virtual_geometry_buffers();     // same for the cluster draw commands (virtual geometry)
+        void update_virtual_geometry_descriptors(); // per frame, like update_cull_descriptors()
         void update_cull_descriptors();             // per frame: buffers can be reallocated when they grow
         void read_back_draw_stats(u32 frame_slot, gpu_frame_report& report);
 
@@ -185,6 +187,8 @@ namespace GLT::renderer::vk_rasterizer {
         void destroy_light_culling_pipeline();
         void create_cull_pipeline();
         void destroy_cull_pipeline();
+        void create_virtual_geometry_resources();   // cluster cull pipeline + per-frame buffers (scene_renderer_virtual_geometry.inl)
+        void destroy_virtual_geometry_resources();
         void create_shadow_resources();
         void destroy_shadow_resources();
         void create_local_shadow_resources();
@@ -205,6 +209,24 @@ namespace GLT::renderer::vk_rasterizer {
 
         void add_reset_draw_count_pass();
         void add_cull_pass();
+
+        // Virtual geometry: meshes that opted in are drawn as clusters picked per frame on the GPU (main view only)
+        void begin_virtual_geometry_frame();        // update(): reset this frame's work list (build_instance_buffer fills it)
+        [[nodiscard]] u32 add_virtual_geometry_instance(u32 instance_index, const mesh_slot& slot, const glm::mat4& transform);
+        void finish_virtual_geometry_frame();       // update(): command ranges + uploads
+        void add_virtual_geometry_cull_pass();      // render(): cluster selection + culling -> cluster draw commands
+        [[nodiscard]] virtual_geometry_cull_push virtual_geometry_cull_constants() const;   // thresholds of this frame's selection
+        void read_virtual_geometry_commands(graph::pass_builder& builder);  // setup of every pass that draws them
+        void draw_virtual_geometry(graph::pass_context& ctx, material_pipeline_kind kind);     // cluster draws, per material
+        void draw_virtual_geometry_unbound(graph::pass_context& ctx);       // same draws with the caller's pipeline bound
+        [[nodiscard]] bool virtual_geometry_enabled() const;                // pipeline available + renderer setting on
+
+        // Render modes "Virtual Geometry / ..." (scene_renderer_virtual_geometry_debug.inl): one pass that redraws what the
+        // lit path draws, coloured per cluster / hierarchy level / triangle / projected error
+        void create_virtual_geometry_debug_resources();
+        void destroy_virtual_geometry_debug_resources();
+        void add_virtual_geometry_debug_pass();
+        [[nodiscard]] u32 virtual_geometry_debug_view() const;              // 0 = the active mode is not one of them
         void add_depth_prepass_pass();
         void add_clear_light_grid_pass();
         void add_light_culling_pass();
@@ -341,6 +363,33 @@ namespace GLT::renderer::vk_rasterizer {
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_cull_desc_buffers{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_commands_handles{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_count_handles{};
+
+        // Virtual geometry. Everything is separate from the instance cull above (own work list, command ranges, buffers
+        // and pass), so a frame without virtual geometry instances records exactly what it recorded before
+        bool                                                                m_vg_active = false;            // this frame has instances on the path
+        u32                                                                 m_vg_instance_count = 0;
+        u32                                                                 m_vg_cluster_count = 0;         // clusters tested this frame
+        std::vector<glm::uvec2>                                             m_vg_work_items{};              // x = instance, y = first cluster (VIRTUAL_CLUSTERS_PER_ITEM each)
+        std::vector<glm::uvec2>                                             m_vg_material_ranges{};         // [MAX_MATERIALS] x = first cmd, y = capacity
+        std::vector<u32>                                                    m_vg_material_draw_counts{};    // [MAX_MATERIALS] scratch
+        u32                                                                 m_vg_total_draw_capacity = 0;
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_vg_work_item_buffers{};
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_vg_material_range_buffers{};
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_vg_draw_capacity{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_vg_draw_commands_handles{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_vg_draw_count_handles{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_vg_draw_cluster_handles{};    // u32 per command: the cluster it draws (debug views)
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_vg_cull_desc_buffers{};
+        vk::DescriptorSetLayout                                             m_vg_cull_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_vg_cull_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_vg_cull_pipeline = nullptr;   // null: path unavailable, LODs everywhere
+
+        // Virtual geometry debug views (render modes Vg_*)
+        vk::DescriptorSetLayout                                             m_vg_debug_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_vg_debug_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_vg_debug_pipeline = nullptr;          // null: views unavailable (flat grey scene instead)
+        vk::Pipeline                                                        m_vg_debug_triangle_pipeline = nullptr; // per-triangle colours (needs geometryShader for gl_PrimitiveID)
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_vg_debug_desc_buffers{};
 
         // Mesh descriptor + per-frame resource buffers
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_camera_ubos{};

@@ -156,8 +156,13 @@ namespace GLT::renderer::vk_rasterizer {
         GLT_PROFILE_SCOPE("scene_renderer::build_instance_buffer");
 
         // Reset the per-material counters of the previous frame (only the touched entries)
-        for (u32 slot : m_scene_materials)
+        for (u32 slot : m_scene_materials) {
             m_material_draw_counts[slot] = 0;
+            m_vg_material_draw_counts[slot] = 0;
+            m_vg_material_ranges[slot] = glm::uvec2(0u);
+        }
+        begin_virtual_geometry_frame();
+        const bool virtual_geometry = virtual_geometry_enabled();
 
         m_packed_instances.clear();
         m_material_table.clear();
@@ -219,11 +224,20 @@ namespace GLT::renderer::vk_rasterizer {
             inst.normal_matrix = glm::mat4(glm::transpose(glm::inverse(ul)));
             inst.mesh_index = rit->second;
             inst.material_index = static_cast<u32>(m_material_table.size());     // first entry of this instance's material list
-            inst.flags = scene_instance.flags & GLT::asset::mesh::INSTANCE_FLAG_FORCE_LOD_MASK;   // forced LOD (mesh editor preview)
+            const u32 force_bits = scene_instance.flags & GLT::asset::mesh::INSTANCE_FLAG_FORCE_LOD_MASK;   // forced LOD (mesh editor preview)
+
+            // Virtual geometry: meshes with clusters are drawn per cluster in the main view, unless a level is forced or
+            // the frame's cluster budget is used up (then the instance simply stays on the LOD path)
+            u32 virtual_flags = 0u;
+            if (virtual_geometry && force_bits == 0u && slot->cluster_count > 0)
+                virtual_flags = add_virtual_geometry_instance(static_cast<u32>(m_packed_instances.size()), *slot, scene_instance.transform);
+            const bool virtual_instance = (virtual_flags & INSTANCE_FLAG_VIRTUAL) != 0u;
+
+            inst.flags = force_bits | virtual_flags;
             m_packed_instances.push_back(inst);
 
             // Same rule as cull.comp: forced level clamped to the uploaded levels, otherwise LOD 0
-            const u32 forced_lod = inst.flags != 0u ? std::min(inst.flags - 1u, std::max(slot->lod_count, 1u) - 1u) : 0u;
+            const u32 forced_lod = force_bits != 0u ? std::min(force_bits - 1u, std::max(slot->lod_count, 1u) - 1u) : 0u;
 
             // Exactly `submesh_count` entries: cull.comp loops the GPU mesh table's submesh_count, which is the same value
             const u32 submesh_count = std::min(slot->submesh_count, MAX_SUBMESHES_PER_MESH);
@@ -241,11 +255,20 @@ namespace GLT::renderer::vk_rasterizer {
 
                     // Translucent submeshes are not counted: their range stays empty, so cull.comp skips them (and they
                     // stay out of the depth pre-pass and shadows). They are drawn sorted in the translucent pass instead
-                    if (m_shared->get_material(material).is_translucent())
+                    const material_slot& material_entry = m_shared->get_material(material);
+                    if (material_entry.is_translucent())
                         m_translucent_candidates.push_back({ 0.f, static_cast<u32>(m_packed_instances.size() - 1), material,
-                            rit->second, sm, false, forced_lod, inst.flags != 0u });
-                    else
-                        m_material_draw_counts[material]++;
+                            rit->second, sm, false, forced_lod, force_bits != 0u });
+                    else {
+                        m_material_draw_counts[material]++;     // shadow views (and the main view without virtual geometry)
+
+                        // Main view: this submesh is drawn as clusters. Reserve the most it can ever emit at once
+                        if (virtual_instance && sm < slot->cluster_max_visible.size()) {
+                            m_vg_material_draw_counts[material] += slot->cluster_max_visible[sm];
+                            if (material_entry.is_double_sided())
+                                m_packed_instances.back().flags &= ~INSTANCE_FLAG_CONE_CULL;    // back faces are visible
+                        }
+                    }
                 }
             }
         }
@@ -297,6 +320,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_total_draw_capacity = base;
         m_instance_count = static_cast<u32>(m_packed_instances.size());
 
+        finish_virtual_geometry_frame();        // cluster command ranges + work items of the virtual geometry instances
         upload_instance_data();
     }
 
@@ -454,6 +478,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         report.draw_calls = values.visible_draws;
         report.triangles = values.triangles;
+        report.virtual_clusters = values.virtual_clusters;      // subset of the two above (virtual_geometry_cull.comp)
+        report.virtual_triangles = values.virtual_triangles;
     }
 
 
@@ -464,10 +490,14 @@ namespace GLT::renderer::vk_rasterizer {
             [this](graph::pass_builder& builder) {
                 builder.write(m_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
                 builder.write(m_draw_stats_handles[m_current_frame], graph::buffer_usage::transfer_dst);
+                if (m_vg_active)
+                    builder.write(m_vg_draw_count_handles[m_current_frame], graph::buffer_usage::transfer_dst);
             },
             [this](graph::pass_context& ctx) {
                 ctx.cmd.fillBuffer(ctx.get_buffer(m_draw_count_handles[m_current_frame]), 0, MAX_MATERIALS * sizeof(u32), 0);
                 ctx.cmd.fillBuffer(ctx.get_buffer(m_draw_stats_handles[m_current_frame]), 0, sizeof(gpu_draw_stats), 0);
+                if (m_vg_active)                // cluster draw counters of the virtual geometry pass
+                    ctx.cmd.fillBuffer(ctx.get_buffer(m_vg_draw_count_handles[m_current_frame]), 0, MAX_MATERIALS * sizeof(u32), 0);
             });
     }
 

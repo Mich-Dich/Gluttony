@@ -276,6 +276,7 @@ namespace GLT::renderer::vk_rasterizer {
                 builder.read(m_depth_target, graph::texture_usage::depth_sampled);
                 builder.read(m_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
                 builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
+                read_virtual_geometry_commands(builder);
             },
             [this, set_viewport](graph::pass_context& ctx) {
 
@@ -316,6 +317,7 @@ namespace GLT::renderer::vk_rasterizer {
                     ctx.cmd.drawIndexedIndirectCount(cmd_buf, static_cast<vk::DeviceSize>(range.x) * stride,
                         cnt_buf, static_cast<vk::DeviceSize>(slot) * sizeof(u32), range.y, stride);
                 }
+                draw_virtual_geometry_unbound(ctx);             // virtual geometry clusters (same buffers, own commands)
 
                 // Translucent asset draws (CPU list, same LOD as the translucent pass)
                 for (const translucent_draw& draw : m_translucent_draws) {

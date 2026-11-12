@@ -40,6 +40,8 @@ namespace GLT::renderer::vk_rasterizer {
         GETTER_C(vk::Buffer,                            submesh_data_buffer, m_submesh_data_buffer.buffer)
         GETTER_REF(util::allocated_buffer,              mesh_data_buffer_alloc, m_mesh_data_buffer)
         GETTER_REF(util::allocated_buffer,              submesh_data_buffer_alloc, m_submesh_data_buffer)
+        GETTER_REF(util::allocated_buffer,              cluster_data_buffer_alloc, m_cluster_data_buffer)       // virtual geometry
+        GETTER_REF(util::allocated_buffer,              mesh_cluster_buffer_alloc, m_mesh_cluster_buffer)
         DEFAULT_GETTER_C(vk::DescriptorSetLayout,       mesh_set_layout)
         DEFAULT_GETTER_C(vk::DescriptorSetLayout,       material_set_layout)
         DEFAULT_GETTER_C(vk::PipelineLayout,            mesh_pipeline_layout)
@@ -176,6 +178,7 @@ namespace GLT::renderer::vk_rasterizer {
             u32                                             vertex_offset = 0;
             u32                                             index_offset = 0;
             u32                                             submesh_offset = 0;
+            u32                                             cluster_offset = 0;
         };
 
 
@@ -207,11 +210,18 @@ namespace GLT::renderer::vk_rasterizer {
         // Upload layout of a mesh asset: levels that fit, total indices ([indices ++ lod_indices]) and submesh table entries
         struct mesh_upload_layout {
             u32                                             vertex_count = 0;
-            u32                                             index_count = 0;
+            u32                                             index_count = 0;    // everything below, back to back
             u32                                             submesh_count = 0;  // per level
             u32                                             lod_count = 1;
+            u32                                             cluster_count = 0;      // virtual geometry, 0 = not uploaded
+            u32                                             cluster_index_base = 0; // cluster triangle lists start here in the index range
         };
         [[nodiscard]] static mesh_upload_layout mesh_layout_of(const GLT::asset::mesh::mesh_asset& mesh);
+
+        // Drops the parts of [layout] that are optional, in the order they are given up when the pools are full:
+        // first the virtual geometry clusters, then the LOD levels. Returns false when nothing is left to drop
+        [[nodiscard]] static bool reduce_layout(mesh_upload_layout& layout, const GLT::asset::mesh::mesh_asset& mesh);
+        void write_mesh_cluster_entry(u32 mesh_index, const mesh_slot& slot, f32 error_scale);
         [[nodiscard]] static u64 geometry_signature(const GLT::asset::mesh::mesh_asset& mesh);
         [[nodiscard]] static std::array<f32, 8> lod_screen_sizes(const GLT::asset::mesh::mesh_asset& mesh, u32 lod_count);
 
@@ -254,7 +264,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         // mesh allocation transaction ---------------------------------------------------------------------------------
 
-        std::optional<mesh_alloc> allocate_mesh_ranges(u32 v, u32 i, u32 s);
+        std::optional<mesh_alloc> allocate_mesh_ranges(u32 v, u32 i, u32 s, u32 c = 0);
 
 
 
@@ -276,6 +286,8 @@ namespace GLT::renderer::vk_rasterizer {
         util::allocated_buffer                                              m_index_buffer{};
         util::allocated_buffer                                              m_submesh_data_buffer{};
         util::allocated_buffer                                              m_mesh_data_buffer{};
+        util::allocated_buffer                                              m_cluster_data_buffer{};    // GLT::asset::mesh::cluster[], pool
+        util::allocated_buffer                                              m_mesh_cluster_buffer{};    // gpu_mesh_cluster_data[MAX_MESHES]
         std::vector<mesh_slot>                                              m_mesh_slots{};
         std::vector<u32>                                                    m_free_slots{};
         std::unordered_set<GLT::asset::handle>                              m_failed_mesh_loads{};
@@ -321,6 +333,7 @@ namespace GLT::renderer::vk_rasterizer {
         linear_pool                                                         m_vertex_pool{};
         linear_pool                                                         m_index_pool{};
         linear_pool                                                         m_submesh_pool{};
+        linear_pool                                                         m_cluster_pool{};
         u64                                                                 m_frames_since_compact = 0;
 
         // deferred destruction + GPU stats ----------------------------------------------------------------------------

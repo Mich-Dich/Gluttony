@@ -39,6 +39,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         if (m_active_mode == modes::Lod.id)         return 1u;
         if (m_active_mode == modes::Tri_density.id) return 2u;
+        if (virtual_geometry_debug_view() != 0u)    return 2u;          // flat grey; the debug pass replaces the image
         return 0u;
     }
 
@@ -321,6 +322,8 @@ namespace GLT::renderer::vk_rasterizer {
         create_cluster_resources();
         create_light_culling_pipeline();
         create_cull_pipeline();
+        create_virtual_geometry_resources();
+        create_virtual_geometry_debug_resources();
         create_shadow_resources();
         create_local_shadow_resources();
         if (!m_offscreen)
@@ -347,6 +350,8 @@ namespace GLT::renderer::vk_rasterizer {
             destroy_blit_pipeline();
         destroy_local_shadow_resources();
         destroy_shadow_resources();
+        destroy_virtual_geometry_debug_resources();
+        destroy_virtual_geometry_resources();
         destroy_cull_pipeline();
         destroy_light_culling_pipeline();
         destroy_cluster_resources();

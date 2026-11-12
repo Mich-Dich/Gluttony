@@ -23,6 +23,9 @@ namespace GLT::renderer::vk_rasterizer {
 
     static constexpr u32                                            INDEX_HEADROOM_MIN = 128 * 1024;
 
+    // Virtual geometry: records of the cluster pool (one per geometry cluster of every resident mesh that has them)
+    static constexpr u32                                            CLUSTER_HEADROOM_MIN = 16 * 1024;
+
     // mesh capacity ---------------------------------------------------------------------------------------------------
 
     static constexpr u32                                            MAX_MESHES = 4096;
@@ -123,6 +126,14 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         source_revision = 0;
         u64                                                         source_geometry = 0; // hash of the geometry arrays' data pointers + sizes
         std::array<f32, 8>                                          lod_screen{};       // CPU copy of gpu_mesh_data::lod_screen (translucents)
+
+        // Virtual geometry (asset/mesh_cluster.h). cluster_count == 0: the mesh has no clusters or does not use them, and
+        // renders with the levels above only. The cluster triangle lists sit at the end of this slot's index range
+        // ([indices ++ lod_indices ++ cluster_indices]), the cluster records in the cluster pool
+        u32                                                         cluster_offset = 0;     // in cluster records
+        u32                                                         cluster_count = 0;
+        u32                                                         cluster_index_base = 0; // first cluster index, relative to index_offset
+        std::vector<u32>                                            cluster_max_visible{};  // per submesh: most cluster draws at once
         glm::vec3                                                   local_min{0.0f};
         glm::vec3                                                   local_max{0.0f};
         u32                                                         ref_count = 0;
@@ -154,6 +165,8 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         render_passes = 0;
         u32                                                         draw_calls = 0;     // visible draws emitted by GPU culling (main view)
         u32                                                         triangles = 0;      // triangles of those draws
+        u32                                                         virtual_clusters = 0;   // of the draws: virtual geometry clusters
+        u32                                                         virtual_triangles = 0;  // of the triangles: in those clusters
         std::vector<std::pair<std::string, f32>>                    pass_times_ms{};
     };
 
@@ -226,6 +239,18 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         _pad0 = 0;
     };
     static_assert(sizeof(gpu_submesh_data) == 16, "gpu_submesh_data layout mismatch");
+
+    // Persistent per-mesh entry of the virtual geometry table (same index as gpu_mesh_data). Layout matches
+    // MeshClusterData in virtual_geometry_cull.comp.glsl. The cluster records themselves are GLT::asset::mesh::cluster,
+    // uploaded unchanged
+    struct gpu_mesh_cluster_data {
+
+        u32                                                         first_cluster = 0;      // into the cluster buffer
+        u32                                                         cluster_count = 0;      // 0 = mesh without virtual geometry
+        u32                                                         index_base = 0;         // + gpu_mesh_data::index_offset + cluster::first_index
+        f32                                                         error_scale = 1.0f;     // asset cluster_settings::error_scale
+    };
+    static_assert(sizeof(gpu_mesh_cluster_data) == 16, "gpu_mesh_cluster_data layout mismatch");
 
     // STATIC VARIABLES ================================================================================================
 

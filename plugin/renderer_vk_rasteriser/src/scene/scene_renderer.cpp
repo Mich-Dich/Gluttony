@@ -277,13 +277,16 @@ namespace GLT::renderer::vk_rasterizer {
         update_light_cull_descriptors();
         update_mesh_descriptors();
         ensure_draw_buffers();                  // grow indirect buffers to this frame's draw count (before descriptors)
+        ensure_virtual_geometry_buffers();
         update_cull_descriptors();
+        update_virtual_geometry_descriptors();
 
         m_imgui_clears_backbuffer = false;
         if (m_active) {
 
             add_environment_passes();           // sky cubemap, specular prefilter, SH (only when the sun / sky changed)
             add_reset_draw_count_pass();
+            add_virtual_geometry_cull_pass();   // cluster selection for meshes on the virtual geometry path (no-op without any)
             add_cull_pass();
 
             // Shadow caching: re-render only when casters, shadow views or the target image changed
@@ -345,6 +348,8 @@ namespace GLT::renderer::vk_rasterizer {
                 add_tonemap_pass();             // HDR -> scene_color (display); debug draw goes on top, unaffected by exposure
             if (m_active_mode == modes::Tri_density.id)
                 add_tri_density_passes();       // triangles-per-pixel heatmap blended over the flat grey scene
+            if (virtual_geometry_debug_view() != 0u)
+                add_virtual_geometry_debug_pass();  // clusters / levels / triangles / error instead of the shaded image
             add_debug_draw_pass();
 
             if (!m_offscreen)
@@ -671,6 +676,10 @@ namespace GLT::renderer::vk_rasterizer {
         report.pass_times_ms.emplace_back(label + "[frame total]", report.gpu_time_ms);
         report.pass_times_ms.emplace_back(label + "[width]", static_cast<f32>(m_extent.x));
         report.pass_times_ms.emplace_back(label + "[height]", static_cast<f32>(m_extent.y));
+        if (m_vg_cull_pipeline) {               // virtual geometry: clusters / triangles drawn (counts, not times)
+            report.pass_times_ms.emplace_back(label + "[virtual geometry clusters]", static_cast<f32>(report.virtual_clusters));
+            report.pass_times_ms.emplace_back(label + "[virtual geometry triangles]", static_cast<f32>(report.virtual_triangles));
+        }
         for (u32 i = 1; i < written && (i - 1) < names.size(); ++i)
             report.pass_times_ms.emplace_back(label + names[i - 1], delta_ms(i - 1, i));
 
@@ -929,6 +938,8 @@ namespace GLT::renderer::vk_rasterizer {
 #include "scene/scene_renderer_lights.inl"
 #include "scene/scene_renderer_light_culling.inl"
 #include "scene/scene_renderer_cull.inl"
+#include "scene/scene_renderer_virtual_geometry.inl"
+#include "scene/scene_renderer_virtual_geometry_debug.inl"
 #include "scene/scene_renderer_shadow.inl"
 #include "scene/scene_renderer_blit.inl"
 #include "scene/scene_renderer_tonemap.inl"

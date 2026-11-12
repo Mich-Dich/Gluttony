@@ -34,6 +34,22 @@ namespace GLT::renderer::vk_rasterizer {
 
     constexpr u32                                       INITIAL_DRAW_CAPACITY = 4096;       // draw commands (instance x submesh)
 
+    // virtual geometry (scene_renderer_virtual_geometry.inl, virtual_geometry_cull.comp.glsl) --------------------------
+
+    // gpu_instance_data::flags above the forced-LOD nibble. VIRTUAL: in the main view the instance is drawn cluster by
+    // cluster (cull.comp skips it there). CONE_CULL: its transform and materials allow backface cone culling of clusters
+    constexpr u32                                       INSTANCE_FLAG_VIRTUAL = 1u << 4;
+    constexpr u32                                       INSTANCE_FLAG_CONE_CULL = 1u << 5;
+
+    // One work item = one compute workgroup = this many consecutive clusters of one instance (local_size_x of the shader)
+    constexpr u32                                       VIRTUAL_CLUSTERS_PER_ITEM = 64;
+
+    // Work items per dispatch row. Items beyond one row go to the next (maxComputeWorkGroupCount[0] is only guaranteed
+    // to be 65535)
+    constexpr u32                                       VIRTUAL_DISPATCH_WIDTH = 32768;
+
+    constexpr u32                                       INITIAL_VIRTUAL_DRAW_CAPACITY = 4096;   // cluster draw commands
+
     constexpr u32                                       MAX_LIGHTS = 1024;
 
 
@@ -129,10 +145,24 @@ namespace GLT::renderer::vk_rasterizer {
         glm::mat4                                       normal_matrix{1.0f};
         u32                                             mesh_index = 0;
         u32                                             material_index = 0;
-        u32                                             flags = 0;      // bits 0..3: forced LOD + 1 (asset::mesh::INSTANCE_FLAG_FORCE_LOD_MASK), 0 = LOD 0
+        u32                                             flags = 0;      // bits 0..3: forced LOD + 1 (asset::mesh::INSTANCE_FLAG_FORCE_LOD_MASK), 0 = LOD 0. Bits 4..5: INSTANCE_FLAG_VIRTUAL / _CONE_CULL
         u32                                             _pad1 = 0;
     };
     static_assert(sizeof(gpu_instance_data) == 144, "gpu_instance_data layout mismatch");
+
+
+    // Push constants of virtual_geometry_cull.comp.glsl (layout must match). The thresholds are also what the virtual
+    // geometry debug views use, so both show the same selection
+    struct virtual_geometry_cull_push {
+
+        u32                                             item_count = 0;
+        u32                                             dispatch_width = VIRTUAL_DISPATCH_WIDTH;
+        f32                                             error_threshold = 0.0f;     // pixel error / viewport height
+        f32                                             projection_scale = 0.0f;    // |P11| * 0.5
+        f32                                             near_plane = 0.0f;
+        u32                                             flags = 0;
+    };
+    static_assert(sizeof(virtual_geometry_cull_push) == 24, "virtual_geometry_cull_push layout mismatch");
 
 
     // Written by cull.comp (main view only), read back on the host after the frame's fence. Layout matches DrawStats in
@@ -143,8 +173,15 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                             triangles = 0;
         u32                                             visible_instances = 0;
         u32                                             _pad = 0;
+
+        // Written by virtual_geometry_cull.comp only (cull.comp declares just the four counters above). The cluster
+        // draws are also counted in visible_draws / triangles
+        u32                                             virtual_clusters = 0;
+        u32                                             virtual_triangles = 0;
+        u32                                             _pad1 = 0;
+        u32                                             _pad2 = 0;
     };
-    static_assert(sizeof(gpu_draw_stats) == 16, "gpu_draw_stats layout mismatch");
+    static_assert(sizeof(gpu_draw_stats) == 32, "gpu_draw_stats layout mismatch");
 
 
     // Per-light SSBO entry

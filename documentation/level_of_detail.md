@@ -4,6 +4,9 @@ Static meshes carry up to 8 levels of detail (`GLT::asset::mesh::MAX_LODS`), LOD
 automatically with [meshoptimizer](https://github.com/zeux/meshoptimizer). They are generated once on import and can be
 tuned and regenerated in the mesh editor. The renderer picks a level per instance on the GPU.
 
+Discrete LODs are one of the two detail modes of a mesh. The other one is virtual geometry, see
+[virtual_geometry.md](virtual_geometry.md); the mesh editor's "Geometry Detail" card switches between them.
+
 ## How it fits together
 
 | Piece | Where | What it does |
@@ -100,12 +103,11 @@ Ordered roughly by value for effort.
    cost of duplicated vertices. Pairs well with (1).
 8. **Impostors / billboards as the last level.** Octahedral impostor atlas baked in the editor, for vegetation and
    distant props.
-9. **Meshlets / cluster LOD (Nanite-style).**
-   - Build a cluster DAG with `meshopt_buildMeshlets` plus `meshopt_simplify` (meshoptimizer ships a clusterlod
-     demo).
-   - Select per cluster on the GPU with mesh shaders or compute-expanded index buffers.
-   - This replaces discrete levels with continuous, crack-free LOD and per-cluster culling (frustum, occlusion,
-     backface cones). It is the long-term direction once the renderer has a meshlet path.
+9. **Cluster LOD: done, see [virtual_geometry.md](virtual_geometry.md).** A mesh uses either the discrete levels
+   described here or virtual geometry: a cluster hierarchy that the GPU selects from per cluster and per frame
+   (continuous, crack-free detail plus frustum and backface culling per cluster). The mesh editor switches between
+   the two ("Geometry Detail"). For a mesh in virtual geometry mode the discrete levels are only the fallback (shadows,
+   translucent submeshes). Open ends (occlusion culling, cluster shadows, mesh shaders) are listed in that document.
 10. **Skeletal meshes.** The same chunks apply. Simplification must respect bone weights (add them as attributes or lock
     vertices on influence boundaries), and animation LOD (bone count reduction) would come with it.
 11. **Streaming.** Keep only coarse levels resident for far or streamed-out regions and fetch fine levels on demand.

@@ -1,6 +1,8 @@
 
 #pragma once
 
+#include <limits>
+
 #include "util/data_structures/AABB.h"
 #include "asset/type.h"
 #include "asset/header.h"
@@ -40,6 +42,12 @@ namespace GLT::asset::mesh {
     inline constexpr GLT::asset::chunk_id               CHUNK_LOD_INDICES = 0x000B;     // u32[] of LOD 1..N (LOD 0 = CHUNK_INDICES)
     inline constexpr GLT::asset::chunk_id               CHUNK_LOD_VERTICES = 0x000C;    // vertex[] only LOD 1..N use (recomputed normals), optional
 
+    // Virtual geometry (see asset/mesh_cluster.h). All optional: a mesh without them renders with its discrete LODs
+    inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTER_SETTINGS = 0x000D;    // cluster_settings (one, user authored)
+    inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTERS = 0x000E;            // cluster[] (generated)
+    inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTER_INDICES = 0x000F;     // u32[] triangle lists of all clusters, into CHUNK_VERTICES
+    inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTER_SUBMESHES = 0x0010;   // cluster_submesh[submesh_count]
+
     // Hard upper bound of LOD levels per mesh, LOD 0 included. The renderer packs the per-level switch distances of
     // this many levels into its mesh table, so raising it is a GPU layout change
     inline constexpr u32                                MAX_LODS = 8;
@@ -47,6 +55,14 @@ namespace GLT::asset::mesh {
     // [instance::flags] bits 0..3: forced LOD + 1 (0 = automatic selection by screen size). Used by the mesh editor's
     // LOD preview; clamped to the mesh's generated level count by the renderer
     inline constexpr u32                                INSTANCE_FLAG_FORCE_LOD_MASK = 0xFu;
+
+    // Triangles per cluster of the virtual geometry path (cluster_settings::cluster_triangles). The upper bound is
+    // meshoptimizer's meshlet limit (256 vertices per cluster)
+    inline constexpr u32                                MIN_CLUSTER_TRIANGLES = 32;
+    inline constexpr u32                                MAX_CLUSTER_TRIANGLES = 256;
+
+    // cluster::parent_error of a cluster that has no coarser replacement (the top of the hierarchy)
+    inline constexpr f32                                CLUSTER_ERROR_NONE = std::numeric_limits<f32>::max();
 
     // MACROS ==========================================================================================================
 
@@ -220,6 +236,86 @@ namespace GLT::asset::mesh {
     };
     static_assert(sizeof(lod_range) == 8);
 
+
+    // @brief How a static mesh reduces its detail with distance. A mesh uses exactly one of the two
+    //
+    // discrete_lods:    whole-mesh levels (lod_settings), authored in the mesh editor
+    // virtual_geometry: clusters picked per frame (cluster_settings). The discrete levels are then only a fallback that
+    //                   is not authored any more (shadows, translucent submeshes, renderers / frames without the path)
+    enum class detail_mode : u8 {
+
+        discrete_lods = 0,
+        virtual_geometry,
+    };
+
+
+    enum cluster_flag_bits : u32 {
+
+        CLUSTER_FLAG_NONE = 0,
+        CLUSTER_FLAG_ENABLED = 1u << 0,                 // the mesh's detail mode is virtual geometry (mesh_asset::detail())
+        CLUSTER_FLAG_LOCK_SEAMS = 1u << 1,              // never move vertices shared by several submeshes (no cracks between materials)
+    };
+
+
+    // @brief Per-mesh virtual geometry authoring settings (CHUNK_CLUSTER_SETTINGS). Plain data, blitted to disk
+    //
+    // Virtual geometry replaces the discrete LOD levels in the main view: the mesh is split into clusters of
+    // [cluster_triangles] triangles, groups of neighbouring clusters are simplified and re-split again and again, and the
+    // renderer picks, per cluster and per frame, the coarsest version whose error stays below a pixel. The discrete LODs
+    // stay in the asset as a fallback: shadows, translucent submeshes and the forced-LOD preview keep using them. Cluster
+    // data only exists while CLUSTER_FLAG_ENABLED is set (mesh_cluster.h: set_detail_mode())
+    struct cluster_settings {
+
+        u32                                             flags = CLUSTER_FLAG_LOCK_SEAMS;
+        u32                                             cluster_triangles = 128;        // MIN..MAX_CLUSTER_TRIANGLES (needs a rebuild)
+        f32                                             normal_weight = 0.5f;           // simplifier attribute weights (need a rebuild)
+        f32                                             uv_weight = 0.5f;
+        f32                                             error_scale = 1.0f;             // live: > 1 keeps more detail, < 1 less (multiplies every cluster error)
+        u32                                             _reserved[3]{};
+    };
+    static_assert(sizeof(cluster_settings) == 32);
+    static_assert(std::is_trivially_copyable_v<cluster_settings>);
+
+
+    // @brief One cluster of the virtual geometry hierarchy (CHUNK_CLUSTERS). Uploaded to the GPU as is
+    //
+    // The clusters of a mesh form a DAG: a group of neighbouring clusters is simplified into fewer, coarser clusters that
+    // cover the same surface with the same outline. A cluster is drawn when its own error is small enough on screen and the
+    // error of its coarser replacement is not:
+    //
+    //      projected(lod_bounds, lod_error) <= threshold  &&  projected(parent_bounds, parent_error) > threshold
+    //
+    // Both tests of a group use the same sphere + error, and errors only grow towards the root, so for any camera exactly
+    // one version of every piece of surface passes: no holes, no overlaps, no cracks between neighbouring clusters
+    struct cluster {
+
+        glm::vec4                                       bounds{ 0.0f };         // xyz centre, w radius of this cluster's triangles (frustum / cone culling)
+        glm::vec4                                       lod_bounds{ 0.0f };     // sphere of the group this cluster was simplified from (source triangles: = bounds)
+        glm::vec4                                       parent_bounds{ 0.0f };  // sphere of the group that replaces this cluster with coarser geometry
+        f32                                             lod_error = 0.0f;       // deviation from the source surface in mesh units (source triangles: 0)
+        f32                                             parent_error = CLUSTER_ERROR_NONE;     // deviation of the coarser replacement
+        u32                                             first_index = 0;        // into mesh_asset::cluster_indices
+        u32                                             index_count = 0;
+        u32                                             submesh = 0;
+        u32                                             depth = 0;              // hierarchy level, 0 = source triangles
+        i8                                              cone_axis[3]{};         // backface cone: axis (x / 127)
+        i8                                              cone_cutoff = 127;      // cos of the cone half angle (x / 127), 127 = cannot be culled
+        u32                                             _pad = 0;
+    };
+    static_assert(sizeof(cluster) == 80);
+    static_assert(std::is_trivially_copyable_v<cluster>);
+
+
+    // @brief Clusters of one submesh (CHUNK_CLUSTER_SUBMESHES). Clusters never span submeshes (one material per cluster)
+    struct cluster_submesh {
+
+        u32                                             first_cluster = 0;      // into mesh_asset::clusters
+        u32                                             cluster_count = 0;
+        u32                                             max_visible = 0;        // upper bound of clusters drawn at the same time (sizes the indirect buffers)
+        u32                                             level_count = 0;        // hierarchy levels of this submesh
+    };
+    static_assert(sizeof(cluster_submesh) == 16);
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -252,6 +348,12 @@ namespace GLT::asset::mesh {
         std::vector<lod_range>                          lod_ranges;     // [level * submesh_count + submesh]
         std::vector<u32>                                lod_indices;    // index data of LOD 1..N, into [vertices ++ lod_vertices]
         std::vector<vertex>                             lod_vertices;   // extra vertices of LOD 1..N (recomputed normals)
+
+        // ---- virtual geometry (empty clusters = not built; the mesh renders with the levels above) ----
+        cluster_settings                                virtual_geometry{};
+        std::vector<cluster>                            clusters;           // all submeshes back to back, see cluster_submeshes
+        std::vector<u32>                                cluster_indices;    // triangle lists of every cluster, into [vertices]
+        std::vector<cluster_submesh>                    cluster_submeshes;  // one per submesh
 
         // Bumped by in-place edits (LOD regeneration, ...) so GPU consumers know to re-upload. Runtime only
         u32                                             revision = 0;
@@ -327,6 +429,28 @@ namespace GLT::asset::mesh {
         }
 
 
+        // @brief True if cluster data was built for the current submesh layout
+        FORCE_INLINE_R bool has_clusters() const noexcept {
+
+            return !clusters.empty() && !cluster_indices.empty() && cluster_submeshes.size() == submeshes.size();
+        }
+
+
+        // @brief Which of the two detail systems this mesh uses (the user's choice, see detail_mode)
+        FORCE_INLINE_R detail_mode detail() const noexcept {
+
+            return (virtual_geometry.flags & CLUSTER_FLAG_ENABLED) != 0 ? detail_mode::virtual_geometry : detail_mode::discrete_lods;
+        }
+
+
+        // @brief True if the renderer should draw this mesh through the virtual geometry path: that is its detail mode
+        // and the clusters are built. Until they are, the mesh is drawn with its discrete levels
+        FORCE_INLINE_R bool uses_virtual_geometry() const noexcept {
+
+            return (virtual_geometry.flags & CLUSTER_FLAG_ENABLED) != 0 && has_clusters();
+        }
+
+
         // @brief Approximate resident bytes, used by the profiler
         FORCE_INLINE_R u64 memory_usage() const noexcept override {
 
@@ -338,7 +462,10 @@ namespace GLT::asset::mesh {
                 + lods.capacity() * sizeof(GLT::asset::mesh::lod_level)
                 + lod_ranges.capacity() * sizeof(GLT::asset::mesh::lod_range)
                 + lod_indices.capacity() * sizeof(u32)
-                + lod_vertices.capacity() * sizeof(GLT::asset::mesh::vertex);
+                + lod_vertices.capacity() * sizeof(GLT::asset::mesh::vertex)
+                + clusters.capacity() * sizeof(GLT::asset::mesh::cluster)
+                + cluster_indices.capacity() * sizeof(u32)
+                + cluster_submeshes.capacity() * sizeof(GLT::asset::mesh::cluster_submesh);
         }
         
     };

@@ -48,6 +48,7 @@ namespace GLT::renderer::vk_rasterizer {
                 builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, 1.0f, 0);
                 builder.read(m_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
                 builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
+                read_virtual_geometry_commands(builder);
             },
             [this](graph::pass_context& ctx) {
 
@@ -90,6 +91,9 @@ namespace GLT::renderer::vk_rasterizer {
                         range.y, stride);
                 }
 
+                // ---- Virtual geometry (cluster draws, same buffers + materials) ---------------
+                draw_virtual_geometry(ctx, material_pipeline_kind::depth);
+
                 // ---- Procedural draws ---------------------------------------------------------
                 for (size_t i = 0; i < m_procedural_draw_slots.size(); ++i) {
 
@@ -131,6 +135,7 @@ namespace GLT::renderer::vk_rasterizer {
                 builder.depth_attachment(m_depth_target, vk::AttachmentLoadOp::eLoad, vk::AttachmentStoreOp::eStore, 1.0f, 0);
                 builder.read(m_draw_commands_handles[m_current_frame], graph::buffer_usage::indirect);
                 builder.read(m_draw_count_handles[m_current_frame], graph::buffer_usage::indirect);
+                read_virtual_geometry_commands(builder);
                 builder.read(m_light_grid_handles[m_current_frame], graph::buffer_usage::storage_read);
                 builder.read(m_light_index_list_handles[m_current_frame], graph::buffer_usage::storage_read);
                 if (m_shadow.active)
@@ -180,6 +185,9 @@ namespace GLT::renderer::vk_rasterizer {
                         cnt_buf, static_cast<vk::DeviceSize>(slot) * sizeof(u32),
                         range.y, stride);
                 }
+
+                // ---- Virtual geometry (cluster draws, same buffers + materials) ---------------
+                draw_virtual_geometry(ctx, material_pipeline_kind::main);
 
                 // ---- Procedural draws ---------------------------------------------------------
                 for (size_t i = 0; i < m_procedural_draw_slots.size(); ++i) {

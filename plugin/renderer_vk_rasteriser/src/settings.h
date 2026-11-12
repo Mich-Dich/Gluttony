@@ -40,6 +40,27 @@ namespace GLT::renderer::vk_rasterizer::settings {
         [[=range{0.0, 3.0}]]
         u32 tonemapper = 0u;
 
+        // ---- Virtual geometry ---------------------------------------------------
+        // Meshes in virtual geometry mode (mesh editor: Geometry Detail) are drawn cluster by cluster, with the detail
+        // chosen per cluster and frame. Everything else, and all shadow maps, use the discrete LOD levels. Debug views:
+        // render modes of the category "Virtual Geometry"
+
+        [[=category{"Virtual Geometry"}]]
+        [[=display_name{"Virtual geometry"}]]
+        [[=tooltip{"Draw meshes whose detail mode is Virtual Geometry (mesh editor: Geometry Detail) per cluster. Off: every mesh uses its discrete LOD levels"}]]
+        bool virtual_geometry = true;
+
+        [[=category{"Virtual Geometry"}]]
+        [[=display_name{"Pixel error"}]]
+        [[=tooltip{"How many pixels a cluster may deviate from the full-detail surface. 1 = not visible; higher values draw fewer triangles"}]]
+        [[=range{0.25, 16.0}]]
+        f32 virtual_geometry_pixel_error = 1.0f;
+
+        [[=category{"Virtual Geometry"}]]
+        [[=display_name{"Backface cluster culling"}]]
+        [[=tooltip{"Skip clusters whose triangles all face away from the camera (not applied to double-sided materials or non-uniformly scaled objects)"}]]
+        bool virtual_geometry_cone_culling = true;
+
         // ---- Debug views --------------------------------------------------------
         [[=category{"Debug"}]]
         [[=display_name{"Triangle density blur (px)"}]]
