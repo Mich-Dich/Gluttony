@@ -36,10 +36,6 @@ namespace GLT::editor {
 
     constexpr f32                                   MIN_PREVIEW_SIDE = 64.0f;
 
-    constexpr f32                                   MIN_CAM_DISTANCE = 0.05f;
-
-    constexpr f32                                   MAX_CAM_DISTANCE = 1500.0f;
-
     constexpr u32                                   DEFAULT_PREVIEW_SIZE = 512;
 
     constexpr const char*                           DRAG_PAYLOAD_ID = "CONTENT_BROWSER_ITEM";
@@ -442,6 +438,10 @@ namespace GLT::editor {
         if (m_cluster_job.valid())
             m_cluster_job.wait();               // same for a running cluster build
         m_cluster_job = {};
+        stop_analysis_sweep();
+        save_analysis_data();                   // collected samples: <project>/metadata/asset_stats/<uuid>.txt
+        reset_analysis(false);                  // waits for a running estimate build, same reason
+        m_analysis.data_file.clear();
 
         destroy_preview();
 
@@ -489,11 +489,13 @@ namespace GLT::editor {
 
         poll_lod_generation();
         poll_cluster_build();
+        // The frame delta of the game loop is in milliseconds
+        update_analysis(delta_time * 0.001f);   // samples the preview's GPU statistics, moves the camera of "Measure distances"
 
         if (!m_preview_scene)
             return;
 
-        if (m_auto_rotate)
+        if (m_auto_rotate && !m_analysis.sweep.active)
             m_preview_camera.yaw_rad += (m_auto_rotate_speed / 100000.0f) * glm::two_pi<f32>() * delta_time;
 
         m_preview_scene->set_active_camera(build_camera_snapshot());
@@ -615,6 +617,9 @@ namespace GLT::editor {
 
     void mesh_editor_window::draw_body() {
 
+        // The left panel keeps one width per view: the outliner is a narrow list, the rendering analysis has graphs
+        f32& left_width = m_left_view == left_panel_view::rendering ? m_rendering_width : m_outliner_width;
+
         const ImVec2 avail = ImGui::GetContentRegionAvail();
 
         if (avail.x < BODY_MIN_WIDTH || avail.y < BODY_MIN_HEIGHT)
@@ -630,20 +635,20 @@ namespace GLT::editor {
             const f32 min_preview_reserved = MIN_PREVIEW_SIDE + 2.0f * SPLITTER_WIDTH;
             const f32 max_combined         = total_w - min_preview_reserved;
 
-            if (m_outliner_width + m_inspector_width > max_combined) {
-                const f32 scale = max_combined / (m_outliner_width + m_inspector_width);
-                m_outliner_width  = std::max(MIN_OUTLINER_WIDTH,  m_outliner_width  * scale);
+            if (left_width + m_inspector_width > max_combined) {
+                const f32 scale = max_combined / (left_width + m_inspector_width);
+                left_width  = std::max(MIN_OUTLINER_WIDTH,  left_width  * scale);
                 m_inspector_width = std::max(MIN_INSPECTOR_WIDTH, m_inspector_width * scale);
             }
 
-            m_outliner_width  = std::max(m_outliner_width,  MIN_OUTLINER_WIDTH);
+            left_width  = std::max(left_width,  MIN_OUTLINER_WIDTH);
             m_inspector_width = std::max(m_inspector_width, MIN_INSPECTOR_WIDTH);
         }
 
         const f32 max_outliner_w = std::max(MIN_OUTLINER_WIDTH,
             total_w - m_inspector_width - MIN_PREVIEW_SIDE - 2.0f * SPLITTER_WIDTH);
         const f32 max_inspector_w = std::max(MIN_INSPECTOR_WIDTH,
-            total_w - m_outliner_width - MIN_PREVIEW_SIDE - 2.0f * SPLITTER_WIDTH);
+            total_w - left_width - MIN_PREVIEW_SIDE - 2.0f * SPLITTER_WIDTH);
 
         // ---- outliner ----------------------------------------------------------------------------------------------
         ImGui::SetCursorScreenPos(start_pos);
@@ -654,7 +659,7 @@ namespace GLT::editor {
             sidebar_bg.z = std::max(0.f, sidebar_bg.z - 0.03f);
             ImGui::PushStyleColor(ImGuiCol_ChildBg, sidebar_bg);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.f, 8.f));
-            ImGui::BeginChild("##outliner", ImVec2(m_outliner_width, total_h), ImGuiChildFlags_AlwaysUseWindowPadding);
+            ImGui::BeginChild("##outliner", ImVec2(left_width, total_h), ImGuiChildFlags_AlwaysUseWindowPadding);
             ImGui::PopStyleVar();
             ImGui::PopStyleColor();
             draw_outliner_panel();
@@ -662,14 +667,14 @@ namespace GLT::editor {
         }
 
         // ---- left splitter -----------------------------------------------------------------------------------------
-        ImGui::SetCursorScreenPos(ImVec2(start_pos.x + m_outliner_width, start_pos.y));
-        draw_panel_splitter("##splitter_left", m_outliner_width,
+        ImGui::SetCursorScreenPos(ImVec2(start_pos.x + left_width, start_pos.y));
+        draw_panel_splitter("##splitter_left", left_width,
             MIN_OUTLINER_WIDTH, max_outliner_w, false, total_h);
 
         // ---- preview -----------------------------------------------------------------------------------------------
-        const f32 preview_x = start_pos.x + m_outliner_width + SPLITTER_WIDTH;
+        const f32 preview_x = start_pos.x + left_width + SPLITTER_WIDTH;
         const f32 preview_w = std::max(MIN_PREVIEW_SIDE,
-            total_w - m_outliner_width - m_inspector_width - 2.0f * SPLITTER_WIDTH);
+            total_w - left_width - m_inspector_width - 2.0f * SPLITTER_WIDTH);
 
         ImGui::SetCursorScreenPos(ImVec2(preview_x, start_pos.y));
         ImGui::BeginChild("##preview_region", ImVec2(preview_w, total_h), false);
@@ -853,6 +858,7 @@ namespace GLT::editor {
 
 
     void mesh_editor_window::draw_outliner_panel() {
+        GLT_PROFILE_SCOPE("mesh_editor: outliner");
 
         if (m_load_failed) {
             UI::empty_state("Failed to load the mesh", "See the log for details");
@@ -861,6 +867,14 @@ namespace GLT::editor {
 
         if (!m_has_mesh) {
             UI::empty_state("No mesh loaded", "Drop a mesh asset here");
+            return;
+        }
+
+        draw_left_panel_switch();
+        if (m_left_view == left_panel_view::rendering) {
+            UI::begin_properties(UI::property_layout::compact);
+            draw_rendering_analysis();
+            UI::end_properties();
             return;
         }
 
@@ -1053,6 +1067,7 @@ namespace GLT::editor {
     // inspector -------------------------------------------------------------------------------------------------------
 
     void mesh_editor_window::draw_inspector_panel() {
+        GLT_PROFILE_SCOPE("mesh_editor: inspector");
 
         if (m_load_failed) {
             UI::empty_state("Failed to load the mesh", "See the log for details");
@@ -1071,6 +1086,17 @@ namespace GLT::editor {
             case inspector_target::collider:    draw_inspector_collider();   break;
         }
         UI::end_properties();
+    }
+
+
+    // "Outliner | Rendering" at the top of the left panel
+    void mesh_editor_window::draw_left_panel_switch() {
+
+        static constexpr const char* VIEWS[] = { "Outliner", "Rendering" };
+        i32 view = static_cast<i32>(m_left_view);
+        if (UI::segmented_control("##left_panel_view", view, VIEWS, ImGui::GetContentRegionAvail().x))
+            m_left_view = view == 1 ? left_panel_view::rendering : left_panel_view::outliner;
+        ImGui::Dummy(ImVec2(0.f, 6.f));
     }
 
 
@@ -1455,6 +1481,7 @@ namespace GLT::editor {
     // preview ----------------------------------------------------------------------------------------------------------
 
     void mesh_editor_window::draw_preview_panel() {
+        GLT_PROFILE_SCOPE("mesh_editor: preview");
 
         if (!m_has_mesh) {
             UI::empty_state("No mesh loaded", "Drop a mesh asset from the Content Browser here");
@@ -1496,10 +1523,11 @@ namespace GLT::editor {
         }
         render_collider_gizmo(canvas_min, avail);
 
-        // camera input
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active_left = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
-        const bool active_middle  = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle);
+        // camera input (none while "Measure distances" flies the camera: Stop in the Rendering panel ends it)
+        const bool camera_free = !m_analysis.sweep.active;
+        const bool hovered = camera_free && ImGui::IsItemHovered();
+        const bool active_left = camera_free && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+        const bool active_middle  = camera_free && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle);
         ImGuiIO& io = ImGui::GetIO();
 
         if (hovered && io.MouseWheel != 0.0f) {
@@ -1782,19 +1810,28 @@ namespace GLT::editor {
 
     // helpers ---------------------------------------------------------------------------------------------------------
 
-    void mesh_editor_window::compute_mesh_bounds(const GLT::asset::mesh::mesh_asset& mesh,
-        glm::vec3& out_min, glm::vec3& out_max) const {
+    // Bounds of the vertex positions. Called several times per frame (debug box, bounds card, ...): the loop over every
+    // vertex only runs when the geometry changed (in a Debug build it costs milliseconds for a large mesh)
+    void mesh_editor_window::compute_mesh_bounds(const GLT::asset::mesh::mesh_asset& mesh, glm::vec3& out_min, glm::vec3& out_max) {
 
-        out_min = glm::vec3( std::numeric_limits<f32>::max());
-        out_max = glm::vec3(-std::numeric_limits<f32>::max());
+        if (!m_bounds_valid || m_bounds_vertices != mesh.vertices.data() || m_bounds_vertex_count != mesh.vertices.size()
+            || m_bounds_revision != mesh.revision) {
 
-        if (mesh.vertices.empty())
-            return;
-
-        for (const auto& v : mesh.vertices) {
-            out_min = glm::min(out_min, v.position);
-            out_max = glm::max(out_max, v.position);
+            glm::vec3 mn( std::numeric_limits<f32>::max());
+            glm::vec3 mx(-std::numeric_limits<f32>::max());
+            for (const auto& v : mesh.vertices) {
+                mn = glm::min(mn, v.position);
+                mx = glm::max(mx, v.position);
+            }
+            m_bounds_min = mn;
+            m_bounds_max = mx;
+            m_bounds_vertices = mesh.vertices.data();
+            m_bounds_vertex_count = mesh.vertices.size();
+            m_bounds_revision = mesh.revision;
+            m_bounds_valid = true;
         }
+        out_min = m_bounds_min;
+        out_max = m_bounds_max;
     }
 
 
@@ -1855,6 +1892,8 @@ namespace GLT::editor {
         m_last_cluster_build_ms = 0.0;
         m_wire_lines.clear();
         m_wire_lod = -2;
+        reset_analysis(false);
+        load_analysis_data(registry->info(h).id);   // samples collected in earlier sessions
 
         rebuild_submesh_bounds_cache(*mesh);
         load_colliders_from_mesh(*mesh);
@@ -1893,6 +1932,7 @@ namespace GLT::editor {
 
 
     void mesh_editor_window::submit_debug_draws() {
+        GLT_PROFILE_SCOPE("mesh_editor: debug draws");
 
         if (!m_preview_scene || !m_has_mesh)
             return;
@@ -2707,9 +2747,65 @@ namespace GLT::editor {
 
 
     // What the preview camera selects. Same rule as the GPU pass, without its frustum / backface culling
-    GLT::asset::mesh::cluster_cut mesh_editor_window::preview_cluster_cut(const GLT::asset::mesh::mesh_asset& mesh) const {
+    GLT::asset::mesh::cluster_cut mesh_editor_window::preview_cluster_cut(const GLT::asset::mesh::mesh_asset& mesh) {
 
-        return GLT::asset::mesh::measure_cut(mesh.clusters, preview_cluster_view(mesh));
+        return cached_cut(m_preview_cut, mesh.clusters, preview_cluster_view(mesh), mesh.revision).cut;
+    }
+
+
+    // The selection of [clusters] for [view], from [cache] when it still describes them (see cut_cache)
+    const mesh_editor_window::cut_cache& mesh_editor_window::cached_cut(cut_cache& cache,
+        const std::span<const GLT::asset::mesh::cluster> clusters, const GLT::asset::mesh::cluster_view& view, const u32 revision) {
+
+        constexpr f32 CUT_REFRESH_SECONDS = 0.1f;
+        const auto now = std::chrono::steady_clock::now();
+        const bool same_hierarchy = cache.valid && cache.clusters == clusters.data() && cache.cluster_count == clusters.size()
+            && cache.revision == revision;
+        const bool same_view = same_hierarchy && cache.view.camera_position == view.camera_position && cache.view.projection == view.projection
+            && cache.view.viewport_height == view.viewport_height && cache.view.pixel_error == view.pixel_error
+            && cache.view.error_scale == view.error_scale && cache.view.model == view.model;
+        if (same_view || (same_hierarchy && std::chrono::duration<f32>(now - cache.time).count() < CUT_REFRESH_SECONDS))
+            return cache;
+
+        GLT_PROFILE_SCOPE("mesh_editor: cluster selection");
+        GLT::asset::mesh::collect_cut(clusters, view, cache.selected);
+        cache.cut = {};
+        for (const u32 index : cache.selected) {
+            cache.cut.clusters++;
+            cache.cut.triangles += clusters[index].index_count / 3;
+            cache.cut.deepest_level = std::max(cache.cut.deepest_level, clusters[index].depth);
+        }
+        cache.clusters = clusters.data();
+        cache.cluster_count = clusters.size();
+        cache.revision = revision;
+        cache.view = view;
+        cache.time = now;
+        cache.valid = true;
+        return cache;
+    }
+
+
+    // Statistics of the "Virtual Geometry" card, recomputed when the hierarchy changes
+    const mesh_editor_window::cluster_stats_cache& mesh_editor_window::cluster_stats(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        cluster_stats_cache& stats = m_cluster_stats;
+        if (stats.clusters == mesh.clusters.data() && stats.cluster_count == mesh.clusters.size() && stats.revision == mesh.revision)
+            return stats;
+
+        stats = {};
+        for (const GLT::asset::mesh::cluster& c : mesh.clusters) {
+            stats.levels = std::max(stats.levels, c.depth + 1u);
+            if (c.depth == 0) {
+                stats.source_clusters++;
+                stats.source_triangles += c.index_count / 3;
+            }
+            if (c.parent_error >= GLT::asset::mesh::CLUSTER_ERROR_NONE)
+                stats.coarsest_triangles += c.index_count / 3;
+        }
+        stats.clusters = mesh.clusters.data();
+        stats.cluster_count = mesh.clusters.size();
+        stats.revision = mesh.revision;
+        return stats;
     }
 
 
@@ -2751,8 +2847,8 @@ namespace GLT::editor {
             return;
 
         // The job worked on a copy of the geometry. Only accept a result that fits the mesh as it is now
-        if (!GLT::asset::mesh::validate_clusters(result.clusters, result.indices, result.submeshes, mesh->vertices.size(),
-            mesh->submeshes.size())) {
+        if (!GLT::asset::mesh::validate_clusters(result.clusters, result.indices, result.submeshes,
+            mesh->vertices.size() + result.vertices.size(), mesh->submeshes.size())) {
 
             LOG(warn, "mesh_editor: [{}] cluster build produced no usable hierarchy - the mesh keeps using its fallback levels", m_mesh_name);
             m_clusters_need_rebuild = false;
@@ -2762,6 +2858,7 @@ namespace GLT::editor {
         mesh->clusters = std::move(result.clusters);
         mesh->cluster_indices = std::move(result.indices);
         mesh->cluster_submeshes = std::move(result.submeshes);
+        mesh->cluster_vertices = std::move(result.vertices);
         mesh->revision++;                       // renderers re-upload (shared_resource_manager::refresh_mesh)
 
         m_last_cluster_build_ms = result.build_ms;
@@ -2769,8 +2866,9 @@ namespace GLT::editor {
         m_dirty = true;
         m_wire_lod = -2;
 
-        LOG(info, "mesh_editor: [{}] {} clusters in {} levels in {:.1f} ms (coarsest selection {} of {} triangles)", m_mesh_name,
-            mesh->clusters.size(), result.level_count, result.build_ms, result.coarsest_triangles, result.source_triangles);
+        LOG(info, "mesh_editor: [{}] {} clusters in {} levels in {:.1f} ms (coarsest selection {} of {} triangles, {} extra vertices)", m_mesh_name,
+            mesh->clusters.size(), result.level_count, result.build_ms, result.coarsest_triangles, result.source_triangles,
+            mesh->cluster_vertices.size());
     }
 
 
@@ -2804,25 +2902,23 @@ namespace GLT::editor {
                 warning_text("No clusters yet - the mesh is drawn with its fallback levels until they are built.");
             else {
 
-                u32 source_clusters = 0, source_triangles = 0, coarsest_triangles = 0, levels = 0;
-                for (const cluster& c : mesh->clusters) {
-                    levels = std::max(levels, c.depth + 1u);
-                    if (c.depth == 0) {
-                        source_clusters++;
-                        source_triangles += c.index_count / 3;
-                    }
-                    if (c.parent_error >= CLUSTER_ERROR_NONE)
-                        coarsest_triangles += c.index_count / 3;
-                }
+                const cluster_stats_cache& stats = cluster_stats(*mesh);
+                const u32 source_clusters = stats.source_clusters, source_triangles = stats.source_triangles;
+                const u32 coarsest_triangles = stats.coarsest_triangles, levels = stats.levels;
                 const u64 bytes = mesh->clusters.size() * sizeof(cluster) + mesh->cluster_indices.size() * sizeof(u32)
-                    + mesh->cluster_submeshes.size() * sizeof(cluster_submesh);
+                    + mesh->cluster_submeshes.size() * sizeof(cluster_submesh) + mesh->cluster_vertices.size() * sizeof(vertex);
 
                 UI::property_value("Clusters", std::format("{} ({} at full detail)", format_count(mesh->clusters.size()),
                     format_count(source_clusters)), "All hierarchy levels / the clusters holding the source triangles");
                 UI::property_value("Levels", std::to_string(levels), "Depth of the hierarchy: each level has about half the triangles of the one below");
                 UI::property_value("Triangles", std::format("{} .. {}", format_count(coarsest_triangles), format_count(source_triangles)),
                     "Fewest (far away) and most (close up) triangles the mesh can be drawn with");
-                UI::property_value("Memory", GLT::util::format_bytes(bytes), "Cluster records + their index data, CPU side. The GPU holds the same");
+                UI::property_value("Memory", GLT::util::format_bytes(bytes), "Cluster records, their index data and the extra vertices of the "
+                    "normals method, CPU side. The GPU holds the same");
+                if (!mesh->cluster_vertices.empty())
+                    UI::property_value("Extra vertices", std::format("{} ({:.0f}% of the mesh)", format_count(mesh->cluster_vertices.size()),
+                        100.0 * static_cast<f64>(mesh->cluster_vertices.size()) / static_cast<f64>(std::max<size_t>(mesh->vertices.size(), 1))),
+                        "Vertices only the simplified clusters use: copies of mesh vertices with a recomputed normal (see 'Normals')");
                 if (m_last_cluster_build_ms > 0.0)
                     UI::property_value("Built in", std::format("{:.0f} ms", m_last_cluster_build_ms));
 
@@ -2837,6 +2933,9 @@ namespace GLT::editor {
             ImGui::Dummy(ImVec2(0.f, 4.f));
             if (m_clusters_need_rebuild && built)
                 warning_text("Build settings changed - rebuild to apply them.");
+            else if (built && !busy && mesh->cluster_normals() == cluster_normals_mode::keep)
+                warning_text("Coarse clusters are shaded with the mesh's own normals ('Keep source'), which can look blotchy. "
+                    "Pick another method under Cluster Build > Normals and rebuild.");
 
             ImGui::BeginDisabled(busy);
             if (UI::accent_button(busy ? "Building..." : (built ? "Rebuild clusters" : "Build clusters"), ImVec2(-FLT_MIN, 0.f)))
@@ -2861,8 +2960,24 @@ namespace GLT::editor {
 
         // ======== build settings (need a rebuild) ===================================================================
         ImGui::BeginDisabled(busy);
-        if (UI::begin_card("Cluster Build", UI::card_options{ .description = "Changes here apply when you rebuild", .collapsible = true,
-            .default_open = false })) {
+        if (UI::begin_card("Cluster Build", UI::card_options{ .description = "Changes here apply when you rebuild", .collapsible = true })) {
+
+            // Normals of the simplified clusters (level 0 always shows the mesh's own normals)
+            static constexpr const char* NORMAL_MODES[] = { "Keep source", "Flat", "Auto smooth", "Smooth" };
+            i32 normals = static_cast<i32>((settings.flags & CLUSTER_FLAG_NORMALS_MASK) >> CLUSTER_FLAG_NORMALS_SHIFT);
+            const i32 default_normals = static_cast<i32>((defaults.flags & CLUSTER_FLAG_NORMALS_MASK) >> CLUSTER_FLAG_NORMALS_SHIFT);
+            if (UI::property_combo("Normals", normals, NORMAL_MODES,
+                "How simplified clusters are shaded. Keep source: the mesh's own vertex normals, no extra memory; they belong to the "
+                "finer surface and, across a collapsed hard edge, to the neighbouring face, so coarse clusters can look blotchy. "
+                "Flat: one normal per face. Auto smooth: recomputed from the simplified faces, hard edges above the angle. "
+                "Smooth: recomputed, smooth everywhere. The recomputed methods add vertices (see 'Extra vertices')", &default_normals)) {
+                settings.flags = (settings.flags & ~static_cast<u32>(CLUSTER_FLAG_NORMALS_MASK))
+                    | ((static_cast<u32>(normals) << CLUSTER_FLAG_NORMALS_SHIFT) & CLUSTER_FLAG_NORMALS_MASK);
+                rebuild_changed = true;
+            }
+            if (normals == static_cast<i32>(cluster_normals_mode::auto_smooth))
+                rebuild_changed |= UI::property_drag("Smooth angle", settings.smooth_angle, 0.5f, 0.0f, 180.0f, "%.0f deg",
+                    "Edges between faces bent more than this stay hard", &defaults.smooth_angle);
 
             i32 cluster_size = static_cast<i32>(settings.cluster_triangles);
             const i32 default_size = static_cast<i32>(defaults.cluster_triangles);
@@ -3039,9 +3154,12 @@ namespace GLT::editor {
         if (!debug)
             return;
 
-        // Lift the lines slightly off the surface (along the vertex normal) so they win the depth test
+        // Lift the lines slightly off the surface (along the vertex normal) so they win the depth test. Level indices
+        // address [vertices ++ lod_vertices], cluster indices [vertices ++ cluster_vertices]
         const f32 lift = 0.002f * std::max(GLT::asset::mesh::lod_sphere_radius(mesh.bounds), 1e-4f);
-        auto lifted = [&](u32 v) { const auto& vx = mesh.vertex_at(v); return vx.position + vx.normal * lift; };
+        const bool clusters = preview_uses_virtual_geometry(mesh);
+        const u32 vertex_limit = clusters ? mesh.cluster_vertex_count() : mesh.total_vertex_count();
+        auto lifted = [&](u32 v) { const auto& vx = clusters ? mesh.cluster_vertex_at(v) : mesh.vertex_at(v); return vx.position + vx.normal * lift; };
 
         // Unique edges of a triangle list, into m_wire_lines. Returns false once the edge budget is used up
         std::unordered_set<u64> seen;
@@ -3055,7 +3173,7 @@ namespace GLT::editor {
 
                     const u32 a = tri[e];
                     const u32 b = tri[(e + 1) % 3];
-                    if (a >= mesh.total_vertex_count() || b >= mesh.total_vertex_count())
+                    if (a >= vertex_limit || b >= vertex_limit)
                         continue;
                     const u64 key = (static_cast<u64>(std::min(a, b)) << 32) | std::max(a, b);
                     if (!seen.insert(key).second)
@@ -3072,11 +3190,12 @@ namespace GLT::editor {
             return true;
         };
 
-        if (preview_uses_virtual_geometry(mesh)) {
+        if (clusters) {
 
             // Virtual geometry: the triangles of the clusters the preview camera selects (what the renderer draws, before
             // its frustum / backface culling). The selection changes with the camera; rebuild the lines only when it does
-            GLT::asset::mesh::collect_cut(mesh.clusters, preview_cluster_view(mesh), m_cut_scratch);
+            const cut_cache& selection = cached_cut(m_preview_cut, mesh.clusters, preview_cluster_view(mesh), mesh.revision);
+            m_cut_scratch = selection.selected;
             u64 signature = 0xcbf29ce484222325ull;
             for (const u32 index : m_cut_scratch)
                 signature = (signature ^ index) * 0x100000001b3ull;
@@ -3134,7 +3253,7 @@ namespace GLT::editor {
             return;
 
         const GLT::asset::mesh::cluster_view view = preview_cluster_view(mesh);
-        GLT::asset::mesh::collect_cut(mesh.clusters, view, m_cut_scratch);
+        m_cut_scratch = cached_cut(m_preview_cut, mesh.clusters, view, mesh.revision).selected;   // copy: sorted below
 
         if (m_cut_scratch.size() > MAX_CLUSTER_BOUNDS) {
 

@@ -537,10 +537,16 @@ namespace GLT::renderer::vk_rasterizer {
         GLT_PROFILE_SCOPE("shared_resource_manager::upload_mesh_slice");
         {
             auto* dst = static_cast<GLT::asset::mesh::vertex*>(m_dev->map_buffer(m_vertex_buffer));
+            // [vertices ++ lod_vertices ++ cluster_vertices]: the two optional parts hold the recomputed normals of the
+            // LOD levels / of the simplified clusters
             std::memcpy(dst + slot.vertex_offset, mesh.vertices.data(), mesh.vertices.size() * sizeof(GLT::asset::mesh::vertex));
-            if (slot.vertex_count > mesh.vertices.size())           // LOD vertices (recomputed normals) right behind
+            const size_t lod_vertex_end = slot.cluster_vertex_count > 0 ? slot.cluster_vertex_base : slot.vertex_count;
+            if (lod_vertex_end > mesh.vertices.size())
                 std::memcpy(dst + slot.vertex_offset + mesh.vertices.size(), mesh.lod_vertices.data(),
-                    (slot.vertex_count - mesh.vertices.size()) * sizeof(GLT::asset::mesh::vertex));
+                    (lod_vertex_end - mesh.vertices.size()) * sizeof(GLT::asset::mesh::vertex));
+            if (slot.cluster_vertex_count > 0)
+                std::memcpy(dst + slot.vertex_offset + slot.cluster_vertex_base, mesh.cluster_vertices.data(),
+                    static_cast<size_t>(slot.cluster_vertex_count) * sizeof(GLT::asset::mesh::vertex));
             m_dev->unmap_buffer(m_vertex_buffer);
         }
         {
@@ -555,9 +561,17 @@ namespace GLT::renderer::vk_rasterizer {
             std::memcpy(dst + slot.index_offset, mesh.indices.data(), mesh.indices.size() * sizeof(u32));
             if (lod_index_count > 0)
                 std::memcpy(dst + slot.index_offset + base_count, mesh.lod_indices.data(), lod_index_count * sizeof(u32));
-            if (cluster_index_count > 0)
-                std::memcpy(dst + slot.index_offset + slot.cluster_index_base, mesh.cluster_indices.data(),
-                    cluster_index_count * sizeof(u32));
+            // Cluster indices address [vertices ++ cluster_vertices] in the asset. In the vertex range the cluster
+            // vertices sit behind the LOD vertices, so indices at or above the source vertex count are moved up
+            if (cluster_index_count > 0) {
+                const u32 source_vertices = static_cast<u32>(mesh.vertices.size());
+                const u32 shift = slot.cluster_vertex_base - source_vertices;
+                u32* out = dst + slot.index_offset + slot.cluster_index_base;
+                for (size_t i = 0; i < cluster_index_count; ++i) {
+                    const u32 index = mesh.cluster_indices[i];
+                    out[i] = index < source_vertices ? index : index + shift;
+                }
+            }
 
             // Never let the GPU fetch past this mesh's vertices (another mesh's data / uninitialised pool memory: huge
             // NaN-shaded triangles). Out-of-range triangles become degenerate. Checks the CPU copy (the mapped buffer is
@@ -565,20 +579,21 @@ namespace GLT::renderer::vk_rasterizer {
             u32 bad_triangles = 0;
             u32* uploaded = dst + slot.index_offset;
             const u32 checked_count = static_cast<u32>(base_count + lod_index_count);   // cluster indices: checked below
+            const u32 lod_vertex_limit = slot.cluster_vertex_count > 0 ? slot.cluster_vertex_base : slot.vertex_count;  // [vertices ++ lod_vertices]
             auto source_index = [&](u32 i) { return i < base_count ? mesh.indices[i] : mesh.lod_indices[i - base_count]; };
             for (u32 t = 0; t + 2 < checked_count; t += 3) {
-                if (source_index(t) < slot.vertex_count && source_index(t + 1) < slot.vertex_count && source_index(t + 2) < slot.vertex_count)
+                if (source_index(t) < lod_vertex_limit && source_index(t + 1) < lod_vertex_limit && source_index(t + 2) < lod_vertex_limit)
                     continue;
                 uploaded[t] = uploaded[t + 1] = uploaded[t + 2] = 0u;
                 ++bad_triangles;
             }
 
-            // Cluster triangles only use the source vertices (asset/mesh_cluster.h). Clusters are whole triangle lists
-            // stored back to back, so triples of the stream are triangles here too
-            const size_t source_vertices = mesh.vertices.size();
+            // Cluster triangles use the source vertices and the cluster vertices (asset/mesh_cluster.h). Clusters are whole
+            // triangle lists stored back to back, so triples of the stream are triangles here too
+            const size_t cluster_stream_vertices = mesh.vertices.size() + slot.cluster_vertex_count;
             for (size_t t = 0; t + 2 < cluster_index_count; t += 3) {
                 const u32* tri = &mesh.cluster_indices[t];
-                if (tri[0] < source_vertices && tri[1] < source_vertices && tri[2] < source_vertices)
+                if (tri[0] < cluster_stream_vertices && tri[1] < cluster_stream_vertices && tri[2] < cluster_stream_vertices)
                     continue;
                 u32* out = uploaded + slot.cluster_index_base + t;
                 out[0] = out[1] = out[2] = 0u;
@@ -775,6 +790,8 @@ namespace GLT::renderer::vk_rasterizer {
         slot.cluster_offset = alloc->cluster_offset;
         slot.cluster_count = layout.cluster_count;
         slot.cluster_index_base = layout.cluster_index_base;
+        slot.cluster_vertex_base = layout.cluster_vertex_base;
+        slot.cluster_vertex_count = layout.cluster_vertex_count;
         slot.source = mesh;
         slot.source_revision = mesh->revision;
         slot.source_geometry = geometry_signature(*mesh);
@@ -817,10 +834,14 @@ namespace GLT::renderer::vk_rasterizer {
         // every submesh is addressable (the instance material list holds MAX_SUBMESHES_PER_MESH entries at most)
         if (mesh.uses_virtual_geometry() && mesh.submeshes.size() <= MAX_SUBMESHES_PER_MESH) {
             const u64 total = static_cast<u64>(l.index_count) + mesh.cluster_indices.size();
-            if (total <= UINT32_MAX && mesh.clusters.size() <= UINT32_MAX) {
+            const u64 vertices = static_cast<u64>(l.vertex_count) + mesh.cluster_vertices.size();
+            if (total <= UINT32_MAX && vertices <= UINT32_MAX && mesh.clusters.size() <= UINT32_MAX) {
                 l.cluster_count = static_cast<u32>(mesh.clusters.size());
                 l.cluster_index_base = l.index_count;
                 l.index_count = static_cast<u32>(total);
+                l.cluster_vertex_base = l.vertex_count;             // behind [vertices ++ lod_vertices]
+                l.cluster_vertex_count = static_cast<u32>(mesh.cluster_vertices.size());
+                l.vertex_count = static_cast<u32>(vertices);
             }
         }
         return l;
@@ -831,8 +852,11 @@ namespace GLT::renderer::vk_rasterizer {
 
         if (layout.cluster_count > 0) {
             layout.index_count = layout.cluster_index_base;         // drop the cluster triangle lists
+            layout.vertex_count -= layout.cluster_vertex_count;     // ... and their vertices (the last part of the range)
             layout.cluster_count = 0;
             layout.cluster_index_base = 0;
+            layout.cluster_vertex_base = 0;
+            layout.cluster_vertex_count = 0;
             return true;
         }
         if (layout.lod_count > 1) {
@@ -860,6 +884,7 @@ namespace GLT::renderer::vk_rasterizer {
         // drops the cluster data)
         mix(reinterpret_cast<std::uintptr_t>(mesh.clusters.data()));        mix(mesh.clusters.size());
         mix(reinterpret_cast<std::uintptr_t>(mesh.cluster_indices.data())); mix(mesh.cluster_indices.size());
+        mix(reinterpret_cast<std::uintptr_t>(mesh.cluster_vertices.data())); mix(mesh.cluster_vertices.size());
         mix(mesh.uses_virtual_geometry() ? 1u : 0u);
         return h;
     }
@@ -949,6 +974,8 @@ namespace GLT::renderer::vk_rasterizer {
         slot.cluster_offset = alloc->cluster_offset;
         slot.cluster_count = layout.cluster_count;
         slot.cluster_index_base = layout.cluster_index_base;
+        slot.cluster_vertex_base = layout.cluster_vertex_base;
+        slot.cluster_vertex_count = layout.cluster_vertex_count;
         slot.local_min = mesh->bounds.min;
         slot.local_max = mesh->bounds.max;
 

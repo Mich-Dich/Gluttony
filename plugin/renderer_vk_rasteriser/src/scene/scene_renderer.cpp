@@ -374,6 +374,7 @@ namespace GLT::renderer::vk_rasterizer {
         m_graph->set_timestamp_queries(m_timestamp_pool, m_current_frame * MAX_TIMESTAMPS_PER_FRAME, MAX_TIMESTAMPS_PER_FRAME);
         m_graph->execute(frame.cmd);
         m_timed_pass_names[m_current_frame] = m_graph->timed_pass_names();
+        m_frame_views[m_current_frame] = { m_active_camera.position, m_active_mode, m_extent };
         m_timestamps_written[m_current_frame] = m_graph->timestamps_written();
         m_graph->end_frame();
 
@@ -654,9 +655,26 @@ namespace GLT::renderer::vk_rasterizer {
             m_plugin.get_vk_device().getQueryPoolResults(m_timestamp_pool, frame_slot * MAX_TIMESTAMPS_PER_FRAME, written,
                 written * sizeof(u64), ticks.data(), sizeof(u64), vk::QueryResultFlagBits::e64) == vk::Result::eSuccess;
 
+        // Per-renderer result for i_scene_renderer::last_frame_stats() (the shared report below sums all renderers)
+        auto publish = [&](const f32 geometry_ms) {
+            const frame_view& view = m_frame_views[frame_slot];
+            m_last_frame_stats.serial++;
+            m_last_frame_stats.gpu_time_ms = report.gpu_time_ms;
+            m_last_frame_stats.geometry_time_ms = geometry_ms;
+            m_last_frame_stats.draw_calls = report.draw_calls;
+            m_last_frame_stats.triangles = report.triangles;
+            m_last_frame_stats.cluster_draws = report.virtual_clusters;
+            m_last_frame_stats.cluster_triangles = report.virtual_triangles;
+            m_last_frame_stats.camera_position = view.camera_position;
+            m_last_frame_stats.render_mode = view.render_mode;
+            m_last_frame_stats.extent = view.extent;
+        };
+
         if (!have_timestamps) {
-            if (report.draw_calls > 0)
+            if (report.draw_calls > 0) {
+                publish(0.0f);
                 m_shared->report_gpu_frame(report);
+            }
             return;
         }
 
@@ -680,9 +698,21 @@ namespace GLT::renderer::vk_rasterizer {
             report.pass_times_ms.emplace_back(label + "[virtual geometry clusters]", static_cast<f32>(report.virtual_clusters));
             report.pass_times_ms.emplace_back(label + "[virtual geometry triangles]", static_cast<f32>(report.virtual_triangles));
         }
-        for (u32 i = 1; i < written && (i - 1) < names.size(); ++i)
-            report.pass_times_ms.emplace_back(label + names[i - 1], delta_ms(i - 1, i));
+        // Passes that cull or draw scene geometry: what a mesh's triangle count and draw calls actually change
+        static constexpr std::string_view GEOMETRY_PASSES[] = {
+            "reset_draw_count", "virtual_geometry_cull", "cull", "depth_prepass", "scene", "translucent",
+            "reset_shadow_draw_count", "shadow_cull", "shadow_pass", "reset_local_shadow_counts", "local_shadow_cull", "local_shadow_pass",
+            "virtual_geometry_debug",
+        };
+        f32 geometry_ms = 0.0f;
+        for (u32 i = 1; i < written && (i - 1) < names.size(); ++i) {
+            const f32 pass_ms = delta_ms(i - 1, i);
+            report.pass_times_ms.emplace_back(label + names[i - 1], pass_ms);
+            if (std::find(std::begin(GEOMETRY_PASSES), std::end(GEOMETRY_PASSES), std::string_view(names[i - 1])) != std::end(GEOMETRY_PASSES))
+                geometry_ms += pass_ms;
+        }
 
+        publish(geometry_ms);
         m_shared->report_gpu_frame(report);
     }
 

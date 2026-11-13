@@ -18,8 +18,9 @@ namespace GLT::asset::mesh {
     struct cluster_build_output {
 
         std::vector<cluster>                            clusters;               // submeshes back to back, levels ascending per submesh
-        std::vector<u32>                                indices;                // triangle lists, into the source vertices
+        std::vector<u32>                                indices;                // triangle lists, into [source vertices ++ vertices]
         std::vector<cluster_submesh>                    submeshes;              // one per source submesh
+        std::vector<vertex>                             vertices;               // extra vertices of simplified clusters (recomputed normals)
         u32                                             level_count = 0;        // deepest hierarchy of all submeshes
         u32                                             source_triangles = 0;   // triangles of the level 0 clusters
         u32                                             coarsest_triangles = 0; // triangles drawn when every cluster is as coarse as it gets
@@ -57,9 +58,10 @@ namespace GLT::asset::mesh {
     // then repeatedly group neighbouring clusters, simplify each group with its outline locked and split the result
     // into new clusters, until nothing can be merged any more
     //
-    // Clusters reference the source vertices (simplification only removes triangles), so the hierarchy adds index data
-    // and one record per cluster, no vertices. Submeshes are processed independently and in parallel. Pure function:
-    // safe to call from import tools and the editor alike
+    // Clusters reference the source vertices (simplification only removes triangles), plus, depending on
+    // cluster_settings' normals method, extra vertices that differ from a source vertex only in normal and tangent
+    // (cluster_build_output::vertices, see cluster_normals_mode). Submeshes are processed independently and in
+    // parallel. Pure function: safe to call from import tools and the editor alike
     [[nodiscard]] cluster_build_output build_clusters(std::span<const vertex> vertices, std::span<const u32> indices,
         std::span<const submesh> submeshes, const cluster_settings& settings);
 
@@ -80,12 +82,14 @@ namespace GLT::asset::mesh {
     bool set_detail_mode(mesh_asset& mesh, detail_mode mode);
 
 
-    // @brief Sanitize user input: cluster size in range, weights and error scale finite and clamped
+    // @brief Sanitize user input: cluster size in range, weights, error scale and smoothing angle finite and clamped.
+    // Also upgrades settings stored before the normals method existed (cluster_settings::version 0)
     void sanitize(cluster_settings& settings);
 
 
     // @brief True if cluster data is safe to draw: every range inside its array, every index a valid vertex, every
-    // cluster in the submesh that lists it. Loaders call this before accepting the chunks
+    // cluster in the submesh that lists it. Loaders call this before accepting the chunks. [vertex_count] is the size
+    // of the stream the indices address: [vertices ++ cluster_vertices]
     [[nodiscard]] bool validate_clusters(std::span<const cluster> clusters, std::span<const u32> indices,
         std::span<const cluster_submesh> submeshes, size_t vertex_count, size_t submesh_count);
 

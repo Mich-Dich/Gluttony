@@ -211,6 +211,14 @@ namespace GLT::asset::registry_default {
 
         [[nodiscard]] GLT::asset::handle find_by_id(GLT::UUID id) const override;
 
+        // asset catalog (catalog.inl) ---------------------------------------------------------------------------------
+
+        [[nodiscard]] std::filesystem::path find_path_by_id(GLT::UUID id) override;
+
+        [[nodiscard]] std::expected<GLT::asset::asset_ref, GLT::asset::load_error> load_by_id(GLT::UUID id) override;
+
+        u64 refresh_catalog() override;
+
         // relocation --------------------------------------------------------------------------------------------------
 
         [[nodiscard]] std::expected<void, GLT::asset::load_error> move(
@@ -348,6 +356,21 @@ namespace GLT::asset::registry_default {
 
         void retain_unlocked(GLT::asset::handle handle);
 
+        // asset catalog (catalog.inl) ---------------------------------------------------------------------------------
+
+        struct catalog_entry {
+
+            std::filesystem::path                                               path{};             // content-relative
+            GLT::asset::type                                                    asset_type{};
+        };
+
+        void ensure_catalog();
+        void scan_catalog();
+        [[nodiscard]] std::filesystem::path catalog_lookup(UUID id) const;
+        void catalog_note(UUID id, const std::filesystem::path& relative, GLT::asset::type asset_type);
+        void catalog_move(const std::string& from, const std::string& to);
+        void flush_catalog();
+
 
         struct source_record {
 
@@ -389,6 +412,15 @@ namespace GLT::asset::registry_default {
         std::condition_variable                                                 m_save_jobs_done{};
         u32                                                                     m_save_jobs{ 0 };
 
+        // asset catalog: UUID -> path of every asset file of the project (catalog.inl) ----------------------------------
+        std::mutex                                                              m_catalog_build_mutex{};
+        mutable std::mutex                                                      m_catalog_mutex{};
+        std::unordered_map<UUID, catalog_entry>                                 m_catalog{};
+        std::filesystem::path                                                   m_catalog_content_dir{};   // absolute; empty = not built
+        std::filesystem::path                                                   m_catalog_file{};          // absolute, metadata/asset_catalog.txt
+        std::chrono::steady_clock::time_point                                   m_catalog_scan_time{};
+        bool                                                                    m_catalog_dirty{ false };
+
     };
 
 }
@@ -397,5 +429,6 @@ namespace GLT::asset::registry_default {
 #include "asset_writer_impl.inl"
 #include "chunk_reader_impl.inl"
 #include "plugin.inl"
+#include "catalog.inl"
 
 EXPORT_PLUGIN_CLASS(GLT::asset::registry_default::plugin, GLT::asset::registry_default::descriptor)

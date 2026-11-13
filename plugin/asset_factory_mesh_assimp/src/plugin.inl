@@ -649,6 +649,8 @@ namespace GLT::asset::factory::mesh_assimp {
             out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTERS,          std::as_bytes(std::span{ clusters.clusters }));
             out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_INDICES,   std::as_bytes(std::span{ clusters.indices }));
             out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_SUBMESHES, std::as_bytes(std::span{ clusters.submeshes }));
+            if (!clusters.vertices.empty())
+                out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_VERTICES, std::as_bytes(std::span{ clusters.vertices }));
         }
 
         // Dependencies: one per submesh, in submesh order so material_slot lines up with info.dependencies[N] on load

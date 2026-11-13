@@ -77,6 +77,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         [[nodiscard]] std::span<const GLT::render::render_mode_info> supported_modes() const override;
         void set_render_mode(u32 id) override { m_active_mode = id; }
+        [[nodiscard]] GLT::render::frame_stats last_frame_stats() const override { return m_last_frame_stats; }
         [[nodiscard]] u32 get_render_mode() const override { return m_active_mode; }
         void set_active(bool active) override { m_active = active; }
         [[nodiscard]] bool is_active() const override { return m_active; }
@@ -499,6 +500,16 @@ namespace GLT::renderer::vk_rasterizer {
         f32                                                                 m_timestamp_period_ns = 0.f;
         u64                                                                 m_timestamp_mask = ~0ull;
         std::array<std::vector<std::string>, MAX_CONCURRENT_FRAMES>         m_timed_pass_names{};
+
+        // i_scene_renderer::last_frame_stats(): the view each frame slot was rendered with (the GPU results of a slot
+        // are read when the slot comes around again) and the latest resolved result
+        struct frame_view {
+            glm::vec3                                                       camera_position{ 0.0f };
+            u32                                                             render_mode = 0;
+            glm::uvec2                                                      extent{ 0, 0 };
+        };
+        std::array<frame_view, MAX_CONCURRENT_FRAMES>                       m_frame_views{};
+        GLT::render::frame_stats                                            m_last_frame_stats{};
         std::array<u32, MAX_CONCURRENT_FRAMES>                              m_timestamps_written{};
 
         // debug draw state --------------------------------------------------------------------------------------------

@@ -45,8 +45,9 @@ namespace GLT::asset::mesh {
     // Virtual geometry (see asset/mesh_cluster.h). All optional: a mesh without them renders with its discrete LODs
     inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTER_SETTINGS = 0x000D;    // cluster_settings (one, user authored)
     inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTERS = 0x000E;            // cluster[] (generated)
-    inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTER_INDICES = 0x000F;     // u32[] triangle lists of all clusters, into CHUNK_VERTICES
+    inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTER_INDICES = 0x000F;     // u32[] triangle lists of all clusters, into [CHUNK_VERTICES ++ CHUNK_CLUSTER_VERTICES]
     inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTER_SUBMESHES = 0x0010;   // cluster_submesh[submesh_count]
+    inline constexpr GLT::asset::chunk_id               CHUNK_CLUSTER_VERTICES = 0x0011;    // vertex[] only coarse clusters use (recomputed normals), optional
 
     // Hard upper bound of LOD levels per mesh, LOD 0 included. The renderer packs the per-level switch distances of
     // this many levels into its mesh table, so raising it is a GPU layout change
@@ -63,6 +64,9 @@ namespace GLT::asset::mesh {
 
     // cluster::parent_error of a cluster that has no coarser replacement (the top of the hierarchy)
     inline constexpr f32                                CLUSTER_ERROR_NONE = std::numeric_limits<f32>::max();
+
+    // cluster_settings::version of this build. 0 = written before the normals method existed (see sanitize())
+    inline constexpr u32                                CLUSTER_SETTINGS_VERSION = 1;
 
     // MACROS ==========================================================================================================
 
@@ -254,7 +258,24 @@ namespace GLT::asset::mesh {
         CLUSTER_FLAG_NONE = 0,
         CLUSTER_FLAG_ENABLED = 1u << 0,                 // the mesh's detail mode is virtual geometry (mesh_asset::detail())
         CLUSTER_FLAG_LOCK_SEAMS = 1u << 1,              // never move vertices shared by several submeshes (no cracks between materials)
+
+        // Bits 4..5: normals of the simplified clusters (cluster_normals_mode, same values and bit position as the LOD
+        // flag). Simplified triangles reuse the source vertices, whose normals belong to the finer surface and, across
+        // hard edges, to a different face; the other methods give coarse clusters vertices of their own
+        CLUSTER_FLAG_NORMALS_SHIFT = 4,
+        CLUSTER_FLAG_NORMALS_MASK = 3u << 4,
     };
+
+    // @brief How simplified clusters get their normals (cluster_settings::flags bits 4..5). Level 0 clusters always use
+    // the source vertices
+    //
+    // keep:        the source vertices' normals, no extra vertices. The behaviour before the methods below existed:
+    //              those normals belong to the finer surface and, where a hard edge was collapsed, to the neighbouring
+    //              face, so coarse clusters can look blotchy
+    // flat:        one normal per face
+    // auto_smooth: recomputed from the simplified faces, smooth below cluster_settings::smooth_angle and hard above
+    // smooth:      recomputed, smooth everywhere
+    using cluster_normals_mode = lod_normals_mode;
 
 
     // @brief Per-mesh virtual geometry authoring settings (CHUNK_CLUSTER_SETTINGS). Plain data, blitted to disk
@@ -266,12 +287,15 @@ namespace GLT::asset::mesh {
     // data only exists while CLUSTER_FLAG_ENABLED is set (mesh_cluster.h: set_detail_mode())
     struct cluster_settings {
 
-        u32                                             flags = CLUSTER_FLAG_LOCK_SEAMS;
+        u32                                             flags = CLUSTER_FLAG_LOCK_SEAMS
+                                                              | (static_cast<u32>(cluster_normals_mode::auto_smooth) << CLUSTER_FLAG_NORMALS_SHIFT);
         u32                                             cluster_triangles = 128;        // MIN..MAX_CLUSTER_TRIANGLES (needs a rebuild)
         f32                                             normal_weight = 0.5f;           // simplifier attribute weights (need a rebuild)
         f32                                             uv_weight = 0.5f;
         f32                                             error_scale = 1.0f;             // live: > 1 keeps more detail, < 1 less (multiplies every cluster error)
-        u32                                             _reserved[3]{};
+        f32                                             smooth_angle = 45.0f;           // auto_smooth: max angle (degrees) between smoothed faces (needs a rebuild)
+        u32                                             version = CLUSTER_SETTINGS_VERSION;
+        u32                                             _reserved = 0;
     };
     static_assert(sizeof(cluster_settings) == 32);
     static_assert(std::is_trivially_copyable_v<cluster_settings>);
@@ -352,8 +376,9 @@ namespace GLT::asset::mesh {
         // ---- virtual geometry (empty clusters = not built; the mesh renders with the levels above) ----
         cluster_settings                                virtual_geometry{};
         std::vector<cluster>                            clusters;           // all submeshes back to back, see cluster_submeshes
-        std::vector<u32>                                cluster_indices;    // triangle lists of every cluster, into [vertices]
+        std::vector<u32>                                cluster_indices;    // triangle lists of every cluster, into [vertices ++ cluster_vertices]
         std::vector<cluster_submesh>                    cluster_submeshes;  // one per submesh
+        std::vector<vertex>                             cluster_vertices;   // extra vertices of simplified clusters (recomputed normals)
 
         // Bumped by in-place edits (LOD regeneration, ...) so GPU consumers know to re-upload. Runtime only
         u32                                             revision = 0;
@@ -413,6 +438,21 @@ namespace GLT::asset::mesh {
             return static_cast<lod_normals_mode>((lod.flags & LOD_FLAG_NORMALS_MASK) >> LOD_FLAG_NORMALS_SHIFT);
         }
 
+        // @brief Vertex [index] of the concatenated stream [vertices ++ cluster_vertices] (what cluster indices address)
+        FORCE_INLINE_R const vertex& cluster_vertex_at(u32 index) const noexcept {
+            return index < vertices.size() ? vertices[index] : cluster_vertices[index - vertices.size()];
+        }
+
+        // @brief Size of [vertices ++ cluster_vertices]
+        FORCE_INLINE_R u32 cluster_vertex_count() const noexcept {
+            return static_cast<u32>(vertices.size() + cluster_vertices.size());
+        }
+
+        // @brief Normals method of the simplified clusters
+        FORCE_INLINE_R cluster_normals_mode cluster_normals() const noexcept {
+            return static_cast<cluster_normals_mode>((virtual_geometry.flags & CLUSTER_FLAG_NORMALS_MASK) >> CLUSTER_FLAG_NORMALS_SHIFT);
+        }
+
         // @brief Index value at [position] of the concatenated stream [indices ++ lod_indices]
         FORCE_INLINE_R u32 index_at(u32 position) const noexcept {
 
@@ -465,7 +505,8 @@ namespace GLT::asset::mesh {
                 + lod_vertices.capacity() * sizeof(GLT::asset::mesh::vertex)
                 + clusters.capacity() * sizeof(GLT::asset::mesh::cluster)
                 + cluster_indices.capacity() * sizeof(u32)
-                + cluster_submeshes.capacity() * sizeof(GLT::asset::mesh::cluster_submesh);
+                + cluster_submeshes.capacity() * sizeof(GLT::asset::mesh::cluster_submesh)
+                + cluster_vertices.capacity() * sizeof(GLT::asset::mesh::vertex);
         }
         
     };

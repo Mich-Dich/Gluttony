@@ -133,6 +133,8 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         cluster_offset = 0;     // in cluster records
         u32                                                         cluster_count = 0;
         u32                                                         cluster_index_base = 0; // first cluster index, relative to index_offset
+        u32                                                         cluster_vertex_base = 0;    // first cluster vertex (recomputed normals), relative to vertex_offset
+        u32                                                         cluster_vertex_count = 0;
         std::vector<u32>                                            cluster_max_visible{};  // per submesh: most cluster draws at once
         glm::vec3                                                   local_min{0.0f};
         glm::vec3                                                   local_max{0.0f};

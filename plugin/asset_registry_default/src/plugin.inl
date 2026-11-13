@@ -267,6 +267,7 @@ namespace GLT::asset::registry_default {
 
         // Background save jobs (e.g. the save-on-exit) still write files and touch the slots: let them finish first
         wait_for_save_jobs();
+        flush_catalog();                                    // path captured at scan time: no application access
 
         std::unique_lock lock(m_mutex);
 
@@ -299,6 +300,8 @@ namespace GLT::asset::registry_default {
         const auto relative = GLT::project::to_content_relative(path);
         if (relative.empty())
             return std::unexpected{ GLT::asset::load_error::not_found };
+
+        ensure_catalog();                                   // first load of a project: dependencies can then resolve by UUID
 
         std::unique_lock lock(m_mutex);
         std::unordered_set<std::string> in_flight;
@@ -447,6 +450,7 @@ namespace GLT::asset::registry_default {
             m_by_path.emplace(new_key, h);
         }
 
+        catalog_note(pending.id, target, pending.asset_type);   // first save of a runtime asset / save as
         return {};
     }
 
@@ -597,6 +601,7 @@ namespace GLT::asset::registry_default {
             }
         }
 
+        catalog_move(from_str, to_str);                     // loaded or not, the files under [from] keep their UUIDs
         return {};
     }
 
@@ -858,6 +863,7 @@ namespace GLT::asset::registry_default {
                 .payload_hash = result.payload_hash,
             };
         }
+        catalog_note(result.id, out_rel, target_type);
 
         auto ref_res = load(out_rel);
         VALIDATE(ref_res, return std::unexpected{ GLT::asset::import_error::handler_rejected },
@@ -1287,29 +1293,38 @@ namespace GLT::asset::registry_default {
                     continue;
                 }
 
-                // slow path - resolve by path relative to the importing asset
-                if (dep.path_offset == 0) {
-                    LOG(warn, "[{}] dependency id={:#x} has no path and is not resident", key, static_cast<unsigned long long>(dep.id));
-                    resolved_deps.push_back(INVALID_HANDLE);
-                    continue;
+                // slow path - resolve by path relative to the importing asset, then by UUID through the catalog (the
+                // dependency was moved / renamed since this file was written, or the row has no path)
+                const std::string dep_path = dep.path_offset != 0 ? read_cstr(dep.path_offset) : std::string{};
+                const std::filesystem::path catalog_path = catalog_lookup(dep.id);
+
+                std::expected<GLT::asset::handle, GLT::asset::load_error> child = std::unexpected{ GLT::asset::load_error::not_found };
+                std::filesystem::path child_path{};
+                if (!dep_path.empty()) {
+
+                    // [dep_path] is content-dir-relative (see the on-disk contract above), so it feeds straight into
+                    // load_unlocked, which is itself content-relative
+                    child_path = std::filesystem::path{ dep_path }.lexically_normal();
+                    child = load_unlocked(child_path, in_flight);
                 }
+                if (!child && !catalog_path.empty() && catalog_path != child_path) {
 
-                const std::string dep_path = read_cstr(dep.path_offset);
-                if (dep_path.empty()) {
-                    LOG(warn, "[{}] dependency id={:#x} has an empty path", key, static_cast<unsigned long long>(dep.id));
-                    resolved_deps.push_back(INVALID_HANDLE);
-                    continue;
+                    if (!dep_path.empty()) {
+                        LOG(info, "[{}] dependency [{}] is now at [{}] (found by UUID {:#x})", key, dep_path, catalog_path.generic_string(),
+                            static_cast<unsigned long long>(dep.id));
+                    }
+                    child_path = catalog_path;
+                    child = load_unlocked(child_path, in_flight);
                 }
-
-                // recurse
-
-                // [dep_path] is content-dir-relative (see the on-disk contract above), so it feeds straight into load_unlocked,
-                // which is itself content-relative
-                const std::filesystem::path child_path = std::filesystem::path{ dep_path }.lexically_normal();
-
-                auto child = load_unlocked(child_path, in_flight);
                 if (!child) {
-                    LOG(warn, "[{}] dependency [{}] failed to load (error={})", key, dep_path, static_cast<int>(child.error()));
+                    if (dep_path.empty() && catalog_path.empty()) {
+                        LOG(warn, "[{}] dependency id={:#x} has no path, is not resident and not in the asset catalog", key,
+                            static_cast<unsigned long long>(dep.id));
+                    } else {
+                        LOG(warn, "[{}] dependency [{}] (id={:#x}) failed to load (error={})", key,
+                            child_path.empty() ? dep_path : child_path.generic_string(), static_cast<unsigned long long>(dep.id),
+                            static_cast<int>(child.error()));
+                    }
                     resolved_deps.push_back(INVALID_HANDLE);
                     continue;
                 }
@@ -1379,7 +1394,13 @@ namespace GLT::asset::registry_default {
                 retain_unlocked(dep);
 
         m_by_path.emplace(key, handle);
-        m_by_id.emplace(hdr.id, handle);
+        if (m_by_id.emplace(hdr.id, handle).second) {
+            catalog_note(hdr.id, path, hdr.asset_type);
+        } else {
+            LOG(warn, "[{}] has the same UUID {:#x} as the loaded asset [{}] - look it up by path; the asset catalog gives it its own "
+                "UUID on its next scan (registry refresh_catalog())", key, static_cast<unsigned long long>(hdr.id),
+                slot_for(m_by_id[hdr.id]) ? slot_for(m_by_id[hdr.id])->canonical_path.generic_string() : std::string("?"));
+        }
 
         for (GLT::asset::handle dep : slot->deps_storage) {
             if (GLT::asset::registry_default::slot* dep_slot = slot_for(dep)) {

@@ -60,40 +60,45 @@ namespace GLT::serializer {
 
             if constexpr (is_vector<T>::value) {                    // value is a vector
 
+                // The sequence is written as "key:" followed by one "- element" line per element, one level deeper
+                // (see the save branch). Searched from the start of the section, so the order of entry() calls on
+                // load does not have to match the order in the file
                 using Elem = typename T::value_type;
                 Elem buffer{};
-                bool found_section = false;
+                std::istringstream section(m_file_content.str());
                 std::string line;
-                while (std::getline(m_file_content, line)) {
+                while (std::getline(section, line)) {
 
                     if (line.empty() || line.front() == '#')        // skip empty lines or comments
                         continue;
+                    if (util::measure_indentation(line) != 0 || line != key_name + ":")
+                        continue;
 
-                    if ((util::measure_indentation(line) == 0) && (line.find(key_name) != std::string::npos) && (line.back() == ':')) {
+                    value.clear();
+                    while (std::getline(section, line)) {
 
-                        found_section = true;
-                        value.clear();
-                        while (std::getline(m_file_content, line) && (util::measure_indentation(line) == 0) && (line.back() != ':')) {
+                        const size_t first = line.find_first_not_of(' ');
+                        if (first == std::string::npos)
+                            continue;                               // empty line inside the sequence
+                        if (first == 0 || line.compare(first, 2, "- ") != 0)
+                            break;                                  // next key: end of the sequence
 
-                            line = line.substr(NUM_OF_INDENTING_SPACES);
-                            if constexpr (std::is_enum_v<Elem>) {
+                        const std::string element = line.substr(first + 2);
+                        if constexpr (std::is_enum_v<Elem>) {
 
-                                auto opt = GLT::util::string_to_enum<Elem>(line);
-                                if (opt)
-                                    value.emplace_back(*opt);
-                                else
-                                    LOG(warn, "Fail to convert the string [{}] to a corresponding enum value", line)
-                            
-                            } else {
+                            auto opt = GLT::util::string_to_enum<Elem>(element);
+                            if (opt)
+                                value.emplace_back(*opt);
+                            else
+                                LOG(warn, "Fail to convert the string [{}] to a corresponding enum value", element)
 
-                                util::from_string(line, buffer);
-                                value.emplace_back(buffer);
-                            }
+                        } else {
+
+                            util::from_string(element, buffer);
+                            value.emplace_back(buffer);
                         }
                     }
-
-                    if (found_section)
-                        break;
+                    break;
                 }
 
             } else {

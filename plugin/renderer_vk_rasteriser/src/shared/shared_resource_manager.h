@@ -215,6 +215,8 @@ namespace GLT::renderer::vk_rasterizer {
             u32                                             lod_count = 1;
             u32                                             cluster_count = 0;      // virtual geometry, 0 = not uploaded
             u32                                             cluster_index_base = 0; // cluster triangle lists start here in the index range
+            u32                                             cluster_vertex_base = 0;    // cluster vertices start here in the vertex range ([vertices ++ lod_vertices ++ cluster_vertices])
+            u32                                             cluster_vertex_count = 0;
         };
         [[nodiscard]] static mesh_upload_layout mesh_layout_of(const GLT::asset::mesh::mesh_asset& mesh);
 

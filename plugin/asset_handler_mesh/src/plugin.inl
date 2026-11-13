@@ -211,11 +211,15 @@ namespace GLT::asset::handler::mesh {
             const auto clusters = reader.get_as<GLT::asset::mesh::cluster>(GLT::asset::mesh::CHUNK_CLUSTERS);
             const auto cluster_idx = reader.get_as<u32>(GLT::asset::mesh::CHUNK_CLUSTER_INDICES);
             const auto cluster_subs = reader.get_as<GLT::asset::mesh::cluster_submesh>(GLT::asset::mesh::CHUNK_CLUSTER_SUBMESHES);
+            const auto cluster_verts = reader.get_as<GLT::asset::mesh::vertex>(GLT::asset::mesh::CHUNK_CLUSTER_VERTICES);  // optional: recomputed normals
 
-            if (GLT::asset::mesh::validate_clusters(clusters, cluster_idx, cluster_subs, asset->vertices.size(), asset->submeshes.size())) {
+            // Cluster indices address [vertices ++ cluster vertices]
+            if (GLT::asset::mesh::validate_clusters(clusters, cluster_idx, cluster_subs, asset->vertices.size() + cluster_verts.size(),
+                asset->submeshes.size())) {
                 asset->clusters.assign(clusters.begin(), clusters.end());
                 asset->cluster_indices.assign(cluster_idx.begin(), cluster_idx.end());
                 asset->cluster_submeshes.assign(cluster_subs.begin(), cluster_subs.end());
+                asset->cluster_vertices.assign(cluster_verts.begin(), cluster_verts.end());
             } else if (!clusters.empty()) {
                 LOG(warn, "[{}] virtual geometry chunks are inconsistent ({} clusters, {} indices, {} submesh entries) - using the LODs",
                     info.name, clusters.size(), cluster_idx.size(), cluster_subs.size());
@@ -324,11 +328,14 @@ namespace GLT::asset::handler::mesh {
         // virtual geometry mode and the hierarchy is consistent)
         out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_SETTINGS, std::as_bytes(std::span{ &m.virtual_geometry, 1 }));
         if (m.detail() == GLT::asset::mesh::detail_mode::virtual_geometry && m.has_clusters()
-            && GLT::asset::mesh::validate_clusters(m.clusters, m.cluster_indices, m.cluster_submeshes, m.vertices.size(), m.submeshes.size())) {
+            && GLT::asset::mesh::validate_clusters(m.clusters, m.cluster_indices, m.cluster_submeshes,
+                m.vertices.size() + m.cluster_vertices.size(), m.submeshes.size())) {
 
             out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTERS,          std::as_bytes(std::span{ m.clusters }));
             out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_INDICES,   std::as_bytes(std::span{ m.cluster_indices }));
             out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_SUBMESHES, std::as_bytes(std::span{ m.cluster_submeshes }));
+            if (!m.cluster_vertices.empty())
+                out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_VERTICES, std::as_bytes(std::span{ m.cluster_vertices }));
         }
 
         // ---- material dependencies (one per submesh, positionally) ----------------------------------------------------

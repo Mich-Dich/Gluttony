@@ -109,6 +109,24 @@ namespace GLT::render {
         std::string                                     message{};
     };
 
+    // @brief What one finished frame of a scene renderer cost on the GPU (i_scene_renderer::last_frame_stats())
+    //
+    // GPU results arrive a few frames after the frame was submitted. [camera_position], [render_mode] and [extent] are
+    // those of the measured frame, so a caller can tell which view the numbers belong to without counting frames
+    struct frame_stats {
+
+        u64                                             serial = 0;             // number of frames measured so far; 0 = none yet / not supported
+        f32                                             gpu_time_ms = 0.0f;     // every pass of this renderer
+        f32                                             geometry_time_ms = 0.0f;// of that: culling and drawing scene geometry (depth, shading, shadows)
+        u32                                             draw_calls = 0;         // draws left after culling, main view
+        u32                                             triangles = 0;          // triangles of those draws
+        u32                                             cluster_draws = 0;      // of the draws: virtual geometry clusters
+        u32                                             cluster_triangles = 0;  // of the triangles: in those clusters
+        glm::vec3                                       camera_position{ 0.0f };
+        u32                                             render_mode = 0;
+        glm::uvec2                                      extent{ 0, 0 };
+    };
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================
@@ -195,6 +213,12 @@ namespace GLT::render {
 
         // Releases GPU buffers and material. Implicitly called on scene renderer destruction.
         virtual void destroy_procedural_mesh(procedural_mesh_id id) = 0;
+
+        // statistics ------------------------------------------------------------------
+
+        // Measured cost of the most recent frame whose GPU results are in (see frame_stats). Renderers without GPU
+        // timing return the default (serial 0)
+        [[nodiscard]] virtual frame_stats last_frame_stats() const { return {}; }
 
     };
 
