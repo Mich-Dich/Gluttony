@@ -18,7 +18,19 @@
 //      slices with no geometry are inactive and get no lights (fragments never land in them)
 //   3. lights are transformed to view space once per batch of 16 (shared memory), then every (active slice, light) pair
 //      is tested in parallel; hits set a bit in a per-slice light bitmask (MAX_LIGHTS bits)
-//   4. per slice: popcount -> one atomicAdd reserves the index range, threads write the indices (sorted by light index)
+//   4. per slice: popcount; slices with the same lights as the slice in front of them share that slice's list; one
+//      atomicAdd per list reserves the index range, threads write the indices (sorted by light index)
+//
+// NO LIGHT IS EVER DROPPED FROM A CLUSTER. A per-cluster limit (it was 256) cuts the list of every cluster on its own:
+// where many large lights overlap, neighbouring clusters keep different subsets and the cluster grid shows up in the
+// image as blocks of different brightness (stress world lights_cluster_overflow). The shading loop multiplies every
+// light by a window that is exactly 0 outside its radius / cone, so a list may hold MORE lights than reach a fragment
+// without changing the image, but never fewer. Hence:
+//   - a cluster touched by every light, and a cluster whose list no longer fits into the index list, use the IDENTITY
+//     list { 0, light_count }: entries [0, MAX_LIGHTS) of the index list hold 0, 1, 2, ... (written here every frame
+//     by tile 0). Correct, only slower to shade; nothing is written for it
+//   - every other cluster gets its exact list behind those entries
+// The index-list capacity is therefore a performance budget, not a correctness limit.
 //
 // 16 threads are few enough to fit into one SIMD unit of current GPUs (Intel 16 or 32 lanes, NVIDIA 32, AMD 64). A
 // driver can then run a tile's threads in lock-step, and barrier() needs no real synchronisation.
@@ -27,7 +39,8 @@
 // tests. Checked against the second version on random scenes (identical light lists for every cluster); only the
 // offsets into light_index_list differ from run to run, as before (atomic counter).
 //
-// Output format is unchanged: light_grid[cluster] = { offset, count } into light_index_list.
+// Output format is unchanged: light_grid[cluster] = { offset, count } into light_index_list. Several clusters may point
+// at the same range.
 
 #define GROUP_SIZE_X 4
 #define GROUP_SIZE_Y 4
@@ -57,8 +70,8 @@ struct Light {
 layout(std430, set = 0, binding = 1) readonly buffer LightBuffer { Light lights[]; } light_buffer;
 layout(std430, set = 0, binding = 2) writeonly buffer LightGrid { uvec2 grid[]; } light_grid;   // { offset_into_index_list, count }
 layout(std430, set = 0, binding = 3) writeonly buffer LightIndexList { uint indices[]; } light_index_list;
-layout(std430, set = 0, binding = 4) buffer LightCounter { uint next_free; } light_counter; // global atomic cursor into light_index_list
-layout(set = 0, binding = 5) uniform LightMetaUBO { uvec4 meta; } light_meta; // x = light_count, y = index_list_capacity, z = max_per_cluster, w = translucent view depth span (half2, 0 = none)
+layout(std430, set = 0, binding = 4) buffer LightCounter { uint next_free; } light_counter; // global atomic cursor into light_index_list, counted from LIST_BASE (0 at frame start)
+layout(set = 0, binding = 5) uniform LightMetaUBO { uvec4 meta; } light_meta; // x = light_count, y = index_list_capacity (entries, identity prefix included), z = unused, w = translucent view depth span (half2, 0 = none)
 layout(set = 0, binding = 6) uniform sampler2D depth_texture;
 
 // Constants / shared --------------------------------------------------------------------------------------------------
@@ -69,6 +82,7 @@ const uvec2 TILE_SIZE = uvec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y);
 const uvec2 BLOCK_SIZE = (TILE_SIZE + GROUP_SIZE - 1u) / GROUP_SIZE;        // depth texels per thread (rounded up)
 const uint  SLICES = CLUSTER_DEPTH_SLICES;
 const uint MASK_WORDS = (MAX_LIGHTS + 31u) / 32u;
+const uint  LIST_BASE = MAX_LIGHTS;                 // index list: [0, LIST_BASE) identity (0, 1, 2, ...), cluster lists behind it
 
 shared uint  s_min_bits;
 shared uint  s_max_bits;
@@ -80,8 +94,10 @@ shared uint  s_slice_active[SLICES];
 shared uint  s_active_any;
 
 shared uint  s_mask[SLICES][MASK_WORDS];
-shared uint  s_base[SLICES];
-shared uint  s_count[SLICES];
+shared uint  s_same[SLICES];                      // 1: same lights as slice - 1 -> uses that slice's list
+shared uint  s_base[SLICES];                      // first slice of a run of equal slices: offset of its list
+shared uint  s_count[SLICES];                     // ... and its length
+shared uint  s_own[SLICES];                       // ... 1: the list was reserved for this run and has to be written
 
 // one batch of lights in view space
 shared vec4  s_light_pos_radius[THREADS];         // xyz view pos, w radius
@@ -162,8 +178,9 @@ void main() {
     const uint  tiles_per_slice = camera.cluster_dims.x * camera.cluster_dims.y;
     const uint  tile_index = tile.x + tile.y * camera.cluster_dims.x;
     const uint  light_count = min(light_meta.meta.x, MAX_LIGHTS);
-    const uint  max_per_cluster = min(light_meta.meta.z, MAX_LIGHTS_PER_CLUSTER);
     const uint  words = (light_count + 31u) / 32u;
+    const uint  identity_count = min(light_count, light_meta.meta.y);                                   // "all lights": { 0, identity_count }
+    const uint  list_capacity = light_meta.meta.y > LIST_BASE ? light_meta.meta.y - LIST_BASE : 0u;     // entries for cluster lists
 
     if (tid == 0u) {
         s_min_bits = floatBitsToUint(1e30);
@@ -288,31 +305,57 @@ void main() {
         }
     }
 
-    // ---- 4. per slice: count, reserve, write --------------------------------------------------------------------------
+    // ---- 4. per slice: count, one list per run of equal slices (never shortened, see the head of the file) -------------
+    // The active slices of a tile are one contiguous run, and neighbouring slices are mostly touched by the same lights
+    // (a light is rarely thinner than a slice): comparing with the slice in front finds nearly all duplicates
     for (uint slice = tid; slice < slices; slice += THREADS) {
         uint running = 0u;
         for (uint w = 0u; w < words; ++w)
             running += uint(bitCount(s_mask[slice][w]));
-        uint count = min(running, max_per_cluster);
+        bool same = slice > 0u && running > 0u;
+        for (uint w = 0u; same && w < words; ++w)
+            same = s_mask[slice][w] == s_mask[slice - 1u][w];
+
         uint base = 0u;
-        if (count > 0u) {
-            base = atomicAdd(light_counter.next_free, count);
-            const uint capacity = light_meta.meta.y;
-            if (base >= capacity)
-                count = 0u;                                     // overflow: drop rather than stomp another cluster's range
-            else if (base + count > capacity)
-                count = capacity - base;
+        uint count = 0u;
+        uint own = 0u;
+        if (same) {
+            // uses the list of the run's first slice (step 5)
+        } else if (running > 0u && running >= light_count) {
+            count = identity_count;                             // every light: the identity list, nothing to write
+        } else if (running > 0u) {
+            const uint offset = atomicAdd(light_counter.next_free, running);
+            if (offset <= list_capacity && running <= list_capacity - offset) {
+                base = LIST_BASE + offset;
+                count = running;
+                own = 1u;
+            } else {
+                count = identity_count;                         // index list full: all lights (correct, slower), never fewer
+            }
         }
+        s_same[slice] = same ? 1u : 0u;
         s_base[slice] = base;
         s_count[slice] = count;
-        light_grid.grid[slice * tiles_per_slice + tile_index] = uvec2(count > 0u ? base : 0u, count);
+        s_own[slice] = own;
     }
     barrier();
 
+    // ---- 5. grid entries, index lists -------------------------------------------------------------------------------
+    for (uint slice = tid; slice < slices; slice += THREADS) {
+        uint leader = slice;
+        for (uint step = 0u; step < SLICES && s_same[leader] != 0u; ++step)     // s_same[0] is always 0
+            --leader;
+        light_grid.grid[slice * tiles_per_slice + tile_index] = uvec2(s_base[leader], s_count[leader]);
+    }
+
     for (uint i = tid; i < slices * words; i += THREADS) {
         const uint slice = i / words;
+        if (s_own[slice] == 0u)
+            continue;
         const uint w = i % words;
         uint bits = s_mask[slice][w];
+        if (bits == 0u)
+            continue;
         uint rank = 0u;                                         // lights of this slice in earlier words
         for (uint pw = 0u; pw < w; ++pw)
             rank += uint(bitCount(s_mask[slice][pw]));
@@ -323,5 +366,11 @@ void main() {
             light_index_list.indices[s_base[slice] + rank] = w * 32u + bit;
             ++rank;
         }
+    }
+
+    // The identity list. Entries [0, LIST_BASE) are reserved for it and never handed out above
+    if (tile == uvec2(0u)) {
+        for (uint i = tid; i < identity_count; i += THREADS)
+            light_index_list.indices[i] = i;
     }
 }

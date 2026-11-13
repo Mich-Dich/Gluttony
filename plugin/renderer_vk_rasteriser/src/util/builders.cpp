@@ -357,6 +357,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         note(missing_used, enable_10(&VkPhysicalDeviceFeatures::drawIndirectFirstInstance), "drawIndirectFirstInstance");  // firstInstance = instance index
         note(missing_used, enable_12(&VkPhysicalDeviceVulkan12Features::drawIndirectCount), "drawIndirectCount");          // drawIndexedIndirectCount
         note(missing_used, enable_11(&VkPhysicalDeviceVulkan11Features::shaderDrawParameters), "shaderDrawParameters");    // SV_StartInstanceLocation
+        note(missing_used, enable_10(&VkPhysicalDeviceFeatures::shaderClipDistance), "shaderClipDistance");                // local shadow atlas: one pass, views clipped to their tiles
 
         note(missing_optional, enable_10(&VkPhysicalDeviceFeatures::textureCompressionBC), "textureCompressionBC");        // BC1-7 texture assets
         note(missing_optional, enable_13(&VkPhysicalDeviceVulkan13Features::shaderDemoteToHelperInvocation), "shaderDemoteToHelperInvocation");

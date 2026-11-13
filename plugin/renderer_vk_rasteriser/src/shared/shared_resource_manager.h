@@ -126,6 +126,10 @@ namespace GLT::renderer::vk_rasterizer {
         [[nodiscard]] u64 implementation_hash() const { return m_shader_compiler_hash; }
         [[nodiscard]] u32 contract_version() const;
 
+        // Local shadows render every view in one pass and keep each view in its atlas tile with clip distances (material
+        // vertex shader, RENDERER_SHADOW_ATLAS). False without the shaderClipDistance device feature: no local shadows
+        [[nodiscard]] bool local_shadow_atlas_supported() const { return m_local_shadow_atlas; }
+
         std::expected<GLT::render::compiled_shader, GLT::render::shader_compile_error> compile(std::string_view slang_source,
             GLT::asset::material::blend_mode blend);
 
@@ -323,6 +327,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         util::slang_compiler                                                m_slang{};
         u64                                                                 m_shader_compiler_hash = 0;
+        bool                                                                m_local_shadow_atlas = false;   // see local_shadow_atlas_supported()
 
         // stats -------------------------------------------------------------------------------------------------------
 

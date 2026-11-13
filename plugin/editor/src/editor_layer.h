@@ -53,6 +53,11 @@ namespace GLT::editor {
         ~editor_layer();
 
 
+        // False while Play-in-Editor runs or is paused. Windows check this before structural operations on the
+        // editor's world (e.g. opening another world by dropping it onto the viewport)
+        [[nodiscard]] static bool is_simulation_idle() noexcept;
+
+
         void on_attach() override;
 
 
@@ -259,6 +264,7 @@ namespace GLT::editor {
 
         bool                                            m_start_sims = false;
         GLT::system_state                               m_simulation_state = GLT::system_state::idle;   // editor specific sim
+        inline static editor_layer*                     s_instance = nullptr;                           // for is_simulation_idle()
         simulation_mode                                 m_simulation_mode{ simulation_mode::current_viewport };
         u32                                             m_sim_window_count{ 1 };
         std::array<sim_layout, 4>                       m_sim_layouts{}; // m_sim_layouts[N - 1] = layout for N windows. All 4 are always saved

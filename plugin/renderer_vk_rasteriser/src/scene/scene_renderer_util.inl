@@ -119,8 +119,9 @@ namespace GLT::renderer::vk_rasterizer {
             CLUSTER_TILE_SIZE_X | (CLUSTER_TILE_SIZE_Y << 16));
         cam.cluster_depth = glm::vec4(m_active_camera.near_plane, m_active_camera.far_plane,
             static_cast<f32>(m_extent.x), static_cast<f32>(m_extent.y));
-        cam.light_view_proj = m_shadow.view_proj;
-        cam.shadow_params = m_shadow.params;
+        // Sun shadows: the cascades are shadow views (scene/sun_shadow_cascades.h), the material shaders only need to know
+        // how many there are and where they start
+        cam.shadow_params = glm::vec4(m_shadow.active ? static_cast<f32>(m_shadow.cascades) : 0.f, static_cast<f32>(SUN_SHADOW_VIEW_FIRST), 0.f, 0.f);
         cam.flags.x = m_asset_instance_count;   // cull.comp: only the asset-backed prefix of this frame's instance SSBO is valid
         cam.flags.y = 1u;                       // cull.comp: main view writes the draw statistics (shadow cull does not)
         cam.flags.z = debug_shading_mode();     // material fragment shaders: 0 lit, 1 LOD colours, 2 flat grey
@@ -471,12 +472,12 @@ namespace GLT::renderer::vk_rasterizer {
         dd.persistent = true;
         m_depth_target = m_graph->create_texture(dd);
 
-        // Directional shadow map ----------------------------------------------------
+        // Sun shadow atlas: the cascades side by side (scene/sun_shadow_cascades.h) -----
         graph::texture_desc sd{};
         sd.name = "shadow_map";
         sd.format = vk::Format::eD32Sfloat;
-        sd.width = m_shadow_settings.resolution;
-        sd.height = m_shadow_settings.resolution;
+        sd.width = sun_shadow_cascades::atlas_size(m_shadow_settings.resolution);
+        sd.height = sun_shadow_cascades::atlas_size(m_shadow_settings.resolution);
         sd.usage = VKIU::eDepthStencilAttachment | VKIU::eSampled;
         sd.persistent = true;
         m_shadow_map = m_graph->create_texture(sd);
@@ -538,7 +539,7 @@ namespace GLT::renderer::vk_rasterizer {
         items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, list);
         items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_globals_ubos[frame]);
         items.emplace_back(5, VKDT::eSampledImage, VKSF::eFragment, 1, &shadow_img);
-        items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, &m_shadow_view_buffers[frame]);
+        items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eVertex | VKSF::eFragment, 1, &m_shadow_view_buffers[frame]);
         items.emplace_back(7, VKDT::eSampledImage, VKSF::eFragment, 1, &atlas_img);
         items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, &shadow_sampler_image);
         items.emplace_back(10, VKDT::eSampledImage, VKSF::eFragment, 1, &env_specular_img);
@@ -554,19 +555,8 @@ namespace GLT::renderer::vk_rasterizer {
         m_plugin.get_dev()->compute_descriptor_binding_offsets(m_shared->get_mesh_set_layout(), items);
         m_plugin.get_dev()->update_descriptor_buffer(m_frame_desc_buffers[frame], items, bt);
 
-        // Shadow-pass set: only bindings 0-4 and 9 (camera swapped for the shadow camera). Filter by binding number: the
-        // old positional erase dropped binding 9 (globals), which sits at index 5
-        std::vector<util::descriptor_item> shadow_items;
-        for (const auto& item : items)
-            if (item.binding <= 4 || item.binding == 9)
-                shadow_items.push_back(item);
-        shadow_items[0].p_resources = &m_shadow_camera_ubos[frame];
-
-        if (!m_shadow_desc_buffers[frame].buffer.buffer)
-            m_shadow_desc_buffers[frame] = m_plugin.get_dev()->create_descriptor_buffer(m_shared->get_mesh_set_layout(), shadow_items,
-                bt, 1);
-
-        m_plugin.get_dev()->update_descriptor_buffer(m_shadow_desc_buffers[frame], shadow_items, bt);
+        // The shadow atlas passes (sun cascades, local lights) draw with this set too: the material vertex shader takes
+        // the shadow view from firstInstance (renderer_project_vertex)
     }
 
     // pipelines + resources -------------------------------------------------------------------------------------------

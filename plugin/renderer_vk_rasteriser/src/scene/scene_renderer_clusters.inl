@@ -45,8 +45,10 @@ namespace GLT::renderer::vk_rasterizer {
         const vk::DeviceSize grid_bytes =
             static_cast<vk::DeviceSize>(cluster_count) * sizeof(glm::uvec2);
 
-        // Ideal size if every cluster saturated its per-cluster ceiling, capped at a hard upper bound
-        const vk::DeviceSize ideal_index_bytes = static_cast<vk::DeviceSize>(cluster_count) * MAX_LIGHTS_PER_CLUSTER * sizeof(u32);
+        // The identity list (MAX_LIGHTS entries, see scene/type.h) + the budget for the clusters' own lists, capped at a
+        // hard upper bound. Not a correctness limit: a cluster whose list does not fit uses the identity list (all lights)
+        const vk::DeviceSize ideal_index_bytes = (static_cast<vk::DeviceSize>(MAX_LIGHTS)
+            + static_cast<vk::DeviceSize>(cluster_count) * CLUSTER_INDEX_BUDGET_PER_CLUSTER) * sizeof(u32);
         const vk::DeviceSize index_bytes = std::min<vk::DeviceSize>(ideal_index_bytes,
             static_cast<vk::DeviceSize>(MAX_CLUSTER_INDEX_ENTRIES) * sizeof(u32));
 

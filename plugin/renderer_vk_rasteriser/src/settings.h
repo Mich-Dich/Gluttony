@@ -74,6 +74,27 @@ namespace GLT::renderer::vk_rasterizer::settings {
         [[=range{0.01, 16.0}]]
         f32 tri_density_max = 1.0f;
 
+        // ---- Shadows --------------------------------------------------------------
+        // The sun's shadows are nested maps around the camera that reach up to the distance below. Each map is only
+        // drawn again when the camera travelled out of it or something in it moved, so a long distance costs little
+        // per frame; it makes the maps in between coarser (they share the range evenly on a logarithmic scale)
+
+        [[=category{"Shadows"}]]
+        [[=display_name{"Sun shadow distance (m)"}]]
+        [[=tooltip{"How far from the camera the sun casts shadows at most (it stops earlier where the scene ends). Shorter distances give sharper shadows in the middle range"}]]
+        [[=range{50.0, 5000.0}]]
+        f32 sun_shadow_distance = 1500.0f;
+
+        // Point and spot lights keep their shadow maps until the light or something in its range moves; only the number
+        // of lights that have one is limited here. The cost that scales with it is in the lit passes (every shadowed
+        // light a fragment is lit by adds shadow map lookups), not in drawing the maps
+
+        [[=category{"Shadows"}]]
+        [[=display_name{"Shadow-casting local lights"}]]
+        [[=tooltip{"How many point / spot lights near the camera cast shadows at once (the ones that are largest on screen first). 0 = only the sun casts shadows"}]]
+        [[=range{0.0, 256.0}]]
+        u32 local_shadow_lights = 256u;
+
         // Sky, sun and ambient light are world components now ("sky" / "ambient_light" / directional "light" on the
         // world entity), see GLT::world::environment_snapshot
     };

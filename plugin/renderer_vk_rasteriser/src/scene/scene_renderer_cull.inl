@@ -368,23 +368,33 @@ namespace GLT::renderer::vk_rasterizer {
             cmd_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
             cmd_desc.persistent = true;
             m_draw_commands_handles[frame] = m_graph->create_buffer(cmd_desc);
-
-            cmd_desc.name = "shadow_draw_commands_" + std::to_string(frame);
-            m_shadow_draw_commands_handles[frame] = m_graph->create_buffer(cmd_desc);
-
-            m_local_draw_views[frame] = 0;              // stride changed -> local buffer must be re-laid out
         }
 
-        // Local shadows: one full set of material ranges per view, `m_draw_capacity` apart
-        const u32 views = std::max(m_local_shadow_view_count, 1u);
-        if (m_local_shadow_view_count > 0 && views > m_local_draw_views[frame]) {
+        // Sun shadows: (draws) x (cascades drawn this frame, at most SUN_CASCADES_PER_FRAME) commands, same layout as the
+        // local lights' buffer below
+        const u64 sun_needed = static_cast<u64>(m_total_draw_capacity) * m_sun_shadow_tiles.size();
+        if (sun_needed > m_sun_command_capacity[frame]) {
 
-            const u32 view_capacity = std::bit_ceil(views);
-            m_local_draw_views[frame] = std::min(view_capacity, MAX_SHADOW_VIEWS);
+            m_sun_command_capacity[frame] = static_cast<u32>(std::bit_ceil(sun_needed));
+
+            graph::buffer_desc commands_desc{};
+            commands_desc.name = "shadow_draw_commands_" + std::to_string(frame);
+            commands_desc.size = static_cast<vk::DeviceSize>(m_sun_command_capacity[frame]) * stride;
+            commands_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
+            commands_desc.persistent = true;
+            m_shadow_draw_commands_handles[frame] = m_graph->create_buffer(commands_desc);
+        }
+
+        // Local shadows: every material's block holds (its draws) x (views drawn this frame) commands, see
+        // shadow_cull.comp.glsl. The views per frame are limited so that this stays below SHADOW_COMMAND_BUDGET
+        const u64 local_needed = static_cast<u64>(m_total_draw_capacity) * m_local_shadow_tiles.size();
+        if (local_needed > m_local_command_capacity[frame]) {
+
+            m_local_command_capacity[frame] = static_cast<u32>(std::bit_ceil(local_needed));
 
             graph::buffer_desc commands_desc{};
             commands_desc.name = "local_shadow_commands_" + std::to_string(frame);
-            commands_desc.size = static_cast<vk::DeviceSize>(m_local_draw_views[frame]) * m_draw_capacity[frame] * stride;
+            commands_desc.size = static_cast<vk::DeviceSize>(m_local_command_capacity[frame]) * stride;
             commands_desc.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer;
             commands_desc.persistent = true;
             m_local_shadow_commands_handles[frame] = m_graph->create_buffer(commands_desc);
@@ -405,9 +415,7 @@ namespace GLT::renderer::vk_rasterizer {
         util::allocated_buffer* commands = m_graph->buffer_allocation(m_draw_commands_handles[frame]);
         util::allocated_buffer* counts = m_graph->buffer_allocation(m_draw_count_handles[frame]);
         util::allocated_buffer* stats = m_graph->buffer_allocation(m_draw_stats_handles[frame]);
-        util::allocated_buffer* shadow_commands = m_graph->buffer_allocation(m_shadow_draw_commands_handles[frame]);
-        util::allocated_buffer* shadow_counts = m_graph->buffer_allocation(m_shadow_draw_count_handles[frame]);
-        ASSERT(commands && counts && stats && shadow_commands && shadow_counts, "", "Graph failed to allocate cull buffers")
+        ASSERT(commands && counts && stats, "", "Graph failed to allocate cull buffers")
 
         auto cull_items = [&](util::allocated_buffer* out_commands, util::allocated_buffer* out_counts, util::allocated_buffer* camera) {
             std::vector<util::descriptor_item> items;
@@ -419,7 +427,7 @@ namespace GLT::renderer::vk_rasterizer {
             items.emplace_back(5, VKDT::eUniformBuffer, VKSF::eCompute, 1, camera);
             items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_material_table_buffers[frame]);
             items.emplace_back(7, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_material_range_buffers[frame]);
-            items.emplace_back(8, VKDT::eStorageBuffer, VKSF::eCompute, 1, stats);  // shadow cull: bound, never written (flags.y = 0)
+            items.emplace_back(8, VKDT::eStorageBuffer, VKSF::eCompute, 1, stats);
             dev->compute_descriptor_binding_offsets(m_cull_set_layout, items);
             return items;
         };
@@ -428,33 +436,30 @@ namespace GLT::renderer::vk_rasterizer {
         dev->update_descriptor_buffer(m_cull_desc_buffers[frame], cull_items(commands, counts, &m_camera_ubos[frame]),
             util::descriptor_buffer_type::resource);
 
-        // Directional shadow: same pipeline + layout, different outputs and "camera"
-        dev->update_descriptor_buffer(m_shadow_cull_desc_buffers[frame],
-            cull_items(shadow_commands, shadow_counts, &m_shadow_camera_ubos[frame]), util::descriptor_buffer_type::resource);
+        // Shadow atlases (shadow_cull.comp.glsl): the sun's cascades and the local lights' tiles. Same shader and
+        // layout, each with its own outputs; both read the shadow view buffer
+        const auto write_shadow_cull = [&](util::descriptor_buffer& descriptors, const graph::buffer_handle commands_handle,
+            const graph::buffer_handle counts_handle) {
 
-        // Local shadows
-        util::allocated_buffer* local_commands = m_graph->buffer_allocation(m_local_shadow_commands_handles[frame]);
-        util::allocated_buffer* local_counts = m_graph->buffer_allocation(m_local_shadow_counts_handles[frame]);
-        if (local_commands && local_counts) {
+            util::allocated_buffer* out_commands = m_graph->buffer_allocation(commands_handle);
+            util::allocated_buffer* out_counts = m_graph->buffer_allocation(counts_handle);
+            if (!out_commands || !out_counts || !descriptors.buffer.buffer)
+                return;
 
             std::vector<util::descriptor_item> items;
             items.emplace_back(0, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_instance_buffers[frame]);
             items.emplace_back(1, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_mesh_data_buffer_alloc_ref());
             items.emplace_back(2, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shared->get_submesh_data_buffer_alloc_ref());
-            items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, local_commands);
-            items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, local_counts);
+            items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eCompute, 1, out_commands);
+            items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eCompute, 1, out_counts);
             items.emplace_back(5, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_shadow_view_buffers[frame]);
             items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_material_table_buffers[frame]);
             items.emplace_back(7, VKDT::eStorageBuffer, VKSF::eCompute, 1, &m_material_range_buffers[frame]);
             dev->compute_descriptor_binding_offsets(m_local_shadow_cull_set_layout, items);
-            dev->update_descriptor_buffer(m_local_shadow_cull_desc_buffers[frame], items, util::descriptor_buffer_type::resource);
-        }
-
-        // Local shadow draw sets (one per view) reference the instance buffer: only rewrite when it was reallocated
-        if (m_local_shadow_desc_generation[frame] != m_instance_buffer_generation[frame]) {
-            m_local_shadow_desc_generation[frame] = m_instance_buffer_generation[frame];
-            write_local_shadow_draw_descriptors(frame);
-        }
+            dev->update_descriptor_buffer(descriptors, items, util::descriptor_buffer_type::resource);
+        };
+        write_shadow_cull(m_shadow_cull_desc_buffers[frame], m_shadow_draw_commands_handles[frame], m_shadow_draw_count_handles[frame]);
+        write_shadow_cull(m_local_shadow_cull_desc_buffers[frame], m_local_shadow_commands_handles[frame], m_local_shadow_counts_handles[frame]);
     }
 
 

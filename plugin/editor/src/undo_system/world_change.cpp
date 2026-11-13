@@ -142,6 +142,12 @@ namespace GLT::undo_system {
 
         world_state now = capture(*m_world, m_ids);
 
+        // Widgets write components through raw pointers. The world caches render data of fixed entities, so tell it what
+        // changed (on any frame the state differs, user input or not). Compared against the state before this frame
+        if (!(now == (m_open ? m_latest : m_frame_before)))
+            for (const world::entity_id id : m_ids)
+                m_world->mark_changed(id);
+
         if (!m_open) {
 
             if (now == m_frame_before || !user_input) {

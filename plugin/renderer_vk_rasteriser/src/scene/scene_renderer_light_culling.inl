@@ -44,7 +44,7 @@ namespace GLT::renderer::vk_rasterizer {
         //   2  Light grid SSBO      (per frame, Step 2 — persistent, {offset, count} per cluster)
         //   3  Light index list     (per frame, Step 2 — persistent, packed indices)
         //   4  Light counter        (per frame, Step 2 — persistent, single u32)
-        //   5  Light meta UBO       (per frame — {light_count, list_capacity, per_cluster_cap})
+        //   5  Light meta UBO       (per frame — {light_count, list_capacity, unused, translucent depth span})
         std::vector<util::descriptor_item> layout_items;
         layout_items.emplace_back(0, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
         layout_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
@@ -138,7 +138,7 @@ namespace GLT::renderer::vk_rasterizer {
         glm::uvec4 meta{};
         meta.x = m_light_count;
         meta.y = m_cluster_index_capacity;
-        meta.z = MAX_LIGHTS_PER_CLUSTER;
+        meta.z = 0u;        // unused. It was the limit of lights per cluster: there is none (light_culling.comp.glsl)
         // w = view depth span of the visible translucents (half2, widened by 3 % so fp16 rounding stays conservative).
         // Translucents are not in the depth buffer; without this, clusters in front of the opaque surface of a tile
         // (or the whole tile when only sky is behind) have no lights and translucent surfaces render unlit per tile

@@ -6,6 +6,8 @@
 #include "render/i_debug_draw.h"
 #include "util/builders.h"
 #include "plugin/image.h"
+#include "scene/local_shadow_cache.h"
+#include "scene/sun_shadow_cascades.h"
 
 
 
@@ -156,6 +158,7 @@ namespace GLT::renderer::vk_rasterizer {
         void upload_instance_data();
         void update_lights();
         void update_shadow();
+        void update_shadow_casters();               // which casters moved since the last frame (drives every shadow cache)
         void update_local_shadows();
         void update_camera_ubo();
         void update_globals();
@@ -193,7 +196,6 @@ namespace GLT::renderer::vk_rasterizer {
         void create_shadow_resources();
         void destroy_shadow_resources();
         void create_local_shadow_resources();
-        void write_local_shadow_draw_descriptors(u32 frame_index);
         void destroy_local_shadow_resources();
         void create_blit_pipeline();
         void destroy_blit_pipeline();
@@ -243,10 +245,25 @@ namespace GLT::renderer::vk_rasterizer {
         [[nodiscard]] bool debug_view_active() const { return debug_shading_mode() != 0u; }
         void add_environment_passes();              // sky cubemap -> specular prefilter + SH (only when the env changed)
         void add_sky_background_pass();             // sky + sun disk into scene_hdr where no geometry was drawn
-        void add_reset_shadow_draw_count_pass();
-        void add_shadow_cull_pass();
-        void add_shadow_pass();
-        void add_local_shadow_passes();
+
+        // One shadow atlas and the views to draw into it this frame (the sun's cascades or the local lights' tiles)
+        struct shadow_atlas_pass {
+
+            const char*                                 reset_name = "";
+            const char*                                 cull_name = "";
+            const char*                                 draw_name = "";
+            graph::texture_handle                       atlas{};
+            graph::buffer_handle                        commands{};
+            graph::buffer_handle                        counts{};
+            const util::descriptor_buffer*              cull_descriptors = nullptr;
+            const std::vector<local_shadow_tile>*       tiles = nullptr;        // views drawn this frame and their place in the atlas
+            u32                                         view_first = 0;         // views the cull shader walks: [first, first + count)
+            u32                                         view_count = 0;
+            bool                                        clear_atlas = false;    // the atlas image is new: nothing in it is valid
+        };
+        void add_shadow_atlas_passes(const shadow_atlas_pass& pass);
+        void add_sun_shadow_passes(bool clear_atlas);
+        void add_local_shadow_passes(bool clear_atlas);
         void add_clear_backbuffer_pass();
         void add_output_to_shader_read_pass();      // offscreen: leave the output image ready for ImGui sampling
 
@@ -334,14 +351,15 @@ namespace GLT::renderer::vk_rasterizer {
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_material_table_buffers{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_material_range_buffers{};
         std::array<u32, MAX_CONCURRENT_FRAMES>                              m_instance_buffer_generation{};   // bumps when reallocated
-        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_local_shadow_desc_generation{};
         std::array<u32, MAX_CONCURRENT_FRAMES>                              m_draw_capacity{};          // per-view command capacity
-        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_local_draw_views{};       // views the local buffer holds
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_local_command_capacity{}; // commands the local shadow buffer holds
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_sun_command_capacity{};   // commands the sun shadow buffer holds
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_stats_handles{};
         std::array<bool, MAX_CONCURRENT_FRAMES>                             m_draw_stats_written{};
 
         // Lights
         std::vector<gpu_light>                                              m_packed_lights{};
+        std::vector<u64>                                                    m_packed_light_keys{};      // per packed light: stable id (the light's entity)
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_light_buffers{};
         u32                                                                 m_light_count = 0;
 
@@ -399,30 +417,47 @@ namespace GLT::renderer::vk_rasterizer {
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_frame_desc_buffers{};
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_material_desc_buffers{};
 
-        // Shadow (directional)
+        // Shadow (sun). Nested maps around the camera in one atlas texture (m_shadow_map); a map is only drawn again when
+        // the camera travelled out of it, a caster inside it moved or the sun moved (scene/sun_shadow_cascades.h)
         shadow_settings                                                     m_shadow_settings{};
         shadow_state                                                        m_shadow{};
         graph::texture_handle                                               m_shadow_map{};
-        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_shadow_camera_ubos{};
-        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_shadow_desc_buffers{};
+        sun_shadow_cascades                                                 m_sun_shadows{};
+        std::vector<local_shadow_tile>                                      m_sun_shadow_tiles{};       // cascades drawn this frame
+        bool                                                                m_sun_shadow_plan_pending = false;  // planned in update(), not drawn yet
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_shadow_cull_desc_buffers{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_shadow_draw_commands_handles{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_shadow_draw_count_handles{};
 
-        // Shadow (local)
+        // Extent of all shadow casters along the sun direction (depth range of the sun's maps) and a sphere around them
+        // (how far shadows have to reach), and what both were computed for
+        f32                                                                 m_caster_depth_near = 0.f;
+        f32                                                                 m_caster_depth_far = 0.f;
+        glm::vec4                                                           m_caster_bounds{0.f};       // xyz = centre, w = radius (< 0: no casters)
+        u64                                                                 m_caster_depth_revision = ~u64{0};
+        glm::vec3                                                           m_caster_depth_direction{0.f};
+        f32                                                                 m_sun_shadow_distance = 0.f;    // the shadow distance in use
+
+        // Shadow casters: the asset instances as the shadow maps last saw them (update_shadow_casters)
+        std::vector<gpu_instance_data>                                      m_caster_instances{};
+        std::vector<glm::vec4>                                              m_caster_spheres{};         // world bounds of m_caster_instances
+        std::vector<glm::vec4>                                              m_caster_dirty_spheres{};   // this frame: bounds of what moved (old + new place)
+        bool                                                                m_casters_all_dirty = false;
+        u64                                                                 m_caster_revision = 0;      // bumped whenever a caster changed
+        u64                                                                 m_caster_mesh_generation = 0;
+
+        // Shadow (local). Every point / spot light near the camera keeps its own tiles in the atlas; a tile is only drawn
+        // again when its light or a caster inside it moved (scene/local_shadow_cache.h)
         graph::texture_handle                                               m_shadow_atlas{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_shadow_view_buffers{};
-        std::vector<gpu_shadow_view>                                        m_packed_shadow_views{};
-
-        // Shadow caching: shadow maps are only re-rendered when what they depend on changed (casters, light / shadow views,
-        // target image). A static scene renders its shadows once instead of every frame
-        u64                                                                 m_dir_shadow_key = 0;
-        u64                                                                 m_local_shadow_key = 0;
-        vk::Image                                                           m_dir_shadow_image = nullptr;
+        local_shadow_cache                                                  m_local_shadows{};
+        std::vector<local_shadow_tile>                                      m_local_shadow_tiles{};     // tiles drawn this frame
+        u32                                                                 m_local_shadow_view_count = 0;  // views sampled this frame
+        u32                                                                 m_local_shadow_cull_views = 0;  // leading views the cull shader walks
+        bool                                                                m_local_shadow_plan_pending = false;    // planned in update(), not drawn yet
         vk::Image                                                           m_local_shadow_image = nullptr;
-        std::vector<local_shadow_tile>                                      m_local_shadow_tiles{};
-        u32                                                                 m_local_shadow_view_count = 0;
-        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_local_shadow_desc_buffers{};
+
+        vk::Image                                                           m_dir_shadow_image = nullptr;       // detects a replaced sun atlas
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_local_shadow_cull_desc_buffers{};
         vk::DescriptorSetLayout                                             m_local_shadow_cull_set_layout = nullptr;
         vk::PipelineLayout                                                  m_local_shadow_cull_pipeline_layout = nullptr;

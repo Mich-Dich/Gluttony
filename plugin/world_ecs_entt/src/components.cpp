@@ -136,6 +136,17 @@ namespace GLT::world::world_ecs_entt::component {
                         t->rotation = glm::radians(degrees);
 
                     GLT::UI::property_drag("Scale", t->scale, 0.01f, 0.f, 0.f, "%.2f", nullptr, &defaults.scale);
+
+                    // set_mobility (not a direct write): moving an entity between fixed and movable rebuilds the render cache
+                    static constexpr const char* mobility_options[] = { "Static", "Movable" };
+                    static constexpr i32 default_mobility = static_cast<i32>(GLT::world::mobility::fixed);
+                    i32 mobility_index = static_cast<i32>(t->mobility);
+                    if (GLT::UI::property_segmented("Mobility", mobility_index, mobility_options,
+                        "Static: render data is cached and only refreshed when the entity is edited (free per frame)\n"
+                        "Movable: recomputed every frame. Use for anything moved by scripts or animation\n"
+                        "Static entities can still move, it is just the slower path. Children of movables and "
+                        "dynamic / kinematic physics bodies always count as movable", &default_mobility))
+                        world.set_mobility(id, static_cast<GLT::world::mobility>(mobility_index));
                     ImGui::PopID();
                 },
 

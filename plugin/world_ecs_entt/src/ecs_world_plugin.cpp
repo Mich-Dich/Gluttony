@@ -181,7 +181,6 @@ namespace GLT::world::world_ecs_entt {
         m_asset_handler.on_load();
 
         // POD components
-        m_codec.register_component<component::transform>("glt.transform");
         m_codec.register_component<component::no_inherit_transform>("glt.no_inherit_transform");
         m_codec.register_component<component::camera>("glt.camera");
         m_codec.register_component<component::light>("glt.light");
@@ -200,6 +199,7 @@ namespace GLT::world::world_ecs_entt {
                     registry.emplace_or_replace<T>(entity, comp);
                 });
         };
+        register_prefix_pod.template operator()<component::transform>("glt.transform");    // 36-byte payloads (pre mobility) load as fixed
         register_prefix_pod.template operator()<component::sky>("glt.sky");
         register_prefix_pod.template operator()<component::ambient_light>("glt.ambient_light");
 

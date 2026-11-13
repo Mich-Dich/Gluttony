@@ -284,14 +284,26 @@ namespace GLT::game {
         if (!scene)
             return;
 
+        // Worlds with a render cache hand out views into it (fixed entities cost nothing per frame); others fill our buffers
+        std::span<const asset::mesh::instance> instances{};
+        std::span<const world::light_snapshot> lights{};
         {
             GLT_PROFILE_SCOPE_C("Gather scene", GLT::debug::trace::COLOR_WORLD);
-            scene->gather_scene(m_scene_buffer);
-            scene->gather_lights(m_light_buffer);
+            world::i_world_scene::scene_view view{};
+            if (scene->view_scene(view)) {
+                instances = view.instances;
+                lights = view.lights;
+                GLT_PROFILE_PLOT("Fixed instances", static_cast<int64_t>(view.fixed_instance_count));
+            } else {
+                scene->gather_scene(m_scene_buffer);
+                scene->gather_lights(m_light_buffer);
+                instances = m_scene_buffer;
+                lights = m_light_buffer;
+            }
             scene->gather_environment(m_environment);
         }
-        GLT_PROFILE_PLOT("Scene instances", static_cast<int64_t>(m_scene_buffer.size()));
-        GLT_PROFILE_PLOT("Lights", static_cast<int64_t>(m_light_buffer.size()));
+        GLT_PROFILE_PLOT("Scene instances", static_cast<int64_t>(instances.size()));
+        GLT_PROFILE_PLOT("Lights", static_cast<int64_t>(lights.size()));
 
         GLT_PROFILE_SCOPE("Submit to renderers");
         for (auto& slot : m_renderers) {
@@ -299,8 +311,8 @@ namespace GLT::game {
             if (!slot.renderer)
                 continue;
 
-            slot.renderer->submit_scene(m_scene_buffer);
-            slot.renderer->submit_lights(m_light_buffer);
+            slot.renderer->submit_scene(instances);
+            slot.renderer->submit_lights(lights);
             slot.renderer->submit_environment(m_environment);
 
             const auto camera = resolve_camera(scene, slot.camera);

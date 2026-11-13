@@ -449,7 +449,7 @@ namespace GLT::renderer::vk_rasterizer {
         mesh_items.emplace_back(3, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
         mesh_items.emplace_back(4, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
         mesh_items.emplace_back(5, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);
-        mesh_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eFragment, 1, nullptr);
+        mesh_items.emplace_back(6, VKDT::eStorageBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);  // shadow views: atlas pass VS + sampling
         mesh_items.emplace_back(7, VKDT::eSampledImage, VKSF::eFragment, 1, nullptr);
         mesh_items.emplace_back(8, VKDT::eSampler, VKSF::eFragment, 1, nullptr);
         mesh_items.emplace_back(9, VKDT::eUniformBuffer, VKSF::eVertex | VKSF::eFragment, 1, nullptr);

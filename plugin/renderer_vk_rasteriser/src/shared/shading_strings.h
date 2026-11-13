@@ -54,8 +54,8 @@ struct RendererCamera {
     float4x4                                                    inv_projection;
     uint4                                                       cluster_dims;
     float4                                                      cluster_depth;      // x=near y=far z=render_w w=render_h
-    float4x4                                                    light_view_proj;
-    float4                                                      shadow_params;      // x=world_per_texel y=normal_bias z=depth_bias w=1/res
+    float4x4                                                    light_view_proj;    // unused
+    float4                                                      shadow_params;      // x = sun cascades (0 = none), y = their first shadow view
     float4                                                      ambient_sky;        // rgb = linear radiance from above
     float4                                                      ambient_ground;     // rgb = linear radiance from below
 };
@@ -72,6 +72,33 @@ struct RendererCamera {
 [[vk::binding(10, 0)]] TextureCube                              renderer_env_specular;      // GGX prefiltered, roughness per mip
 [[vk::binding(11, 0)]] StructuredBuffer<float4>                 renderer_env_sh;            // SH9, eval = irradiance / PI
 [[vk::binding(12, 0)]] SamplerState                             renderer_env_sampler;
+
+// Local shadow atlas pass (scene_renderer_shadow.inl, add_local_shadow_passes): firstInstance has bit 31 set and carries
+// the shadow view in bits 20..30 (shadow_cull.comp.glsl writes it; in every other pass those bits hold LOD info and bit 31
+// is clear). The vertex is projected with that view and moved into the view's atlas tile. The clip distances are the view
+// frustum's side planes, so nothing leaves the tile: every view of one material is a single indirect draw, with one
+// descriptor set for the whole pass.
+// RENDERER_SHADOW_ATLAS is defined by the renderer (0 when the device has no shaderClipDistance: no local shadows then)
+static const uint RENDERER_SHADOW_PASS_BIT = 0x80000000u;
+static const uint RENDERER_SHADOW_VIEW_SHIFT = 20u;
+static const uint RENDERER_SHADOW_VIEW_MASK = 0x7FFu;
+
+float4 renderer_project_vertex(float3 position_ws, uint base_instance, out float4 clip_distance) {
+
+    clip_distance = float4(1.0, 1.0, 1.0, 1.0);
+#if RENDERER_SHADOW_ATLAS
+    if ((base_instance & RENDERER_SHADOW_PASS_BIT) != 0u) {
+        const uint shadow_view = (base_instance >> RENDERER_SHADOW_VIEW_SHIFT) & RENDERER_SHADOW_VIEW_MASK;
+        const float4x4 view_proj = renderer_shadow_views[shadow_view].view_proj;
+        const float4 rect = renderer_shadow_views[shadow_view].atlas_rect;         // xy = tile origin, zw = tile size (atlas uv)
+        float4 clip = mul(view_proj, float4(position_ws, 1.0));
+        clip_distance = float4(clip.w + clip.x, clip.w - clip.x, clip.w + clip.y, clip.w - clip.y);
+        clip.xy = clip.xy * rect.zw + (rect.xy * 2.0 + rect.zw - 1.0) * clip.w;    // view NDC [-1, 1] -> the tile's part of the atlas
+        return clip;
+    }
+#endif
+    return mul(renderer_camera.view_proj, float4(position_ws, 1.0));
+}
 
 // ---- set 1: per-material textures ----------------------------------------------------
 [[vk::binding(1, 1)]] Texture2D                                 renderer_tex_base_color;
@@ -141,21 +168,72 @@ uint renderer_point_face(float3 d) {
     return d.z > 0.0 ? 4u : 5u;
 }
 
-float renderer_sample_shadow(float3 world_pos, float3 N, float ndotl) {
+// Sun shadows: nested maps around the camera ("cascades", scene/sun_shadow_cascades.h), each a view in
+// renderer_shadow_views and a tile of renderer_shadow_map. A fragment uses the finest cascade it lies in; towards the
+// edge of that map it fades into the next cascade, and behind the last one into no shadow. A cascade that has no depth
+// map yet (atlas_rect.z == 0) is skipped, the next one covers its range at a lower resolution.
+static const float RENDERER_SUN_EDGE = 0.98;    // usable part of a cascade: clip units, 1 = the edge of its map
+static const float RENDERER_SUN_FADE = 0.88;    // from here to RENDERER_SUN_EDGE: fade into the next cascade
 
-    float normal_offset = renderer_camera.shadow_params.x * renderer_camera.shadow_params.y * (1.0 - ndotl);
-    float4 lc = mul(renderer_camera.light_view_proj, float4(world_pos + N * normal_offset, 1.0));
-    float3 ndc = lc.xyz / lc.w;
-    float2 uv = ndc.xy * 0.5 + 0.5;
-    if (any(uv < 0.0) || any(uv > 1.0) || ndc.z > 1.0)
-        return 1.0;
-    float ref_depth = ndc.z - renderer_camera.shadow_params.z;
-    float texel = renderer_camera.shadow_params.w;
+// Nine bilinear comparison taps one texel apart with tent weights (1 2 1 per axis), from four fetches: the offsets and
+// weights below fold each pair of neighbouring taps into one (the footprint is 4 x 4 texels)
+float renderer_sun_pcf(float2 uv, float atlas_texels, float ref_depth) {
+
+    const float2 texel = uv * atlas_texels;
+    const float2 corner = floor(texel + 0.5);
+    const float2 f = texel + 0.5 - corner;
+    const float2 base = (corner - 0.5) / atlas_texels;
+    const float2 w0 = 3.0 - 2.0 * f;
+    const float2 w1 = 1.0 + 2.0 * f;
+    const float2 o0 = ((2.0 - f) / w0 - 1.0) / atlas_texels;
+    const float2 o1 = (f / w1 + 1.0) / atlas_texels;
+
     float sum = 0.0;
-    for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x)
-            sum += renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, uv + float2(x, y) * texel, ref_depth);
-    return sum / 9.0;
+    sum += w0.x * w0.y * renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, base + float2(o0.x, o0.y), ref_depth);
+    sum += w1.x * w0.y * renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, base + float2(o1.x, o0.y), ref_depth);
+    sum += w0.x * w1.y * renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, base + float2(o0.x, o1.y), ref_depth);
+    sum += w1.x * w1.y * renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, base + float2(o1.x, o1.y), ref_depth);
+    return sum / 16.0;
+}
+
+// [L]: towards the sun. [N], [ndotl]: geometric normal and its cosine with L
+float renderer_sample_shadow(float3 world_pos, float3 N, float3 L, float ndotl) {
+
+    const uint count = uint(renderer_camera.shadow_params.x);
+    const uint first = uint(renderer_camera.shadow_params.y);
+
+    // Along the normal by the filter radius (2 texels) times sin: a step of d along the normal lifts the sample d / cos
+    // above the surface's own depth in the map, the kernel sees that depth change by radius * tan. So this clears the
+    // surface's slope under the filter at every angle to the light. Plus a constant step towards the light
+    const float sin_nl = sqrt(saturate(1.0 - ndotl * ndotl));
+
+    float near_shadow = 1.0;
+    float fade = -1.0;                              // < 0: no cascade found yet
+    for (uint c = 0u; c < count; ++c) {
+
+        const float4 rect = renderer_shadow_views[first + c].atlas_rect;
+        if (rect.z <= 0.0)
+            continue;
+
+        const float4 params = renderer_shadow_views[first + c].params;     // x = texel in the world, y = normal bias, z = bias, w = 1 / atlas texels
+        const float3 biased = world_pos + N * (params.x * params.y * sin_nl) + L * (params.x * params.z);
+        const float3 ndc = mul(renderer_shadow_views[first + c].view_proj, float4(biased, 1.0)).xyz;
+        const float edge = max(abs(ndc.x), abs(ndc.y));
+        if (edge >= RENDERER_SUN_EDGE)
+            continue;                               // not in this cascade (or in its guard band): try the next, larger one
+
+        // Behind the far end of the depth range (below every caster): anything in the map is in front of it
+        const float2 uv = rect.xy + (ndc.xy * 0.5 + 0.5) * rect.zw;
+        const float shadow = renderer_sun_pcf(uv, 1.0 / params.w, min(ndc.z, 1.0));
+
+        if (fade >= 0.0)
+            return lerp(near_shadow, shadow, fade); // second cascade of a fade
+        fade = saturate((edge - RENDERER_SUN_FADE) / (RENDERER_SUN_EDGE - RENDERER_SUN_FADE));
+        if (fade <= 0.0)
+            return shadow;
+        near_shadow = shadow;
+    }
+    return fade < 0.0 ? 1.0 : lerp(near_shadow, 1.0, fade);
 }
 
 float renderer_sample_local_shadow(uint view_index, float3 world_pos, float3 N, float3 L, float ndotl, float dist) {
@@ -177,6 +255,11 @@ float renderer_sample_local_shadow(uint view_index, float3 world_pos, float3 N, 
     float  t = v.params.w;
     float2 lo = v.atlas_rect.xy + 0.5 * t;
     float2 hi = v.atlas_rect.xy + v.atlas_rect.zw - 0.5 * t;
+
+    // Small tiles (lights that are far away or share a crowded atlas): one bilinear comparison tap. Their texels are
+    // large on screen, more taps would only blur them further, and these are the lights there are many of
+    if (v.atlas_rect.z < 200.0 * t)
+        return renderer_shadow_atlas.SampleCmpLevelZero(renderer_shadow_sampler, clamp(atlas_uv, lo, hi), ndc.z);
 
     float s = 0.0;
     s += renderer_shadow_atlas.SampleCmpLevelZero(renderer_shadow_sampler, clamp(atlas_uv + float2(-0.5,-0.5)*t, lo, hi), ndc.z);
@@ -273,15 +356,19 @@ struct renderer_vert_attributes {
 
 struct renderer_vert_result {
     float4                              clip_pos : SV_Position;
+#if RENDERER_SHADOW_ATLAS
+    float                               clip_distance[4] : SV_ClipDistance;  // local shadow atlas tile, see renderer_project_vertex
+#endif
     renderer_vertex_outputs             varyings;
 };
 
 [shader("vertex")]
-renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID,
-    uint base_instance : SV_StartInstanceLocation) {
+renderer_vert_result vertex_main(renderer_vert_attributes v, uint base_instance : SV_StartInstanceLocation) {
 
-    // firstInstance carries the instance index in its low 20 bits and LOD info above (cull.comp.glsl)
-    RendererInstance inst = renderer_instances[(base_instance & 0xFFFFFu) + instance_id];
+    // firstInstance carries the instance index in its low 20 bits and LOD / shadow view info above (cull.comp.glsl,
+    // shadow_cull.comp.glsl). Every draw has instanceCount 1, so the index is firstInstance alone: SV_InstanceID is not
+    // used, its meaning (with or without firstInstance) differs between Slang versions
+    RendererInstance inst = renderer_instances[base_instance & 0xFFFFFu];
 
     vertex_input vi;
     vi.position_ws = mul(inst.model, float4(v.position, 1.0)).xyz;
@@ -295,7 +382,12 @@ renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : 
     vertex_output vo = passthrough(vi);
 
     renderer_vert_result o;
-    o.clip_pos = mul(renderer_camera.view_proj, float4(vo.position_ws, 1.0));
+    float4 clip_distance;
+    o.clip_pos = renderer_project_vertex(vo.position_ws, base_instance, clip_distance);
+#if RENDERER_SHADOW_ATLAS
+    spirv_asm { OpCapability ClipDistance };        // Slang 2025.1 writes the builtin without declaring the capability
+    o.clip_distance = { clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w };
+#endif
     o.varyings.position_ws = vo.position_ws;
     o.varyings.normal_ws = vo.normal_ws;
     o.varyings.tangent_ws = vo.tangent_ws;
@@ -318,6 +410,9 @@ struct renderer_vert_attributes {
 
 struct renderer_vert_result {
     float4                              clip_pos : SV_Position;
+#if RENDERER_SHADOW_ATLAS
+    float                               clip_distance[4] : SV_ClipDistance;  // local shadow atlas tile, see renderer_project_vertex
+#endif
     renderer_vertex_outputs             varyings;
 };
 
@@ -326,11 +421,12 @@ struct renderer_vert_result {
 [[vk::binding(0, 1)]] ConstantBuffer<material_params> renderer_material_params;
 
 [shader("vertex")]
-renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID,
-    uint base_instance : SV_StartInstanceLocation) {
+renderer_vert_result vertex_main(renderer_vert_attributes v, uint base_instance : SV_StartInstanceLocation) {
 
-    // firstInstance carries the instance index in its low 20 bits and LOD info above (cull.comp.glsl)
-    RendererInstance inst = renderer_instances[(base_instance & 0xFFFFFu) + instance_id];
+    // firstInstance carries the instance index in its low 20 bits and LOD / shadow view info above (cull.comp.glsl,
+    // shadow_cull.comp.glsl). Every draw has instanceCount 1, so the index is firstInstance alone: SV_InstanceID is not
+    // used, its meaning (with or without firstInstance) differs between Slang versions
+    RendererInstance inst = renderer_instances[base_instance & 0xFFFFFu];
 
     vertex_input vi;
     vi.position_ws = mul(inst.model, float4(v.position, 1.0)).xyz;
@@ -347,7 +443,12 @@ renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : 
     vertex_output vo = vertex_transform(vi, p);
 
     renderer_vert_result o;
-    o.clip_pos = mul(renderer_camera.view_proj, float4(vo.position_ws, 1.0));
+    float4 clip_distance;
+    o.clip_pos = renderer_project_vertex(vo.position_ws, base_instance, clip_distance);
+#if RENDERER_SHADOW_ATLAS
+    spirv_asm { OpCapability ClipDistance };        // Slang 2025.1 writes the builtin without declaring the capability
+    o.clip_distance = { clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w };
+#endif
     o.varyings.position_ws = vo.position_ws;
     o.varyings.normal_ws = vo.normal_ws;
     o.varyings.tangent_ws = vo.tangent_ws;
@@ -466,7 +567,7 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position, boo
         if (light.params.z > 0.5) {
             float ndotl_geo = clamp(dot(Ng, L), 0.0, 1.0);
             if (type == 0u) {
-                attenuation *= renderer_sample_shadow(i.position_ws, Ng, ndotl_geo);
+                attenuation *= renderer_sample_shadow(i.position_ws, Ng, L, ndotl_geo);
             } else if (attenuation > 0.002) {
                 uint view_index = uint(light.params.z) - 1u;
                 if (type == 1u)

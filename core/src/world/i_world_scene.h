@@ -51,6 +51,25 @@ namespace GLT::world {
         virtual void gather_scene(std::vector<GLT::asset::mesh::instance>& out) const = 0;
 
 
+        // Zero-copy variant of gather_scene() + gather_lights(): refreshes the world's own render cache and returns views
+        // into it. The spans stay valid until the next call or until the world changes. Layout:
+        //
+        //   instances = [ fixed (cached) ... | movable (recomputed this call) ... ]      first [fixed_instance_count]
+        //   lights    = [ world sun (if any) | fixed ... | movable ... ]                 same rule
+        //
+        // [fixed_version] changes whenever any fixed entry changed (structure or a patched entity), so a consumer can keep
+        // derived data (GPU buffers, sort keys) for the fixed prefix while it stays the same.
+        // Returns false if the world has no cache; callers then use gather_scene() / gather_lights()
+        struct scene_view {
+            std::span<const GLT::asset::mesh::instance>     instances{};
+            std::span<const GLT::world::light_snapshot>     lights{};
+            u32                                             fixed_instance_count = 0;
+            u32                                             fixed_light_count = 0;
+            u64                                             fixed_version = 0;
+        };
+        [[nodiscard]] virtual bool view_scene(scene_view& /*out*/) { return false; }
+
+
         virtual void gather_lights(std::vector<GLT::world::light_snapshot>& out) const = 0;
 
         // World-level environment (sky, sun, ambient) from the world entity's components. [out] is reset first.

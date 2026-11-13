@@ -25,15 +25,6 @@ namespace GLT::renderer::vk_rasterizer {
 
     // CONSTANTS =======================================================================================================
 
-    static const glm::vec3 SHADOW_FACE_DIRECTIONS[6] = {
-        { 1.f,  0.f,  0.f},
-        {-1.f,  0.f,  0.f},
-        { 0.f,  1.f,  0.f},
-        { 0.f, -1.f,  0.f},
-        { 0.f,  0.f,  1.f},
-        { 0.f,  0.f, -1.f}
-    };
-
     // MACROS ==========================================================================================================
 
     // The call ALWAYS runs; only the result check is debug-only. (The release variant used to expand to nothing, which
@@ -54,6 +45,9 @@ namespace GLT::renderer::vk_rasterizer {
 
     static FORCE_INLINE void extract_frustum_planes(const glm::mat4& view_projection, glm::vec4 (&planes)[6]);
 
+    // 64-bit FNV-1a style hash over a block of bytes, 8 at a time (shadow cache keys)
+    static u64 shadow_hash_bytes(const void* data, size_t bytes, u64 hash);
+
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
@@ -72,6 +66,22 @@ namespace GLT::renderer::vk_rasterizer {
             const f32 len = glm::length(glm::vec3(p));
             if (len > 0.f) p /= len;
         }
+    }
+
+
+    static u64 shadow_hash_bytes(const void* data, const size_t bytes, u64 hash) {
+
+        const auto* cursor = static_cast<const unsigned char*>(data);
+        size_t index = 0;
+        for (; index + 8 <= bytes; index += 8) {
+            u64 word;
+            std::memcpy(&word, cursor + index, 8);
+            hash = (hash ^ word) * 0x100000001b3ull;
+            hash ^= hash >> 29;
+        }
+        for (; index < bytes; ++index)
+            hash = (hash ^ cursor[index]) * 0x100000001b3ull;
+        return hash;
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -197,6 +207,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         ensure_scene_meshes();
         build_instance_buffer();
+        update_shadow_casters();
         update_lights();
         update_shadow();
         update_camera_ubo();
@@ -289,52 +300,39 @@ namespace GLT::renderer::vk_rasterizer {
             add_virtual_geometry_cull_pass();   // cluster selection for meshes on the virtual geometry path (no-op without any)
             add_cull_pass();
 
-            // Shadow caching: re-render only when casters, shadow views or the target image changed
-            bool render_directional = false;
+            // Shadow caching: update_shadow() / update_local_shadows() already planned which cascades of the sun and
+            // which atlas tiles of the local lights are out of date. Here: was one of the atlas images replaced?
+            bool render_sun = false;
+            bool clear_sun_atlas = false;
             bool render_local = false;
+            bool clear_atlas = false;
             {
                 GLT_PROFILE_SCOPE("Shadow cache check");
-                auto hash_words = [](const void* data, size_t bytes, u64 h) {
-                    const auto* p = static_cast<const unsigned char*>(data);
-                    size_t i = 0;
-                    for (; i + 8 <= bytes; i += 8) {
-                        u64 w;
-                        std::memcpy(&w, p + i, 8);
-                        h = (h ^ w) * 0x100000001b3ull;
-                        h ^= h >> 29;
-                    }
-                    for (; i < bytes; ++i)
-                        h = (h ^ p[i]) * 0x100000001b3ull;
-                    return h;
-                };
-                u64 casters = hash_words(m_packed_instances.data(), m_packed_instances.size() * sizeof(gpu_instance_data), 0xcbf29ce484222325ull);
-                casters = hash_words(&m_asset_instance_count, sizeof(m_asset_instance_count), casters);
-                casters = hash_words(&m_mesh_generation, sizeof(m_mesh_generation), casters);
 
                 if (m_shadow.active) {
-                    u64 key = hash_words(&m_shadow.view_proj, sizeof(m_shadow.view_proj), casters);
-                    key = hash_words(&m_shadow.params, sizeof(m_shadow.params), key);
                     const vk::Image image = m_graph->texture_image(m_shadow_map);
-                    render_directional = key != m_dir_shadow_key || image != m_dir_shadow_image;
-                    m_dir_shadow_key = key;
+                    clear_sun_atlas = image != m_dir_shadow_image;  // new image: only what this frame draws is in it
                     m_dir_shadow_image = image;
+                    if (clear_sun_atlas)
+                        m_sun_shadows.atlas_lost();
+                    render_sun = clear_sun_atlas || !m_sun_shadow_tiles.empty();
                 }
                 if (m_local_shadow_view_count > 0) {
-                    const u64 key = hash_words(m_packed_shadow_views.data(), m_packed_shadow_views.size() * sizeof(gpu_shadow_view), casters);
                     const vk::Image image = m_graph->texture_image(m_shadow_atlas);
-                    render_local = key != m_local_shadow_key || image != m_local_shadow_image;
-                    m_local_shadow_key = key;
+                    clear_atlas = image != m_local_shadow_image;    // new image: only what this frame draws is in it
                     m_local_shadow_image = image;
+                    if (clear_atlas)
+                        m_local_shadows.atlas_lost();
+                    render_local = clear_atlas || !m_local_shadow_tiles.empty();
                 }
             }
 
-            if (m_shadow.active && render_directional) {
-                add_reset_shadow_draw_count_pass();
-                add_shadow_cull_pass();
-                add_shadow_pass();
-            }
+            if (render_sun)
+                add_sun_shadow_passes(clear_sun_atlas);
             if (render_local)
-                add_local_shadow_passes();
+                add_local_shadow_passes(clear_atlas);
+            m_sun_shadow_plan_pending = false;      // this frame's cascades and tiles are in the graph
+            m_local_shadow_plan_pending = false;
             add_depth_prepass_pass();
             add_clear_light_grid_pass();
             add_light_culling_pass();
@@ -694,6 +692,19 @@ namespace GLT::renderer::vk_rasterizer {
         report.pass_times_ms.emplace_back(label + "[frame total]", report.gpu_time_ms);
         report.pass_times_ms.emplace_back(label + "[width]", static_cast<f32>(m_extent.x));
         report.pass_times_ms.emplace_back(label + "[height]", static_cast<f32>(m_extent.y));
+        {   // local light shadows (counts, not times): lights with shadow maps, their views, views drawn in the latest frame
+            const local_shadow_cache::frame_stats& shadows = m_local_shadows.stats();
+            report.pass_times_ms.emplace_back(label + "[shadowed local lights]", static_cast<f32>(shadows.shadowed));
+            report.pass_times_ms.emplace_back(label + "[shadow views]", static_cast<f32>(shadows.views));
+            report.pass_times_ms.emplace_back(label + "[shadow views drawn]", static_cast<f32>(shadows.rendered));
+            report.pass_times_ms.emplace_back(label + "[shadow views waiting]", static_cast<f32>(shadows.waiting));
+            report.pass_times_ms.emplace_back(label + "[shadow atlas used %]", shadows.atlas_fill * 100.0f);
+            const sun_shadow_cascades::frame_stats& sun = m_sun_shadows.stats();
+            report.pass_times_ms.emplace_back(label + "[sun shadow distance m]", m_shadow.active ? m_sun_shadow_distance : 0.f);
+            report.pass_times_ms.emplace_back(label + "[sun shadow cascades]", static_cast<f32>(sun.cascades));
+            report.pass_times_ms.emplace_back(label + "[sun shadow cascades drawn]", static_cast<f32>(sun.drawn));
+            report.pass_times_ms.emplace_back(label + "[sun shadow cascades waiting]", static_cast<f32>(sun.waiting));
+        }
         if (m_vg_cull_pipeline) {               // virtual geometry: clusters / triangles drawn (counts, not times)
             report.pass_times_ms.emplace_back(label + "[virtual geometry clusters]", static_cast<f32>(report.virtual_clusters));
             report.pass_times_ms.emplace_back(label + "[virtual geometry triangles]", static_cast<f32>(report.virtual_triangles));

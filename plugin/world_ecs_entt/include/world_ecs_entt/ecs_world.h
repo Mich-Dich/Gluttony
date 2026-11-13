@@ -62,6 +62,10 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] bool is_visible(entity_id id) const override;
         void set_visible(entity_id id, bool visible) override;
 
+        [[nodiscard]] mobility get_mobility(entity_id id) const override;
+        void set_mobility(entity_id id, mobility value) override;
+        void mark_changed(entity_id id) override;
+
         entity_id spawn_preset(std::string_view preset_name, entity_id parent = INVALID_ENTITY) override;
 
         [[nodiscard]] glm::vec3 get_local_position(entity_id id) const override;
@@ -133,6 +137,7 @@ namespace GLT::world::world_ecs_entt {
         // i_world_scene -----------------------------------------------------------------------------------------------
         void gather_scene(std::vector<asset::mesh::instance>& out) const override;
         void gather_lights(std::vector<light_snapshot>& out) const override;
+        [[nodiscard]] bool view_scene(scene_view& out) override;
         void gather_environment(environment_snapshot& out) const override;
         void gather_entity_positions(std::vector<entity_position>& out) const override;
         [[nodiscard]] bool get_camera_view(camera_snapshot& out) const override;
@@ -151,6 +156,30 @@ namespace GLT::world::world_ecs_entt {
             std::vector<entity_id>                          entities;
         };
 
+        // Render snapshot cache. Fixed entities are written once and patched when edited; movable ones are recomputed on
+        // every refresh from a cached entity list (no per-frame scan of all entities). Mutable: the gather functions are
+        // const by contract but keep this cache warm
+        struct render_cache {
+            static constexpr u32                            NONE = UINT32_MAX;
+
+            std::vector<asset::mesh::instance>              instances;          // [fixed | movable]
+            std::vector<light_snapshot>                     lights;             // [sun | fixed | movable]
+            std::vector<entt::entity>                       movable_meshes;     // in output order, after the fixed prefix
+            std::vector<entt::entity>                       movable_lights;
+            std::vector<u32>                                instance_of_slot;   // slot index -> fixed instance index (NONE: not cached)
+            std::vector<u32>                                light_of_slot;      // slot index -> fixed light index
+            std::vector<u8>                                 movable_mesh_of_slot;   // slot index -> listed in movable_meshes
+            std::vector<entity_id>                          dirty;              // edited since the last refresh (patched or ignored if movable)
+            std::vector<glm::mat4>                          world_memo;         // per slot: ancestors * local (see chain_transform_memo), valid for [memo_pass]
+            std::vector<u32>                                world_memo_pass;
+            u32                                             memo_pass = 0;
+            u32                                             fixed_instance_count = 0;
+            u32                                             fixed_light_count = 0;      // includes the sun entry
+            u64                                             fixed_version = 1;
+            bool                                            has_sun = false;
+            bool                                            structure_dirty = true;     // membership changed: full rebuild
+        };
+
         // Init helpers --------------------------------------------------------
         [[nodiscard]] std::expected<void, asset::load_error> init_from_world_asset();
 
@@ -163,6 +192,7 @@ namespace GLT::world::world_ecs_entt {
         void release_slot(entity_id id);
         [[nodiscard]] std::pair<entity_id, entt::entity> allocate_for_load(entity_id preferred);
         [[nodiscard]] entity_id entity_id_for(entt::entity entity) const noexcept;
+        void bind_slot(u32 index, entt::entity handle);                          // keeps m_slot_of_entt in sync with m_slots
 
         // Streaming -----------------------------------------------------------
         void stream_pass();
@@ -178,6 +208,21 @@ namespace GLT::world::world_ecs_entt {
 
         // Transform -----------------------------------------------------------
         [[nodiscard]] glm::mat4 world_transform_of(entity_id id) const noexcept;
+
+        // Render cache (see render_cache) ------------------------------------
+        void refresh_render_cache(bool meshes, bool lights) const;
+        void rebuild_render_cache() const;
+        [[nodiscard]] bool patch_fixed_subtree(entity_id id) const;              // false: membership changed, rebuild instead
+        void begin_world_memo_pass() const;
+        [[nodiscard]] glm::mat4 world_transform_memo(entity_id id, entt::entity entity) const;  // O(1) amortised within a pass
+        [[nodiscard]] glm::mat4 chain_transform_memo(entity_id id, entt::entity entity) const;  // product of all ancestors * local
+        [[nodiscard]] bool is_effectively_movable(entt::entity entity) const;   // own / inherited mobility, physics motion
+        [[nodiscard]] bool emits_instance(entt::entity entity) const;
+        void write_instance(asset::mesh::instance& out, entt::entity entity, entity_id id) const;
+        void write_light(light_snapshot& out, entt::entity entity, entity_id id) const;
+        void mark_render_structure_dirty() const noexcept { m_render.structure_dirty = true; }
+        void on_render_structure_signal(entt::registry&, entt::entity) { m_render.structure_dirty = true; }
+        void on_render_content_signal(entt::registry&, entt::entity entity);
 
         // Persistence helpers ------------------------------------------------
         [[nodiscard]] std::expected<void, asset::load_error> flush_regions();
@@ -204,10 +249,12 @@ namespace GLT::world::world_ecs_entt {
         const entity_codec&                                                             m_codec;            // borrowed from plugin (stateless)
         component_registry                                                              m_components;       // per-instance, descriptors capture this
         asset::asset_ref                                                                m_asset;            // owns one ref to the .glt_world
+        mutable render_cache                                                            m_render;           // BEFORE m_registry: its destruction fires on_destroy handlers that touch this
         entt::registry                                                                  m_registry;
         std::vector<asset::region::region>                                              m_regions;
         std::unordered_map<UUID, region_state>                                          m_region_states;
         std::vector<slot>                                                               m_slots;
+        std::vector<u32>                                                                m_slot_of_entt;     // entt::to_entity(handle) -> slot index (O(1) id_of)
         std::vector<u32>                                                                m_free;
         glm::vec3                                                                       m_streaming_anchor{ 0.f };
         f32                                                                             m_streaming_radius{ 1024.f };

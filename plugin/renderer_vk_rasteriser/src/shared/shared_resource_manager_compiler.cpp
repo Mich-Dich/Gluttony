@@ -545,7 +545,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         const auto assemble = [&](std::string_view suffix) {
             std::string out;
-            out.reserve(shading_strings::prefix.size() + slang_source.size() + suffix.size() + 8);
+            out.reserve(shading_strings::prefix.size() + slang_source.size() + suffix.size() + 64);
+            out.append(m_local_shadow_atlas ? "#define RENDERER_SHADOW_ATLAS 1\n" : "#define RENDERER_SHADOW_ATLAS 0\n");
             out.append(shading_strings::prefix);
             out.append("\n"); out.append(slang_source); out.append("\n"); out.append(suffix);
             return out;
@@ -618,8 +619,14 @@ namespace GLT::renderer::vk_rasterizer {
         VALIDATE(slang.has_value(), return, "", "Failed to create Slang session")
         m_slang = std::move(*slang);
 
+        // Clip distances in the material vertex shader (local shadow atlas). Supported => enabled by the device builder
+        m_local_shadow_atlas = m_physical_device.getFeatures().shaderClipDistance == VK_TRUE;
+        if (!m_local_shadow_atlas)
+            LOG(warn, "Vulkan device has no shaderClipDistance: point and spot lights render without shadows")
+
         u64 h = 14695981039346656037ull;
         h = GLT::util::mix_u64(h, GLT::util::fnv1a_64(util::slang_toolchain_version()));
+        h = GLT::util::mix_u64(h, m_local_shadow_atlas ? 1ull : 0ull);
         h = GLT::util::mix_u64(h, static_cast<u64>(GLT::asset::material::REFLECT_SCHEMA_VERSION));
         h = GLT::util::mix_u64(h, static_cast<u64>(GLT::asset::material::MATERIAL_CONTRACT_VERSION));
         h = GLT::util::mix_u64(h, static_cast<u64>(VK_MATERIAL_CODEGEN_REVISION));

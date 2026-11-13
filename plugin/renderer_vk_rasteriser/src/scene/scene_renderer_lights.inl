@@ -50,7 +50,9 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_shadow.active = false;
         m_packed_lights.clear();
+        m_packed_light_keys.clear();
         m_packed_lights.reserve(std::min<size_t>(MAX_LIGHTS, m_submitted_lights.size()));
+        m_packed_light_keys.reserve(m_packed_lights.capacity());
 
         for (const auto& submitted_light : m_submitted_lights) {
 
@@ -65,22 +67,27 @@ namespace GLT::renderer::vk_rasterizer {
             light.direction_inner_cos = glm::vec4(dir, std::cos(submitted_light.inner_cone_angle));
             light.params = glm::vec4(std::cos(submitted_light.outer_cone_angle), static_cast<f32>(submitted_light.type), 0.f, 0.f);
 
-            if (m_shadow_settings.enabled && !m_shadow.active && light.params.y == LIGHT_TYPE_DIRECTIONAL) {
+            // The first directional light is the sun: it casts shadows (cascades, update_shadow()). Like the local
+            // lights' atlas, the cascades need clip distances in the vertex shader
+            if (m_shadow_settings.enabled && !m_shadow.active && light.params.y == LIGHT_TYPE_DIRECTIONAL
+                && m_shared->local_shadow_atlas_supported()) {
                 light.params.z = 1.f;
                 m_shadow.active = true;
                 m_shadow.direction = dir;
             }
+            // Stable id for the shadow cache: the light's entity. Lights without one are told apart by their position in
+            // the list
+            const GLT::world::entity_id entity = submitted_light.entity;
+            m_packed_light_keys.push_back(entity.is_valid()
+                ? (static_cast<u64>(entity.generation) << 32) | entity.index
+                : 0xFFFFFFFF00000000ull | m_packed_lights.size());
             m_packed_lights.push_back(light);
         }
 
         m_light_count = static_cast<u32>(m_packed_lights.size());
-        if (m_light_count == 0) {
-            m_local_shadow_view_count = 0;
-            m_local_shadow_tiles.clear();
+        update_local_shadows();                 // sets params.z of the local lights; without lights it empties the cache
+        if (m_light_count == 0)
             return;
-        }
-
-        update_local_shadows();
 
         void* mapped = m_plugin.get_dev()->map_buffer(m_light_buffers[m_current_frame]);
         std::memcpy(mapped, m_packed_lights.data(), m_light_count * sizeof(gpu_light));

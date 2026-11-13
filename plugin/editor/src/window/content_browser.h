@@ -76,6 +76,10 @@ namespace GLT::editor {
 
         bool serialize(const std::filesystem::path& project_file, const GLT::serializer::option option) override;
 
+        // Parse an ASSET_DRAG_PAYLOAD produced by draw_file_item(). Newline-separated, null-terminated-or-not (we accept both).
+        // Public: other windows accept asset drops too (the world viewport opens dropped worlds)
+        [[nodiscard]] static std::vector<std::filesystem::path> parse_drag_payload(const ImGuiPayload* payload);
+
     private:
 
         struct dir_entry {
@@ -120,8 +124,6 @@ namespace GLT::editor {
         void create_folder();
         void create_material();
 
-        // Parse a drag payload produced by draw_file_item(). Newline-separated, null-terminated-or-not (we accept both)
-        static std::vector<std::filesystem::path> parse_drag_payload(const ImGuiPayload* payload);
 
         // Move every path in `sources` into `target_dir` via the registry. Handles single files, folders, and the "self-nesting" guard
         void move_assets_to(const std::vector<std::filesystem::path>& sources, const std::filesystem::path& target_dir);

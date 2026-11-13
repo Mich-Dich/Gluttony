@@ -70,10 +70,20 @@ namespace GLT::undo_system {
         [[nodiscard]] bool is_replaying() const noexcept;
         [[nodiscard]] size_t size() const noexcept;
 
+        // Unsaved-changes tracking: mark_clean() after a save (or a fresh load); is_clean() is true while the applied steps
+        // are exactly those of that moment. Undoing back to the saved state counts as clean again; a new step after an undo
+        // past the saved state, or the saved state falling off the history, makes it unreachable (dirty until next save)
+        void mark_clean() noexcept { m_clean_cursor = m_cursor; }
+        [[nodiscard]] bool is_clean() const noexcept { return m_clean_cursor == m_cursor; }
+
     private:
+
+        static constexpr size_t                 UNREACHABLE = static_cast<size_t>(-1);
+        void drop_oldest(const size_t count);                                   // keeps m_cursor / m_clean_cursor consistent
 
         std::vector<step>                       m_steps{};
         size_t                                  m_cursor = 0;                   // number of steps that are currently applied
+        size_t                                  m_clean_cursor = 0;             // m_cursor at the last mark_clean(), UNREACHABLE if lost
         size_t                                  m_max_steps = 256;
         bool                                    m_replaying = false;
 

@@ -49,13 +49,14 @@ namespace GLT::undo_system {
             return;
         }
 
+        if (m_clean_cursor != UNREACHABLE && m_clean_cursor > m_cursor)
+            m_clean_cursor = UNREACHABLE;                       // the saved state lived in the redo branch dropped below
         m_steps.resize(m_cursor);                               // a new operation drops the redo branch
         m_steps.push_back(std::move(new_step));
+        m_cursor = m_steps.size();
 
         if (m_steps.size() > m_max_steps)
-            m_steps.erase(m_steps.begin(), m_steps.begin() + static_cast<std::ptrdiff_t>(m_steps.size() - m_max_steps));
-
-        m_cursor = m_steps.size();
+            drop_oldest(m_steps.size() - m_max_steps);
     }
 
 
@@ -142,6 +143,7 @@ namespace GLT::undo_system {
 
     void stack::clear() noexcept {
 
+        m_clean_cursor = is_clean() ? 0 : UNREACHABLE;         // forgetting the history does not save the world
         m_steps.clear();
         m_cursor = 0;
         m_group_depth = 0;
@@ -155,9 +157,7 @@ namespace GLT::undo_system {
         if (m_steps.size() <= m_max_steps)
             return;
 
-        const size_t drop = m_steps.size() - m_max_steps;
-        m_steps.erase(m_steps.begin(), m_steps.begin() + static_cast<std::ptrdiff_t>(drop));
-        m_cursor = m_cursor > drop ? m_cursor - drop : 0;
+        drop_oldest(m_steps.size() - m_max_steps);
     }
 
 
@@ -165,6 +165,16 @@ namespace GLT::undo_system {
 
 
     size_t stack::size() const noexcept                 { return m_steps.size(); }
+
+
+    void stack::drop_oldest(const size_t count) {
+
+        const size_t drop = std::min(count, m_steps.size());
+        m_steps.erase(m_steps.begin(), m_steps.begin() + static_cast<std::ptrdiff_t>(drop));
+        m_cursor = m_cursor > drop ? m_cursor - drop : 0;
+        if (m_clean_cursor != UNREACHABLE)
+            m_clean_cursor = m_clean_cursor >= drop ? m_clean_cursor - drop : UNREACHABLE;
+    }
 
     // CLASS PROTECTED =================================================================================================
 

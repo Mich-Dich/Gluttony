@@ -143,6 +143,8 @@ namespace GLT::editor {
 
     editor_layer::editor_layer() : layer("editor_layer") {
 
+        s_instance = this;
+
         auto& scene_renderers = GLT::application::get().get_scene_renderers_ref();
         scene_renderers.front()->set_active(false);
 
@@ -200,6 +202,9 @@ namespace GLT::editor {
 
 
     editor_layer::~editor_layer() {
+
+        if (s_instance == this)
+            s_instance = nullptr;
 
         GLT::event_bus::unsubscribe(m_window_close_sub);
         GLT::event_bus::unsubscribe(m_save_sub_handle);
@@ -1226,6 +1231,12 @@ namespace GLT::editor {
                 }
             });
         }
+    }
+
+
+    bool editor_layer::is_simulation_idle() noexcept {
+
+        return !s_instance || s_instance->m_simulation_state == GLT::system_state::idle;
     }
 
 

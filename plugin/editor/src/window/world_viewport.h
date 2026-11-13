@@ -87,7 +87,8 @@ namespace GLT::editor {
         void set_cursor_captured(const bool captured);
 
         // ---- outliner ----
-        void render_outliner_row(GLT::world::entity_id id, int depth, int& row_index,
+        // One row, no recursion: the outliner flattens the open tree into rows and only draws the ones on screen
+        void render_outliner_row(GLT::world::entity_id id, int depth, int row_index,
                                  const std::vector<GLT::world::entity_id>& visible_order, bool flat);
         void render_entity_tooltip(GLT::world::entity_id id);
         void render_entity_context_menu(GLT::world::entity_id id, bool visible);
@@ -101,7 +102,8 @@ namespace GLT::editor {
         [[nodiscard]] GLT::world::entity_id primary_selection() const;
         void prune_dead_selection();
 
-        void collect_visible_tree_order(GLT::world::entity_id id, std::vector<GLT::world::entity_id>& out) const;
+        void collect_visible_tree_order(GLT::world::entity_id id, int depth, std::vector<GLT::world::entity_id>& out,
+                                        std::vector<int>& depths) const;
         [[nodiscard]] bool is_tree_node_open(GLT::world::entity_id id) const;
 
         [[nodiscard]] std::string entity_display_name(GLT::world::entity_id id) const;
@@ -114,6 +116,12 @@ namespace GLT::editor {
         void open_next_save_request();
         void render_save_as_popup();
         void resolve_save_as_request(bool confirmed);
+
+        // ---- opening worlds: drop a .glt_world from the content browser onto the viewport image ----
+        void handle_viewport_world_drop();                                      // drag-drop target, call right after the image
+        void request_open_world(const std::filesystem::path& path);             // checks simulation / unsaved changes first
+        void render_open_world_popup();
+        void open_requested_world();                                            // in update(): swaps the world between frames
 
         // ---- render settings ----
         bool render_settings_overlay();
@@ -170,6 +178,11 @@ namespace GLT::editor {
         // undo / redo: one tracker per UI region that edits entities "freely" (see world_edit_tracker)
         undo_system::world_edit_tracker                 m_details_edit{ m_undo_stack };
         undo_system::world_edit_tracker                 m_gizmo_edit{ m_undo_stack };
+
+        // world opening (the swap happens in update(), never in the middle of drawing panels that hold m_world)
+        std::filesystem::path                           m_world_to_open{};              // confirmed, opened next update()
+        std::filesystem::path                           m_world_awaiting_confirm{};     // waits for the unsaved-changes popup
+        bool                                            m_open_world_popup_requested = false;
 
     };
 

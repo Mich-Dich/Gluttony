@@ -6,6 +6,7 @@
 #include "asset/asset_ref.h"
 #include "asset/region.h"
 #include "world/entity.h"
+#include "world/mobility.h"
 #include "world/component.h"
 #include "physics/i_physics.h"
 
@@ -103,6 +104,16 @@ namespace GLT::world {
         // an entire subtree must walk it themselves (children_of / parent_of are already on this interface)
         [[nodiscard]] virtual bool is_visible(entity_id /*id*/) const { return true; }
         virtual void set_visible(entity_id /*id*/, bool /*visible*/) {}
+
+        // mobility ----------------------------------------------------------------------------------------------------
+        // Performance hint for render data caching, see world/mobility.h. Worlds without caching treat everything as movable
+        [[nodiscard]] virtual mobility get_mobility(entity_id /*id*/) const { return mobility::movable; }
+        virtual void set_mobility(entity_id /*id*/, mobility /*value*/) {}
+
+        // Tells the world that component data of [id] was written directly (through a component pointer, e.g. an editor
+        // property panel) instead of through this interface, so cached render data of [id] and its children is refreshed.
+        // Setters on this interface do this themselves. Cheap: the work is deferred to the next gather
+        virtual void mark_changed(entity_id /*id*/) {}
 
         // transform ---------------------------------------------------------------------------------------------------
         [[nodiscard]] virtual glm::vec3 get_local_position(entity_id id) const = 0;

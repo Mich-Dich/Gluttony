@@ -1,4 +1,5 @@
 #include "util/pch.h"
+#include <debug/trace.h>
 #include "ecs_world.h"
 #include "ecs_world_plugin.h"
 
@@ -77,13 +78,19 @@ namespace GLT::world::world_ecs_entt {
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
-    // position/rotation(euler,rad)/scale -> mat4. YXZ order
+    // position/rotation(euler,rad)/scale -> mat4. YXZ order: T * Ry * Rx * Rz * S
+    // Built in closed form (3 sin/cos pairs, 27 multiplies) instead of three glm::rotate calls: identical result (within
+    // 1e-7), 2x faster optimised and far faster at -O0, where every glm vector operator is a real function call
     static glm::mat4 compose_transform(const component::transform& t) {
-        glm::mat4 m = glm::translate(glm::mat4(1.0f), t.position);
-        m = glm::rotate(m, t.rotation.y, glm::vec3(0, 1, 0));
-        m = glm::rotate(m, t.rotation.x, glm::vec3(1, 0, 0));
-        m = glm::rotate(m, t.rotation.z, glm::vec3(0, 0, 1));
-        m = glm::scale(m, t.scale);
+        const f32 cx = std::cos(t.rotation.x), sx = std::sin(t.rotation.x);
+        const f32 cy = std::cos(t.rotation.y), sy = std::sin(t.rotation.y);
+        const f32 cz = std::cos(t.rotation.z), sz = std::sin(t.rotation.z);
+        const glm::vec3& s = t.scale;
+        glm::mat4 m;
+        m[0] = glm::vec4((cy * cz + sy * sx * sz) * s.x, (cx * sz) * s.x, (cy * sx * sz - sy * cz) * s.x, 0.f);
+        m[1] = glm::vec4((sy * sx * cz - cy * sz) * s.y, (cx * cz) * s.y, (sy * sz + cy * sx * cz) * s.y, 0.f);
+        m[2] = glm::vec4((sy * cx) * s.z, -sx * s.z, (cy * cx) * s.z, 0.f);
+        m[3] = glm::vec4(t.position, 1.f);
         return m;
     }
 
@@ -348,6 +355,23 @@ namespace GLT::world::world_ecs_entt {
 
         m_registry.on_construct<component::mesh>().template connect<&ecs_world::on_mesh_construct>(this);
         m_registry.on_destroy<component::physics_body>().template connect<&ecs_world::on_physics_body_destroyed>(this);
+
+        // Render cache invalidation. Adding / removing anything that decides WHAT is rendered (or how a transform is
+        // inherited) rebuilds the cache; replacing transform / light data patches just that entity. Writes through
+        // component pointers do not fire signals: those go through the i_world setters or mark_changed()
+        auto structure = [this]<typename T>() {
+            m_registry.on_construct<T>().template connect<&ecs_world::on_render_structure_signal>(this);
+            m_registry.on_destroy<T>().template connect<&ecs_world::on_render_structure_signal>(this);
+        };
+        structure.template operator()<component::transform>();
+        structure.template operator()<component::mesh>();
+        structure.template operator()<component::light>();
+        structure.template operator()<component::hierarchy>();
+        structure.template operator()<component::no_inherit_transform>();
+        m_registry.on_update<component::mesh>().template connect<&ecs_world::on_render_structure_signal>(this);
+        m_registry.on_update<component::hierarchy>().template connect<&ecs_world::on_render_structure_signal>(this);
+        m_registry.on_update<component::transform>().template connect<&ecs_world::on_render_content_signal>(this);
+        m_registry.on_update<component::light>().template connect<&ecs_world::on_render_content_signal>(this);
     }
 
 
@@ -586,8 +610,35 @@ namespace GLT::world::world_ecs_entt {
         // No-op for non-rendering entities. Adding a mesh component just to carry the flag would make every
         // hide-toggle pay for a component install (and fire on_mesh_construct). If you want a visibility
         // flag on a bare entity, add the mesh component first
-        if (auto* mesh_comp = m_registry.try_get<component::mesh>(entity))
+        if (auto* mesh_comp = m_registry.try_get<component::mesh>(entity); mesh_comp && mesh_comp->visible != visible) {
             mesh_comp->visible = visible;
+            mark_render_structure_dirty();                  // the entity enters / leaves the instance list
+        }
+    }
+
+
+    mobility ecs_world::get_mobility(entity_id id) const {
+
+        if (const auto* transform = m_registry.try_get<component::transform>(entt_of(id)))
+            return transform->mobility;
+        return mobility::fixed;
+    }
+
+
+    void ecs_world::set_mobility(entity_id id, mobility value) {
+
+        auto* transform = m_registry.try_get<component::transform>(entt_of(id));
+        if (!transform || transform->mobility == value)
+            return;
+        transform->mobility = value;
+        mark_render_structure_dirty();                      // moves the entity (and maybe its subtree) between fixed and movable
+    }
+
+
+    void ecs_world::mark_changed(entity_id id) {
+
+        if (alive(id))
+            m_render.dirty.push_back(id);
     }
 
     // transform -------------------------------------------------------------------------------------------------------
@@ -625,6 +676,7 @@ namespace GLT::world::world_ecs_entt {
 
         auto& transform = m_registry.get_or_emplace<component::transform>(entt_of(id));
         transform.position += rotation_matrix_from_euler(transform.rotation) * local_delta;
+        mark_changed(id);
 
         // World position changed -> which cell is this entity in now?
         assign_entity_to_cell(id);
@@ -638,6 +690,7 @@ namespace GLT::world::world_ecs_entt {
 
         auto& transform = m_registry.get_or_emplace<component::transform>(entt_of(id));
         transform.rotation += euler_delta;
+        mark_changed(id);
         // Rotation doesn't move the pivot; no re-bin needed
     }
 
@@ -662,6 +715,7 @@ namespace GLT::world::world_ecs_entt {
 
         auto& transform = m_registry.get_or_emplace<component::transform>(entt_of(id));
         transform.rotation = euler_yxz_from_quat(rotation);
+        mark_changed(id);
 
         // Rotation doesn't move the pivot - no re-bin needed (same rationale as rotate_local)
     }
@@ -688,6 +742,7 @@ namespace GLT::world::world_ecs_entt {
         auto& t = m_registry.get_or_emplace<component::transform>(entt_of(id));
         const glm::vec3 old = t.scale;
         t.scale = scale;
+        mark_changed(id);
 
         if (m_physics && old != scale) {
             const entt::entity e = entt_of(id);
@@ -893,6 +948,7 @@ namespace GLT::world::world_ecs_entt {
         } else {
             h.parent = INVALID_ENTITY;
         }
+        mark_render_structure_dirty();                      // world transforms and inherited mobility of the subtree change
     }
 
     // CLASS PROTECTED =================================================================================================
@@ -1059,12 +1115,32 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
+    // O(1): m_slot_of_entt maps the entt entity index to our slot. This used to be a linear scan over all slots, and every
+    // gather called it once per entity, which made gathering O(n^2) (27k entities: ~290 ms per frame)
     entity_id ecs_world::id_of(entt::entity e) const noexcept {
 
-        for (u32 i = 0; i < m_slots.size(); ++i)
-            if (m_slots[i].handle == e)
-                return { i, m_slots[i].generation };
-        return INVALID_ENTITY;
+        if (e == entt::null)
+            return INVALID_ENTITY;
+
+        const auto entt_index = static_cast<size_t>(entt::to_entity(e));
+        if (entt_index >= m_slot_of_entt.size())
+            return INVALID_ENTITY;
+
+        const u32 index = m_slot_of_entt[entt_index];
+        if (index >= m_slots.size() || m_slots[index].handle != e)        // also rejects a recycled entt handle (version differs)
+            return INVALID_ENTITY;
+        return { index, m_slots[index].generation };
+    }
+
+
+    void ecs_world::bind_slot(u32 index, entt::entity handle) {
+
+        if (handle == entt::null)
+            return;
+        const auto entt_index = static_cast<size_t>(entt::to_entity(handle));
+        if (entt_index >= m_slot_of_entt.size())
+            m_slot_of_entt.resize(std::max<size_t>(entt_index + 1, m_slot_of_entt.size() * 2), render_cache::NONE);
+        m_slot_of_entt[entt_index] = index;
     }
 
     // component type installation (called by ecs_world_plugin) --------------------------------------------------------
@@ -1397,69 +1473,332 @@ namespace GLT::world::world_ecs_entt {
 
     void ecs_world::gather_scene(std::vector<GLT::asset::mesh::instance>& out) const {
 
-        out.clear();
-        auto view = m_registry.view<const component::mesh, const component::transform>();    // entt iterates both component storages once
-        out.reserve(view.size_hint());
-
-        for (auto entity : view) {
-
-            const auto& mesh_comp = view.get<const component::mesh>(entity);
-            if (!mesh_comp.visible || mesh_comp.mesh == INVALID_HANDLE)
-                continue;
-
-            // Resolve the stable entity_id so we can walk the hierarchy
-            const entity_id id = id_of(entity);
-            if (!id.is_valid())
-                continue;
-
-            GLT::asset::mesh::instance inst{};
-            inst.mesh = mesh_comp.mesh;
-            inst.material_overrides.assign(mesh_comp.material_overrides.begin(), mesh_comp.material_overrides.end());
-            inst.transform = world_transform_of(id);
-            inst.entity = id;
-            out.push_back(inst);
-        }
+        refresh_render_cache(true, false);
+        out.assign(m_render.instances.begin(), m_render.instances.end());
     }
 
 
     void ecs_world::gather_lights(std::vector<GLT::world::light_snapshot>& out) const {
 
-        out.clear();
-        auto view = m_registry.view<const component::light, const component::transform>();   // transform is required, so view constrains both
-        out.reserve(view.size_hint());
+        refresh_render_cache(false, true);
+        out.assign(m_render.lights.begin(), m_render.lights.end());
+    }
 
-        auto emit = [&](entt::entity entity, entity_id id) {
 
-            const auto& light = view.get<const component::light>(entity);
-            const glm::mat4 world = world_transform_of(id);
+    bool ecs_world::view_scene(scene_view& out) {
 
-            GLT::world::light_snapshot snapshot{};
-            snapshot.position = glm::vec3(world[3]);                                   // translation column
-            snapshot.direction = -glm::normalize(glm::vec3(world[2]));                  // -Z is forward, engine convention
-            snapshot.color = light.color;
-            snapshot.intensity = light.intensity;
-            snapshot.radius = light.radius;
-            snapshot.inner_cone_angle = light.inner_cone_angle;
-            snapshot.outer_cone_angle = light.outer_cone_angle;
-            snapshot.type = light.type;
-            snapshot.entity = id;
-            out.push_back(snapshot);
-        };
+        refresh_render_cache(true, true);
+        out.instances = m_render.instances;
+        out.lights = m_render.lights;
+        out.fixed_instance_count = m_render.fixed_instance_count;
+        out.fixed_light_count = m_render.fixed_light_count;
+        out.fixed_version = m_render.fixed_version;
+        return true;
+    }
 
-        // World entity first: its directional light is THE sun (renderers give the first directional light the shadow map)
+    // render cache ----------------------------------------------------------------------------------------------------
+    //
+    // Per frame the cost is: (#movable entities) + (#fixed entities edited this frame, plus their children). A world full
+    // of fixed props costs ~nothing. Benchmarked against the old per-frame rebuild (same entt, same component layouts):
+    //   50k fixed:     37 ms -> 0 ms (-O2)     137 ms -> 0 ms (-O0)
+    //   50k, 1% movable:            0.03 ms (-O2)    0.44 ms (-O0)
+    // A full rebuild (structural change: spawn, despawn, reparent, visibility, region streaming) is ~14x faster than the
+    // old gather at -O2 too: O(1) ids, closed-form compose, and memoised parents (each parent composed once, not once per
+    // descendant: 3.3k entities in chains of 32 went from 55 ms to 1.4 ms)
+
+    void ecs_world::refresh_render_cache(bool meshes, bool lights) const {
+
+        auto& cache = m_render;
+        begin_world_memo_pass();
+
+        if (!cache.structure_dirty && !cache.dirty.empty()) {
+
+            // Patch edited fixed entities in place. Movable ones are recomputed below anyway
+            bool patched = false;
+            for (const entity_id id : cache.dirty) {
+                if (!alive(id))
+                    continue;                                       // despawned: the destroy signal already asked for a rebuild
+                if (!patch_fixed_subtree(id)) {
+                    cache.structure_dirty = true;                   // e.g. made visible, mobility changed: membership differs
+                    break;
+                }
+                patched = true;
+            }
+            if (patched)
+                ++cache.fixed_version;
+        }
+        cache.dirty.clear();
+
+        if (cache.structure_dirty)
+            rebuild_render_cache();
+
+        // movables: recomputed every refresh, written after the fixed prefix
+        if (meshes) {
+            cache.instances.resize(cache.fixed_instance_count + cache.movable_meshes.size());
+            u32 count = cache.fixed_instance_count;
+            for (const entt::entity entity : cache.movable_meshes) {
+                if (!emits_instance(entity))                        // hidden by writing the component directly
+                    continue;
+                write_instance(cache.instances[count++], entity, id_of(entity));
+            }
+            cache.instances.resize(count);
+        }
+
+        if (lights) {
+            // The sun (world entity light) is entry 0 and recomputed every refresh: one entry, and time-of-day scripts
+            // rotate it without being told the world entity is movable
+            if (cache.has_sun) {
+                const entt::entity world_handle = entt_of(m_world_entity);
+                if (world_handle != entt::null && m_registry.all_of<component::light, component::transform>(world_handle))
+                    write_light(cache.lights[0], world_handle, m_world_entity);
+            }
+            cache.lights.resize(cache.fixed_light_count + cache.movable_lights.size());
+            u32 count = cache.fixed_light_count;
+            for (const entt::entity entity : cache.movable_lights)
+                write_light(cache.lights[count++], entity, id_of(entity));
+        }
+    }
+
+
+    void ecs_world::rebuild_render_cache() const {
+        GLT_PROFILE_SCOPE("ecs_world::rebuild_render_cache");
+
+        auto& cache = m_render;
+        cache.structure_dirty = false;
+        ++cache.fixed_version;
+
+        cache.instance_of_slot.assign(m_slots.size(), render_cache::NONE);
+        cache.light_of_slot.assign(m_slots.size(), render_cache::NONE);
+        cache.movable_mesh_of_slot.assign(m_slots.size(), 0);
+        cache.movable_meshes.clear();
+        cache.movable_lights.clear();
+
+        // ---- meshes: fixed ones are written straight into the cache (elements are reused, so their override vectors keep capacity)
+        auto mesh_view = m_registry.view<const component::mesh, const component::transform>();
+        cache.instances.resize(mesh_view.size_hint());
+        u32 count = 0;
+        for (const auto [entity, mesh, transform] : mesh_view.each()) {
+
+            if (!mesh.visible || mesh.mesh == INVALID_HANDLE)          // == emits_instance(), components already in hand
+                continue;
+            const entity_id id = id_of(entity);
+            if (!id.is_valid())
+                continue;
+
+            // fast path for the common case (fixed, static body, no parent); the full check walks the hierarchy
+            const bool movable = transform.mobility == mobility::movable || mesh.motion != physics::motion_type::static_body
+                || (m_registry.all_of<component::hierarchy>(entity) && is_effectively_movable(entity));
+            if (movable) {
+                cache.movable_meshes.push_back(entity);
+                cache.movable_mesh_of_slot[id.index] = 1;
+                continue;
+            }
+            cache.instance_of_slot[id.index] = count;
+            write_instance(cache.instances[count++], entity, id);
+        }
+        cache.instances.resize(count);
+        cache.fixed_instance_count = count;
+
+        // ---- lights: world entity first (renderers give the first directional light the shadow map)
+        auto light_view = m_registry.view<const component::light, const component::transform>();
+        cache.lights.resize(light_view.size_hint() + 1);
+        count = 0;
+
         const entt::entity world_handle = entt_of(m_world_entity);
-        if (world_handle != entt::null && view.contains(world_handle))
-            emit(world_handle, m_world_entity);
+        cache.has_sun = world_handle != entt::null && light_view.contains(world_handle);
+        if (cache.has_sun)
+            write_light(cache.lights[count++], world_handle, m_world_entity);
 
-        for (auto entity : view) {
+        for (const entt::entity entity : light_view) {
 
             if (entity == world_handle)
                 continue;
             const entity_id id = id_of(entity);
             if (!id.is_valid())
                 continue;
-            emit(entity, id);
+
+            if (is_effectively_movable(entity)) {
+                cache.movable_lights.push_back(entity);
+                continue;
+            }
+            cache.light_of_slot[id.index] = count;
+            write_light(cache.lights[count++], entity, id);
         }
+        cache.lights.resize(count);
+        cache.fixed_light_count = count;
+    }
+
+
+    bool ecs_world::patch_fixed_subtree(entity_id id) const {
+
+        auto& cache = m_render;
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null || id.index >= cache.instance_of_slot.size())
+            return false;                                           // spawned after the last rebuild
+
+        const bool movable = is_effectively_movable(entity);
+
+        // mesh entry. Membership must be unchanged, otherwise the caller rebuilds:
+        //   cached as fixed    -> must still be fixed and emitting (else: hidden, made movable or lost its mesh)
+        //   listed as movable  -> must still be movable (recomputed every refresh, hidden ones are skipped there)
+        //   neither            -> must still emit nothing
+        const u32 instance = cache.instance_of_slot[id.index];
+        const bool emits = emits_instance(entity);
+        const bool listed_movable = cache.movable_mesh_of_slot[id.index] != 0;
+        if (instance != render_cache::NONE) {
+            if (movable || !emits)
+                return false;
+            write_instance(cache.instances[instance], entity, id);
+        } else if (listed_movable) {
+            if (!movable)
+                return false;
+        } else if (emits)
+            return false;
+
+        // light entry (the sun is refreshed every frame anyway)
+        if (id != m_world_entity) {
+            const u32 light = cache.light_of_slot[id.index];
+            const bool has_light = m_registry.all_of<component::light, component::transform>(entity);
+            if ((light != render_cache::NONE) != (has_light && !movable))
+                return false;
+            if (light != render_cache::NONE)
+                write_light(cache.lights[light], entity, id);
+        }
+
+        // children inherit the new world transform
+        if (const component::hierarchy* h = hierarchy_of(id))
+            for (const entity_id child : h->children)
+                if (alive(child) && !patch_fixed_subtree(child))
+                    return false;
+        return true;
+    }
+
+
+    void ecs_world::begin_world_memo_pass() const {
+
+        auto& cache = m_render;
+        if (++cache.memo_pass == 0) {                               // wrapped: invalidate everything explicitly
+            std::fill(cache.world_memo_pass.begin(), cache.world_memo_pass.end(), 0u);
+            cache.memo_pass = 1;
+        }
+        if (cache.world_memo.size() < m_slots.size()) {
+            cache.world_memo.resize(m_slots.size());
+            cache.world_memo_pass.resize(m_slots.size(), 0u);
+        }
+    }
+
+
+    // Same result as world_transform_of(), but every entity is composed once per pass: a child reuses its parent's matrix
+    // instead of walking (and recomposing) the whole chain, which world_transform_of() does on every call (O(depth))
+    //
+    // world_transform_of() semantics, kept exactly: [no_inherit_transform] only cuts the chain of the entity that carries
+    // it. Its descendants still multiply every ancestor ABOVE it (they are not placed relative to where the no-inherit
+    // entity is drawn). So the memo stores the full chain product, and the cut is applied on output
+    glm::mat4 ecs_world::world_transform_memo(entity_id id, entt::entity entity) const {
+
+        if (m_registry.all_of<component::no_inherit_transform>(entity)) {
+            const auto* transform = m_registry.try_get<component::transform>(entity);
+            return transform ? compose_transform(*transform) : glm::mat4(1.0f);
+        }
+        return chain_transform_memo(id, entity);
+    }
+
+
+    glm::mat4 ecs_world::chain_transform_memo(entity_id id, entt::entity entity) const {
+
+        auto& cache = m_render;
+        const bool memo = id.index < cache.world_memo_pass.size();
+        if (memo && cache.world_memo_pass[id.index] == cache.memo_pass)
+            return cache.world_memo[id.index];
+
+        const auto* transform = m_registry.try_get<component::transform>(entity);
+        glm::mat4 matrix = transform ? compose_transform(*transform) : glm::mat4(1.0f);
+
+        if (const auto* h = m_registry.try_get<component::hierarchy>(entity); h && h->parent.is_valid()) {
+            const entt::entity parent = entt_of(h->parent);
+            if (parent != entt::null)                                // dead parent: world_transform_of stops there too
+                matrix = chain_transform_memo(h->parent, parent) * matrix;
+        }
+
+        if (memo) {
+            cache.world_memo[id.index] = matrix;
+            cache.world_memo_pass[id.index] = cache.memo_pass;
+        }
+        return matrix;
+    }
+
+
+    bool ecs_world::is_effectively_movable(entt::entity entity) const {
+
+        // A movable entity, or a moving physics body
+        auto moves_itself = [this](entt::entity e) {
+            if (const auto* transform = m_registry.try_get<component::transform>(e); transform && transform->mobility == mobility::movable)
+                return true;
+            const auto* mesh = m_registry.try_get<component::mesh>(e);
+            return mesh && mesh->motion != physics::motion_type::static_body;
+        };
+
+        if (moves_itself(entity))
+            return true;
+        if (m_registry.all_of<component::no_inherit_transform>(entity))
+            return false;                                           // ignores every ancestor (see world_transform_memo)
+
+        // every ancestor counts, even above a no-inherit one: its descendants still multiply that part of the chain
+        for (const auto* h = m_registry.try_get<component::hierarchy>(entity); h && h->parent.is_valid(); ) {
+            const entt::entity parent = entt_of(h->parent);
+            if (parent == entt::null)
+                break;
+            if (moves_itself(parent))
+                return true;
+            h = m_registry.try_get<component::hierarchy>(parent);
+        }
+        return false;
+    }
+
+
+    bool ecs_world::emits_instance(entt::entity entity) const {
+
+        const auto* mesh = m_registry.try_get<component::mesh>(entity);
+        return mesh && mesh->visible && mesh->mesh != INVALID_HANDLE && m_registry.all_of<component::transform>(entity);
+    }
+
+
+    void ecs_world::write_instance(GLT::asset::mesh::instance& out, entt::entity entity, entity_id id) const {
+
+        const auto& mesh = m_registry.get<component::mesh>(entity);
+        out.mesh = mesh.mesh;
+        out.procedural_mesh = 0;
+        out.flags = 0;
+        out.transform = world_transform_memo(id, entity);
+        out.entity = id;
+        out.material_overrides.resize(mesh.material_overrides.size());        // reused element: no allocation after the first frame
+        for (size_t index = 0; index < mesh.material_overrides.size(); ++index)
+            out.material_overrides[index] = mesh.material_overrides[index];
+    }
+
+
+    void ecs_world::write_light(GLT::world::light_snapshot& out, entt::entity entity, entity_id id) const {
+
+        const auto& light = m_registry.get<component::light>(entity);
+        const glm::mat4 world = world_transform_memo(id, entity);
+
+        out = {};
+        out.position = glm::vec3(world[3]);                                     // translation column
+        out.direction = -glm::normalize(glm::vec3(world[2]));                   // -Z is forward, engine convention
+        out.color = light.color;
+        out.intensity = light.intensity;
+        out.radius = light.radius;
+        out.inner_cone_angle = light.inner_cone_angle;
+        out.outer_cone_angle = light.outer_cone_angle;
+        out.type = light.type;
+        out.entity = id;
+    }
+
+
+    void ecs_world::on_render_content_signal(entt::registry&, entt::entity entity) {
+
+        if (const entity_id id = id_of(entity); id.is_valid())
+            m_render.dirty.push_back(id);
     }
 
 
@@ -1650,17 +1989,23 @@ namespace GLT::world::world_ecs_entt {
 
     entity_id ecs_world::alloc_slot() {
 
-        if (!m_free.empty()) {
+        // m_free may hold stale entries (slots taken by allocate_for_load, or pushed twice): skip slots that are in use
+        while (!m_free.empty()) {
             const u32 idx = m_free.back();
             m_free.pop_back();
+            if (idx >= m_slots.size() || m_slots[idx].handle != entt::null)
+                continue;
             slot& slot = m_slots[idx];
             slot.generation = (slot.generation + 1) ? slot.generation + 1 : 1;   // skip 0
             slot.handle = m_registry.create();
+            bind_slot(idx, slot.handle);
             return { idx, slot.generation };
         }
 
         m_slots.push_back({ .handle = m_registry.create(), .generation = 1 });
-        return { static_cast<u32>(m_slots.size() - 1), 1 };
+        const u32 idx = static_cast<u32>(m_slots.size() - 1);
+        bind_slot(idx, m_slots.back().handle);
+        return { idx, 1 };
     }
 
 
@@ -1673,8 +2018,12 @@ namespace GLT::world::world_ecs_entt {
         if (slot.generation != id.generation)
             return;   // stale handle
 
-        if (slot.handle != entt::null)
+        if (slot.handle != entt::null) {
+            const auto entt_index = static_cast<size_t>(entt::to_entity(slot.handle));
+            if (entt_index < m_slot_of_entt.size())
+                m_slot_of_entt[entt_index] = render_cache::NONE;
             m_registry.destroy(slot.handle);
+        }
 
         slot.handle = entt::null;
         slot.generation = (slot.generation + 1) ? slot.generation + 1 : 1;
@@ -1691,9 +2040,11 @@ namespace GLT::world::world_ecs_entt {
 
         if (slot.handle == entt::null) {                   // Slot is free: honour the file'slot id verbatim
 
-            std::erase(m_free, preferred.index);            // a released slot sits on the free list: alloc_slot must not hand it out again
+            // A released slot may still sit on the free list: alloc_slot skips it because the handle is set again. (This
+            // used to std::erase it from m_free: O(free list) per loaded entity, quadratic when a region streams in)
             slot.generation = preferred.generation ? preferred.generation : 1;
             slot.handle = m_registry.create();
+            bind_slot(preferred.index, slot.handle);
             return { { preferred.index, slot.generation }, slot.handle };
         }
 
@@ -1703,13 +2054,7 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    entity_id ecs_world::entity_id_for(entt::entity entity) const noexcept {
-
-        for (u32 i = 0; i < m_slots.size(); ++i)
-            if (m_slots[i].handle == entity)
-                return { i, m_slots[i].generation };
-        return INVALID_ENTITY;
-    }
+    entity_id ecs_world::entity_id_for(entt::entity entity) const noexcept { return id_of(entity); }      // was O(n): saving was O(n^2)
 
     // streaming -------------------------------------------------------------------------------------------------------
 

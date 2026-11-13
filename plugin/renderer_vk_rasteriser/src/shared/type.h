@@ -57,7 +57,10 @@ namespace GLT::renderer::vk_rasterizer {
     // Bump whenever shading_strings.h changes: it is mixed into the implementation hash, so materials recompile
     // rev 2: HDR output (linear radiance, tonemapping moved to a post pass), hemispherical sky ambient
     // rev 3: SV_IsFrontFace normal flip (double-sided materials)
-    static constexpr u32                                            VK_MATERIAL_CODEGEN_REVISION = 4;
+    // rev 5: local shadow atlas projection + clip distances in the vertex shader, instance index without SV_InstanceID
+    // rev 6: shadow view in firstInstance bits 20..30 (up to 1536 views), single-tap sampling of small shadow tiles
+    // rev 7: sun shadows from cascades (shadow views), 3 x 3 tent filter with four taps
+    static constexpr u32                                            VK_MATERIAL_CODEGEN_REVISION = 7;
 
     // Lit scene colour target. Material "main" pipelines are created against this format
     inline constexpr vk::Format                                     HDR_COLOR_FORMAT = vk::Format::eR16G16B16A16Sfloat;

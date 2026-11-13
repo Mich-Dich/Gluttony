@@ -23,11 +23,13 @@
 #include <game/game_session.h>
 #include <render/i_scene_renderer.h>
 #include <application.h>
+#include <config/project.h>
 
 #include "util/ui/panel_collection.h"
 #include "resource_manager/icon_manager.h"
 #include "window/content_browser.h"
 #include "settings/editor_settings.h"
+#include "editor_layer.h"
 
 
 
@@ -338,10 +340,13 @@ namespace GLT::editor {
                 browser->window(delta_time);
 
         render_save_as_popup();
+        render_open_world_popup();
     }
 
 
     void world_viewport_window::update(const f32 /*delta_time*/) {
+
+        open_requested_world();                                 // before anything reads m_world this frame
 
         auto* game_layer = GLT::application::get().get_game_layer_ptr();
         auto* session = game_layer ? game_layer->get_primary_session() : nullptr;
@@ -353,6 +358,7 @@ namespace GLT::editor {
             m_details_edit.reset();
             m_gizmo_edit.reset();
             m_undo_stack.clear();
+            m_undo_stack.mark_clean();                          // freshly loaded: nothing unsaved
             clear_selection();
 
             m_world = world;
@@ -553,6 +559,7 @@ namespace GLT::editor {
             if (m_scene && m_scene->get_output_image()) {
                 ImGui::Image(m_scene->get_output_image(), m_viewport_size);
                 m_viewport_image_drawn = ImGui::IsItemVisible();
+                handle_viewport_world_drop();
             } else
                 ImGui::TextColored(ImVec4(1.f, 0.5f, 0.4f, 1.f), "Scene renderer not available");
 
@@ -1026,16 +1033,18 @@ namespace GLT::editor {
         const search_query query = parse_search(m_outliner_filter);
         const bool filter_mode = !query.empty();
 
-        // ---- build visible order ----
+        // ---- build visible order (= the rows, flattened; depth per row for the indent) ----
         std::vector<GLT::world::entity_id> visible_order;
+        std::vector<int> visible_depth;
         visible_order.reserve(64);
 
         for (auto root : m_world->root_entities()) {
             if (filter_mode)
                 collect_filtered_matches_rec(root, query, m_world, m_inspector, visible_order);
             else
-                collect_visible_tree_order(root, visible_order);
+                collect_visible_tree_order(root, 0, visible_order, visible_depth);
         }
+        visible_depth.resize(visible_order.size(), 0);                 // filter mode: flat
 
         if (filter_mode && visible_order.empty()) {
             UI::empty_state("No entities match", "Hover the filter field for the search syntax");
@@ -1047,14 +1056,15 @@ namespace GLT::editor {
         if (!filter_mode)
             render_world_row();
 
-        // ---- draw rows ----
-        int row_index = 0;
-        if (!filter_mode)
-            for (auto root : m_world->root_entities())
-                render_outliner_row(root, 0, row_index, visible_order, /*flat=*/false);
-        else
-            for (auto id : visible_order)
-                render_outliner_row(id, 0, row_index, visible_order, /*flat=*/true);
+        // ---- draw rows: only the ones on screen ----
+        // Drawing every row (image buttons, icons, name ellipsizing) cost 12-22 ms per frame with 4k-27k entities. The
+        // clipper measures the first row and skips the rest of the off-screen ones with a single cursor jump
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(visible_order.size()));
+        while (clipper.Step())
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+                render_outliner_row(visible_order[row], visible_depth[row], row, visible_order, /*flat=*/filter_mode);
+        clipper.End();
 
         // ---- blank-click deselect ----
         if (!filter_mode
@@ -1151,7 +1161,7 @@ namespace GLT::editor {
     void world_viewport_window::render_outliner_row(
         GLT::world::entity_id id,
         int depth,
-        int& row_index,
+        int row_index,
         const std::vector<GLT::world::entity_id>& visible_order,
         bool flat) {
 
@@ -1160,9 +1170,7 @@ namespace GLT::editor {
 
         ImGui::PushID(static_cast<int>(id.index));
 
-        // ---- zebra bookkeeping (increment BEFORE recursion so children see the next stripe) ----
-        const bool striped = (row_index % 2) != 0;
-        ++row_index;
+        const bool striped = (row_index % 2) != 0;            // zebra
 
         const std::string name = entity_display_name(id);
         const bool has_kids = m_world->has_children(id);
@@ -1303,11 +1311,7 @@ namespace GLT::editor {
 
         ImGui::SetCursorScreenPos({ row_start.x, row_end.y });
         ImGui::Dummy(ImVec2());
-
-        if (!flat && open && has_kids) {
-            for (auto child : m_world->children_of(id))
-                render_outliner_row(child, depth + 1, row_index, visible_order, /*flat=*/false);
-        }
+        (void)open;                                             // children are their own rows (see collect_visible_tree_order)
 
         ImGui::PopID();
     }
@@ -1516,15 +1520,21 @@ namespace GLT::editor {
 
     // ---- outliner (hierarchy helpers) -----------------------------------------------------------------------------
 
-    void world_viewport_window::collect_visible_tree_order(GLT::world::entity_id id, std::vector<GLT::world::entity_id>& out) const {
+    // Rows push only their own id (no nesting), so the open state read here is exactly the one the row's tree node writes
+    void world_viewport_window::collect_visible_tree_order(GLT::world::entity_id id, int depth,
+        std::vector<GLT::world::entity_id>& out, std::vector<int>& depths) const {
+
+        if (!m_world->alive(id))
+            return;
 
         out.push_back(id);
+        depths.push_back(depth);
 
         if (!is_tree_node_open(id))
             return;
 
         for (auto c : m_world->children_of(id))
-            collect_visible_tree_order(c, out);
+            collect_visible_tree_order(c, depth + 1, out, depths);
     }
 
 
@@ -1593,6 +1603,137 @@ namespace GLT::editor {
         return icons;
     }
 
+    // ---- opening worlds -------------------------------------------------------------------------------------------
+
+    // Accepts exactly one .glt_world from the content browser. Other drags (meshes, materials, several files) are not
+    // taken, so the image stays free for future drop targets
+    void world_viewport_window::handle_viewport_world_drop() {
+
+        const ImGuiPayload* dragged = ImGui::GetDragDropPayload();
+        if (!dragged || !dragged->IsDataType(GLT::UI::ASSET_DRAG_PAYLOAD))
+            return;
+
+        const auto paths = content_browser_window::parse_drag_payload(dragged);
+        if (paths.size() != 1 || GLT::asset::extension_to_type(paths.front().extension().string()) != GLT::asset::core_types::world)
+            return;
+
+        if (!ImGui::BeginDragDropTarget())
+            return;
+
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(GLT::UI::ASSET_DRAG_PAYLOAD, ImGuiDragDropFlags_AcceptBeforeDelivery)) {
+            if (payload->IsDelivery())
+                request_open_world(paths.front());
+            else
+                ImGui::SetTooltip("Open world  %s", paths.front().stem().string().c_str());
+        }
+        ImGui::EndDragDropTarget();
+    }
+
+
+    void world_viewport_window::request_open_world(const std::filesystem::path& path) {
+
+        if (!GLT::editor::editor_layer::is_simulation_idle()) {
+            GLT::event_bus::post(GLT::notification_event("Open world", "Stop the simulation before opening another world",
+                GLT::logger::severity::warn));
+            return;
+        }
+
+        // already open: nothing to do (dropping it again is not a "revert")
+        if (m_world && m_world->asset()) {
+            const auto& current = GLT::asset::registry::get_ref()->info(m_world->asset().get()).virtual_path;
+            if (GLT::project::to_content_relative(path) == current.lexically_normal()) {
+                GLT::event_bus::post(GLT::notification_event("Open world", std::format("[{}] is already open", path.stem().string()),
+                    GLT::logger::severity::info));
+                return;
+            }
+        }
+
+        flush_edits();                                          // an open property / gizmo edit becomes an undo step first
+        if (m_world && !m_undo_stack.is_clean()) {
+            m_world_awaiting_confirm = path;
+            m_open_world_popup_requested = true;
+            return;
+        }
+        m_world_to_open = path;
+    }
+
+
+    void world_viewport_window::render_open_world_popup() {
+
+        constexpr const char* POPUP = "Unsaved changes##open_world";
+        if (m_open_world_popup_requested) {
+            ImGui::OpenPopup(POPUP);
+            m_open_world_popup_requested = false;
+        }
+
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (!ImGui::BeginPopupModal(POPUP, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            return;
+
+        const std::string current = (m_world && m_world->asset())
+            ? GLT::asset::registry::get_ref()->info(m_world->asset().get()).name : std::string("the current world");
+        ImGui::Text("%s has unsaved changes.", current.c_str());
+        ImGui::Text("Open %s anyway?", m_world_awaiting_confirm.stem().string().c_str());
+        ImGui::Dummy(ImVec2(0.f, 4.f));
+
+        auto close = [this]() {
+            m_world_awaiting_confirm.clear();
+            ImGui::CloseCurrentPopup();
+        };
+
+        if (ImGui::Button("Save and open")) {
+            if (auto result = m_world ? m_world->save() : std::expected<void, GLT::asset::load_error>{}; result) {
+                m_undo_stack.mark_clean();
+                m_world_to_open = m_world_awaiting_confirm;
+            } else
+                GLT::event_bus::post(GLT::notification_event("Open world", std::format("Saving failed [{}], world not switched",
+                    GLT::util::enum_to_string(result.error())), GLT::logger::severity::warn));
+            close();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard changes and open")) {
+            m_world_to_open = m_world_awaiting_confirm;
+            close();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+            close();
+
+        ImGui::EndPopup();
+    }
+
+
+    void world_viewport_window::open_requested_world() {
+
+        if (m_world_to_open.empty())
+            return;
+        const std::filesystem::path path = std::exchange(m_world_to_open, {});
+
+        if (!GLT::editor::editor_layer::is_simulation_idle())   // started playing while the popup was open
+            return;
+
+        auto* game_layer = GLT::application::get().get_game_layer_ptr();
+        auto* session = game_layer ? game_layer->get_primary_session() : nullptr;
+        auto registry = GLT::asset::registry::get_ref();
+        VALIDATE(session && registry, return, "", "cannot open world [{}]: no primary session or asset registry", (path.string()))
+
+        auto asset = registry->load(path);
+        if (!asset) {
+            GLT::event_bus::post(GLT::notification_event("Open world", std::format("Failed to load [{}]: {}", path.stem().string(),
+                GLT::util::enum_to_string(asset.error())), GLT::logger::severity::error));
+            return;
+        }
+
+        // load_world (not load_world_from_path): it also rebinds scripts and runs world generators, like the PIE windows do
+        if (auto result = session->load_world(std::move(*asset)); !result) {
+            GLT::event_bus::post(GLT::notification_event("Open world", std::format("Failed to open [{}]: {}", path.stem().string(),
+                GLT::util::enum_to_string(result.error())), GLT::logger::severity::error));
+            return;
+        }
+        LOG(info, "opened world [{}]", path.string())
+        // update() continues and sees the new world: selection, undo history and trackers are reset there
+    }
+
     // ---- saving ---------------------------------------------------------------------------------------------------
 
     void world_viewport_window::on_save_event(const GLT::save_event& /*event*/) {
@@ -1606,6 +1747,8 @@ namespace GLT::editor {
         VALIDATE(world, return, "", "Failed to get world");
 
         if (auto result = world->save(); result) {
+            if (world == m_world)
+                m_undo_stack.mark_clean();
             GLT::event_bus::post(GLT::notification_event("Saved", "World saved successfully", GLT::logger::severity::info));
             return;
         } else
