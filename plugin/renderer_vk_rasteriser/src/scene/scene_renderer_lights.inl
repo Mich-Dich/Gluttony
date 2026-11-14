@@ -58,6 +58,8 @@ namespace GLT::renderer::vk_rasterizer {
 
             if (m_packed_lights.size() >= MAX_LIGHTS)
                 break;
+            if (submitted_light.hidden)
+                continue;                                   // hidden in the editor: gives no light, its outline can still be drawn
             const glm::vec3 dir = glm::dot(submitted_light.direction, submitted_light.direction) > 1e-6f
                 ? glm::normalize(submitted_light.direction) : glm::vec3(0.f, -1.f, 0.f);
 

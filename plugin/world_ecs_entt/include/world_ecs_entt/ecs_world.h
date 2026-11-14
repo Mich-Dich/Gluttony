@@ -61,6 +61,8 @@ namespace GLT::world::world_ecs_entt {
 
         [[nodiscard]] bool is_visible(entity_id id) const override;
         void set_visible(entity_id id, bool visible) override;
+        [[nodiscard]] bool is_hidden(entity_id id) const override;
+        void set_hidden(entity_id id, bool hidden) override;
 
         [[nodiscard]] mobility get_mobility(entity_id id) const override;
         void set_mobility(entity_id id, mobility value) override;
@@ -218,6 +220,7 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] glm::mat4 chain_transform_memo(entity_id id, entt::entity entity) const;  // product of all ancestors * local
         [[nodiscard]] bool is_effectively_movable(entt::entity entity) const;   // own / inherited mobility, physics motion
         [[nodiscard]] bool emits_instance(entt::entity entity) const;
+        [[nodiscard]] bool is_effectively_hidden(entity_id id) const;           // own flag or one of the parents' (set_hidden)
         void write_instance(asset::mesh::instance& out, entt::entity entity, entity_id id) const;
         void write_light(light_snapshot& out, entt::entity entity, entity_id id) const;
         void mark_render_structure_dirty() const noexcept { m_render.structure_dirty = true; }
@@ -256,6 +259,7 @@ namespace GLT::world::world_ecs_entt {
         std::vector<slot>                                                               m_slots;
         std::vector<u32>                                                                m_slot_of_entt;     // entt::to_entity(handle) -> slot index (O(1) id_of)
         std::vector<u32>                                                                m_free;
+        std::unordered_set<entity_id>                                                   m_hidden;           // set_hidden(): by id, so it survives streaming
         glm::vec3                                                                       m_streaming_anchor{ 0.f };
         f32                                                                             m_streaming_radius{ 1024.f };
         entity_id                                                                       m_active_camera{ INVALID_ENTITY };

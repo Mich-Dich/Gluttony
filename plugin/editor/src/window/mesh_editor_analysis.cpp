@@ -49,23 +49,23 @@ namespace GLT::editor {
     constexpr u32                                   SETTLE_STATISTICS = 6;
 
     // "Collect Data" (analysis_sweep)
-    constexpr f32                                   SWEEP_SECONDS_PER_RANGE = 2.8f;        // pace of the zoom: a distance range (half an octave) per half second
+    constexpr f32                                   SWEEP_SECONDS_PER_RANGE = 2.8f;         // pace of the zoom: a distance range (half an octave) per half second
 
-    constexpr f32                                   SWEEP_MIN_TURNS_PER_SECOND = 0.12f;     // auto rotate during the flight: at least this fast
+    constexpr f32                                   SWEEP_MIN_TURNS_PER_SECOND = 0.32f;     // auto rotate during the flight: at least this fast
 
-    constexpr f32                                   SWEEP_PITCH_SECONDS = 9.0f;             // one up / down swing of the camera height
+    constexpr f32                                   SWEEP_PITCH_SECONDS = 2.0f;             // one up / down swing of the camera height
 
-    constexpr f32                                   SWEEP_PITCH_AMPLITUDE = 0.85f;          // radians: reaches "from above" and "from below"
+    constexpr f32                                   SWEEP_PITCH_AMPLITUDE = 1.35f;          // radians: reaches "from above" and "from below"
 
     // Collected samples are written at the latest this long after they were taken (and when the mesh closes, a measurement ends, the data is reset)
-    constexpr f32                                   ANALYSIS_SAVE_INTERVAL = 10.0f;
+    constexpr f32                                   ANALYSIS_SAVE_INTERVAL = 5.0f;
 
     constexpr u32                                   ANALYSIS_FILE_VERSION = 2;              // 2: YAML (serializer::yaml)
 
     inline const std::filesystem::path              ANALYSIS_DATA_DIR("asset_stats");       // under <project>/metadata
 
     // Cluster selections computed per frame for the curves (each one visits every cluster: spread over frames)
-    constexpr u32                                   CURVE_POINTS_PER_FRAME = 2;
+    constexpr u32                                   CURVE_POINTS_PER_FRAME = 1;
 
     constexpr f32                                   CHART_HEIGHT = 132.0f;
 

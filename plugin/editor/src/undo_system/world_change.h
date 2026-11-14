@@ -112,6 +112,9 @@ namespace GLT::undo_system {
         // Drops the open edit without recording it (world changed, history cleared)
         void reset();
 
+        // An edit was started and is not a step yet (the user still holds the slider / the gizmo)
+        [[nodiscard]] bool is_open() const noexcept { return m_open; }
+
 
         on_applied_fn                           on_applied{};
 

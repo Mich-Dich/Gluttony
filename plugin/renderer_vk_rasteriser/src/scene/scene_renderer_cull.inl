@@ -206,6 +206,8 @@ namespace GLT::renderer::vk_rasterizer {
                 continue;
             if (scene_instance.mesh == INVALID_HANDLE)
                 continue;
+            if ((scene_instance.flags & GLT::asset::mesh::INSTANCE_FLAG_HIDDEN) != 0u)
+                continue;                                   // hidden in the editor: only its outline is drawn (debug draw)
 
             auto rit = m_resident_meshes.find(scene_instance.mesh);
             if (rit == m_resident_meshes.end())

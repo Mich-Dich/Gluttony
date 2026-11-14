@@ -1626,7 +1626,9 @@ namespace GLT::UI {
 		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, height * 0.5f);
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(icon_space, ImGui::GetStyle().FramePadding.y));
 		ImGui::SetNextItemWidth(width);
+		ImGui::SetNextItemAllowOverlap();				// the clear button lies on top of the field: without this the field keeps the click
 		bool changed = ImGui::InputTextWithHint("##search", hint, buffer, buffer_size);
+		const ImGuiID field_id = ImGui::GetItemID();
 		ImGui::PopStyleVar(2);
 
 		// magnifier: circle + handle
@@ -1646,6 +1648,8 @@ namespace GLT::UI {
 			if (ImGui::InvisibleButton("##clear", ImVec2(size, size))) {
 				buffer[0] = '\0';
 				changed = true;
+				if (ImGui::GetActiveID() == field_id)	// a focused field would write its own copy of the text back
+					ImGui::ClearActiveID();
 			}
 			const bool hovered = ImGui::IsItemHovered();
 			const ImVec2 cc = ImVec2(clear_pos.x + size * 0.5f, clear_pos.y + size * 0.5f);
