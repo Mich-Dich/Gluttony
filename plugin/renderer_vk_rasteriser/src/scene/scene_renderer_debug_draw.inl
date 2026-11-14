@@ -80,6 +80,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::clear() {
+        GLT_PROFILE_SCOPE("scene_renderer::clear");
         std::lock_guard lock(m_debug_mutex);
         m_debug_primitives.clear();
         m_watched_meshes.clear();
@@ -143,6 +144,7 @@ namespace GLT::renderer::vk_rasterizer {
     // per-frame CPU work ----------------------------------------------------------------------------------------------
 
     void scene_renderer::process_debug_primitives() {
+        GLT_PROFILE_SCOPE("scene_renderer::process_debug_primitives");
 
         const f64 now = std::chrono::duration<f64>(std::chrono::steady_clock::now().time_since_epoch()).count();
         const f32 delta = (m_debug_last_frame_time > 0.0) ? static_cast<f32>(now - m_debug_last_frame_time) : 0.0f;
@@ -328,6 +330,43 @@ namespace GLT::renderer::vk_rasterizer {
         frame_debug_layout& layout = m_debug_layouts[m_current_frame];
         layout = {};
 
+        // Clip lines to the view frustum on the CPU. Grid / axis lines that pass close to (or behind) the camera end up
+        // with endpoints millions of pixels off screen after the near-plane clip; lines are only clipped against the
+        // rasterizer guard band there, and the fixed-point precision loss turns them into wide, stair-stepped bands.
+        // Clip space is an affine function of world space, so the clip parameter t applies to the world endpoints too
+        {
+            GLT_PROFILE_SCOPE("Debug line frustum clip");
+            const glm::mat4 view_proj = camera_projection() * m_active_camera.view;
+            std::erase_if(pending, [&view_proj](debug_primitive_record& p) {
+                if (p.type != debug_primitive_record::kind::line)
+                    return false;
+
+                const glm::vec4 c0 = view_proj * glm::vec4(p.verts[0].position, 1.0f);
+                const glm::vec4 c1 = view_proj * glm::vec4(p.verts[1].position, 1.0f);
+                // signed distances to x=-w, x=w, y=-w, y=w, z=0 (near, ZO and NO safe), z=w (far)
+                const f32 d0[6] = { c0.w + c0.x, c0.w - c0.x, c0.w + c0.y, c0.w - c0.y, c0.z, c0.w - c0.z };
+                const f32 d1[6] = { c1.w + c1.x, c1.w - c1.x, c1.w + c1.y, c1.w - c1.y, c1.z, c1.w - c1.z };
+
+                f32 t0 = 0.0f, t1 = 1.0f;
+                for (u32 i = 0; i < 6; ++i) {
+                    if (d0[i] < 0.0f && d1[i] < 0.0f)
+                        return true;                                    // fully outside one plane
+                    if (d0[i] < 0.0f)
+                        t0 = std::max(t0, d0[i] / (d0[i] - d1[i]));
+                    else if (d1[i] < 0.0f)
+                        t1 = std::min(t1, d0[i] / (d0[i] - d1[i]));
+                }
+                if (t0 >= t1)
+                    return true;
+
+                const glm::vec3 a = p.verts[0].position;
+                const glm::vec3 b = p.verts[1].position;
+                p.verts[0].position = a + (b - a) * t0;
+                p.verts[1].position = a + (b - a) * t1;
+                return false;
+            });
+        }
+
         std::vector<debug_vertex> vertices;
         vertices.reserve(pending.size() * 3);
 
@@ -365,6 +404,7 @@ namespace GLT::renderer::vk_rasterizer {
     // GPU resources ------------------------------------------------------------------------------------------------------------------
 
     void scene_renderer::create_debug_draw_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_debug_draw_resources");
 
         using VKDT = vk::DescriptorType;
         using VKSF = vk::ShaderStageFlagBits;
@@ -455,6 +495,7 @@ namespace GLT::renderer::vk_rasterizer {
         auto make_pipeline = [&](const vk::PipelineInputAssemblyStateCreateInfo& ia,
                                  const vk::PipelineDepthStencilStateCreateInfo& ds) -> vk::Pipeline {
             vk::GraphicsPipelineCreateInfo pi{};
+            pi.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;    // bound via descriptor buffers (spec: mandatory)
             pi.pNext = &ri;
             pi.stageCount = 2;
             pi.pStages = stages;
@@ -496,6 +537,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_debug_draw_resources() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_debug_draw_resources");
 
         m_plugin.get_vk_device().waitIdle();
 
@@ -537,6 +579,7 @@ namespace GLT::renderer::vk_rasterizer {
     // pass ---------------------------------------------------------------------------------------------------------------------------
 
     void scene_renderer::add_debug_draw_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_debug_draw_pass");
 
         const frame_debug_layout& layout = m_debug_layouts[m_current_frame];
         const u32 total = layout.line_depth_count + layout.line_overlay_count +

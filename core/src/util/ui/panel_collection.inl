@@ -469,4 +469,78 @@ namespace GLT::UI {
 
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
+
+	template<typename E> requires std::is_enum_v<E>
+	bool property_enum(const char* label, E& value, const char* desc, const E* default_value) {
+
+		const auto& values = GLT::util::enum_values<E>;
+
+		// Display names are built once per enum type
+		static const std::vector<std::string> names = [] {
+			std::vector<std::string> out;
+			for (const char* raw : GLT::util::enum_name_ptrs<E>)
+				out.push_back(pretty_name(raw));
+			return out;
+		}();
+		static const std::vector<const char*> name_ptrs = [] {
+			std::vector<const char*> out;
+			for (const auto& name : names)
+				out.push_back(name.c_str());
+			return out;
+		}();
+
+		auto index_of = [&](const E e) -> i32 {
+			for (size_t x = 0; x < values.size(); ++x)
+				if (values[x] == e)
+					return static_cast<i32>(x);
+			return 0;
+		};
+
+		i32 index = index_of(value);
+		const i32 default_index = default_value ? index_of(*default_value) : 0;
+		const bool changed = property_combo(label, index, name_ptrs, desc, default_value ? &default_index : nullptr);
+		if (changed)
+			value = values[static_cast<size_t>(index)];
+		return changed;
+	}
+
+
+	template<typename E> requires std::is_enum_v<E>
+	bool property_combo(const char* label, E& value, std::span<const char* const> options, const char* desc, const E* default_value) {
+
+		i32 index = static_cast<i32>(value);
+		const i32 default_index = default_value ? static_cast<i32>(*default_value) : 0;
+		const bool changed = property_combo(label, index, options, desc, default_value ? &default_index : nullptr);
+		if (changed)
+			value = static_cast<E>(index);
+		return changed;
+	}
+
+
+	template<typename E> requires std::is_enum_v<E>
+	bool property_segmented(const char* label, E& value, std::span<const char* const> options, const char* desc, const E* default_value) {
+
+		i32 index = static_cast<i32>(value);
+		const i32 default_index = default_value ? static_cast<i32>(*default_value) : 0;
+		const bool changed = property_segmented(label, index, options, desc, default_value ? &default_index : nullptr);
+		if (changed)
+			value = static_cast<E>(index);
+		return changed;
+	}
+
+
+	template<typename E> requires std::is_enum_v<E>
+	bool settings_combo(const char* label, const char* desc, E& value, const E default_value, std::span<const char* const> options) {
+
+		return property_combo(label, value, options, desc, &default_value);
+	}
+
+
+	template<typename E> requires std::is_enum_v<E>
+	bool settings_segmented(const char* label, const char* desc, E& value, const E default_value, std::span<const char* const> options) {
+
+		return property_segmented(label, value, options, desc, &default_value);
+	}
+
 }
+

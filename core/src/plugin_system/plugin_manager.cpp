@@ -531,7 +531,7 @@ namespace GLT::plugin_manager {
 
             if (!detail::get_static_plugin_registry().empty())
                 LOG(warn, "LINKAGE_STYLE=DYNAMIC: ignoring [{}] static registrar entries, "
-                        "plugins statically linked into this binary will NOT be discovered", detail::get_static_plugin_registry().size());
+                    "plugins statically linked into this binary will NOT be discovered", detail::get_static_plugin_registry().size());
 
         #endif
 

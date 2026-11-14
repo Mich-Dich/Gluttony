@@ -1,4 +1,5 @@
 #include "util/pch.h"
+#include <debug/trace.h>
 #include "util/util_pch.h"
 #include "plugin/plugin.h"
 
@@ -6,7 +7,9 @@
 #include "event/application_event.h"
 #include "platform/i_window.h"
 #include "reflection/registry.h"
+#include "settings/engine_settings.h"
 #include "render/image.h"
+#include "debug/profiler.h"
 #include "image.h"
 
 // GLFW is the only backend we implement surface creation for. The window plugin gives us a native
@@ -22,6 +25,8 @@
 namespace GLT::renderer::vk_rasterizer {
 
     // CONSTANTS =======================================================================================================
+
+    constexpr const char*                           VISUAL_SETTINGS_BLOCK = "renderer.vk_rasterizer.visual";   // name in the engine settings files
 
     // MACROS ==========================================================================================================
 
@@ -75,6 +80,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PUBLIC ====================================================================================================
 
     void renderer::on_load() {
+        GLT_PROFILE_SCOPE("renderer::on_load");
 
         // Register the image factory (used by external consumers of `render::image`)
         GLT::render::image::factory_table table{};
@@ -97,13 +103,23 @@ namespace GLT::renderer::vk_rasterizer {
         // Register the visual settings type so the editor can walk it
         GLT::reflect::register_type<settings::visual>();
         GLT::reflect::finalize();
+
+        // Engine settings: the stored values (project file, changes on this computer) are written into
+        // m_visual_settings now and whenever they change. Read every frame, so there is nothing else to update
+        GLT::engine_settings::register_block({ VISUAL_SETTINGS_BLOCK, "Rendering", GLT::reflect::type_of<settings::visual>(),
+            &m_visual_settings, [this] { on_settings_changed(); } });
     }
 
 
-    void renderer::on_unload() { GLT::render::image::register_factory({}); }
+    void renderer::on_unload() {
+
+        GLT::engine_settings::unregister_block(VISUAL_SETTINGS_BLOCK);
+        GLT::render::image::register_factory({});
+    }
 
 
     bool renderer::create(GLT::platform::window_handle primary_window) {
+        GLT_PROFILE_SCOPE("renderer::create");
 
         mp_window = GLT::platform::window::get_ptr();
         ASSERT(mp_window, "", "Failed to get window plugin")
@@ -113,6 +129,28 @@ namespace GLT::renderer::vk_rasterizer {
         m_primary_window = primary_window;
 
         init_vulkan();
+
+        // Which GPU we run on matters for every timing: log it and expose it to the stats / trace summary
+        {
+            const auto props = m_physical_device.getProperties();
+            const std::string device_name = props.deviceName.data();
+            LOG(info, "Vulkan device: {} ({}), driver {:#x}, API {}.{}.{}", device_name, vk::to_string(props.deviceType),
+                props.driverVersion, VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion),
+                VK_API_VERSION_PATCH(props.apiVersion))
+            const f32 device_type = static_cast<f32>(static_cast<u32>(props.deviceType));
+            const f32 timestamp_period = props.limits.timestampPeriod;
+
+            // A software rasteriser (llvmpipe & co) must be impossible to overlook: it is 10-100x slower than any GPU and
+            // makes every "GPU" timing a CPU timing. (It went unnoticed for days as "type 4" in this section.)
+            const bool software = props.deviceType == vk::PhysicalDeviceType::eCpu;
+            m_gpu_device_provider = GLT::debug::register_provider(GLT::debug::stats_provider{
+                .name = "GPU device: " + device_name + (software ? "  !! SOFTWARE RASTERISER (CPU), NOT A GPU !!" : ""),
+                .fill = [device_type, timestamp_period](GLT::debug::system_stats& out) {
+                    out.custom.push_back({ "type (1 integrated, 2 discrete, 3 virtual, 4 CPU/software)", device_type, "%.0f" });
+                    out.custom.push_back({ "timestamp period (ns)", timestamp_period, "%.3f" });
+                }
+            });
+        }
 
         m_shared = GLT::create_unique_ref<shared_resource_manager>(m_device, m_physical_device, m_dev,
             m_queues.graphics_queue, m_queues.graphics_index);
@@ -125,14 +163,30 @@ namespace GLT::renderer::vk_rasterizer {
                 // Left here as a hook for future diagnostics / dirty tracking
             });
 
+        // Per-pass GPU timings in the stats HUD (filled from the timestamp queries the scene renderers resolve)
+        m_gpu_stats_provider = GLT::debug::register_provider(GLT::debug::stats_provider{
+            .name = "GPU passes",
+            .fill = [this](GLT::debug::system_stats& out) {
+                if (!m_shared)
+                    return;
+                const auto& stats = m_shared->last_gpu_stats();
+                out.custom.push_back({ "total", stats.gpu_time_ms, "%.3f ms" });
+                for (const auto& [pass_name, ms] : stats.pass_times_ms)
+                    out.custom.push_back({ pass_name, ms, "%.3f ms" });
+            }
+        });
+
         LOG_INIT
         return true;
     }
 
 
     void renderer::destroy() {
+        GLT_PROFILE_SCOPE("renderer::destroy");
 
         GLT::event_bus::unsubscribe(m_framebuffer_resize_sub);
+        GLT::debug::unregister_provider(m_gpu_stats_provider);
+        GLT::debug::unregister_provider(m_gpu_device_provider);
 
         if (m_shared) {
             m_shared->destroy();
@@ -144,11 +198,16 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    void renderer::begin_frame(u64 frame_number) { m_shared->begin_frame(frame_number); }
+    void renderer::begin_frame(u64 frame_number) {
+
+        GLT_PROFILE_SCOPE_C("Renderer begin frame", GLT::debug::trace::COLOR_RENDER);
+        m_shared->begin_frame(frame_number);
+    }
 
 
     std::expected<GLT::unique_ref<GLT::render::i_scene_renderer>, GLT::render::scene_renderer_error> renderer::create_scene_renderer(
         const GLT::render::scene_renderer_desc& desc) {
+        GLT_PROFILE_SCOPE("renderer::create_scene_renderer");
 
         // Validate surface targets up front — cheaper than doing it inside scene_renderer::create()
         if (std::holds_alternative<GLT::render::surface_target_desc>(desc.target)) {
@@ -173,12 +232,14 @@ namespace GLT::renderer::vk_rasterizer {
 
     GLT::debug::render_stats renderer::get_render_stats() const {
 
+        const gpu_frame_report* gpu = m_shared ? &m_shared->last_gpu_stats() : nullptr;
+
         return GLT::debug::render_stats{
-            .gpu_time_ms = 0.0f,
-            .draw_calls = 0,
-            .triangles = 0,
+            .gpu_time_ms = gpu ? gpu->gpu_time_ms : 0.0f,
+            .draw_calls = gpu ? gpu->draw_calls : 0u,
+            .triangles = gpu ? gpu->triangles : 0u,         // main view, after GPU culling (read back from cull.comp)
             .vertices = 0,
-            .render_passes = 0,
+            .render_passes = gpu ? gpu->render_passes : 0u,
             #if defined(DEBUG)
                 .vram_bytes = GLT::render::image::get_live_vram_bytes(),
             #endif
@@ -216,12 +277,14 @@ namespace GLT::renderer::vk_rasterizer {
 
     std::expected<GLT::render::compiled_shader, GLT::render::shader_compile_error>
     renderer::compile(std::string_view slang_source, GLT::asset::material::blend_mode blend) {
+        GLT_PROFILE_SCOPE("renderer::compile");
         return m_shared->compile(slang_source, blend);
     }
 
     // window <-> surface registry -------------------------------------------------------------------------------------
 
     vk::SurfaceKHR renderer::get_or_create_surface(GLT::platform::window_handle handle) {
+        GLT_PROFILE_SCOPE("renderer::get_or_create_surface");
 
         if (!handle.is_valid() || !m_instance.instance_handle)
             return nullptr;
@@ -265,6 +328,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void renderer::release_surface(GLT::platform::window_handle handle) {
+        GLT_PROFILE_SCOPE("renderer::release_surface");
 
         auto it = m_surfaces.find(handle);
         if (it == m_surfaces.end())
@@ -283,6 +347,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PRIVATE ===================================================================================================
 
     void renderer::init_vulkan() {
+        GLT_PROFILE_SCOPE("renderer::init_vulkan");
 
         u32 count = 0;
         const char** ext = mp_window->get_required_render_extensions(&count);
@@ -290,8 +355,9 @@ namespace GLT::renderer::vk_rasterizer {
         util::vulkan_builder builder;
         builder.enable_debug = USE_VULKAN_VALIDATION;
         builder.debug_callback = util::vulkan_debug_callback;
+        // Hard requirements only. pick_physical_device() adds what the renderer itself cannot run without and enables
+        // the optional features on whatever device it picks; a requirement listed here rejects every device without it
         builder.physical_device_features10.samplerAnisotropy = true;
-        builder.physical_device_features12.shaderSampledImageArrayNonUniformIndexing = true;
         for (u32 i = 0; i < count; i++)
             builder.instance_extensions.push_back(ext[i]);
 
@@ -313,6 +379,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void renderer::destroy_vulkan() {
+        GLT_PROFILE_SCOPE("renderer::destroy_vulkan");
 
         if (m_device)
             m_device.waitIdle();

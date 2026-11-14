@@ -2,6 +2,7 @@
 #pragma once
 
 #include "shared/type.h"
+#include "util/retire_queue.h"
 
 
 
@@ -39,6 +40,8 @@ namespace GLT::renderer::vk_rasterizer {
         GETTER_C(vk::Buffer,                            submesh_data_buffer, m_submesh_data_buffer.buffer)
         GETTER_REF(util::allocated_buffer,              mesh_data_buffer_alloc, m_mesh_data_buffer)
         GETTER_REF(util::allocated_buffer,              submesh_data_buffer_alloc, m_submesh_data_buffer)
+        GETTER_REF(util::allocated_buffer,              cluster_data_buffer_alloc, m_cluster_data_buffer)       // virtual geometry
+        GETTER_REF(util::allocated_buffer,              mesh_cluster_buffer_alloc, m_mesh_cluster_buffer)
         DEFAULT_GETTER_C(vk::DescriptorSetLayout,       mesh_set_layout)
         DEFAULT_GETTER_C(vk::DescriptorSetLayout,       material_set_layout)
         DEFAULT_GETTER_C(vk::PipelineLayout,            mesh_pipeline_layout)
@@ -72,6 +75,11 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Decrement ref count. When it reaches zero the mesh (and its material slots) are released to the GPU
         void release_mesh(shared_mesh_id id);
+
+        // Re-uploads the mesh if its asset was edited in place (mesh_asset::revision, e.g. LOD regeneration in the mesh
+        // editor) or replaced (reload). The slot id stays the same; old GPU ranges are retired, never overwritten while
+        // in flight. Returns true if it re-uploaded. Cheap when nothing changed (one registry lookup)
+        bool refresh_mesh(shared_mesh_id id);
 
         // True if the mesh is resident and usable
         [[nodiscard]] bool is_mesh_ready(shared_mesh_id id) const;
@@ -118,8 +126,30 @@ namespace GLT::renderer::vk_rasterizer {
         [[nodiscard]] u64 implementation_hash() const { return m_shader_compiler_hash; }
         [[nodiscard]] u32 contract_version() const;
 
+        // Local shadows render every view in one pass and keep each view in its atlas tile with clip distances (material
+        // vertex shader, RENDERER_SHADOW_ATLAS). False without the shaderClipDistance device feature: no local shadows
+        [[nodiscard]] bool local_shadow_atlas_supported() const { return m_local_shadow_atlas; }
+
         std::expected<GLT::render::compiled_shader, GLT::render::shader_compile_error> compile(std::string_view slang_source,
             GLT::asset::material::blend_mode blend);
+
+        // deferred destruction ----------------------------------------------------------------------------------------
+
+        // Every queue submission that can reference renderer resources must signal `retire_timeline()` with
+        // `next_retire_value()`. Objects handed to `retire*()` are destroyed once that work has completed
+        [[nodiscard]] vk::Semaphore retire_timeline() const { return m_retire.timeline(); }
+        [[nodiscard]] u64 next_retire_value() { return m_retire.next_signal_value(); }
+        void retire(std::function<void()>&& fn) { m_retire.retire(std::move(fn)); }
+
+        // Moves [buffer] into the retire queue and clears the caller's copy
+        void retire_buffer(util::allocated_buffer& buffer);
+
+        // GPU frame statistics ----------------------------------------------------------------------------------------
+
+        // Scene renderers report their resolved timestamp results here (one report per completed frame). The totals of
+        // all reports between two begin_frame() calls become `last_gpu_stats()`
+        void report_gpu_frame(const gpu_frame_report& report);
+        [[nodiscard]] const gpu_frame_report& last_gpu_stats() const { return m_last_gpu_stats; }
 
         // stats -------------------------------------------------------------------------------------------------------
 
@@ -152,6 +182,7 @@ namespace GLT::renderer::vk_rasterizer {
             u32                                             vertex_offset = 0;
             u32                                             index_offset = 0;
             u32                                             submesh_offset = 0;
+            u32                                             cluster_offset = 0;
         };
 
 
@@ -168,6 +199,8 @@ namespace GLT::renderer::vk_rasterizer {
         void create_mesh_buffers();
         void destroy_mesh_buffers();
         void create_fallback_textures();
+        void create_depth_only_fragment_module();
+        void destroy_depth_only_fragment_module();
         void install_fallback_material();
 
         // mesh internal -----------------------------------------------------------------------------------------------
@@ -177,6 +210,26 @@ namespace GLT::renderer::vk_rasterizer {
         void upload_mesh_slice(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh);
         void pack_mesh_into_ssbo(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh);
         shared_mesh_id load_mesh_internal(GLT::asset::handle handle);
+
+        // Upload layout of a mesh asset: levels that fit, total indices ([indices ++ lod_indices]) and submesh table entries
+        struct mesh_upload_layout {
+            u32                                             vertex_count = 0;
+            u32                                             index_count = 0;    // everything below, back to back
+            u32                                             submesh_count = 0;  // per level
+            u32                                             lod_count = 1;
+            u32                                             cluster_count = 0;      // virtual geometry, 0 = not uploaded
+            u32                                             cluster_index_base = 0; // cluster triangle lists start here in the index range
+            u32                                             cluster_vertex_base = 0;    // cluster vertices start here in the vertex range ([vertices ++ lod_vertices ++ cluster_vertices])
+            u32                                             cluster_vertex_count = 0;
+        };
+        [[nodiscard]] static mesh_upload_layout mesh_layout_of(const GLT::asset::mesh::mesh_asset& mesh);
+
+        // Drops the parts of [layout] that are optional, in the order they are given up when the pools are full:
+        // first the virtual geometry clusters, then the LOD levels. Returns false when nothing is left to drop
+        [[nodiscard]] static bool reduce_layout(mesh_upload_layout& layout, const GLT::asset::mesh::mesh_asset& mesh);
+        void write_mesh_cluster_entry(u32 mesh_index, const mesh_slot& slot, f32 error_scale);
+        [[nodiscard]] static u64 geometry_signature(const GLT::asset::mesh::mesh_asset& mesh);
+        [[nodiscard]] static std::array<f32, 8> lod_screen_sizes(const GLT::asset::mesh::mesh_asset& mesh, u32 lod_count);
 
         // texture internal --------------------------------------------------------------------------------------------
 
@@ -192,8 +245,16 @@ namespace GLT::renderer::vk_rasterizer {
 
         void pack_material(u32 slot_index);
         void destroy_material_shaders(material_slot& slot);
-        bool load_material_shaders(material_slot& slot, const GLT::asset::material::material_asset& asset);
+        // Shaders of a material whose stored bytecode is out of date, built again from its source (see rebuild_stale_material())
+        struct stale_material_build {
+            std::vector<std::byte>                                          bytecode{};             // empty: compile failed
+            u32                                                             packed_param_size = 0;
+            bool                                                            alpha_test = false;
+        };
+        [[nodiscard]] const stale_material_build* rebuild_stale_material(const GLT::asset::material::material_asset& asset);
+        bool load_material_shaders(material_slot& slot, std::span<const std::byte> bytecode, bool alpha_test);
         vk::Pipeline create_material_pipeline(const material_slot& slot, material_pipeline_kind kind);
+        void rebuild_material_pipelines(material_slot& slot);
 
         // shader compiler internal ------------------------------------------------------------------------------------
 
@@ -216,7 +277,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         // mesh allocation transaction ---------------------------------------------------------------------------------
 
-        std::optional<mesh_alloc> allocate_mesh_ranges(u32 v, u32 i, u32 s);
+        std::optional<mesh_alloc> allocate_mesh_ranges(u32 v, u32 i, u32 s, u32 c = 0);
 
 
 
@@ -238,6 +299,8 @@ namespace GLT::renderer::vk_rasterizer {
         util::allocated_buffer                                              m_index_buffer{};
         util::allocated_buffer                                              m_submesh_data_buffer{};
         util::allocated_buffer                                              m_mesh_data_buffer{};
+        util::allocated_buffer                                              m_cluster_data_buffer{};    // GLT::asset::mesh::cluster[], pool
+        util::allocated_buffer                                              m_mesh_cluster_buffer{};    // gpu_mesh_cluster_data[MAX_MESHES]
         std::vector<mesh_slot>                                              m_mesh_slots{};
         std::vector<u32>                                                    m_free_slots{};
         std::unordered_set<GLT::asset::handle>                              m_failed_mesh_loads{};
@@ -262,6 +325,7 @@ namespace GLT::renderer::vk_rasterizer {
         vk::DescriptorSetLayout                                             m_mesh_set_layout = nullptr;
         vk::DescriptorSetLayout                                             m_material_set_layout = nullptr;
         vk::PipelineLayout                                                  m_mesh_pipeline_layout = nullptr;
+        vk::ShaderModule                                                    m_depth_only_fragment_module = nullptr;
         vk::Sampler                                                         m_material_sampler = nullptr;
         vk::Sampler                                                         m_shadow_sampler = nullptr;
         vk::Sampler                                                         m_depth_sampler = nullptr;
@@ -270,6 +334,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         util::slang_compiler                                                m_slang{};
         u64                                                                 m_shader_compiler_hash = 0;
+        std::unordered_map<u64, stale_material_build>                       m_stale_material_builds{};     // by hash of (source, blend)
+        bool                                                                m_local_shadow_atlas = false;   // see local_shadow_atlas_supported()
 
         // stats -------------------------------------------------------------------------------------------------------
 
@@ -282,7 +348,14 @@ namespace GLT::renderer::vk_rasterizer {
         linear_pool                                                         m_vertex_pool{};
         linear_pool                                                         m_index_pool{};
         linear_pool                                                         m_submesh_pool{};
+        linear_pool                                                         m_cluster_pool{};
         u64                                                                 m_frames_since_compact = 0;
+
+        // deferred destruction + GPU stats ----------------------------------------------------------------------------
+
+        util::retire_queue                                                  m_retire{};
+        gpu_frame_report                                                    m_accum_gpu_stats{};
+        gpu_frame_report                                                    m_last_gpu_stats{};
 
     };
 

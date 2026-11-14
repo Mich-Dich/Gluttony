@@ -7,9 +7,8 @@
       "description": "debug build with no optimizations",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/engine/debug",
+      "toolchainFile": "${sourceDir}/cmake/gcc-16.2-toolchain.cmake",
       "cacheVariables": {
-        "CMAKE_C_COMPILER": "/opt/gcc-16.2/bin/gcc-16.2",
-        "CMAKE_CXX_COMPILER": "/opt/gcc-16.2/bin/g++-16.2",
         "CMAKE_CXX_STANDARD": "26",
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
@@ -21,9 +20,8 @@
       "description": "release build with optimizations, no debug info",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/engine/release",
+      "toolchainFile": "${sourceDir}/cmake/gcc-16.2-toolchain.cmake",
       "cacheVariables": {
-        "CMAKE_C_COMPILER": "/opt/gcc-16.2/bin/gcc-16.2",
-        "CMAKE_CXX_COMPILER": "/opt/gcc-16.2/bin/g++-16.2",
         "CMAKE_CXX_STANDARD": "26",
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
@@ -35,9 +33,8 @@
       "description": "Optimised build but with debug symbols",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/engine/release_with_debug_info",
+      "toolchainFile": "${sourceDir}/cmake/gcc-16.2-toolchain.cmake",
       "cacheVariables": {
-        "CMAKE_C_COMPILER": "/opt/gcc-16.2/bin/gcc-16.2",
-        "CMAKE_CXX_COMPILER": "/opt/gcc-16.2/bin/g++-16.2",
         "CMAKE_CXX_STANDARD": "26",
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
@@ -48,23 +45,17 @@
     {
       "name": "debug",
       "configurePreset": "debug",
-      "environment": {
-        "CMAKE_BUILD_PARALLEL_LEVEL": "32"
-      }
+      "environment": { "CMAKE_BUILD_PARALLEL_LEVEL": "32" }
     },
     {
       "name": "release",
       "configurePreset": "release",
-      "environment": {
-        "CMAKE_BUILD_PARALLEL_LEVEL": "32"
-      }
+      "environment": { "CMAKE_BUILD_PARALLEL_LEVEL": "32" }
     },
     {
       "name": "release_with_debug_info",
       "configurePreset": "release_with_debug_info",
-      "environment": {
-        "CMAKE_BUILD_PARALLEL_LEVEL": "32"
-      }
+      "environment": { "CMAKE_BUILD_PARALLEL_LEVEL": "32" }
     }
   ]
 }

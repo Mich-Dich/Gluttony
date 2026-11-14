@@ -66,7 +66,11 @@ namespace GLT::imgui_config {
 	
 	static ImVec4               	                    g_highlighted_window_bg = {0.5700f, 0.5700f, 0.5700f, 1.0000f};     // Highlighted background color for selected windows.
 	
-	static ImVec4	                                    main_color = {0.0000f, 0.4609f, 0.7382f, 1.0000f};
+	static constexpr ImVec4                             g_default_main_color = {0.0000f, 0.4609f, 0.7382f, 1.0000f};
+
+	static ImVec4	                                    main_color = g_default_main_color;
+
+	static f32                                          g_font_scale = 1.f;                                                 // ImGuiStyle::FontScaleMain
 	
 	static ImVec4   	                                main_titlebar_color = {};
 	
@@ -162,10 +166,11 @@ namespace GLT::imgui_config {
 		style->ItemInnerSpacing = ImVec2(4.f, 4.f);
 		style->TouchExtraPadding = ImVec2(4.f, 4.f);
 		style->IndentSpacing = 10.f;
-		style->ScrollbarSize = 14.f;
-		style->GrabMinSize = 14.f;
+		style->ScrollbarSize = 10.f;
+		style->GrabMinSize = 12.f;
 		style->WindowMenuButtonPosition = ImGuiDir_Right;
 		style->ButtonTextAlign = ImVec2(.0f, .5f);
+		style->FontScaleMain = g_font_scale;
 
 		// border
 		style->WindowBorderSize = 1.0f;
@@ -173,16 +178,19 @@ namespace GLT::imgui_config {
 		style->PopupBorderSize = 0.0f;
 		style->FrameBorderSize = 0.0f;
 		style->TabBorderSize = 0.0f;
-		style->TabBarBorderSize = 0.0f;
+		style->TabBarBorderSize = 1.0f;
+		style->TabBarOverlineSize = 2.0f;                       // accent line on the selected tab (modern "active tab" marker)
+		style->TabCloseButtonMinWidthUnselected = 0.0f;         // close buttons appear on hover only
+		style->DockingSeparatorSize = 2.0f;
 
 		// padding
-		style->WindowRounding = 2.f;
-		style->ChildRounding = 2.f;
-		style->FrameRounding = 2.f;
-		style->PopupRounding = 2.f;
-		style->ScrollbarRounding = 2.f;
-		style->GrabRounding = 2.f;
-		style->TabRounding = 2.f;
+		style->WindowRounding = 6.f;
+		style->ChildRounding = 4.f;
+		style->FrameRounding = 4.f;
+		style->PopupRounding = 6.f;
+		style->ScrollbarRounding = 6.f;
+		style->GrabRounding = 4.f;
+		style->TabRounding = 4.f;
 
 		switch (g_ui_theme) {
 
@@ -206,7 +214,7 @@ namespace GLT::imgui_config {
 				colors[ImGuiCol_WindowBg]				= default_gray;
 				colors[ImGuiCol_ChildBg]				= default_gray;
 				colors[ImGuiCol_PopupBg]				= IMCOLOR_GRAY(20);
-				colors[ImGuiCol_Border]					= LERP_GRAY_A(.43f, .5f);
+				colors[ImGuiCol_Border]					= LERP_GRAY_A(.22f, .9f);
 				colors[ImGuiCol_BorderShadow]			= LERP_GRAY_A(.12f, .5f);
 				colors[ImGuiCol_FrameBg]				= LERP_GRAY_A(.06f, .54f);
 				colors[ImGuiCol_FrameBgHovered]			= LERP_GRAY_A(.19f, .4f);
@@ -215,33 +223,37 @@ namespace GLT::imgui_config {
 				colors[ImGuiCol_TitleBgActive]			= IMCOLOR_GRAY(22);
 				colors[ImGuiCol_TitleBgCollapsed]		= IMCOLOR_GRAY(22);
 				colors[ImGuiCol_MenuBarBg]				= LERP_GRAY(.1f);
-				colors[ImGuiCol_ScrollbarBg]			= LERP_GRAY(0.23f);
-				colors[ImGuiCol_ScrollbarGrab]			= action_color00_default;
-				colors[ImGuiCol_ScrollbarGrabHovered]	= action_color00_hover;
-				colors[ImGuiCol_ScrollbarGrabActive]	= action_color00_active;
+				colors[ImGuiCol_ScrollbarBg]			= ImVec4(0.f, 0.f, 0.f, 0.f);
+				colors[ImGuiCol_ScrollbarGrab]			= LERP_GRAY(0.27f);
+				colors[ImGuiCol_ScrollbarGrabHovered]	= LERP_GRAY(0.35f);
+				colors[ImGuiCol_ScrollbarGrabActive]	= action_color00_default;
 				colors[ImGuiCol_CheckMark]				= action_color00_active;
 				colors[ImGuiCol_SliderGrab]				= action_color00_default;
 				colors[ImGuiCol_SliderGrabActive]		= action_color00_active;
 				colors[ImGuiCol_Button]					= action_color00_default;
 				colors[ImGuiCol_ButtonHovered]			= action_color00_hover;
 				colors[ImGuiCol_ButtonActive]			= action_color00_active;
-				colors[ImGuiCol_Header]					= LERP_GRAY(.3f);
-				colors[ImGuiCol_HeaderHovered]			= LERP_GRAY(.4f);
-				colors[ImGuiCol_HeaderActive]			= LERP_GRAY(.5f);
-				colors[ImGuiCol_Separator]				= LERP_GRAY(.45f);
-				colors[ImGuiCol_SeparatorHovered]		= LERP_GRAY(.45f);
-				colors[ImGuiCol_SeparatorActive]		= LERP_GRAY(.45f);
-				colors[ImGuiCol_ResizeGrip]				= action_color00_default;
+				colors[ImGuiCol_Header]					= LERP_GRAY(.22f);
+				colors[ImGuiCol_HeaderHovered]			= LERP_GRAY(.27f);
+				colors[ImGuiCol_HeaderActive]			= LERP_GRAY(.32f);
+				colors[ImGuiCol_Separator]				= LERP_GRAY(.2f);                   // dock splitters: barely visible...
+				colors[ImGuiCol_SeparatorHovered]		= action_color00_hover;             // ...until you grab them
+				colors[ImGuiCol_SeparatorActive]		= action_color00_active;
+				colors[ImGuiCol_ResizeGrip]				= ImVec4(0.f, 0.f, 0.f, 0.f);
 				colors[ImGuiCol_ResizeGripHovered]		= action_color00_hover;
 				colors[ImGuiCol_ResizeGripActive]		= action_color00_active;
-				colors[ImGuiCol_Tab]					= LERP_MAIN_COLOR_DARK(0.4f);
-				colors[ImGuiCol_TabHovered]				= LERP_MAIN_COLOR_DARK(0.5f);
-				colors[ImGuiCol_TabSelected]			= LERP_MAIN_COLOR_DARK(0.6f);
-				colors[ImGuiCol_TabDimmed]				= LERP_MAIN_COLOR_DARK(0.5f);
-				colors[ImGuiCol_TabDimmedSelected]		= LERP_MAIN_COLOR_DARK(0.6f);
-				colors[ImGuiCol_TabSelectedOverline]	= ImVec4(0.f, 0.f, 0.f, 0.f);
-				colors[ImGuiCol_DockingPreview]			= action_color00_active;
-				colors[ImGuiCol_DockingEmptyBg]			= LERP_GRAY(0.2f);
+
+				// Tabs: the selected tab has the panel color (it "is" the panel), others blend into the tab bar.
+				// The accent only shows as a thin line on the tab of the focused panel
+				colors[ImGuiCol_Tab]					= IMCOLOR_GRAY(22);
+				colors[ImGuiCol_TabHovered]				= IMCOLOR_GRAY(40);
+				colors[ImGuiCol_TabSelected]			= default_gray;
+				colors[ImGuiCol_TabDimmed]				= IMCOLOR_GRAY(22);
+				colors[ImGuiCol_TabDimmedSelected]		= default_gray;
+				colors[ImGuiCol_TabSelectedOverline]	= action_color00_hover;
+				colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.f, 0.f, 0.f, 0.f);
+				colors[ImGuiCol_DockingPreview]			= ImVec4(action_color00_active.x, action_color00_active.y, action_color00_active.z, 0.5f);
+				colors[ImGuiCol_DockingEmptyBg]			= IMCOLOR_GRAY(18);
 				colors[ImGuiCol_PlotLines]				= ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
 				colors[ImGuiCol_PlotLinesHovered]		= ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
 				colors[ImGuiCol_PlotHistogram]			= LERP_MAIN_COLOR_DARK(.75f);
@@ -365,6 +377,20 @@ namespace GLT::imgui_config {
 	ImVec4& get_action_color_gray_active_ref()          { return actionColorGrayActive; }
 
 	ImGuiContext* get_context_imgui()                   { return s_context_imgui; }
+
+	ImVec4 get_default_main_color()                     { return g_default_main_color; }
+
+	theme_selection get_ui_theme_selection()            { return g_ui_theme; }
+
+	f32 get_font_scale()                                { return g_font_scale; }
+
+
+	void set_font_scale(const f32 scale) {
+
+		g_font_scale = std::clamp(scale, 0.5f, 2.f);
+		if (s_context_imgui)
+			ImGui::GetStyle().FontScaleMain = g_font_scale;
+	}
 	
 	void init(const bool enable_multi_viewport) {
 
@@ -426,10 +452,11 @@ namespace GLT::imgui_config {
 	}
 
 
-	void update_ui_colors(const ImVec4 new_color) {
+	void update_ui_colors(const ImVec4 new_color, const bool save) {
 
 		main_color = new_color;
-		serialize(GLT::serializer::option::save);
+		if (save)
+			serialize(GLT::serializer::option::save);
 		update_ui_theme();
 	}
 
@@ -479,6 +506,7 @@ namespace GLT::imgui_config {
 			.entry(KEY_VALUE(g_big_font_size))
 			.entry(KEY_VALUE(g_font_size_small))
 			.entry(KEY_VALUE(g_ui_theme))
+			.entry(KEY_VALUE(g_font_scale))
 			.entry(KEY_VALUE(g_window_border))
 			.entry(KEY_VALUE(g_highlighted_window_bg))
 

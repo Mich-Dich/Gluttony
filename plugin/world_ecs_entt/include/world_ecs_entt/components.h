@@ -8,6 +8,7 @@
 #include <asset/audio.h>
 #include <world/entity.h>
 #include <world/light_snapshot.h>
+#include <world/mobility.h>
 #include <physics/type.h>
 #include <physics/material.h>
 
@@ -30,14 +31,20 @@ namespace GLT::world::world_ecs_entt::component {
     // TYPES ===========================================================================================================
 
     // Per-entity local transform. World transform is computed by walking the hierarchy on demand (see ecs_world_plugin::world_transform)
+    // [mobility] is a caching hint for the render snapshot (see world/mobility.h). It lives here because every entity that
+    // can be placed has a transform, and the hot per-frame path never reads it: the world keeps a list of movable entities
+    // instead of scanning (benchmarked: scanning a field / tag over 50k entities costs 21 ms per frame at -O0, the list 0)
+    // Serialized as a prefix POD: payloads written before the field existed (36 bytes) load as [fixed]
     struct transform {
 
-        // glm::mat4                                   transform{ 1.f };
         glm::vec3                                   position{ 0.f };
         glm::vec3                                   rotation{ 0.f };   // euler, radians
         glm::vec3                                   scale{ 1.f };
+        GLT::world::mobility                        mobility{ GLT::world::mobility::fixed };
+        u8                                          _pad[3]{};
     };
-    static_assert(sizeof(transform) == 36);
+    static_assert(sizeof(transform) == 40);
+    static_assert(offsetof(transform, mobility) == 36);             // older 36-byte payloads end right before it
     static_assert(std::is_trivially_copyable_v<transform>);
 
 
@@ -140,6 +147,28 @@ namespace GLT::world::world_ecs_entt::component {
     };
     static_assert(std::is_trivially_copyable_v<light>);
 
+
+    // ---- world-scope components (live on the world entity, see i_world::world_entity) ----------------------------
+
+    // Procedural, physically based sky (single-scattering atmosphere) driven by the sun (the world's directional light).
+    // Renders the background and the image based lighting. Append new fields at the END only: the codec loads older,
+    // shorter payloads as a prefix and keeps the defaults for the rest
+    struct sky {
+        f32                                         intensity{ 1.f };           // sky radiance relative to the sun
+        f32                                         haze{ 1.f };                // aerosol (Mie) density, 0..10
+        f32                                         ground_albedo{ 0.3f };      // reflectance below the horizon
+        f32                                         sun_disk_size{ 0.53f };     // angular diameter, degrees. 0 hides the disk
+    };
+    static_assert(std::is_trivially_copyable_v<sky>);
+
+    // Ambient light. With a sky it scales the image based lighting; without one it is a hemisphere (sky colour from
+    // above, ground colour from below). Append-only, like [sky]
+    struct ambient_light {
+        f32                                         intensity{ 1.f };
+        glm::vec3                                   sky_color{ 0.040f, 0.045f, 0.055f };     // linear RGB
+        glm::vec3                                   ground_color{ 0.020f, 0.018f, 0.016f };  // linear RGB
+    };
+    static_assert(std::is_trivially_copyable_v<ambient_light>);
 
     // Plays a single clip. Looping / attenuation / etc. live in `config` so the entity doesn't need to copy them on spawn
     struct audio_source {

@@ -6,6 +6,8 @@
 #include "render/i_debug_draw.h"
 #include "util/builders.h"
 #include "plugin/image.h"
+#include "scene/local_shadow_cache.h"
+#include "scene/sun_shadow_cascades.h"
 
 
 
@@ -54,6 +56,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         void submit_scene(std::span<const GLT::asset::mesh::instance> instances) override;
         void submit_lights(std::span<const GLT::world::light_snapshot> lights) override;
+        void submit_environment(const GLT::world::environment_snapshot& environment) override;
         void set_active_camera(const GLT::world::camera_snapshot& camera) override;
 
         // lifecycle ---------------------------------------------------------------------------------------------------
@@ -76,6 +79,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         [[nodiscard]] std::span<const GLT::render::render_mode_info> supported_modes() const override;
         void set_render_mode(u32 id) override { m_active_mode = id; }
+        [[nodiscard]] GLT::render::frame_stats last_frame_stats() const override { return m_last_frame_stats; }
         [[nodiscard]] u32 get_render_mode() const override { return m_active_mode; }
         void set_active(bool active) override { m_active = active; }
         [[nodiscard]] bool is_active() const override { return m_active; }
@@ -105,7 +109,21 @@ namespace GLT::renderer::vk_rasterizer {
             vk::Fence                                   fence = nullptr;
             vk::CommandBuffer                           cmd = nullptr;
             vk::Semaphore                               image_available = nullptr;   // surface only
-            vk::Semaphore                               render_finished = nullptr;   // surface only
+            // render_finished lives per swapchain image (m_render_finished), not per frame slot: the present engine may still
+            // be waiting on it when this slot comes around again
+        };
+
+        // One translucent (instance, submesh) draw. Translucents bypass GPU culling: they are frustum-culled and sorted
+        // back-to-front on the CPU and drawn directly in the translucent pass
+        struct translucent_draw {
+            f32                                         sort_depth = 0.f;       // view-space distance along the camera forward
+            u32                                         instance = 0;           // index into the instance SSBO (firstInstance)
+            u32                                         material = 0;           // material slot
+            u32                                         mesh = 0;               // shared_mesh_id, or procedural slot index
+            u32                                         submesh = 0;
+            bool                                        procedural = false;
+            u32                                         lod = 0;                // LOD level (forced, else chosen in prepare_translucent_draws)
+            bool                                        forced_lod = false;
         };
 
         struct cluster_grid_params {
@@ -122,6 +140,13 @@ namespace GLT::renderer::vk_rasterizer {
         void init_surface_target(const GLT::render::surface_target_desc& target);
         void init_offscreen_target(const GLT::render::offscreen_target_desc& target);
         void init_frames();
+        void create_present_semaphores();
+        void destroy_present_semaphores();
+        void create_timestamp_queries();
+        void create_gpu_profiler();                     // Tracy Vulkan context (no-op without GLT_TRACY_ENABLED)
+        void destroy_gpu_profiler();
+        void destroy_timestamp_queries();
+        void resolve_gpu_timestamps(u32 frame_slot);
         void init_gpu_state();
         void destroy_gpu_state();
         void destroy_internal();
@@ -130,11 +155,15 @@ namespace GLT::renderer::vk_rasterizer {
 
         void ensure_scene_meshes();
         void build_instance_buffer();
+        void upload_instance_data();
+        void apply_visual_settings();               // user-adjustable shadow values -> m_shadow_settings
         void update_lights();
         void update_shadow();
+        void update_shadow_casters();               // which casters moved since the last frame (drives every shadow cache)
         void update_local_shadows();
         void update_camera_ubo();
         void update_globals();
+        void prepare_translucent_draws();           // frustum cull + back-to-front sort (needs the camera)
         void write_scene_material_descriptors();
 
         // per-frame GPU work (render()) -------------------------------------------------------------------------------
@@ -144,6 +173,14 @@ namespace GLT::renderer::vk_rasterizer {
         void update_light_meta_ubo();
         void update_light_cull_descriptors();
         void update_mesh_descriptors();
+        void ensure_draw_buffers();                 // grow this frame's indirect command buffers to the scene's draw count
+        void ensure_virtual_geometry_buffers();     // same for the cluster draw commands (virtual geometry)
+        void update_virtual_geometry_descriptors(); // per frame, like update_cull_descriptors()
+        void update_cull_descriptors();             // per frame: buffers can be reallocated when they grow
+        void read_back_draw_stats(u32 frame_slot, gpu_frame_report& report);
+
+        // Grow-only host-visible buffer: reallocates (power of two) and retires the old one. Returns true if reallocated
+        bool ensure_host_buffer(util::allocated_buffer& buffer, vk::DeviceSize bytes, vk::BufferUsageFlags usage);
 
         // pipelines + resources ---------------------------------------------------------------------------------------
 
@@ -155,27 +192,81 @@ namespace GLT::renderer::vk_rasterizer {
         void destroy_light_culling_pipeline();
         void create_cull_pipeline();
         void destroy_cull_pipeline();
+        void create_virtual_geometry_resources();   // cluster cull pipeline + per-frame buffers (scene_renderer_virtual_geometry.inl)
+        void destroy_virtual_geometry_resources();
         void create_shadow_resources();
         void destroy_shadow_resources();
         void create_local_shadow_resources();
         void destroy_local_shadow_resources();
         void create_blit_pipeline();
         void destroy_blit_pipeline();
+        void create_tonemap_pipeline();
+        void destroy_tonemap_pipeline();
+        void create_light_cull_debug_pipeline();
+        void destroy_light_cull_debug_pipeline();
+        void create_environment_resources();        // sky / IBL compute + background pipelines
+        void destroy_environment_resources();
+        void ensure_environment_textures();         // graph-owned env cubemaps + SH buffer (before update_mesh_descriptors)
+        void update_environment();                  // sun + parameters -> m_env, decides whether the env must be rebuilt
 
         // passes ------------------------------------------------------------------------------------------------------
 
         void add_reset_draw_count_pass();
         void add_cull_pass();
+
+        // Virtual geometry: meshes that opted in are drawn as clusters picked per frame on the GPU (main view only)
+        void begin_virtual_geometry_frame();        // update(): reset this frame's work list (build_instance_buffer fills it)
+        [[nodiscard]] u32 add_virtual_geometry_instance(u32 instance_index, const mesh_slot& slot, const glm::mat4& transform);
+        void finish_virtual_geometry_frame();       // update(): command ranges + uploads
+        void add_virtual_geometry_cull_pass();      // render(): cluster selection + culling -> cluster draw commands
+        [[nodiscard]] virtual_geometry_cull_push virtual_geometry_cull_constants() const;   // thresholds of this frame's selection
+        void read_virtual_geometry_commands(graph::pass_builder& builder);  // setup of every pass that draws them
+        void draw_virtual_geometry(graph::pass_context& ctx, material_pipeline_kind kind);     // cluster draws, per material
+        void draw_virtual_geometry_unbound(graph::pass_context& ctx);       // same draws with the caller's pipeline bound
+        [[nodiscard]] bool virtual_geometry_enabled() const;                // pipeline available + renderer setting on
+
+        // Render modes "Virtual Geometry / ..." (scene_renderer_virtual_geometry_debug.inl): one pass that redraws what the
+        // lit path draws, coloured per cluster / hierarchy level / triangle / projected error
+        void create_virtual_geometry_debug_resources();
+        void destroy_virtual_geometry_debug_resources();
+        void add_virtual_geometry_debug_pass();
+        [[nodiscard]] u32 virtual_geometry_debug_view() const;              // 0 = the active mode is not one of them
         void add_depth_prepass_pass();
         void add_clear_light_grid_pass();
         void add_light_culling_pass();
         void add_scene_pass();
+        void add_translucent_pass();
         void add_blit_to_backbuffer_pass();
-        void add_reset_shadow_draw_count_pass();
-        void add_shadow_cull_pass();
-        void add_shadow_pass();
-        void add_local_shadow_passes();
+        void add_tonemap_pass();
+        void add_light_cull_debug_pass();           // render mode "Light Culling": replaces the tonemap pass
+        void add_tri_density_passes();              // render mode "Triangle Density": count, blur, heat overlay on scene_color
+        void create_tri_density_resources();
+        void destroy_tri_density_resources();
+        [[nodiscard]] u32 debug_shading_mode() const;   // camera flags.z for the material shaders (0 = lit)
+        [[nodiscard]] bool debug_view_active() const { return debug_shading_mode() != 0u; }
+        void add_environment_passes();              // sky cubemap -> specular prefilter + SH (only when the env changed)
+        void add_sky_background_pass();             // sky + sun disk into scene_hdr where no geometry was drawn
+
+        // One shadow atlas and the views to draw into it this frame (the sun's cascades or the local lights' tiles)
+        struct shadow_atlas_pass {
+
+            const char*                                 reset_name = "";
+            const char*                                 cull_name = "";
+            const char*                                 draw_name = "";
+            graph::texture_handle                       atlas{};
+            graph::buffer_handle                        commands{};
+            graph::buffer_handle                        counts{};
+            const util::descriptor_buffer*              cull_descriptors = nullptr;
+            const std::vector<local_shadow_tile>*       tiles = nullptr;        // views drawn this frame and their place in the atlas
+            u32                                         view_first = 0;         // views the cull shader walks: [first, first + count)
+            u32                                         view_count = 0;
+            bool                                        clear_atlas = false;    // the atlas image is new: nothing in it is valid
+        };
+        void add_shadow_atlas_passes(const shadow_atlas_pass& pass);
+        void add_sun_shadow_passes(bool clear_atlas);
+        void add_local_shadow_passes(bool clear_atlas);
         void add_clear_backbuffer_pass();
+        void add_output_to_shader_read_pass();      // offscreen: leave the output image ready for ImGui sampling
 
         // debug draw --------------------------------------------------------------------------------------------------
 
@@ -190,7 +281,13 @@ namespace GLT::renderer::vk_rasterizer {
         void imgui_shutdown();
         void begin_imgui_frame();
         void end_imgui_frame();
+        void abort_imgui_frame();               // close an opened ImGui frame when render() bails out before recording
+        void sync_swapchain_to_window();        // surface only: rebuild the swapchain if the window size changed
+        void seed_resized_output(GLT::renderer::vk_rasterizer::image& from, GLT::renderer::vk_rasterizer::image& to);
         void add_imgui_pass();
+        void upload_imgui_textures(vk::CommandBuffer cmd);  // ImGui font atlas etc. without the backend's vkQueueWaitIdle
+        void destroy_imgui_textures();
+        void render_imgui_platform_windows();           // detached ImGui windows: after this target's submit + present
         void recreate_imgui_framebuffers();
 
         // helpers -----------------------------------------------------------------------------------------------------
@@ -222,6 +319,8 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                                 m_image_count = 0;
         u32                                                                 m_current_swapchain_image = 0;
         std::vector<vk::ImageLayout>                                        m_swapchain_images_layout{};
+        std::vector<vk::Semaphore>                                          m_render_finished{};     // one per swapchain image
+        bool                                                                m_swapchain_out_of_date = false;    // driver said so: rebuild even at the same size
 
         // Offscreen
         ref<GLT::renderer::vk_rasterizer::image>                            m_output_image = nullptr;
@@ -235,12 +334,33 @@ namespace GLT::renderer::vk_rasterizer {
         // Instances
         std::vector<gpu_instance_data>                                      m_packed_instances{};
         u32                                                                 m_instance_count = 0;
-        std::vector<u32>                                                    m_instance_material_slots{};
-        std::vector<GLT::asset::handle>                                     m_instance_material_handles{};
-        std::vector<u32>                                                    m_scene_materials{};
+        std::vector<u32>                                                    m_scene_materials{};        // unique material slots drawn this frame
+        std::vector<translucent_draw>                                       m_translucent_candidates{}; // from build_instance_buffer
+        std::vector<translucent_draw>                                       m_translucent_draws{};      // visible, sorted far -> near
+        glm::vec2                                                           m_translucent_span{ 0.f };  // view depth [min, max] of visible translucents, max <= min: none
+        u32                                                                 m_mesh_refresh_tick = 0;
+        u64                                                                 m_mesh_generation = 0;      // bumped when a resident mesh was re-uploaded
+
+        // Materials -> draw ranges. Every asset instance owns `submesh_count` consecutive entries in m_material_table
+        // (gpu_instance_data::material_index = first entry). Each scene material gets an exact command range sized by the
+        // number of (instance, submesh) pairs using it, so culling can never overflow or drop draws
+        std::vector<u32>                                                    m_material_table{};
+        std::vector<glm::uvec2>                                             m_material_ranges{};        // [MAX_MATERIALS] x = first cmd, y = capacity
+        std::vector<u32>                                                    m_material_draw_counts{};   // [MAX_MATERIALS] scratch
+        u32                                                                 m_total_draw_capacity = 0;
+        std::vector<u32>                                                    m_held_materials{};         // override materials this scene holds a ref on
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_material_table_buffers{};
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_material_range_buffers{};
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_instance_buffer_generation{};   // bumps when reallocated
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_draw_capacity{};          // per-view command capacity
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_local_command_capacity{}; // commands the local shadow buffer holds
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_sun_command_capacity{};   // commands the sun shadow buffer holds
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_stats_handles{};
+        std::array<bool, MAX_CONCURRENT_FRAMES>                             m_draw_stats_written{};
 
         // Lights
         std::vector<gpu_light>                                              m_packed_lights{};
+        std::vector<u64>                                                    m_packed_light_keys{};      // per packed light: stable id (the light's entity)
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_light_buffers{};
         u32                                                                 m_light_count = 0;
 
@@ -264,31 +384,81 @@ namespace GLT::renderer::vk_rasterizer {
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_commands_handles{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_draw_count_handles{};
 
+        // Virtual geometry. Everything is separate from the instance cull above (own work list, command ranges, buffers
+        // and pass), so a frame without virtual geometry instances records exactly what it recorded before
+        bool                                                                m_vg_active = false;            // this frame has instances on the path
+        u32                                                                 m_vg_instance_count = 0;
+        u32                                                                 m_vg_cluster_count = 0;         // clusters tested this frame
+        std::vector<glm::uvec2>                                             m_vg_work_items{};              // x = instance, y = first cluster (VIRTUAL_CLUSTERS_PER_ITEM each)
+        std::vector<glm::uvec2>                                             m_vg_material_ranges{};         // [MAX_MATERIALS] x = first cmd, y = capacity
+        std::vector<u32>                                                    m_vg_material_draw_counts{};    // [MAX_MATERIALS] scratch
+        u32                                                                 m_vg_total_draw_capacity = 0;
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_vg_work_item_buffers{};
+        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_vg_material_range_buffers{};
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_vg_draw_capacity{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_vg_draw_commands_handles{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_vg_draw_count_handles{};
+        std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_vg_draw_cluster_handles{};    // u32 per command: the cluster it draws (debug views)
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_vg_cull_desc_buffers{};
+        vk::DescriptorSetLayout                                             m_vg_cull_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_vg_cull_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_vg_cull_pipeline = nullptr;   // null: path unavailable, LODs everywhere
+
+        // Virtual geometry debug views (render modes Vg_*)
+        vk::DescriptorSetLayout                                             m_vg_debug_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_vg_debug_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_vg_debug_pipeline = nullptr;          // null: views unavailable (flat grey scene instead)
+        vk::Pipeline                                                        m_vg_debug_triangle_pipeline = nullptr; // per-triangle colours (needs geometryShader for gl_PrimitiveID)
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_vg_debug_desc_buffers{};
+
         // Mesh descriptor + per-frame resource buffers
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_camera_ubos{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_globals_ubos{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_instance_buffers{};
-        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_instance_override_buffers{};
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_frame_desc_buffers{};
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_material_desc_buffers{};
 
-        // Shadow (directional)
+        // Shadow (sun). Nested maps around the camera in one atlas texture (m_shadow_map); a map is only drawn again when
+        // the camera travelled out of it, a caster inside it moved or the sun moved (scene/sun_shadow_cascades.h)
         shadow_settings                                                     m_shadow_settings{};
         shadow_state                                                        m_shadow{};
         graph::texture_handle                                               m_shadow_map{};
-        std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_shadow_camera_ubos{};
-        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_shadow_desc_buffers{};
+        sun_shadow_cascades                                                 m_sun_shadows{};
+        std::vector<local_shadow_tile>                                      m_sun_shadow_tiles{};       // cascades drawn this frame
+        bool                                                                m_sun_shadow_plan_pending = false;  // planned in update(), not drawn yet
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_shadow_cull_desc_buffers{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_shadow_draw_commands_handles{};
         std::array<graph::buffer_handle, MAX_CONCURRENT_FRAMES>             m_shadow_draw_count_handles{};
 
-        // Shadow (local)
+        // Extent of all shadow casters along the sun direction (depth range of the sun's maps) and a sphere around them
+        // (how far shadows have to reach), and what both were computed for
+        f32                                                                 m_caster_depth_near = 0.f;
+        f32                                                                 m_caster_depth_far = 0.f;
+        glm::vec4                                                           m_caster_bounds{0.f};       // xyz = centre, w = radius (< 0: no casters)
+        u64                                                                 m_caster_depth_revision = ~u64{0};
+        glm::vec3                                                           m_caster_depth_direction{0.f};
+        f32                                                                 m_sun_shadow_distance = 0.f;    // the shadow distance in use
+
+        // Shadow casters: the asset instances as the shadow maps last saw them (update_shadow_casters)
+        std::vector<gpu_instance_data>                                      m_caster_instances{};
+        std::vector<glm::vec4>                                              m_caster_spheres{};         // world bounds of m_caster_instances
+        std::vector<glm::vec4>                                              m_caster_dirty_spheres{};   // this frame: bounds of what moved (old + new place)
+        bool                                                                m_casters_all_dirty = false;
+        u64                                                                 m_caster_revision = 0;      // bumped whenever a caster changed
+        u64                                                                 m_caster_mesh_generation = 0;
+
+        // Shadow (local). Every point / spot light near the camera keeps its own tiles in the atlas; a tile is only drawn
+        // again when its light or a caster inside it moved (scene/local_shadow_cache.h)
         graph::texture_handle                                               m_shadow_atlas{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_shadow_view_buffers{};
-        std::vector<gpu_shadow_view>                                        m_packed_shadow_views{};
-        std::vector<local_shadow_tile>                                      m_local_shadow_tiles{};
-        u32                                                                 m_local_shadow_view_count = 0;
-        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_local_shadow_desc_buffers{};
+        local_shadow_cache                                                  m_local_shadows{};
+        std::vector<local_shadow_tile>                                      m_local_shadow_tiles{};     // tiles drawn this frame
+        u32                                                                 m_local_shadow_view_count = 0;  // views sampled this frame
+        u32                                                                 m_local_shadow_cull_views = 0;  // leading views the cull shader walks
+        bool                                                                m_local_shadow_plan_pending = false;    // planned in update(), not drawn yet
+        vk::Image                                                           m_local_shadow_image = nullptr;
+
+        vk::Image                                                           m_dir_shadow_image = nullptr;       // detects a replaced sun atlas
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_local_shadow_cull_desc_buffers{};
         vk::DescriptorSetLayout                                             m_local_shadow_cull_set_layout = nullptr;
         vk::PipelineLayout                                                  m_local_shadow_cull_pipeline_layout = nullptr;
@@ -302,13 +472,81 @@ namespace GLT::renderer::vk_rasterizer {
         vk::Pipeline                                                        m_blit_pipeline = nullptr;
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_blit_desc_buffers{};
 
+        // Tonemap (HDR -> display, both target kinds)
+        vk::DescriptorSetLayout                                             m_tonemap_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_tonemap_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_tonemap_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_tonemap_desc_buffers{};
+
+        // Environment: procedural sky cubemap, GGX-prefiltered specular cubemap, SH9 irradiance, sky background
+        vk::DescriptorSetLayout                                             m_sky_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_sky_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_sky_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_sky_desc_buffers{};
+        vk::DescriptorSetLayout                                             m_env_prefilter_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_env_prefilter_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_env_prefilter_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_env_prefilter_desc_buffers{};    // one set per mip
+        vk::DescriptorSetLayout                                             m_env_sh_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_env_sh_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_env_sh_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_env_sh_desc_buffers{};
+        vk::DescriptorSetLayout                                             m_sky_bg_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_sky_bg_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_sky_bg_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_sky_bg_desc_buffers{};
+        graph::texture_handle                                               m_env_sky{};            // ENV_SKY_SIZE cube, no sun disk
+        graph::texture_handle                                               m_env_specular{};       // ENV_SPECULAR_SIZE cube, ENV_SPECULAR_MIPS
+        graph::buffer_handle                                                m_env_sh{};             // 9 x vec4, irradiance / PI
+        environment_state                                                   m_env{};
+        GLT::world::environment_snapshot                                    m_environment{};       // from the world entity (sky / sun / ambient)
+
+        // Light culling heatmap (debug render mode)
+        vk::DescriptorSetLayout                                             m_light_debug_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_light_debug_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_light_debug_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_light_debug_desc_buffers{};
+
+        // Triangle density heatmap (debug render mode)
+        vk::DescriptorSetLayout                                             m_tri_density_count_set_layout = nullptr;
+        vk::DescriptorSetLayout                                             m_tri_density_blur_set_layout = nullptr;
+        vk::PipelineLayout                                                  m_tri_density_count_pipeline_layout = nullptr;
+        vk::PipelineLayout                                                  m_tri_density_blur_pipeline_layout = nullptr;
+        vk::Pipeline                                                        m_tri_density_count_pipeline = nullptr;
+        vk::Pipeline                                                        m_tri_density_blur_h_pipeline = nullptr;
+        vk::Pipeline                                                        m_tri_density_blur_v_pipeline = nullptr;
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_tri_density_count_desc{};
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_tri_density_blur_h_desc{};
+        std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_tri_density_blur_v_desc{};
+
         // Graph + target handles
         unique_ref<graph::render_graph>                                     m_graph;
         graph::texture_handle                                               m_backbuffer_handle{};
-        graph::texture_handle                                               m_scene_color{};
+        graph::texture_handle                                               m_scene_color{};        // display-referred (LDR) output
+        graph::texture_handle                                               m_scene_hdr{};          // linear HDR, lit passes render here
         graph::texture_handle                                               m_depth_target{};
 
         u32                                                                 m_frame_counter = 0;
+
+        // GPU timing (render graph writes one timestamp per pass into this frame slot's query range) ----------------------
+
+        static constexpr u32                                                MAX_TIMESTAMPS_PER_FRAME = 64;
+        vk::QueryPool                                                       m_timestamp_pool = nullptr;
+        void*                                                               m_gpu_profiler = nullptr;          // tracy::VkCtx*
+        f32                                                                 m_timestamp_period_ns = 0.f;
+        u64                                                                 m_timestamp_mask = ~0ull;
+        std::array<std::vector<std::string>, MAX_CONCURRENT_FRAMES>         m_timed_pass_names{};
+
+        // i_scene_renderer::last_frame_stats(): the view each frame slot was rendered with (the GPU results of a slot
+        // are read when the slot comes around again) and the latest resolved result
+        struct frame_view {
+            glm::vec3                                                       camera_position{ 0.0f };
+            u32                                                             render_mode = 0;
+            glm::uvec2                                                      extent{ 0, 0 };
+        };
+        std::array<frame_view, MAX_CONCURRENT_FRAMES>                       m_frame_views{};
+        GLT::render::frame_stats                                            m_last_frame_stats{};
+        std::array<u32, MAX_CONCURRENT_FRAMES>                              m_timestamps_written{};
 
         // debug draw state --------------------------------------------------------------------------------------------
 
@@ -331,8 +569,19 @@ namespace GLT::renderer::vk_rasterizer {
 
         vk::DescriptorPool                                                  m_imgui_descriptor_pool = nullptr;
         vk::RenderPass                                                      m_imgui_render_pass = nullptr;
+        vk::RenderPass                                                      m_imgui_clear_render_pass = nullptr;   // compatible variant: loadOp CLEAR (UI-only frames)
+        bool                                                                m_imgui_clears_backbuffer = false;    // this frame: no separate clear pass
         std::vector<vk::Framebuffer>                                        m_imgui_framebuffers{};
         bool                                                                m_imgui_initialized = false;
+        bool                                                                m_imgui_platform_pending = false;   // imgui pass recorded, platform windows not yet rendered
+
+        // ImGui-managed textures (keyed by their ImTextureData*), uploaded through this renderer's frame command buffer
+        struct imgui_texture {
+            util::allocated_image                                           image{};
+            vk::ImageView                                                   view = nullptr;
+            VkDescriptorSet                                                 set = VK_NULL_HANDLE;
+        };
+        std::unordered_map<const void*, imgui_texture>                      m_imgui_textures{};
 
         // Procedural meshes -------------------------------------------------------------------------------------------
 

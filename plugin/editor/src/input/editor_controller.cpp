@@ -6,6 +6,8 @@
 #include <application.h>
 #include <world/i_world_scene.h>
 
+#include "settings/editor_settings.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -138,26 +140,30 @@ namespace GLT::editor::input {
             return;
         set_target(target);
 
-        const f32 scroll = get_axis(m_scroll_action_handle);
-        if (scroll != 0.0f) {
+        auto& camera = GLT::editor::editor_settings::get().camera;
 
-            m_move_speed += (scroll * (m_move_speed * 0.2f));
-            m_move_speed = GLT::math::clamp(m_move_speed, 0.01f, 5.f);
+        const f32 scroll = get_axis(m_scroll_action_handle);
+        if (scroll != 0.0f && camera.scroll_changes_speed) {
+
+            camera.fly_speed += (scroll * (camera.fly_speed * 0.2f));
+            camera.fly_speed = GLT::math::clamp(camera.fly_speed, 0.01f, 5.f);
         }
 
+        const f32 speed = camera.fly_speed;
         const glm::vec3 move = get_axis3d(m_move_action_handle);
         if (glm::length(move) > 0.f) {
 
-            const glm::vec3 local_delta{move.y * m_move_speed, move.z * m_move_speed, -move.x * m_move_speed};
+            const glm::vec3 local_delta{move.y * speed, move.z * speed, -move.x * speed};
             world->translate_local(target, local_delta);
         }
 
         const glm::vec2 look = get_axis2d(m_look_action_handle);
         if (glm::length(look) > 0.f) {
 
+            const f32 pitch_sign = camera.invert_y ? -1.f : 1.f;
             const glm::vec3 euler_delta{
-                glm::radians(look.y * m_look_sensitivity),  // pitch around +X
-                glm::radians(look.x * m_look_sensitivity),  // yaw around +Y
+                glm::radians(look.y * camera.look_sensitivity * pitch_sign),    // pitch around +X
+                glm::radians(look.x * camera.look_sensitivity),                 // yaw around +Y
                 0.f
             };
             world->rotate_local(target, euler_delta);

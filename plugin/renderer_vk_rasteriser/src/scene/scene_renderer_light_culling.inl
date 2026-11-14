@@ -36,6 +36,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PRIVATE ==========================================================================================
 
     void scene_renderer::create_light_culling_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_light_culling_pipeline");
 
         // Descriptor set layout -----------------------------------------------------------------------------------
         //   0  Camera UBO           (per frame)
@@ -43,7 +44,7 @@ namespace GLT::renderer::vk_rasterizer {
         //   2  Light grid SSBO      (per frame, Step 2 — persistent, {offset, count} per cluster)
         //   3  Light index list     (per frame, Step 2 — persistent, packed indices)
         //   4  Light counter        (per frame, Step 2 — persistent, single u32)
-        //   5  Light meta UBO       (per frame — {light_count, list_capacity, per_cluster_cap})
+        //   5  Light meta UBO       (per frame — {light_count, list_capacity, unused, translucent depth span})
         std::vector<util::descriptor_item> layout_items;
         layout_items.emplace_back(0, vk::DescriptorType::eUniformBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
         layout_items.emplace_back(1, vk::DescriptorType::eStorageBuffer, vk::ShaderStageFlagBits::eCompute, 1, nullptr);
@@ -73,6 +74,7 @@ namespace GLT::renderer::vk_rasterizer {
         shader_stage.pName = "main";
 
         vk::ComputePipelineCreateInfo pipeline_info{};
+        pipeline_info.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;     // bound via descriptor buffers (spec: mandatory)
         pipeline_info.layout = m_light_cull_pipeline_layout;
         pipeline_info.stage = shader_stage;
 
@@ -99,6 +101,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_light_culling_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_light_culling_pipeline");
 
         m_plugin.get_vk_device().waitIdle();
 
@@ -130,12 +133,21 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_light_meta_ubo() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_light_meta_ubo");
 
         glm::uvec4 meta{};
         meta.x = m_light_count;
         meta.y = m_cluster_index_capacity;
-        meta.z = MAX_LIGHTS_PER_CLUSTER;
+        meta.z = 0u;        // unused. It was the limit of lights per cluster: there is none (light_culling.comp.glsl)
+        // w = view depth span of the visible translucents (half2, widened by 3 % so fp16 rounding stays conservative).
+        // Translucents are not in the depth buffer; without this, clusters in front of the opaque surface of a tile
+        // (or the whole tile when only sky is behind) have no lights and translucent surfaces render unlit per tile
         meta.w = 0u;
+        if (m_translucent_span.y > 0.f) {
+            const f32 lo = m_translucent_span.x * 0.97f;
+            const f32 hi = std::min(m_translucent_span.y * 1.03f, 65000.f);
+            meta.w = glm::packHalf2x16(glm::vec2(lo, hi));
+        }
 
         void* mapped = m_plugin.get_dev()->map_buffer(m_light_meta_ubos[m_current_frame]);
         std::memcpy(mapped, &meta, sizeof(meta));
@@ -144,6 +156,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::update_light_cull_descriptors() {
+        GLT_PROFILE_SCOPE("scene_renderer::update_light_cull_descriptors");
 
         if (m_cluster_params.cluster_count == 0)
             return;
@@ -193,6 +206,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::add_light_culling_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_light_culling_pass");
 
         // Reads the light SSBO (Step 1) and writes the grid/index-list/counter. Runs after clear_light_grid so every cluster starts
         // with an empty {0,0} slot, and after depth_prepass so a future iteration can tighten the depth range per cluster from real depth
@@ -205,13 +219,15 @@ namespace GLT::renderer::vk_rasterizer {
             },
             [this](graph::pass_context& ctx) {
 
-                if (m_light_count == 0 || m_cluster_params.cluster_count == 0)
+                // Runs with zero lights too: it is what writes the (empty) grid now that the grid is no longer cleared
+                if (m_cluster_params.cluster_count == 0)
                     return;
 
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_light_cull_pipeline);
                 m_plugin.get_dev()->bind_descriptor_buffer({ m_light_cull_desc_buffers[m_current_frame] }, ctx.cmd);
                 m_plugin.get_dev()->bind_descriptor_set(m_light_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-                ctx.cmd.dispatch(m_cluster_params.grid_x, m_cluster_params.grid_y, m_cluster_params.grid_z);
+                // One workgroup per screen tile; it handles all depth slices of the tile (light_culling.comp.glsl)
+                ctx.cmd.dispatch(m_cluster_params.grid_x, m_cluster_params.grid_y, 1);
             });
     }
 

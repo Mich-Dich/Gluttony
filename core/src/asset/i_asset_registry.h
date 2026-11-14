@@ -112,6 +112,34 @@ namespace GLT::asset {
         // @return The live handle, or INVALID_HANDLE
         [[nodiscard]] virtual GLT::asset::handle find_by_id(GLT::UUID id) const = 0;
 
+        // asset catalog -----------------------------------------------------------------------------------------------
+        //
+        // Every asset file carries a UUID in its header (minted on import / first save, kept by every later save). The
+        // catalog maps the UUID of EVERY asset file of the project to its current path, loaded or not, so an asset can
+        // be referenced by UUID independent of where it lies and of when / in which slot it gets loaded. Handles stay
+        // the runtime key (slot index + generation: cheap, detect stale references); the UUID is the persistent one.
+        //
+        // Built on first use by reading the header of every .glt_asset file under the content directory, persisted in
+        // <project>/metadata/asset_catalog.txt, kept current by import / save / load. Files moved or renamed outside the
+        // engine are found again by their UUID on the next scan. Two files with the same UUID (a copy made in a file
+        // manager) are repaired during the scan: the copy gets a fresh UUID written into its header
+
+        // @brief Content-dir-relative path of the asset file with UUID [id], loaded or not. Empty if unknown
+        //
+        // Scans the content directory the first time it is called for a project. If the catalogued file is gone, the
+        // directory is rescanned once (the file may have been moved outside the engine)
+        [[nodiscard]] virtual std::filesystem::path find_path_by_id(GLT::UUID id) = 0;
+
+
+        // @brief Loads (or returns the loaded) asset with UUID [id], wherever its file is now
+        [[nodiscard]] virtual std::expected<GLT::asset::asset_ref, GLT::asset::load_error> load_by_id(GLT::UUID id) = 0;
+
+
+        // @brief Rescans the content directory (after files were added, moved or deleted outside the engine)
+        //
+        // @return Number of asset files in the catalog
+        virtual u64 refresh_catalog() = 0;
+
         // relocation --------------------------------------------------------------------------------------------------
 
         // @brief Moves a file OR directory tree inside the content directory

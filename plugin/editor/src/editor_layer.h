@@ -9,6 +9,7 @@
 #include <platform/i_window.h>
 
 #include "window/base/base_window.h"
+#include "settings/settings_registry.h"
 #include "util/event/asset_event.h"
 
 
@@ -50,6 +51,11 @@ namespace GLT::editor {
 
         editor_layer();
         ~editor_layer();
+
+
+        // False while Play-in-Editor runs or is paused. Windows check this before structural operations on the
+        // editor's world (e.g. opening another world by dropping it onto the viewport)
+        [[nodiscard]] static bool is_simulation_idle() noexcept;
 
 
         void on_attach() override;
@@ -115,6 +121,28 @@ namespace GLT::editor {
 
 
 	    base_window* find_window_by_name(const std::string& name);
+
+
+        // The undo-enabled window the user worked in most recently (receives Ctrl+Z / Ctrl+Y and the Edit menu). May be null
+        [[nodiscard]] base_window* undo_target();
+
+
+        // Ctrl+Z = undo, Ctrl+Y / Ctrl+Shift+Z = redo. Text fields keep their own Ctrl+Z, simulation blocks both
+        void handle_undo_shortcuts();
+
+
+        // Edit menu entries ("Undo Move Cube", "Redo ...")
+        void render_undo_menu_items();
+
+
+        // Opens (or focuses) the editor settings window, optionally on a specific page ("Appearance", ...)
+        void open_settings_window(std::string_view page = {});
+        void open_engine_settings_window(std::string_view page = {});
+
+
+        // Rows of the "Play in Editor" settings page, also used by the simulation settings popup in the toolbar.
+        // Returns true if something changed
+        bool render_simulation_settings();
 
 
         void render_toolbar();
@@ -207,9 +235,13 @@ namespace GLT::editor {
 
 
         GLT::unique_ref<GLT::render::image>             m_logo{};
+        settings_registry                               m_editor_settings_pages{};      // declared before m_windows: the settings window references it
+        settings_registry                               m_engine_settings_pages{};      // same; rebuilt when plugins register / remove settings
+        u64                                             m_engine_settings_signature = 0;
         std::vector<GLT::unique_ref<base_window>>       m_windows{};
 
         bool                                            m_show_stats_window = false;
+        bool                                            m_show_tracing_window = false;
         bool                                            m_show_plugin_manager_window = false;
         bool                                            m_show_demo = false;
         bool                                            m_show_style = false;
@@ -235,6 +267,7 @@ namespace GLT::editor {
 
         bool                                            m_start_sims = false;
         GLT::system_state                               m_simulation_state = GLT::system_state::idle;   // editor specific sim
+        inline static editor_layer*                     s_instance = nullptr;                           // for is_simulation_idle()
         simulation_mode                                 m_simulation_mode{ simulation_mode::current_viewport };
         u32                                             m_sim_window_count{ 1 };
         std::array<sim_layout, 4>                       m_sim_layouts{}; // m_sim_layouts[N - 1] = layout for N windows. All 4 are always saved

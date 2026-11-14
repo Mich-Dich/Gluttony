@@ -54,8 +54,10 @@ struct RendererCamera {
     float4x4                                                    inv_projection;
     uint4                                                       cluster_dims;
     float4                                                      cluster_depth;      // x=near y=far z=render_w w=render_h
-    float4x4                                                    light_view_proj;
-    float4                                                      shadow_params;      // x=world_per_texel y=normal_bias z=depth_bias w=1/res
+    float4x4                                                    light_view_proj;    // unused
+    float4                                                      shadow_params;      // x = sun cascades (0 = none), y = their first shadow view
+    float4                                                      ambient_sky;        // rgb = linear radiance from above
+    float4                                                      ambient_ground;     // rgb = linear radiance from below
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<RendererCamera>            renderer_camera;
@@ -67,6 +69,36 @@ struct RendererCamera {
 [[vk::binding(6, 0)]] StructuredBuffer<RendererShadowView>      renderer_shadow_views;
 [[vk::binding(7, 0)]] Texture2D                                 renderer_shadow_atlas;
 [[vk::binding(8, 0)]] SamplerComparisonState                    renderer_shadow_sampler;
+[[vk::binding(10, 0)]] TextureCube                              renderer_env_specular;      // GGX prefiltered, roughness per mip
+[[vk::binding(11, 0)]] StructuredBuffer<float4>                 renderer_env_sh;            // SH9, eval = irradiance / PI
+[[vk::binding(12, 0)]] SamplerState                             renderer_env_sampler;
+
+// Local shadow atlas pass (scene_renderer_shadow.inl, add_local_shadow_passes): firstInstance has bit 31 set and carries
+// the shadow view in bits 20..30 (shadow_cull.comp.glsl writes it; in every other pass those bits hold LOD info and bit 31
+// is clear). The vertex is projected with that view and moved into the view's atlas tile. The clip distances are the view
+// frustum's side planes, so nothing leaves the tile: every view of one material is a single indirect draw, with one
+// descriptor set for the whole pass.
+// RENDERER_SHADOW_ATLAS is defined by the renderer (0 when the device has no shaderClipDistance: no local shadows then)
+static const uint RENDERER_SHADOW_PASS_BIT = 0x80000000u;
+static const uint RENDERER_SHADOW_VIEW_SHIFT = 20u;
+static const uint RENDERER_SHADOW_VIEW_MASK = 0x7FFu;
+
+float4 renderer_project_vertex(float3 position_ws, uint base_instance, out float4 clip_distance) {
+
+    clip_distance = float4(1.0, 1.0, 1.0, 1.0);
+#if RENDERER_SHADOW_ATLAS
+    if ((base_instance & RENDERER_SHADOW_PASS_BIT) != 0u) {
+        const uint shadow_view = (base_instance >> RENDERER_SHADOW_VIEW_SHIFT) & RENDERER_SHADOW_VIEW_MASK;
+        const float4x4 view_proj = renderer_shadow_views[shadow_view].view_proj;
+        const float4 rect = renderer_shadow_views[shadow_view].atlas_rect;         // xy = tile origin, zw = tile size (atlas uv)
+        float4 clip = mul(view_proj, float4(position_ws, 1.0));
+        clip_distance = float4(clip.w + clip.x, clip.w - clip.x, clip.w + clip.y, clip.w - clip.y);
+        clip.xy = clip.xy * rect.zw + (rect.xy * 2.0 + rect.zw - 1.0) * clip.w;    // view NDC [-1, 1] -> the tile's part of the atlas
+        return clip;
+    }
+#endif
+    return mul(renderer_camera.view_proj, float4(position_ws, 1.0));
+}
 
 // ---- set 1: per-material textures ----------------------------------------------------
 [[vk::binding(1, 1)]] Texture2D                                 renderer_tex_base_color;
@@ -83,16 +115,49 @@ struct renderer_vertex_outputs {
     [[vk::location(1)]] float3                                  normal_ws;
     [[vk::location(2)]] float4                                  tangent_ws;
     [[vk::location(3)]] float2                                  uv0;
+    [[vk::location(4)]] nointerpolation uint                    lod_info;   // firstInstance >> 20: LOD | has LODs | procedural
 };
 
 // ---- helpers -------------------------------------------------------------------------
 static const float                                              RENDERER_PI = 3.14159265359;
-static const float3                                             RENDERER_AMBIENT = float3(0.03, 0.03, 0.03);
 
 float renderer_linearize_depth(float d) {
 
     float4 view = mul(renderer_camera.inv_projection, float4(0.0, 0.0, d, 1.0));
     return -view.z / view.w;
+}
+
+// Normalise with a fallback for zero / NaN / inf vectors (comparisons with NaN are false -> fallback). Assets can carry
+// NaN tangents (assimp CalcTangentSpace on degenerate UVs) or zero normals (degenerate faces); one NaN in the frame
+// makes the whole fragment NaN, which the tonemapper writes out as black
+float3 renderer_safe_normalize(float3 v, float3 fallback) {
+    const float l2 = dot(v, v);
+    return (l2 > 1e-20 && l2 < 1e30) ? v * rsqrt(l2) : fallback;
+}
+
+// Tangent frame that is always finite: unit normal, tangent orthogonal to it, handedness +-1
+void renderer_safe_frame(inout float3 n, inout float4 t) {
+    n = renderer_safe_normalize(n, float3(0.0, 1.0, 0.0));
+    float3 tt = t.xyz - n * dot(n, t.xyz);
+    const float3 axis = abs(n.x) < 0.9 ? float3(1.0, 0.0, 0.0) : float3(0.0, 1.0, 0.0);
+    tt = renderer_safe_normalize(tt, normalize(cross(axis, n)));
+    t = float4(tt, t.w < 0.0 ? -1.0 : 1.0);
+}
+
+// Debug render modes (renderer_camera.flags.z): 1 = LOD colours, 2 = flat grey (triangle density background)
+float3 renderer_lod_color(uint lod_info) {
+    if ((lod_info & 0x20u) != 0u) return float3(0.85, 0.85, 0.85);        // procedural mesh
+    if ((lod_info & 0x10u) == 0u) return float3(0.35, 0.35, 0.38);        // mesh without generated levels
+    switch (lod_info & 0xFu) {
+        case 0u:  return float3(0.05, 0.75, 0.10);
+        case 1u:  return float3(0.55, 0.85, 0.05);
+        case 2u:  return float3(0.95, 0.85, 0.05);
+        case 3u:  return float3(1.00, 0.45, 0.02);
+        case 4u:  return float3(0.90, 0.05, 0.05);
+        case 5u:  return float3(0.85, 0.05, 0.75);
+        case 6u:  return float3(0.45, 0.10, 0.95);
+        default:  return float3(0.10, 0.35, 1.00);
+    }
 }
 
 uint renderer_point_face(float3 d) {
@@ -103,21 +168,72 @@ uint renderer_point_face(float3 d) {
     return d.z > 0.0 ? 4u : 5u;
 }
 
-float renderer_sample_shadow(float3 world_pos, float3 N, float ndotl) {
+// Sun shadows: nested maps around the camera ("cascades", scene/sun_shadow_cascades.h), each a view in
+// renderer_shadow_views and a tile of renderer_shadow_map. A fragment uses the finest cascade it lies in; towards the
+// edge of that map it fades into the next cascade, and behind the last one into no shadow. A cascade that has no depth
+// map yet (atlas_rect.z == 0) is skipped, the next one covers its range at a lower resolution.
+static const float RENDERER_SUN_EDGE = 0.98;    // usable part of a cascade: clip units, 1 = the edge of its map
+static const float RENDERER_SUN_FADE = 0.88;    // from here to RENDERER_SUN_EDGE: fade into the next cascade
 
-    float normal_offset = renderer_camera.shadow_params.x * renderer_camera.shadow_params.y * (1.0 - ndotl);
-    float4 lc = mul(renderer_camera.light_view_proj, float4(world_pos + N * normal_offset, 1.0));
-    float3 ndc = lc.xyz / lc.w;
-    float2 uv = ndc.xy * 0.5 + 0.5;
-    if (any(uv < 0.0) || any(uv > 1.0) || ndc.z > 1.0)
-        return 1.0;
-    float ref_depth = ndc.z - renderer_camera.shadow_params.z;
-    float texel = renderer_camera.shadow_params.w;
+// Nine bilinear comparison taps one texel apart with tent weights (1 2 1 per axis), from four fetches: the offsets and
+// weights below fold each pair of neighbouring taps into one (the footprint is 4 x 4 texels)
+float renderer_sun_pcf(float2 uv, float atlas_texels, float ref_depth) {
+
+    const float2 texel = uv * atlas_texels;
+    const float2 corner = floor(texel + 0.5);
+    const float2 f = texel + 0.5 - corner;
+    const float2 base = (corner - 0.5) / atlas_texels;
+    const float2 w0 = 3.0 - 2.0 * f;
+    const float2 w1 = 1.0 + 2.0 * f;
+    const float2 o0 = ((2.0 - f) / w0 - 1.0) / atlas_texels;
+    const float2 o1 = (f / w1 + 1.0) / atlas_texels;
+
     float sum = 0.0;
-    for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x)
-            sum += renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, uv + float2(x, y) * texel, ref_depth);
-    return sum / 9.0;
+    sum += w0.x * w0.y * renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, base + float2(o0.x, o0.y), ref_depth);
+    sum += w1.x * w0.y * renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, base + float2(o1.x, o0.y), ref_depth);
+    sum += w0.x * w1.y * renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, base + float2(o0.x, o1.y), ref_depth);
+    sum += w1.x * w1.y * renderer_shadow_map.SampleCmpLevelZero(renderer_shadow_sampler, base + float2(o1.x, o1.y), ref_depth);
+    return sum / 16.0;
+}
+
+// [L]: towards the sun. [N], [ndotl]: geometric normal and its cosine with L
+float renderer_sample_shadow(float3 world_pos, float3 N, float3 L, float ndotl) {
+
+    const uint count = uint(renderer_camera.shadow_params.x);
+    const uint first = uint(renderer_camera.shadow_params.y);
+
+    // Along the normal by the filter radius (2 texels) times sin: a step of d along the normal lifts the sample d / cos
+    // above the surface's own depth in the map, the kernel sees that depth change by radius * tan. So this clears the
+    // surface's slope under the filter at every angle to the light. Plus a constant step towards the light
+    const float sin_nl = sqrt(saturate(1.0 - ndotl * ndotl));
+
+    float near_shadow = 1.0;
+    float fade = -1.0;                              // < 0: no cascade found yet
+    for (uint c = 0u; c < count; ++c) {
+
+        const float4 rect = renderer_shadow_views[first + c].atlas_rect;
+        if (rect.z <= 0.0)
+            continue;
+
+        const float4 params = renderer_shadow_views[first + c].params;     // x = texel in the world, y = normal bias, z = bias, w = 1 / atlas texels
+        const float3 biased = world_pos + N * (params.x * params.y * sin_nl) + L * (params.x * params.z);
+        const float3 ndc = mul(renderer_shadow_views[first + c].view_proj, float4(biased, 1.0)).xyz;
+        const float edge = max(abs(ndc.x), abs(ndc.y));
+        if (edge >= RENDERER_SUN_EDGE)
+            continue;                               // not in this cascade (or in its guard band): try the next, larger one
+
+        // Behind the far end of the depth range (below every caster): anything in the map is in front of it
+        const float2 uv = rect.xy + (ndc.xy * 0.5 + 0.5) * rect.zw;
+        const float shadow = renderer_sun_pcf(uv, 1.0 / params.w, min(ndc.z, 1.0));
+
+        if (fade >= 0.0)
+            return lerp(near_shadow, shadow, fade); // second cascade of a fade
+        fade = saturate((edge - RENDERER_SUN_FADE) / (RENDERER_SUN_EDGE - RENDERER_SUN_FADE));
+        if (fade <= 0.0)
+            return shadow;
+        near_shadow = shadow;
+    }
+    return fade < 0.0 ? 1.0 : lerp(near_shadow, 1.0, fade);
 }
 
 float renderer_sample_local_shadow(uint view_index, float3 world_pos, float3 N, float3 L, float ndotl, float dist) {
@@ -139,6 +255,11 @@ float renderer_sample_local_shadow(uint view_index, float3 world_pos, float3 N, 
     float  t = v.params.w;
     float2 lo = v.atlas_rect.xy + 0.5 * t;
     float2 hi = v.atlas_rect.xy + v.atlas_rect.zw - 0.5 * t;
+
+    // Small tiles (lights that are far away or share a crowded atlas): one bilinear comparison tap. Their texels are
+    // large on screen, more taps would only blur them further, and these are the lights there are many of
+    if (v.atlas_rect.z < 200.0 * t)
+        return renderer_shadow_atlas.SampleCmpLevelZero(renderer_shadow_sampler, clamp(atlas_uv, lo, hi), ndc.z);
 
     float s = 0.0;
     s += renderer_shadow_atlas.SampleCmpLevelZero(renderer_shadow_sampler, clamp(atlas_uv + float2(-0.5,-0.5)*t, lo, hi), ndc.z);
@@ -165,9 +286,60 @@ float3 renderer_F_Schlick(float VoH, float3 f0) {
     return f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0);
 }
 
-float3 renderer_output_transform(float3 c) {
-    c = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
-    return pow(c, float3(1.0 / 2.2));
+// ---- ambient ------------------------------------------------------------------------
+// ambient_sky.a == 0: hemispherical sky, radiance blends from ground (straight down) to sky (straight up).
+// ambient_sky.a == 1: image based lighting from the procedural sky (SH9 irradiance + GGX prefiltered cubemap),
+// ambient_sky.rgb is then the intensity scale and ambient_ground.a the highest specular mip
+float3 renderer_sky_radiance(float3 dir) {
+    float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+    return lerp(renderer_camera.ambient_ground.rgb, renderer_camera.ambient_sky.rgb, t);
+}
+
+bool renderer_ibl_active() {
+    return renderer_camera.ambient_sky.a > 0.5;
+}
+
+// L2 spherical harmonics with the cosine lobe baked in: irradiance(n) / PI (engine Lambert convention)
+float3 renderer_sh_irradiance(float3 n) {
+    float3 r = renderer_env_sh[0].rgb * 0.282095;
+    r += renderer_env_sh[1].rgb * (0.488603 * n.y);
+    r += renderer_env_sh[2].rgb * (0.488603 * n.z);
+    r += renderer_env_sh[3].rgb * (0.488603 * n.x);
+    r += renderer_env_sh[4].rgb * (1.092548 * n.x * n.y);
+    r += renderer_env_sh[5].rgb * (1.092548 * n.y * n.z);
+    r += renderer_env_sh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0));
+    r += renderer_env_sh[7].rgb * (1.092548 * n.x * n.z);
+    r += renderer_env_sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(r, float3(0.0, 0.0, 0.0));
+}
+
+float3 renderer_ambient_irradiance(float3 n) {
+    if (renderer_ibl_active())
+        return renderer_sh_irradiance(n) * renderer_camera.ambient_sky.rgb;
+    return renderer_sky_radiance(n);
+}
+
+float3 renderer_ambient_specular_radiance(float3 r, float roughness) {
+    if (renderer_ibl_active()) {
+        const float lod = roughness * renderer_camera.ambient_ground.a;
+        return renderer_env_specular.SampleLevel(renderer_env_sampler, r, lod).rgb * renderer_camera.ambient_sky.rgb;
+    }
+    return renderer_sky_radiance(r);
+}
+
+// Analytic fit of the split-sum environment BRDF (Karis, "Physically Based Shading on Mobile"). Replaces the 2D LUT
+float3 renderer_env_brdf_approx(float3 f0, float roughness, float NoV) {
+    const float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+    const float4 c1 = float4( 1.0,  0.0425,  1.040, -0.040);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
+    float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + ab.y;
+}
+
+// Specular occlusion from AO (Lagarde & de Rousiers, "Moving Frostbite to PBR")
+float renderer_specular_occlusion(float NoV, float ao, float a) {
+    return clamp(pow(NoV + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
 }
 )SLANG";
 
@@ -184,19 +356,25 @@ struct renderer_vert_attributes {
 
 struct renderer_vert_result {
     float4                              clip_pos : SV_Position;
+#if RENDERER_SHADOW_ATLAS
+    float                               clip_distance[4] : SV_ClipDistance;  // local shadow atlas tile, see renderer_project_vertex
+#endif
     renderer_vertex_outputs             varyings;
 };
 
 [shader("vertex")]
-renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID,
-    uint base_instance : SV_StartInstanceLocation) {
+renderer_vert_result vertex_main(renderer_vert_attributes v, uint base_instance : SV_StartInstanceLocation) {
 
-    RendererInstance inst = renderer_instances[base_instance + instance_id];
+    // firstInstance carries the instance index in its low 20 bits and LOD / shadow view info above (cull.comp.glsl,
+    // shadow_cull.comp.glsl). Every draw has instanceCount 1, so the index is firstInstance alone: SV_InstanceID is not
+    // used, its meaning (with or without firstInstance) differs between Slang versions
+    RendererInstance inst = renderer_instances[base_instance & 0xFFFFFu];
 
     vertex_input vi;
     vi.position_ws = mul(inst.model, float4(v.position, 1.0)).xyz;
-    vi.normal_ws = normalize(mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz);
-    vi.tangent_ws = float4(normalize(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz), v.tangent.w);
+    vi.normal_ws = mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz;
+    vi.tangent_ws = float4(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz, v.tangent.w);
+    renderer_safe_frame(vi.normal_ws, vi.tangent_ws);
     vi.uv0 = v.uv0;
     vi.uv1 = float2(0.0, 0.0);
     vi.color = float3(1.0, 1.0, 1.0);
@@ -204,11 +382,17 @@ renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : 
     vertex_output vo = passthrough(vi);
 
     renderer_vert_result o;
-    o.clip_pos = mul(renderer_camera.view_proj, float4(vo.position_ws, 1.0));
+    float4 clip_distance;
+    o.clip_pos = renderer_project_vertex(vo.position_ws, base_instance, clip_distance);
+#if RENDERER_SHADOW_ATLAS
+    spirv_asm { OpCapability ClipDistance };        // Slang 2025.1 writes the builtin without declaring the capability
+    o.clip_distance = { clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w };
+#endif
     o.varyings.position_ws = vo.position_ws;
     o.varyings.normal_ws = vo.normal_ws;
     o.varyings.tangent_ws = vo.tangent_ws;
     o.varyings.uv0 = vo.uv0;
+    o.varyings.lod_info = base_instance >> 20u;
     return o;
 }
 )SLANG";
@@ -226,6 +410,9 @@ struct renderer_vert_attributes {
 
 struct renderer_vert_result {
     float4                              clip_pos : SV_Position;
+#if RENDERER_SHADOW_ATLAS
+    float                               clip_distance[4] : SV_ClipDistance;  // local shadow atlas tile, see renderer_project_vertex
+#endif
     renderer_vertex_outputs             varyings;
 };
 
@@ -234,15 +421,18 @@ struct renderer_vert_result {
 [[vk::binding(0, 1)]] ConstantBuffer<material_params> renderer_material_params;
 
 [shader("vertex")]
-renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : SV_InstanceID,
-    uint base_instance : SV_StartInstanceLocation) {
+renderer_vert_result vertex_main(renderer_vert_attributes v, uint base_instance : SV_StartInstanceLocation) {
 
-    RendererInstance inst = renderer_instances[base_instance + instance_id];
+    // firstInstance carries the instance index in its low 20 bits and LOD / shadow view info above (cull.comp.glsl,
+    // shadow_cull.comp.glsl). Every draw has instanceCount 1, so the index is firstInstance alone: SV_InstanceID is not
+    // used, its meaning (with or without firstInstance) differs between Slang versions
+    RendererInstance inst = renderer_instances[base_instance & 0xFFFFFu];
 
     vertex_input vi;
     vi.position_ws = mul(inst.model, float4(v.position, 1.0)).xyz;
-    vi.normal_ws = normalize(mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz);
-    vi.tangent_ws = float4(normalize(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz), v.tangent.w);
+    vi.normal_ws = mul(inst.normal_matrix, float4(v.normal, 0.0)).xyz;
+    vi.tangent_ws = float4(mul(inst.model, float4(v.tangent.xyz, 0.0)).xyz, v.tangent.w);
+    renderer_safe_frame(vi.normal_ws, vi.tangent_ws);
     vi.uv0 = v.uv0;
     vi.uv1 = float2(0.0, 0.0);
     vi.color = float3(1.0, 1.0, 1.0);
@@ -253,11 +443,17 @@ renderer_vert_result vertex_main(renderer_vert_attributes v, uint instance_id : 
     vertex_output vo = vertex_transform(vi, p);
 
     renderer_vert_result o;
-    o.clip_pos = mul(renderer_camera.view_proj, float4(vo.position_ws, 1.0));
+    float4 clip_distance;
+    o.clip_pos = renderer_project_vertex(vo.position_ws, base_instance, clip_distance);
+#if RENDERER_SHADOW_ATLAS
+    spirv_asm { OpCapability ClipDistance };        // Slang 2025.1 writes the builtin without declaring the capability
+    o.clip_distance = { clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w };
+#endif
     o.varyings.position_ws = vo.position_ws;
     o.varyings.normal_ws = vo.normal_ws;
     o.varyings.tangent_ws = vo.tangent_ws;
     o.varyings.uv0 = vo.uv0;
+    o.varyings.lod_info = base_instance >> 20u;
     return o;
 }
 )SLANG";
@@ -281,13 +477,26 @@ material_textures renderer_assemble_textures() {
 }
 
 [shader("fragment")]
-float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) : SV_Target {
+float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position, bool is_front : SV_IsFrontFace) : SV_Target {
 
     material_textures tex = renderer_assemble_textures();
 
+    // Double-sided materials (no back-face culling): back faces see the surface from behind, so the interpolated
+    // normal points away from the viewer -> flip it. Single-sided pipelines cull back faces, so this never triggers there
+    const float3 geo_normal = renderer_safe_normalize(i.normal_ws, float3(0.0, 1.0, 0.0)) * (is_front ? 1.0 : -1.0);
+
+    // Debug render modes: unlit, no material evaluation (uniform branch)
+    const uint debug_mode = renderer_camera.flags.z;
+    if (debug_mode != 0u) {
+        const float facing = abs(dot(geo_normal, renderer_safe_normalize(renderer_camera.camera_pos.xyz - i.position_ws, geo_normal)));
+        if (debug_mode == 1u)
+            return float4(renderer_lod_color(i.lod_info) * (0.35 + 0.65 * facing), 1.0);
+        return float4(float3(0.30, 0.30, 0.32) * (0.75 + 0.25 * facing), 1.0);
+    }
+
     surface_input s = {};
     s.position_ws = i.position_ws;
-    s.normal_ws = normalize(i.normal_ws);
+    s.normal_ws = geo_normal;
     s.tangent_ws = i.tangent_ws;
     s.uv0 = i.uv0;
     s.uv1 = float2(0.0, 0.0);
@@ -300,8 +509,8 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) : S
 
     surface_output o = surface_evaluate(s, renderer_material_params, tex);
 
-    const float3 Ng = normalize(i.normal_ws);
-    const float3 N = normalize(o.normal_ws);
+    const float3 Ng = geo_normal;
+    const float3 N = renderer_safe_normalize(o.normal_ws, Ng);
     const float3 V = s.view_dir_ws;
     const float  NoV = max(dot(N, V), 1e-4);
 
@@ -311,7 +520,8 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) : S
 
     // ---- cluster lookup -----------------------------------------------------------
     uint3  grid_dims = renderer_camera.cluster_dims.xyz;
-    uint2  tile = uint2(sv_pos.xy / float2(16.0, 16.0));
+    const uint tile_packed = renderer_camera.cluster_dims.w;
+    uint2  tile = uint2(sv_pos.xy) / max(uint2(tile_packed & 0xFFFFu, tile_packed >> 16u), uint2(1u, 1u));
     float  near_z = renderer_camera.cluster_depth.x;
     float  far_z = renderer_camera.cluster_depth.y;
     float  lz = clamp(s.view_depth, near_z, far_z);
@@ -357,7 +567,7 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) : S
         if (light.params.z > 0.5) {
             float ndotl_geo = clamp(dot(Ng, L), 0.0, 1.0);
             if (type == 0u) {
-                attenuation *= renderer_sample_shadow(i.position_ws, Ng, ndotl_geo);
+                attenuation *= renderer_sample_shadow(i.position_ws, Ng, L, ndotl_geo);
             } else if (attenuation > 0.002) {
                 uint view_index = uint(light.params.z) - 1u;
                 if (type == 1u)
@@ -374,10 +584,17 @@ float4 fragment_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) : S
         Lo += (diffuse_color + spec * RENDERER_PI) * radiance * NoL;
     }
 
-    float3 ambient = RENDERER_AMBIENT * (diffuse_color + f0 * lerp(0.5, 0.1, o.roughness)) * o.ao;
-    float3 final_c = renderer_output_transform(ambient + Lo + o.emissive);
+    // ---- ambient (split-sum style: irradiance x albedo + prefiltered radiance x env BRDF) ---
+    const float3 R = reflect(-V, N);
+    const float3 R_rough = normalize(lerp(R, N, a));            // rough lobes lean towards the normal
+    const float3 ambient_diffuse = diffuse_color * renderer_ambient_irradiance(N) * o.ao;
+    const float3 ambient_specular = renderer_env_brdf_approx(f0, o.roughness, NoV)
+        * renderer_ambient_specular_radiance(R_rough, o.roughness) * renderer_specular_occlusion(NoV, o.ao, a);
 
-    return float4(final_c, o.opacity);
+    // Linear HDR radiance. Exposure, tonemapping and sRGB encoding happen in the tonemap pass. Clamp to the fp16 range
+    // so a hot light can't produce inf (which the tonemapper would turn into NaN)
+    float3 color = min(ambient_diffuse + ambient_specular + Lo + o.emissive, float3(65000.0, 65000.0, 65000.0));
+    return float4(color, o.opacity);
 }
 )SLANG";
 
@@ -406,7 +623,7 @@ void depth_main(renderer_vertex_outputs i, float4 sv_pos : SV_Position) {
 
     surface_input s = {};
     s.position_ws = i.position_ws;
-    s.normal_ws = normalize(i.normal_ws);
+    s.normal_ws = renderer_safe_normalize(i.normal_ws, float3(0.0, 1.0, 0.0));
     s.tangent_ws = i.tangent_ws;
     s.uv0 = i.uv0;
     s.uv1 = float2(0.0, 0.0);

@@ -99,6 +99,9 @@ namespace GLT::editor {
 
         // panels -----------------------------------------------------------------------------------------------------
 
+        void handle_shortcuts();        // Ctrl+S save, F7 compile
+        void draw_header_bar();
+        void draw_body();               // details | splitter | source
         void draw_details_panel();
 
         void draw_source_panel();
@@ -108,6 +111,7 @@ namespace GLT::editor {
         // details sections --------------------------------------------------------------------------------------------
 
         void draw_blend_section();
+        void push_live_render_state();      // blend + flags -> live asset (renderer rebuilds pipelines, no recompile needed)
 
         void draw_parameters_section();
 
@@ -165,6 +169,9 @@ namespace GLT::editor {
         // material close - it's a UI preference, not material state
         f32                                                     m_terminal_height{ 160.0f };
 
+        // Persisted width (px) of the details panel on the left, UI preference like m_terminal_height
+        f32                                                     m_details_width{ 400.0f };
+
         // Edit buffers. The window edits these, never the asset directly.
         std::string                                             m_edit_slang{};
         std::string                                             m_baseline_slang{};
@@ -174,6 +181,8 @@ namespace GLT::editor {
 
         GLT::asset::material::blend_mode                        m_edit_blend{ GLT::asset::material::blend_mode::opaque };
         GLT::asset::material::blend_mode                        m_baseline_blend{ GLT::asset::material::blend_mode::opaque };
+        u32                                                     m_edit_flags{ 0 };          // GLT::asset::material::material_flag bits
+        u32                                                     m_baseline_flags{ 0 };
 
         texture_handles                                         m_edit_textures{};
         texture_handles                                         m_baseline_textures{};

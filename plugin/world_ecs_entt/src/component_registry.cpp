@@ -22,10 +22,18 @@ namespace GLT::world::world_ecs_entt {
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
     void ensure_required(const std::vector<GLT::world::component::descriptor>& descriptors, const std::vector<u64>& required, entity_id id);
+    [[nodiscard]] bool scope_allows(const ecs_world& world, const GLT::world::component::descriptor& d, entity_id id);
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
+
+    // World entity takes world-scope components, every other entity entity-scope ones (see component::scope)
+    bool scope_allows(const ecs_world& world, const GLT::world::component::descriptor& d, entity_id id) {
+        using GLT::world::component::scope;
+        return GLT::world::component::allows(d.scope, world.is_world_entity(id) ? scope::world : scope::entity);
+    }
+
 
     void ensure_required(const std::vector<GLT::world::component::descriptor>& descriptors, const std::vector<u64>& required, entity_id id) {
 
@@ -100,6 +108,8 @@ namespace GLT::world::world_ecs_entt {
             return false;
         if (d->has(id))
             return false;
+        if (!scope_allows(m_world, *d, id))
+            return false;                                       // e.g. sky on a normal entity, mesh on the world entity
 
         ensure_required(m_descriptors, d->required, id);
         d->add(id);
@@ -122,7 +132,7 @@ namespace GLT::world::world_ecs_entt {
     void component_registry::copy(entity_id from, entity_id to) {
 
         for (const auto* d : on(from)) {
-            if (!d->add || d->has(to))
+            if (!d->add || d->has(to) || !scope_allows(m_world, *d, to))
                 continue;
             ensure_required(m_descriptors, d->required, to);
             d->add(to);

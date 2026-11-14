@@ -1,7 +1,51 @@
-
 #version 450
 
-layout(local_size_x = 64) in;
+// Clustered light assignment (Forward+). ONE WORKGROUP PER SCREEN TILE (all depth slices of that tile).
+//
+// The first version ran one 64-thread workgroup per CLUSTER (tile x slice): every slice of a tile re-read and
+// re-linearised the same 16x16 depth texels, a single thread built the cluster AABB while 63 idled, and every light was
+// tested by a separate workgroup per slice. ~200k workgroups at 1080p, ~24 ms of GPU time with 2 lights.
+//
+// The second version ran one workgroup per tile with one thread per depth texel (256): 0.61 ms on an Intel Arc iGPU at
+// 1260x693 (trace 2026-11-11 15:03), more than the depth pre-pass. The work per tile is small; the cost is that every
+// tile starts 256 threads, lines them up at up to six barriers and sends two shared-memory atomics per texel.
+//
+// Now, per tile, with GROUP_SIZE_X * GROUP_SIZE_Y (16) threads:
+//   1. every thread reads its block of the tile's depth texels (4x4) and reduces it to min/max in registers (sky /
+//      cleared depth == 1 is skipped: no geometry there); two atomics per THREAD merge the blocks. The range is extended
+//      by the translucents' view depth span (clamped to the opaque surface)
+//   2. the threads share out the slices: each slice gets its view-space AABB, clamped to the tile's real depth range;
+//      slices with no geometry are inactive and get no lights (fragments never land in them)
+//   3. lights are transformed to view space once per batch of 16 (shared memory), then every (active slice, light) pair
+//      is tested in parallel; hits set a bit in a per-slice light bitmask (MAX_LIGHTS bits)
+//   4. per slice: popcount; slices with the same lights as the slice in front of them share that slice's list; one
+//      atomicAdd per list reserves the index range, threads write the indices (sorted by light index)
+//
+// NO LIGHT IS EVER DROPPED FROM A CLUSTER. A per-cluster limit (it was 256) cuts the list of every cluster on its own:
+// where many large lights overlap, neighbouring clusters keep different subsets and the cluster grid shows up in the
+// image as blocks of different brightness (stress world lights_cluster_overflow). The shading loop multiplies every
+// light by a window that is exactly 0 outside its radius / cone, so a list may hold MORE lights than reach a fragment
+// without changing the image, but never fewer. Hence:
+//   - a cluster touched by every light, and a cluster whose list no longer fits into the index list, use the IDENTITY
+//     list { 0, light_count }: entries [0, MAX_LIGHTS) of the index list hold 0, 1, 2, ... (written here every frame
+//     by tile 0). Correct, only slower to shade; nothing is written for it
+//   - every other cluster gets its exact list behind those entries
+// The index-list capacity is therefore a performance budget, not a correctness limit.
+//
+// 16 threads are few enough to fit into one SIMD unit of current GPUs (Intel 16 or 32 lanes, NVIDIA 32, AMD 64). A
+// driver can then run a tile's threads in lock-step, and barrier() needs no real synchronisation.
+//
+// The result is the same as with one thread per texel: same texels, same arithmetic per texel, same (slice, light)
+// tests. Checked against the second version on random scenes (identical light lists for every cluster); only the
+// offsets into light_index_list differ from run to run, as before (atomic counter).
+//
+// Output format is unchanged: light_grid[cluster] = { offset, count } into light_index_list. Several clusters may point
+// at the same range.
+
+#define GROUP_SIZE_X 4
+#define GROUP_SIZE_Y 4
+
+layout(local_size_x = GROUP_SIZE_X, local_size_y = GROUP_SIZE_Y, local_size_z = 1) in;
 
 // Bindings ------------------------------------------------------------------------------------------------------------
 layout(set = 0, binding = 0) uniform CameraUBO {
@@ -26,54 +70,84 @@ struct Light {
 layout(std430, set = 0, binding = 1) readonly buffer LightBuffer { Light lights[]; } light_buffer;
 layout(std430, set = 0, binding = 2) writeonly buffer LightGrid { uvec2 grid[]; } light_grid;   // { offset_into_index_list, count }
 layout(std430, set = 0, binding = 3) writeonly buffer LightIndexList { uint indices[]; } light_index_list;
-layout(std430, set = 0, binding = 4) buffer LightCounter { uint next_free; } light_counter; // global atomic cursor into light_index_list
-layout(set = 0, binding = 5) uniform LightMetaUBO { uvec4 meta; } light_meta; // x = light_count, y = index_list_capacity, z = max_per_cluster
+layout(std430, set = 0, binding = 4) buffer LightCounter { uint next_free; } light_counter; // global atomic cursor into light_index_list, counted from LIST_BASE (0 at frame start)
+layout(set = 0, binding = 5) uniform LightMetaUBO { uvec4 meta; } light_meta; // x = light_count, y = index_list_capacity (entries, identity prefix included), z = unused, w = translucent view depth span (half2, 0 = none)
 layout(set = 0, binding = 6) uniform sampler2D depth_texture;
+
+// Constants / shared --------------------------------------------------------------------------------------------------
+
+const uint  THREADS = uint(GROUP_SIZE_X * GROUP_SIZE_Y);
+const uvec2 GROUP_SIZE = uvec2(GROUP_SIZE_X, GROUP_SIZE_Y);
+const uvec2 TILE_SIZE = uvec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y);
+const uvec2 BLOCK_SIZE = (TILE_SIZE + GROUP_SIZE - 1u) / GROUP_SIZE;        // depth texels per thread (rounded up)
+const uint  SLICES = CLUSTER_DEPTH_SLICES;
+const uint MASK_WORDS = (MAX_LIGHTS + 31u) / 32u;
+const uint  LIST_BASE = MAX_LIGHTS;                 // index list: [0, LIST_BASE) identity (0, 1, 2, ...), cluster lists behind it
+
+shared uint  s_min_bits;
+shared uint  s_max_bits;
+shared uint  s_has_background;                    // any texel of the tile at cleared depth (sky)
+
+shared vec3  s_aabb_min[SLICES];
+shared vec3  s_aabb_max[SLICES];
+shared uint  s_slice_active[SLICES];
+shared uint  s_active_any;
+
+shared uint  s_mask[SLICES][MASK_WORDS];
+shared uint  s_same[SLICES];                      // 1: same lights as slice - 1 -> uses that slice's list
+shared uint  s_base[SLICES];                      // first slice of a run of equal slices: offset of its list
+shared uint  s_count[SLICES];                     // ... and its length
+shared uint  s_own[SLICES];                       // ... 1: the list was reserved for this run and has to be written
+
+// one batch of lights in view space
+shared vec4  s_light_pos_radius[THREADS];         // xyz view pos, w radius
+shared vec4  s_light_axis_cos[THREADS];           // xyz view axis, w cos(outer)
+shared uint  s_light_type[THREADS];
 
 // Helpers -------------------------------------------------------------------------------------------------------------
 
-// Convert a window-space depth value in [0,1] to a positive view-space Z.
-// Works for any projection whose inverse is available, regardless of Z-range convention.
-float linearize_depth(float d, mat4 inv_proj) {
-
-    vec4 clip = vec4(0.0, 0.0, d, 1.0);
-    vec4 view = inv_proj * clip;
-    return -view.z / view.w;    // view-space Z is negative in front
+float linearize_depth(float d) {
+    vec4 v = camera.inv_projection * vec4(0.0, 0.0, d, 1.0);
+    return -v.z / v.w;      // view-space Z is negative in front
 }
 
 
-void cluster_aabb_view(uvec3 cluster, float min_linear, float max_linear, out vec3 aabb_min, out vec3 aabb_max) {
+bool sphere_intersects_aabb(vec3 center, float radius, vec3 aabb_min, vec3 aabb_max) {
+    vec3 closest = clamp(center, aabb_min, aabb_max);
+    vec3 d = center - closest;
+    return dot(d, d) <= radius * radius;
+}
 
-    const uint  slices = camera.cluster_dims.z;
+
+// Conservative: infinite double cone; `pz + sr > 0` rejects spheres entirely behind the apex
+bool sphere_intersects_cone(vec3 apex, vec3 axis, float cos_outer, vec3 sphere_center, float sphere_radius) {
+    vec3 V = sphere_center - apex;
+    float pz = dot(V, axis);
+    float pr = length(V - pz * axis);
+    float sin_t = sqrt(max(1.0 - cos_outer * cos_outer, 0.0));
+    float dist = abs(pz * sin_t - pr * cos_outer);
+    return dist < sphere_radius && pz + sphere_radius > 0.0;
+}
+
+
+// View-space AABB of one slice of this tile, tightened to [min_linear, max_linear]. Returns false if the slice holds
+// no geometry
+bool slice_aabb(uvec2 tile, uint slice, uint slices, float min_linear, float max_linear, out vec3 aabb_min, out vec3 aabb_max) {
+
     const float near_z = camera.cluster_depth.x;
     const float far_z = camera.cluster_depth.y;
-    const ivec2 tile_origin = ivec2(cluster.xy) * ivec2(16, 16);
-
-    // Small relative padding: the cull and fragment shaders linearize in different
-    // places, so rounding could otherwise put a boundary pixel a hair outside the range
-    min_linear *= 0.999;
-    max_linear *= 1.001;
-
     const float log_ratio = log(far_z / near_z);
-    const float slice_near_nominal = near_z * exp(log_ratio * (float(cluster.z)     / float(slices)));
-    const float slice_far_nominal = near_z * exp(log_ratio * (float(cluster.z + 1) / float(slices)));
+    const float slice_near = max(near_z * exp(log_ratio * (float(slice) / float(slices))), min_linear * 0.999);
+    const float slice_far = min(near_z * exp(log_ratio * (float(slice + 1u) / float(slices))), max_linear * 1.001);
 
-    const float slice_near = max(slice_near_nominal, min_linear);
-    const float slice_far = min(slice_far_nominal,  max_linear);
+    aabb_min = vec3(0.0);
+    aabb_max = vec3(-1.0);
+    if (slice_near > slice_far)
+        return false;
 
-    // If the entire slice is empty (min > max), collapse to an empty range. Light tests
-    // against an empty AABB reject everything, which is the correct behavior
-    if (slice_near > slice_far) {
-        aabb_min = vec3(0.0);
-        aabb_max = vec3(-1.0);      // inverted, no sphere can intersect
-        return;
-    }
-
-    // ---- 2. Build the view-space AABB for the tightened slice range ----
     const vec2 render_size = camera.cluster_depth.zw;
-    const vec2 tile_px_min = vec2(tile_origin);
-    const vec2 tile_px_max = tile_px_min + vec2(16.0, 16.0);
-
+    const vec2 tile_px_min = vec2(tile * uvec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y));
+    const vec2 tile_px_max = tile_px_min + vec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y);
     const vec2 ndc_min = (tile_px_min / render_size) * 2.0 - 1.0;
     const vec2 ndc_max = (tile_px_max / render_size) * 2.0 - 1.0;
 
@@ -82,174 +156,221 @@ void cluster_aabb_view(uvec3 cluster, float min_linear, float max_linear, out ve
     vec4 p01 = camera.inv_projection * vec4(ndc_min.x, ndc_max.y, 0.0, 1.0);
     vec4 p11 = camera.inv_projection * vec4(ndc_max.x, ndc_max.y, 0.0, 1.0);
 
-    // Rays through the tile corners, normalised so that view-space z == -1
+    // Rays through the tile corners, normalised to view-space z == -1; corner at depth d = ray * d
     const vec3 r00 = p00.xyz / -p00.z;
     const vec3 r10 = p10.xyz / -p10.z;
     const vec3 r01 = p01.xyz / -p01.z;
     const vec3 r11 = p11.xyz / -p11.z;
 
-    // Corner at view depth d is simply ray * d
-    const vec3 c0n = r00 * slice_near;const vec3 c1n = r10 * slice_near;
-    const vec3 c2n = r01 * slice_near;const vec3 c3n = r11 * slice_near;
-    const vec3 c0f = r00 * slice_far; const vec3 c1f = r10 * slice_far;
-    const vec3 c2f = r01 * slice_far; const vec3 c3f = r11 * slice_far;
-
-    aabb_min = min(min(min(c0n, c1n), min(c2n, c3n)), min(min(c0f, c1f), min(c2f, c3f)));
-    aabb_max = max(max(max(c0n, c1n), max(c2n, c3n)), max(max(c0f, c1f), max(c2f, c3f)));
+    const vec3 rmin = min(min(r00, r10), min(r01, r11));
+    const vec3 rmax = max(max(r00, r10), max(r01, r11));
+    aabb_min = min(rmin * slice_near, rmin * slice_far);
+    aabb_max = max(rmax * slice_near, rmax * slice_far);
+    return true;
 }
-
-
-bool sphere_intersects_aabb(vec3 center, float radius, vec3 aabb_min, vec3 aabb_max) {
-
-    vec3 closest = clamp(center, aabb_min, aabb_max);
-    vec3 d = center - closest;
-    return dot(d, d) <= radius * radius;
-}
-
-
-// Conservative: treats the cone as an infinite double cone. `pz + sr > 0` rejects spheres that
-// are entirely behind the apex, and the rest of the test rejects anything off the lateral surface
-bool sphere_intersects_cone(vec3 apex, vec3 axis, float cos_outer, vec3 sphere_center, float sphere_radius) {
-
-    vec3 V = sphere_center - apex;
-    float pz = dot(V, axis);
-    float pr = length(V - pz * axis);
-
-    float sin_t = sqrt(max(1.0 - cos_outer * cos_outer, 0.0));
-    float dist = abs(pz * sin_t - pr * cos_outer);
-
-    return dist < sphere_radius && pz + sphere_radius > 0.0;
-}
-
-
-// Entry point: one workgroup per cluster ------------------------------------------------------------------------------
-
-const uint LOCAL_SIZE = 64u;
-const uint MAX_PER_CLUSTER_LDS = 256u;   // matches MAX_LIGHTS_PER_CLUSTER on the C++ side
-
-shared uint s_light_count;
-shared uint s_light_indices[MAX_PER_CLUSTER_LDS];
-shared vec3 s_aabb_min;
-shared vec3 s_aabb_max;
-shared uint s_min_bits;
-shared uint s_max_bits;
 
 
 void main() {
 
-    const uint  local_id = gl_LocalInvocationIndex;
-    const uvec3 cluster = gl_WorkGroupID;
+    const uint  tid = gl_LocalInvocationIndex;
+    const uvec2 tile = gl_WorkGroupID.xy;
+    const uint  slices = min(camera.cluster_dims.z, SLICES);
+    const uint  tiles_per_slice = camera.cluster_dims.x * camera.cluster_dims.y;
+    const uint  tile_index = tile.x + tile.y * camera.cluster_dims.x;
+    const uint  light_count = min(light_meta.meta.x, MAX_LIGHTS);
+    const uint  words = (light_count + 31u) / 32u;
+    const uint  identity_count = min(light_count, light_meta.meta.y);                                   // "all lights": { 0, identity_count }
+    const uint  list_capacity = light_meta.meta.y > LIST_BASE ? light_meta.meta.y - LIST_BASE : 0u;     // entries for cluster lists
 
-    // Decode the linear cluster id from the 3D dispatch
-    const uint cluster_id = cluster.x + cluster.y * camera.cluster_dims.x + cluster.z * camera.cluster_dims.x * camera.cluster_dims.y;
-
-    if (local_id == 0u) {
+    if (tid == 0u) {
         s_min_bits = floatBitsToUint(1e30);
         s_max_bits = 0u;
+        s_active_any = 0u;
+        s_has_background = 0u;
     }
+    for (uint i = tid; i < slices * words; i += THREADS)        // only these words of the masks are ever read or written
+        s_mask[i / words][i % words] = 0u;
     barrier();
 
+    // ---- 1. tile depth range (one block of texels per thread) -------------------------------------------------------
     {
-        const ivec2 tile_origin = ivec2(cluster.xy) * 16;
-        const ivec2 max_pixel = textureSize(depth_texture, 0) - 1;   // partial edge tiles
-
-        float local_min = 1e30;
-        float local_max = 0.0;
-
-        for (uint i = local_id; i < 256u; i += LOCAL_SIZE) {
-            const ivec2 pixel = min(tile_origin + ivec2(i % 16u, i / 16u), max_pixel);
-            const float lz = max(linearize_depth(texelFetch(depth_texture, pixel, 0).r, camera.inv_projection), 0.0);
-            local_min = min(local_min, lz);
-            local_max = max(local_max, lz);
-        }
-
-        atomicMin(s_min_bits, floatBitsToUint(local_min));
-        atomicMax(s_max_bits, floatBitsToUint(local_max));
-    }
-    barrier();
-
-    if (local_id == 0u)
-        cluster_aabb_view(cluster, uintBitsToFloat(s_min_bits), uintBitsToFloat(s_max_bits), s_aabb_min, s_aabb_max);
-    barrier();
-
-    const uint max_per_cluster = min(min(light_meta.meta.z, MAX_PER_CLUSTER_LDS), 256u);
-
-    if (local_id == 0u)
-        s_light_count = 0u;
-    barrier();
-
-    const uint light_count = light_meta.meta.x;
-
-    for (uint i = local_id; i < light_count; i += LOCAL_SIZE) {
-
-        Light light = light_buffer.lights[i];
-        const uint type = uint(light.params.y);
-
-        // Light in view space. Radius is unchanged by the rigid transform
-        const vec3  light_pos_vs = (camera.view * vec4(light.position_radius.xyz, 1.0)).xyz;
-        const float radius = light.position_radius.w;
-
-        bool visible = false;
-
-        if (type == 1u) {
-
-            // Point light
-            visible = sphere_intersects_aabb(light_pos_vs, radius, s_aabb_min, s_aabb_max);
-
-        } else if (type == 2u) {
-
-            // Spot: sphere-AABB first as a cheap reject, then the cone
-            if (sphere_intersects_aabb(light_pos_vs, radius, s_aabb_min, s_aabb_max)) {
-
-                const vec3  axis_vs = normalize((camera.view * vec4(light.direction_inner_cos.xyz, 0.0)).xyz);
-                const float cos_outer = light.params.x;
-
-                // Conservative: use the AABB's bounding sphere
-                const vec3  center = 0.5 * (s_aabb_min + s_aabb_max);
-                const float aabb_radius = 0.5 * length(s_aabb_max - s_aabb_min);
-
-                visible = sphere_intersects_cone(light_pos_vs, axis_vs, cos_outer, center, aabb_radius + radius);
+        const ivec2 size = textureSize(depth_texture, 0);
+        const uvec2 block = gl_LocalInvocationID.xy * BLOCK_SIZE;
+        uint min_bits = 0xFFFFFFFFu;
+        uint max_bits = 0u;
+        bool geometry = false;
+        bool background = false;
+        for (uint y = 0u; y < BLOCK_SIZE.y; ++y) {
+            for (uint x = 0u; x < BLOCK_SIZE.x; ++x) {
+                const uvec2 texel = block + uvec2(x, y);        // within the tile
+                const ivec2 pixel = ivec2(tile * TILE_SIZE + texel);
+                if (texel.x >= TILE_SIZE.x || texel.y >= TILE_SIZE.y || pixel.x >= size.x || pixel.y >= size.y)
+                    continue;
+                const float d = texelFetch(depth_texture, pixel, 0).r;
+                if (d < 1.0) {                                  // background: nothing to light
+                    const uint lz_bits = floatBitsToUint(max(linearize_depth(d), 0.0));
+                    min_bits = min(min_bits, lz_bits);          // positive floats order like their bit patterns
+                    max_bits = max(max_bits, lz_bits);
+                    geometry = true;
+                } else {
+                    background = true;
+                }
             }
-
-        } else {
-
-            // Directional light: always affects every cluster
-            visible = true;
         }
+        if (geometry) {
+            atomicMin(s_min_bits, min_bits);
+            atomicMax(s_max_bits, max_bits);
+        }
+        if (background)
+            s_has_background = 1u;                              // benign race: every writer stores 1
+    }
+    barrier();
 
-        if (visible) {
-            const uint slot = atomicAdd(s_light_count, 1u);
-            if (slot < max_per_cluster)
-                s_light_indices[slot] = i;
+    float min_linear = uintBitsToFloat(s_min_bits);
+    float max_linear = uintBitsToFloat(s_max_bits);
+    bool  tile_has_geometry = s_max_bits != 0u && min_linear <= max_linear;
+
+    // Translucents are not in the depth buffer. Extend the tile's range by their (screen-global) view depth span so
+    // translucent fragments find lights. Only a tile FULLY covered by opaque geometry may cut the span at its farthest
+    // opaque texel: if any texel shows the sky, a translucent behind the opaque part is still visible through it
+    if (light_meta.meta.w != 0u) {
+        const vec2  span = unpackHalf2x16(light_meta.meta.w);
+        const float t_lo = span.x;
+        const float t_hi = (tile_has_geometry && s_has_background == 0u) ? min(span.y, max_linear) : span.y;
+        if (t_lo <= t_hi) {
+            min_linear = tile_has_geometry ? min(min_linear, t_lo) : t_lo;
+            max_linear = tile_has_geometry ? max(max_linear, t_hi) : t_hi;
+            tile_has_geometry = true;
         }
     }
 
+    // ---- 2. per-slice AABBs (thread t: slices t, t + THREADS, ...) --------------------------------------------------
+    for (uint slice = tid; slice < slices; slice += THREADS) {
+        vec3 mn, mx;
+        const bool slice_live = tile_has_geometry && slice_aabb(tile, slice, slices, min_linear, max_linear, mn, mx);
+        s_aabb_min[slice] = mn;
+        s_aabb_max[slice] = mx;
+        s_slice_active[slice] = slice_live ? 1u : 0u;
+        if (slice_live)
+            atomicOr(s_active_any, 1u);
+    }
     barrier();
 
-    // One thread reserves space and flushes the LDS list to the global buffer
-    if (local_id == 0u) {
+    // ---- 3. light tests (bitmask per slice) -------------------------------------------------------------------------
+    if (s_active_any != 0u && light_count > 0u) {                // uniform across the workgroup
 
-        uint count = min(s_light_count, max_per_cluster);
+        for (uint batch = 0u; batch < light_count; batch += THREADS) {
 
-        if (count == 0u) {
-            light_grid.grid[cluster_id] = uvec2(0u, 0u);
-            return;
+            const uint batch_size = min(THREADS, light_count - batch);
+            if (tid < batch_size) {
+                Light light = light_buffer.lights[batch + tid];
+                s_light_pos_radius[tid] = vec4((camera.view * vec4(light.position_radius.xyz, 1.0)).xyz, light.position_radius.w);
+                const vec3  dir_vs = (camera.view * vec4(light.direction_inner_cos.xyz, 0.0)).xyz;
+                const float len2 = dot(dir_vs, dir_vs);
+                s_light_axis_cos[tid] = vec4(len2 > 1e-12 ? dir_vs * inversesqrt(len2) : vec3(0.0, 0.0, -1.0), light.params.x);
+                s_light_type[tid] = uint(light.params.y);
+            }
+            barrier();
+
+            for (uint pair = tid; pair < batch_size * slices; pair += THREADS) {
+
+                const uint slice = pair / batch_size;
+                const uint local = pair % batch_size;
+                if (s_slice_active[slice] == 0u)
+                    continue;
+
+                const uint type = s_light_type[local];
+                const vec4 pr = s_light_pos_radius[local];
+                bool visible;
+                if (type == 1u) {
+                    visible = sphere_intersects_aabb(pr.xyz, pr.w, s_aabb_min[slice], s_aabb_max[slice]);
+                } else if (type == 2u) {
+                    visible = sphere_intersects_aabb(pr.xyz, pr.w, s_aabb_min[slice], s_aabb_max[slice]);
+                    if (visible) {
+                        const vec3  center = 0.5 * (s_aabb_min[slice] + s_aabb_max[slice]);
+                        const float aabb_radius = 0.5 * length(s_aabb_max[slice] - s_aabb_min[slice]);
+                        const vec4  ac = s_light_axis_cos[local];
+                        visible = sphere_intersects_cone(pr.xyz, ac.xyz, ac.w, center, aabb_radius + pr.w);
+                    }
+                } else {
+                    visible = true;                             // directional: every active cluster
+                }
+
+                if (visible) {
+                    const uint light_index = batch + local;
+                    atomicOr(s_mask[slice][light_index >> 5u], 1u << (light_index & 31u));
+                }
+            }
+            barrier();
         }
+    }
 
-        const uint capacity = light_meta.meta.y;
-        const uint base = atomicAdd(light_counter.next_free, count);
+    // ---- 4. per slice: count, one list per run of equal slices (never shortened, see the head of the file) -------------
+    // The active slices of a tile are one contiguous run, and neighbouring slices are mostly touched by the same lights
+    // (a light is rarely thinner than a slice): comparing with the slice in front finds nearly all duplicates
+    for (uint slice = tid; slice < slices; slice += THREADS) {
+        uint running = 0u;
+        for (uint w = 0u; w < words; ++w)
+            running += uint(bitCount(s_mask[slice][w]));
+        bool same = slice > 0u && running > 0u;
+        for (uint w = 0u; same && w < words; ++w)
+            same = s_mask[slice][w] == s_mask[slice - 1u][w];
 
-        // Overflow: drop this cluster's lights rather than stomp on another cluster's range
-        if (base >= capacity) {
-            light_grid.grid[cluster_id] = uvec2(0u, 0u);
-            return;
+        uint base = 0u;
+        uint count = 0u;
+        uint own = 0u;
+        if (same) {
+            // uses the list of the run's first slice (step 5)
+        } else if (running > 0u && running >= light_count) {
+            count = identity_count;                             // every light: the identity list, nothing to write
+        } else if (running > 0u) {
+            const uint offset = atomicAdd(light_counter.next_free, running);
+            if (offset <= list_capacity && running <= list_capacity - offset) {
+                base = LIST_BASE + offset;
+                count = running;
+                own = 1u;
+            } else {
+                count = identity_count;                         // index list full: all lights (correct, slower), never fewer
+            }
         }
-        if (base + count > capacity)
-            count = capacity - base;
+        s_same[slice] = same ? 1u : 0u;
+        s_base[slice] = base;
+        s_count[slice] = count;
+        s_own[slice] = own;
+    }
+    barrier();
 
-        light_grid.grid[cluster_id] = uvec2(base, count);
+    // ---- 5. grid entries, index lists -------------------------------------------------------------------------------
+    for (uint slice = tid; slice < slices; slice += THREADS) {
+        uint leader = slice;
+        for (uint step = 0u; step < SLICES && s_same[leader] != 0u; ++step)     // s_same[0] is always 0
+            --leader;
+        light_grid.grid[slice * tiles_per_slice + tile_index] = uvec2(s_base[leader], s_count[leader]);
+    }
 
-        for (uint k = 0u; k < count; ++k)
-            light_index_list.indices[base + k] = s_light_indices[k];
+    for (uint i = tid; i < slices * words; i += THREADS) {
+        const uint slice = i / words;
+        if (s_own[slice] == 0u)
+            continue;
+        const uint w = i % words;
+        uint bits = s_mask[slice][w];
+        if (bits == 0u)
+            continue;
+        uint rank = 0u;                                         // lights of this slice in earlier words
+        for (uint pw = 0u; pw < w; ++pw)
+            rank += uint(bitCount(s_mask[slice][pw]));
+        const uint count = s_count[slice];
+        while (bits != 0u && rank < count) {
+            const uint bit = uint(findLSB(bits));
+            bits &= bits - 1u;
+            light_index_list.indices[s_base[slice] + rank] = w * 32u + bit;
+            ++rank;
+        }
+    }
+
+    // The identity list. Entries [0, LIST_BASE) are reserved for it and never handed out above
+    if (tile == uvec2(0u)) {
+        for (uint i = tid; i < identity_count; i += THREADS)
+            light_index_list.indices[i] = i;
     }
 }

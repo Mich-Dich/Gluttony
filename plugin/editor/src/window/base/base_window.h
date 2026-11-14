@@ -33,7 +33,7 @@ namespace GLT::editor {
     // Abstract base class for all ImGui-based editor windows.
     //
     // Provides common functionality: window naming (with unique ID), visibility toggling,
-    // focus management, and a circular buffer for undo/redo operations.
+    // focus management, and an optional undo/redo history.
 	class base_window {
 	public:
 
@@ -103,6 +103,24 @@ namespace GLT::editor {
         // this before the first frame the window is drawn.
         virtual void dock_to(ImGuiID dock_id);
 
+
+        // ---- undo / redo ----------------------------------------------------------------------------------------
+        // Every window can own an undo history. Derived classes opt in by setting m_enable_undo_system = true and
+        // pushing steps onto m_undo_stack. Ctrl+Z / Ctrl+Y and the Edit menu go to the undo-enabled window that had
+        // focus most recently (see track_focus()).
+
+        // Null if this window has no undo history
+        [[nodiscard]] undo_system::stack* get_undo_stack() noexcept;
+
+
+        // Override to finish in-progress edits before stepping (e.g. a gizmo drag that hasn't been released yet)
+        virtual bool undo();
+        virtual bool redo();
+
+
+        // ImGui frame on which one of this window's ImGui windows last had focus
+        FORCE_INLINE_R i32 get_last_focus_frame() const noexcept { return m_last_focus_frame; }
+
     protected:
 
         // Call immediately before ImGui::Begin() to honor a pending dock request.
@@ -115,6 +133,11 @@ namespace GLT::editor {
         //
         // No-op if the window hasn't been shown yet (first frame).
         void cache_window_state();
+
+
+        // Call right after ImGui::Begin() of every ImGui window this editor window owns. Remembers that the user is
+        // working in this window, so undo/redo shortcuts are routed here
+        void track_focus();
 
 
         // Creates a unique ImGui window ID by appending the object's address
@@ -143,9 +166,10 @@ namespace GLT::editor {
         bool                                m_show_window = true;           // Set to false to close/hide the window.
         bool                                m_window_visible = true;        // Can be used for performance optimizations (e.g., skip rendering when false).
 
-        // Undo/redo system using a fixed‑size circular buffer of serialized states.
+        // Undo/redo history of this window (see undo_system/stack.h)
         bool                                m_enable_undo_system = false;   // Enables the undo/redo system (set by derived classes).
         undo_system::stack                  m_undo_stack{};
+        i32                                 m_last_focus_frame = -1;
         ImGuiID                             m_pending_dock_id = 0;
         window_specs                        m_window_specs{};
 

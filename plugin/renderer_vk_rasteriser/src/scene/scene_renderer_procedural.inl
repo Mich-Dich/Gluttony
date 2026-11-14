@@ -30,6 +30,7 @@ namespace GLT::renderer::vk_rasterizer {
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
     GLT::render::procedural_mesh_id scene_renderer::create_procedural_mesh(GLT::render::mesh_update_class update_class) {
+        GLT_PROFILE_SCOPE("scene_renderer::create_procedural_mesh");
 
         u32 slot_idx;
         if (!m_free_procedural_slots.empty()) {
@@ -60,6 +61,7 @@ namespace GLT::renderer::vk_rasterizer {
 
     std::expected<void, GLT::render::procedural_mesh_error> scene_renderer::update_procedural_mesh(GLT::render::procedural_mesh_id id,
         std::span<const GLT::asset::mesh::vertex> vertices, std::span<const u32> indices, GLT::asset::handle material) {
+        GLT_PROFILE_SCOPE("scene_renderer::update_procedural_mesh");
 
         using PME = GLT::render::procedural_mesh_error;
         using ME = GLT::render::mesh_update_class;
@@ -91,15 +93,17 @@ namespace GLT::renderer::vk_rasterizer {
                 return std::unexpected(PME{ Code::invalid_input, std::format("index {} >= vertex count {}", idx, vertices.size()) });
         }
 
-        m_plugin.get_vk_device().waitIdle();
+        // In-flight frames may still be drawing the previous contents, so never write into the existing buffers: allocate
+        // fresh ones and retire the old pair (destroyed once the GPU is done). This replaces a full waitIdle() per update
+        // TODO(roadmap step 7): suballocate from per-frame ring buffers instead of allocating per update
+        if (slot.vertex_buffer.buffer)
+            m_shared->retire_buffer(slot.vertex_buffer);
+        if (slot.index_buffer.buffer)
+            m_shared->retire_buffer(slot.index_buffer);
 
         // Vertex buffer -----------------------------------------------------------------------------------------------
 
-        const bool grow_v = !slot.vertex_buffer.buffer || vb_bytes > slot.vertex_buffer.size;
-        if (grow_v) {
-
-            if (slot.vertex_buffer.buffer)
-                m_plugin.get_dev()->destroy_buffer(slot.vertex_buffer);
+        {
             slot.vertex_buffer = m_plugin.get_dev()->create_buffer(vb_bytes,
                 vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer, 
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
@@ -111,12 +115,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Index buffer ------------------------------------------------------------------------------------------------
 
-        const bool grow_i = !slot.index_buffer.buffer || ib_bytes > slot.index_buffer.size;
-        if (grow_i) {
-
-            if (slot.index_buffer.buffer)
-                m_plugin.get_dev()->destroy_buffer(slot.index_buffer);
-
+        {
             slot.index_buffer = m_plugin.get_dev()->create_buffer(ib_bytes,
                 vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eStorageBuffer,
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
@@ -152,6 +151,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_procedural_mesh(GLT::render::procedural_mesh_id id) {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_procedural_mesh");
 
         if (id == GLT::render::INVALID_PROCEDURAL_MESH || id > m_procedural_meshes.size())
             return;
@@ -160,12 +160,11 @@ namespace GLT::renderer::vk_rasterizer {
         if (!slot.alive)
             return;
 
-        m_plugin.get_vk_device().waitIdle();
-
+        // Retired, not destroyed: frames in flight may still draw this mesh
         if (slot.vertex_buffer.buffer)
-            m_plugin.get_dev()->destroy_buffer(slot.vertex_buffer);
+            m_shared->retire_buffer(slot.vertex_buffer);
         if (slot.index_buffer.buffer)
-            m_plugin.get_dev()->destroy_buffer(slot.index_buffer);
+            m_shared->retire_buffer(slot.index_buffer);
         if (slot.material_slot != DEFAULT_MATERIAL_SLOT)
             m_shared->release_material(slot.material_slot);
 

@@ -76,6 +76,10 @@ namespace GLT::editor {
 
         bool serialize(const std::filesystem::path& project_file, const GLT::serializer::option option) override;
 
+        // Parse an ASSET_DRAG_PAYLOAD produced by draw_file_item(). Newline-separated, null-terminated-or-not (we accept both).
+        // Public: other windows accept asset drops too (the world viewport opens dropped worlds)
+        [[nodiscard]] static std::vector<std::filesystem::path> parse_drag_payload(const ImGuiPayload* payload);
+
     private:
 
         struct dir_entry {
@@ -90,10 +94,11 @@ namespace GLT::editor {
 
         // ---- drawing helpers -----------------------------------------------
         void draw_toolbar();
+        void draw_status_bar(const u32 shown_items);
         void draw_breadcrumbs();
         void draw_directory_tree();
         void draw_directory_tree_recursive(const std::filesystem::path& dir, const bool collapse_tree);
-        void draw_file_view();
+        u32 draw_file_view();                                           // returns the number of items shown
         void draw_file_item(const dir_entry& entry);
         void draw_background_context_menu();
         void draw_item_context_menu(const dir_entry& entry);
@@ -119,8 +124,6 @@ namespace GLT::editor {
         void create_folder();
         void create_material();
 
-        // Parse a drag payload produced by draw_file_item(). Newline-separated, null-terminated-or-not (we accept both)
-        static std::vector<std::filesystem::path> parse_drag_payload(const ImGuiPayload* payload);
 
         // Move every path in `sources` into `target_dir` via the registry. Handles single files, folders, and the "self-nesting" guard
         void move_assets_to(const std::vector<std::filesystem::path>& sources, const std::filesystem::path& target_dir);
@@ -143,6 +146,8 @@ namespace GLT::editor {
         std::filesystem::path                                       m_selection_anchor{};
 
         char                                                        m_search_buffer[256]{};
+        f32                                                         m_icon_size = 56.f;     // grid zoom (Ctrl + wheel, slider in the status bar)
+        u32                                                         m_shown_items = 0;      // items drawn last frame (status bar)
 
         std::filesystem::path                                       m_pending_rename_path{};
         std::filesystem::path                                       m_pending_delete_path{};

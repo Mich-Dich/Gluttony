@@ -10,7 +10,6 @@
 #include "util/builders.h"
 #include "util/device.h"
 #include "shared/shared_resource_manager.h"
-
 #include "settings.h"
 
 
@@ -114,6 +113,7 @@ namespace GLT::renderer::vk_rasterizer {
         GETTER_C(GLT::platform::i_window_plugin*,                               window, mp_window)
         GETTER_C(shared_resource_manager*,                                      shared, m_shared.get())
         GETTER_C(GLT::platform::window_handle,                                  primary_window, m_primary_window)
+        [[nodiscard]] const settings::visual& visual_settings() const { return m_visual_settings; }
 
     private:
 
@@ -138,6 +138,8 @@ namespace GLT::renderer::vk_rasterizer {
         GLT::platform::window_handle                                            m_primary_window{};
         std::unordered_map<GLT::platform::window_handle, surface_entry>         m_surfaces{};
         handle                                                                  m_framebuffer_resize_sub{};
+        handle                                                                  m_gpu_stats_provider{};     // "GPU passes" HUD section
+        handle                                                                  m_gpu_device_provider{};    // "GPU device: <name>" section
         GLT::unique_ref<shared_resource_manager>                                m_shared{};
         GLT::render::renderer_feature                                           m_features{};
         settings::visual                                                        m_visual_settings{};

@@ -3,6 +3,7 @@
 
 #include <application.h>
 #include <util/timing/stopwatch.h>
+#include <debug/trace.h>
 #include <event/event_bus.h>
 #include <event/application_event.h>
 #include <platform/i_window.h>
@@ -96,7 +97,12 @@ namespace GLT::game_loop {
 
         void run(context& ctx) override {
 
-            util::stopwatch cpu_timer(&ctx.stats.cpu_time_ms, GLT::time_unit::milliseconds);
+            GLT_PROFILE_THREAD("Main");
+
+            // The loop time includes every blocking call (GPU fences, swapchain acquire, present/vsync). Those are tracked by
+            // GLT_PROFILE_WAIT zones, so CPU work = loop time - waits. The limiter sleep is reported separately
+            f32 loop_ms = 0.f;
+            util::stopwatch cpu_timer(&loop_ms, GLT::time_unit::milliseconds);
             u64 frame = 0;
 
             while (!is_stop_requested()) {
@@ -107,12 +113,24 @@ namespace GLT::game_loop {
                     refresh_if_stale();
 
                 // update --------------------------------------------------------------------------------------------------
-                m_window->poll_events();
+                {
+                    GLT_PROFILE_SCOPE("Poll events");
+                    m_window->poll_events();
+                }
                 thread_pool::pump_main_thread();
-                for (auto layer = ctx.layers.end(); layer != ctx.layers.begin(); )
-                    (*--layer)->update(ctx.delta_time);                         // world_layer submits to scene renderers
-                GLT::event_bus::post<update_event>(ctx.delta_time);
-                m_audio->update_3d_audio();
+                {
+                    GLT_PROFILE_SCOPE("Layer update");
+                    for (auto layer = ctx.layers.end(); layer != ctx.layers.begin(); )
+                        (*--layer)->update(ctx.delta_time);                     // world_layer submits to scene renderers
+                }
+                {
+                    GLT_PROFILE_SCOPE("Update event");
+                    GLT::event_bus::post<update_event>(ctx.delta_time);
+                }
+                {
+                    GLT_PROFILE_SCOPE("Audio update");
+                    m_audio->update_3d_audio();
+                }
 
                 // draw ----------------------------------------------------------------------------------------------------
                 m_renderer->begin_frame(frame);                                 // tick shared resource manager
@@ -122,10 +140,17 @@ namespace GLT::game_loop {
                 for (auto& scene : scenes)
                     scene->update(ctx.delta_time);
 
-                for (auto layer = ctx.layers.begin(); layer != ctx.layers.end(); )
-                    (*layer++)->render_imgui(ctx.delta_time);
+                {
+                    GLT_PROFILE_SCOPE("Build UI (ImGui)");
+                    for (auto layer = ctx.layers.begin(); layer != ctx.layers.end(); )
+                        (*layer++)->render_imgui(ctx.delta_time);
+                }
 
-                for (auto& scene : scenes) {
+                // Offscreen targets (editor viewport, previews) first, window targets after: the UI rendered by a window
+                // target samples the offscreen images, so they must already hold THIS frame. Otherwise the viewport image
+                // lags one frame behind everything ImGui draws on top of it (gizmo wobbles around the entity when the
+                // camera moves)
+                auto render_scene = [&](auto& scene) {
                     auto result = scene->render(frame);
                     if (!result) {
                         if (result.error().kind == GLT::render::render_error::code::target_out_of_date && !scene->is_offscreen()) {
@@ -135,19 +160,47 @@ namespace GLT::game_loop {
                             LOG(error, "scene_renderer::render failed: {}", result.error().message)
                         }
                     }
+                };
+
+                {
+                    GLT_PROFILE_SCOPE("Render offscreen targets");
+                    for (auto& scene : scenes)
+                        if (scene->is_offscreen())
+                            render_scene(scene);
+                }
+                {
+                    GLT_PROFILE_SCOPE("Render window targets");
+                    for (auto& scene : scenes)
+                        if (!scene->is_offscreen())
+                            render_scene(scene);
                 }
 
                 cpu_timer.stop();
                 frame++;
 
                 // stats ---------------------------------------------------------------------------------------------------
-                ctx.delta_time = ctx.fps_controller.limit();
+                const f32 wait_ms = debug::trace::current_frame_wait_ms();
+                const u64 limiter_start = debug::trace::now_ns();
+                {
+                    GLT_PROFILE_IDLE("Frame limiter");
+                    ctx.delta_time = ctx.fps_controller.limit();
+                }
+                const f32 limiter_ms = static_cast<f32>(debug::trace::now_ns() - limiter_start) * 1e-6f;
+
                 ctx.total_time += ctx.delta_time;
                 ctx.stats.frame_time_ms = ctx.delta_time;
+                ctx.stats.cpu_wait_ms = wait_ms;
+                ctx.stats.cpu_time_ms = std::max(loop_ms - wait_ms, 0.f);
+                ctx.stats.limiter_ms = limiter_ms;
                 ctx.stats.fps = (ctx.delta_time > 0.0f) ? (1000.0f / ctx.delta_time) : 0.0f;
                 ctx.stats.render = m_renderer->get_render_stats();
                 ctx.stats.ram_bytes = GLT::util::get_process_ram_bytes();
                 debug::update_app_stats(ctx.stats);
+
+                GLT_PROFILE_PLOT("CPU work (ms)", static_cast<double>(ctx.stats.cpu_time_ms));
+                GLT_PROFILE_PLOT("CPU wait (ms)", static_cast<double>(wait_ms));
+                GLT_PROFILE_PLOT("GPU (ms)", static_cast<double>(ctx.stats.render.gpu_time_ms));
+                GLT_PROFILE_FRAME();
             }
         }
 

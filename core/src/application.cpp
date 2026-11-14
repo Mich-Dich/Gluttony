@@ -1,5 +1,6 @@
 #include "util/pch.h"
 #include "application.h"
+#include "settings/engine_settings.h"
 
 #include "event/event_bus.h"
 #include "event/application_event.h"
@@ -42,6 +43,7 @@ namespace GLT {
         s_instance = this;
 
         m_project.serialize_projects_data(project_path, GLT::serializer::option::load);
+        engine_settings::load(m_project.project_path);     // before any plugin is created: they start with the stored values
         set_target_fps(60);
         imgui_config::init();
 

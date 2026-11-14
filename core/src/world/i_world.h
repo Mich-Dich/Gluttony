@@ -6,6 +6,7 @@
 #include "asset/asset_ref.h"
 #include "asset/region.h"
 #include "world/entity.h"
+#include "world/mobility.h"
 #include "world/component.h"
 #include "physics/i_physics.h"
 
@@ -83,6 +84,13 @@ namespace GLT::world {
         // (this is Save-As on a never-saved world). If one is already bound elsewhere, migrates
         [[nodiscard]] virtual std::expected<void, asset::load_error> save_as(const std::filesystem::path& path) = 0;
 
+        // world entity ------------------------------------------------------------------------------------------------
+        // Every world owns exactly one world entity: never streamed, never part of a region, saved with the world asset,
+        // cannot be despawned or parented. World-scope components (sky, sun light, ambient, plugin-defined world
+        // settings) live on it; see component::scope. INVALID_ENTITY on worlds that don't support it
+        [[nodiscard]] virtual entity_id world_entity() const noexcept { return INVALID_ENTITY; }
+        [[nodiscard]] bool is_world_entity(entity_id id) const noexcept { return id.is_valid() && id == world_entity(); }
+
         // entity lifecycle -------------------------------------------------------------------------------------------
         [[nodiscard]] virtual entity_id spawn() = 0;
         virtual void despawn(entity_id id) noexcept = 0;
@@ -96,6 +104,16 @@ namespace GLT::world {
         // an entire subtree must walk it themselves (children_of / parent_of are already on this interface)
         [[nodiscard]] virtual bool is_visible(entity_id /*id*/) const { return true; }
         virtual void set_visible(entity_id /*id*/, bool /*visible*/) {}
+
+        // mobility ----------------------------------------------------------------------------------------------------
+        // Performance hint for render data caching, see world/mobility.h. Worlds without caching treat everything as movable
+        [[nodiscard]] virtual mobility get_mobility(entity_id /*id*/) const { return mobility::movable; }
+        virtual void set_mobility(entity_id /*id*/, mobility /*value*/) {}
+
+        // Tells the world that component data of [id] was written directly (through a component pointer, e.g. an editor
+        // property panel) instead of through this interface, so cached render data of [id] and its children is refreshed.
+        // Setters on this interface do this themselves. Cheap: the work is deferred to the next gather
+        virtual void mark_changed(entity_id /*id*/) {}
 
         // transform ---------------------------------------------------------------------------------------------------
         [[nodiscard]] virtual glm::vec3 get_local_position(entity_id id) const = 0;
@@ -134,6 +152,16 @@ namespace GLT::world {
         [[nodiscard]] virtual bool has_children(entity_id /*id*/) const noexcept { return false; }
         virtual void set_parent(entity_id /*child*/, entity_id /*parent*/) {}
         [[nodiscard]] virtual entity_id parent_of(entity_id /*id*/) const noexcept { return INVALID_ENTITY; }
+
+        // snapshots (editor undo / redo) ------------------------------------------------------------------------------
+        // An entity snapshot is an opaque blob holding every persisted component of the given entities (incl. their parent
+        // link). Dead ids are skipped. Worlds that don't support it return an empty blob (= the editor can't undo world edits)
+        [[nodiscard]] virtual std::vector<std::byte> snapshot_entities(std::span<const entity_id> /*ids*/) const { return {}; }
+
+        // Puts every entity stored in `blob` back into exactly the stored state. Alive entities are replaced, despawned
+        // ones are re-created under the SAME entity_id, so anything else that references them stays valid. Parent/child
+        // links, region membership and physics bodies are rebuilt. Returns the restored ids
+        virtual std::vector<entity_id> restore_entities(std::span<const std::byte> /*blob*/) { return {}; }
 
         // Type-erased access. Returns the storage for `hash` in *this world,
         // creating it lazily on first call. Null if no such type is registered.

@@ -41,6 +41,13 @@ namespace GLT::world::component_registry {
 
 
     template<typename T>
+    [[nodiscard]] T* get_world(i_world& world) {
+        const entity_id id = world.world_entity();
+        return id.is_valid() ? get<T>(world, id) : nullptr;
+    }
+
+
+    template<typename T>
     [[nodiscard]] std::vector<std::pair<entity_id, T*>> entities_with(i_world& world) {
 
         std::vector<std::pair<entity_id, T*>> out;

@@ -47,7 +47,7 @@ vec3 heatmap(float t) {
 void main() {
 
     const uvec3 grid_dims = camera.cluster_dims.xyz;
-    const uvec2 tile = uvec2(gl_FragCoord.xy / vec2(16.0, 16.0));
+    const uvec2 tile = uvec2(gl_FragCoord.xy / vec2(CLUSTER_TILE_SIZE_X, CLUSTER_TILE_SIZE_Y));
 
     const float near_z = camera.cluster_depth.x;
     const float far_z = camera.cluster_depth.y;

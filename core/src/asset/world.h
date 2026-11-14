@@ -26,6 +26,7 @@ namespace GLT::asset::world {
     inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_REGION_CELL_SIZE = 0x0304;
 
     inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_STREAMING_RADIUS = 0x0305;
+    inline constexpr GLT::asset::chunk_id               CHUNK_WORLD_ENTITY = 0x0307;            // u32 codec + world entity blob (optional)
 
     // MACROS ==========================================================================================================
 
@@ -53,6 +54,11 @@ namespace GLT::asset::world {
         std::vector<GLT::asset::region::region>         region_index;
         std::vector<std::byte>                          settings;       // opaque, plugin-defined
 
+        // The world entity (world-scope components: sky, sun, ambient, ...), encoded by the world plugin's entity codec.
+        // Empty for worlds saved before world entities existed; the plugin then creates a default one
+        u32                                             world_entity_codec{ 0 };
+        std::vector<std::byte>                          world_entity_data;
+
         // Side length (in meters) of one grid cell. Region bounds are always [cell * size - size/2, cell * size + size/2], so the origin
         // sits at the centre of cell (0,0,0). Every region in the world uses the same size; changing this is a "rebuild the grid" operation
         glm::vec3                                       region_cell_size{ 256.f, 256.f, 256.f };
@@ -72,7 +78,8 @@ namespace GLT::asset::world {
 
         // @brief Approximate resident bytes, used by the profiler
         FORCE_INLINE_R u64 memory_usage() const noexcept override {
-            return sizeof(*this) + region_index.capacity() * sizeof(GLT::asset::region::region) + settings.capacity();
+            return sizeof(*this) + region_index.capacity() * sizeof(GLT::asset::region::region) + settings.capacity()
+                + world_entity_data.capacity();
         }
     };
 

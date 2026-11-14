@@ -49,13 +49,17 @@ namespace GLT::renderer::vk_rasterizer::graph {
                 return {L::eGeneral, A::eShaderRead | A::eShaderWrite, S::eComputeShader | S::eFragmentShader};
 
             case texture_usage::color_attachment:
-                return {L::eColorAttachmentOptimal, A::eColorAttachmentWrite, S::eColorAttachmentOutput};
+                // Read too: load ops and blending (translucent pass) read the attachment, so the barrier must make prior
+                // writes visible to reads, not only order writes
+                return {L::eColorAttachmentOptimal, A::eColorAttachmentRead | A::eColorAttachmentWrite, S::eColorAttachmentOutput};
 
             case texture_usage::depth_sampled:
                 return {L::eDepthStencilReadOnlyOptimal, A::eShaderRead, S::eComputeShader | S::eFragmentShader};
 
             case texture_usage::depth_attachment:
-                return {L::eDepthStencilAttachmentOptimal, A::eDepthStencilAttachmentWrite, S::eEarlyFragmentTests | S::eLateFragmentTests};
+                // Read too: depth testing and eLoad read the attachment
+                return {L::eDepthStencilAttachmentOptimal, A::eDepthStencilAttachmentRead | A::eDepthStencilAttachmentWrite,
+                    S::eEarlyFragmentTests | S::eLateFragmentTests};
 
             case texture_usage::depth_readonly:
                 return {L::eDepthStencilReadOnlyOptimal, A::eDepthStencilAttachmentRead, S::eEarlyFragmentTests | S::eLateFragmentTests};

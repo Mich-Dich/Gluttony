@@ -28,11 +28,11 @@ namespace GLT::world::component_registry {
     template<typename T>
     component::type_descriptor make_descriptor(std::string_view name, std::string_view category,
         std::function<void(GLT::world::i_world&, entity_id)> draw, std::function<std::string(GLT::world::i_world&, entity_id)> summary,
-        std::vector<u64> required);
+        std::vector<u64> required, component::scope scope = component::scope::entity);
 
     template<typename T>
     void add(std::string_view name, std::string_view category, std::function<void(GLT::world::i_world&, entity_id)> draw,
-        std::function<std::string(GLT::world::i_world&, entity_id)> summary, std::vector<u64> required);
+        std::function<std::string(GLT::world::i_world&, entity_id)> summary, std::vector<u64> required, component::scope scope);
 
     template<typename T>
     bool remove_type();

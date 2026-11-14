@@ -139,13 +139,17 @@ add_executable(${PROJECT_NAME}
 )
 
 
-set_target_properties(${PROJECT_NAME}                                   PROPERTIES
+set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY                                            "${COMPILE_OUTPUT_DIR}"
     CXX_VISIBILITY_PRESET                                               default
     VISIBILITY_INLINES_HIDDEN                                           OFF
-    BUILD_RPATH                                                         "/opt/gcc-16.2/lib64"
-    INSTALL_RPATH                                                       "/opt/gcc-16.2/lib64"
 )
+if(GCC16_RUNTIME_DIR)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        BUILD_RPATH                                                     "${GCC16_RUNTIME_DIR}"
+        INSTALL_RPATH                                                   "${GCC16_RUNTIME_DIR}"
+    )
+endif()
 
 
 target_include_directories(${PROJECT_NAME}                              PRIVATE

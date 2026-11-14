@@ -1,5 +1,6 @@
 
 #include "util/pch.h"
+#include <debug/trace.h>
 #include "util/util_pch.h"
 
 #include "image.h"
@@ -220,6 +221,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void* image::load(const std::filesystem::path& path, u32& out_width, u32& out_height) {
+        GLT_PROFILE_SCOPE("image::load");
 
         int width, height, channels;
         u8* buffer = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
@@ -232,6 +234,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void image::resize(const glm::uvec3& new_size, const GLT::render::image_format format, const bool mipmapped) {
+        GLT_PROFILE_SCOPE("image::resize");
 
         const glm::uvec3 current_size{ m_allocated_image.width, m_allocated_image.height, 1 };
         if (current_size == new_size) 
@@ -244,6 +247,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void image::reupload(const void* data) {
+        GLT_PROFILE_SCOPE("image::reupload");
 
         if (!data || !m_renderer || !m_allocated_image.image)
             return;
@@ -264,10 +268,10 @@ namespace GLT::renderer::vk_rasterizer {
                 .setBaseArrayLayer(0)
                 .setLayerCount(1);
 
-            // note: from eShaderReadOnlyOptimal, not eUndefined - the image is
-            // already in use by ImGui at this point
+            // From the tracked layout (an image that was never uploaded / rendered is still UNDEFINED; one that was
+            // rendered to may be in another layout). The whole image is overwritten, so contents may be discarded
             vr_dev->transition_image_layout(cmd, m_allocated_image.image,
-                vk::ImageLayout::eShaderReadOnlyOptimal,
+                m_accessible_image.layout,
                 vk::ImageLayout::eTransferDstOptimal,
                 base_range,
                 vk::PipelineStageFlagBits::eFragmentShader,
@@ -283,19 +287,8 @@ namespace GLT::renderer::vk_rasterizer {
                 vk::ImageLayout::eTransferDstOptimal, 1, &copy_region);
 
             if (m_mip_levels > 1) {
-                const vk::ImageSubresourceRange upper = vk::ImageSubresourceRange()
-                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                    .setBaseMipLevel(1)
-                    .setLevelCount(m_mip_levels - 1)
-                    .setBaseArrayLayer(0).setLayerCount(1);
-
-                vr_dev->transition_image_layout(cmd, m_allocated_image.image,
-                    vk::ImageLayout::eShaderReadOnlyOptimal,
-                    vk::ImageLayout::eTransferDstOptimal,
-                    upper,
-                    vk::PipelineStageFlagBits::eFragmentShader,
-                    vk::PipelineStageFlagBits::eTransfer);
-
+                // base_range above already covers every mip level (now TRANSFER_DST), so no second transition here.
+                // generate_mipmaps leaves every level in SHADER_READ_ONLY_OPTIMAL
                 generate_mipmaps(cmd, m_allocated_image.image,
                     m_allocated_image.width, m_allocated_image.height, m_mip_levels);
             } else {
@@ -308,11 +301,13 @@ namespace GLT::renderer::vk_rasterizer {
             }
         });
 
+        m_accessible_image.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         vr_dev->destroy_buffer(staging);
     }
 
 
     void image::update_region(const void* data, const u32 x, const u32 y, const u32 width, const u32 height, const u32 mip_level) {
+        GLT_PROFILE_SCOPE("image::update_region");
 
         if (!data || !m_renderer || !m_allocated_image.image || width == 0 || height == 0)
             return;
@@ -345,12 +340,10 @@ namespace GLT::renderer::vk_rasterizer {
                 .setBaseArrayLayer(0)
                 .setLayerCount(1);
 
-            // Convention: images live in eShaderReadOnlyOptimal whenever they're
-            // not actively being used by an upload (see allocate_memory/assign_data).
-            // If you ever start keeping long-lived images in a different layout,
-            // you'll need to store the current layout per image instead.
+            // From the tracked layout (m_accessible_image.layout), not an assumed SHADER_READ_ONLY: render targets and
+            // never-uploaded images live in other layouts
             vr_dev->transition_image_layout(cmd, m_allocated_image.image,
-                vk::ImageLayout::eShaderReadOnlyOptimal,
+                m_accessible_image.layout,
                 vk::ImageLayout::eTransferDstOptimal,
                 level_range,
                 vk::PipelineStageFlagBits::eFragmentShader,
@@ -383,7 +376,7 @@ namespace GLT::renderer::vk_rasterizer {
                     .setLayerCount(1);
 
                 vr_dev->transition_image_layout(cmd, m_allocated_image.image,
-                    vk::ImageLayout::eShaderReadOnlyOptimal,
+                    m_accessible_image.layout,                      // upper levels are still in the tracked layout
                     vk::ImageLayout::eTransferDstOptimal,
                     upper_levels,
                     vk::PipelineStageFlagBits::eFragmentShader,
@@ -403,6 +396,7 @@ namespace GLT::renderer::vk_rasterizer {
             }
         });
 
+        m_accessible_image.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         vr_dev->destroy_buffer(staging);
     }
 
@@ -411,6 +405,7 @@ namespace GLT::renderer::vk_rasterizer {
     // CLASS PRIVATE ===================================================================================================
 
     void image::allocate_memory(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const bool mipmapped) {
+        GLT_PROFILE_SCOPE("image::allocate_memory");
 
         m_renderer = GLT::plugin_manager::get_plugin_ref<GLT::renderer::vk_rasterizer::renderer>(GLT::plugin_manager::interface::renderer);
         util::device* vr_dev = m_renderer->get_dev();
@@ -467,6 +462,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void image::assign_data(const void* data, const glm::uvec3 size, const GLT::render::image_format format, const u32 mip_levels) {
+        GLT_PROFILE_SCOPE("image::assign_data");
 
         util::device* vr_dev = m_renderer->get_dev();
         const size_t data_size = size.x * size.y * size.z * bytes_per_pixel(format);
@@ -505,12 +501,14 @@ namespace GLT::renderer::vk_rasterizer {
                         m_allocated_image.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
                         base_range,              vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader);
             });
+            m_accessible_image.layout = vk::ImageLayout::eShaderReadOnlyOptimal;   // reupload/update_region start from it
             vr_dev->destroy_buffer(staging);
         }
     }
 
 
     void image::release() {
+        GLT_PROFILE_SCOPE("image::release");
 
         if (!m_renderer)
             return;                                                     // never allocated, nothing to do

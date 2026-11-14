@@ -1,5 +1,6 @@
 #include "util/pch.h"
 #include "game_session.h"
+#include "debug/trace.h"
 
 #include "world/i_world.h"
 #include "world/i_world_plugin.h"
@@ -8,6 +9,9 @@
 #include "render/i_scene_renderer.h"
 #include "physics/i_physics.h"
 #include "physics/i_physics_plugin.h"
+#include "scripting/i_script_host.h"
+#include "scripting/i_script_plugin.h"
+#include "asset/i_asset_registry.h"
 
 
 
@@ -50,14 +54,6 @@ namespace GLT::game {
 
     // physics ---------------------------------------------------------------------------------------------------------
 
-    void game_session::remove_physics() {
-
-        if (m_world)
-            m_world->set_physics(nullptr);      // detach before destroying: the world must not hold a dangling pointer
-        m_physics.reset();
-    }
-
-
     bool game_session::create_physics() {
 
         if (m_physics)
@@ -74,11 +70,21 @@ namespace GLT::game {
         }
 
         m_physics = std::move(*result);
+        update_script_host_context();
 
         if (m_world)
             m_world->set_physics(m_physics.get());   // world iterates all entities and (re)creates bodies
 
         return true;
+    }
+
+
+    void game_session::remove_physics() {
+
+        if (m_world)
+            m_world->set_physics(nullptr);
+        m_physics.reset();
+        update_script_host_context();
     }
 
     // world -----------------------------------------------------------------------------------------------------------
@@ -106,6 +112,15 @@ namespace GLT::game {
         m_world = std::move(*result);
         m_world->set_physics(m_physics.get());
         reset_per_frame_state();
+
+        ensure_script_host();
+        if (m_scripting) {
+            update_script_host_context();
+            m_scripting->refresh_all();
+            m_scripting->run_world_generators();
+            attach_default_globals();
+        }
+
         return {};
     }
 
@@ -129,16 +144,24 @@ namespace GLT::game {
 
     void game_session::unload_world() {
 
-        m_world.reset();                                // destroys bodies while m_physics is still live
+        // Tear down host's view of the world while m_world is still live, so on_stop can safely read the world. Then reset world
+        if (m_scripting)
+            m_scripting->refresh_all();         // no bindings -> on_stop every entity slot
+
+        m_world.reset();
+        
+        update_script_host_context();           // detach world context but keep the host alive (globals keep ticking)
 
         if (m_physics) {
             if (auto* phys = physics::get_ptr()) {
                 if (auto result = phys->instantiate())
                     m_physics = std::move(*result);
                 else
-                    LOG(error, "Failed to rebuild physics after world unload: {}", (static_cast<int>(result.error())))
+                    LOG(error, "Failed to rebuild physics after world unload: {}", (int)result.error())
             }
+            update_script_host_context();
         }
+
         reset_per_frame_state();
     }
 
@@ -217,13 +240,26 @@ namespace GLT::game {
         if (m_paused)
             return;
 
+        GLT_PROFILE_SCOPE_C("Session update", GLT::debug::trace::COLOR_WORLD);
+
         // Controller runs first so any input-driven intent lands in the world/ECS state before physics reads it. Physics
         // runs before world->update so the world's gather step sees this frame's post-physics transforms
-        if (m_controller)
+        if (m_controller) {
+            GLT_PROFILE_SCOPE("Controller");
             m_controller->update(dt);
+        }
 
-        if (m_physics)
+        if (m_physics) {
+            GLT_PROFILE_SCOPE_C("Physics step", GLT::debug::trace::COLOR_WORLD);
             m_physics->step(dt);
+        }
+
+        // scripting: globals tick even with no world; entity slots tick only when the host has a live world context
+        ensure_script_host();
+        if (m_scripting) {
+            GLT_PROFILE_SCOPE("Scripting");
+            m_scripting->update(dt);
+        }
 
         if (!m_world)
             return;
@@ -238,23 +274,46 @@ namespace GLT::game {
                 m_world->set_streaming_anchor(cam.position);
         }
 
-        m_world->update(dt);
+        {
+            GLT_PROFILE_SCOPE_C("World update (streaming)", GLT::debug::trace::COLOR_WORLD);
+            m_world->update(dt);
+        }
         m_sim_time += dt;
         m_sim_delta = dt;
 
         if (!scene)
             return;
 
-        scene->gather_scene(m_scene_buffer);
-        scene->gather_lights(m_light_buffer);
+        // Worlds with a render cache hand out views into it (fixed entities cost nothing per frame); others fill our buffers
+        std::span<const asset::mesh::instance> instances{};
+        std::span<const world::light_snapshot> lights{};
+        {
+            GLT_PROFILE_SCOPE_C("Gather scene", GLT::debug::trace::COLOR_WORLD);
+            world::i_world_scene::scene_view view{};
+            if (scene->view_scene(view)) {
+                instances = view.instances;
+                lights = view.lights;
+                GLT_PROFILE_PLOT("Fixed instances", static_cast<int64_t>(view.fixed_instance_count));
+            } else {
+                scene->gather_scene(m_scene_buffer);
+                scene->gather_lights(m_light_buffer);
+                instances = m_scene_buffer;
+                lights = m_light_buffer;
+            }
+            scene->gather_environment(m_environment);
+        }
+        GLT_PROFILE_PLOT("Scene instances", static_cast<int64_t>(instances.size()));
+        GLT_PROFILE_PLOT("Lights", static_cast<int64_t>(lights.size()));
 
+        GLT_PROFILE_SCOPE("Submit to renderers");
         for (auto& slot : m_renderers) {
 
             if (!slot.renderer)
                 continue;
 
-            slot.renderer->submit_scene(m_scene_buffer);
-            slot.renderer->submit_lights(m_light_buffer);
+            slot.renderer->submit_scene(instances);
+            slot.renderer->submit_lights(lights);
+            slot.renderer->submit_environment(m_environment);
 
             const auto camera = resolve_camera(scene, slot.camera);
             world::camera_snapshot cam{};
@@ -276,6 +335,57 @@ namespace GLT::game {
         }
 
         return scene->get_active_camera();
+    }
+
+
+    bool game_session::ensure_script_host() {
+
+        if (m_scripting)
+            return true;
+
+        auto* sp = script::manager::get_ptr();
+        if (!sp)
+            return false;
+
+        m_scripting = sp->create_host();
+        if (!m_scripting)
+            return false;
+
+        update_script_host_context();
+        return true;
+    }
+
+
+    void game_session::update_script_host_context() {
+
+        if (!m_scripting)
+            return;
+
+        script::script_host_context ctx{};
+        ctx.world = m_world.get();
+        ctx.physics = m_physics.get();
+        ctx.events = &m_event_bus;
+        ctx.assets = GLT::asset::registry::get_ptr();      // asset registry accessor (existing)
+        m_scripting->set_context(ctx);
+    }
+
+
+    void game_session::attach_default_globals() {
+
+        if (!m_scripting)
+            return;
+
+        auto* sp = GLT::script::manager::get_ptr();
+        if (!sp)
+            return;
+
+        for (const auto& g : sp->default_globals()) {
+            if (auto r = m_scripting->attach_global(g.script_name, g.instance_name); !r) {
+                LOG(warn, "Failed to attach default global '{}' ({}): {}",
+                    g.script_name, g.instance_name,
+                    static_cast<int>(r.error().kind))
+            }
+        }
     }
 
 }

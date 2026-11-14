@@ -17,6 +17,8 @@ namespace GLT {
         inline constexpr std::string                FILE_EXTENSION_CONFIG(".yml");      // Extension for YAML config files: ".yml"
         inline constexpr std::string                FILE_EXTENSION_INI(".ini");         // Extension for INI config files: ".ini"
 
+        // Engine-owned, per-project files that are not game content: the asset catalog, data the editor collects about
+        // assets (asset_stats/), ... Mostly specific to one machine: keep it out of version control
         inline const std::filesystem::path          METADATA_DIR("metadata");
         inline const std::filesystem::path          ASSET_DIR("asset");
         inline const std::filesystem::path          CONFIG_DIR("config");
@@ -56,6 +58,7 @@ namespace GLT {
     // #define ENGINE_RAW_SHADER_PATH		        GLT::util::get_executable_path() / "shaders"
 
     #define PROJECT_CONTENT_DIR                     ( GLT::application::get().get_project_path() / GLT::config::CONTENT_DIR )
+    #define PROJECT_METADATA_DIR                    ( GLT::application::get().get_project_path() / GLT::config::METADATA_DIR )
 
     // TYPES ===========================================================================================================
 

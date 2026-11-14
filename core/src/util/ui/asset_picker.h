@@ -84,6 +84,11 @@ namespace GLT::UI {
 
     // Table row: emits the label into column 0 and the widget into column 1.
     // Matches the calling convention of GLT::UI::table_row* - you call it between begin_table() / end_table(), one call per row.
+    // Asset picker as a property row (see UI::property_* in panel_collection.h)
+    bool property_asset(const char* label, GLT::asset::asset_ref& in_out, GLT::asset::type filter, const char* desc = nullptr,
+        bool allow_clear = true);
+
+
     bool table_row_asset_picker(std::string_view label, GLT::asset::handle& in_out, GLT::asset::type filter,
         const char* desc = nullptr, bool allow_clear = true);
 

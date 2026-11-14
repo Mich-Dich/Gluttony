@@ -40,6 +40,8 @@ namespace GLT::asset::material {
 
     inline constexpr chunk_id                   CHUNK_MATERIAL_BLEND_MODE = 0x0306;
 
+    inline constexpr chunk_id                   CHUNK_MATERIAL_FLAGS = 0x0308;          // u32, material_flag bits (absent => 0)
+
     inline constexpr chunk_id                   CHUNK_INSTANCE_BASE = 0x0310;
 
     inline constexpr chunk_id                   CHUNK_INSTANCE_OVERRIDES = 0x0311;
@@ -293,6 +295,7 @@ surface_output surface_evaluate(surface_input s, material_params p, material_tex
         std::vector<std::byte>                                                      packed_params{};    // laid out per `reflection`
         u64                                                                         compiler_hash{ 0 };
         blend_mode                                                                  blend{ blend_mode::opaque };
+        u32                                                                         flags{ 0 };         // material_flag bits, authored
 
         // resolved texture handles --------
     

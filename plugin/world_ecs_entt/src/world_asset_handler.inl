@@ -167,6 +167,12 @@ namespace GLT::world::world_ecs_entt {
         if (const auto settings = reader.get(GLT::asset::world::CHUNK_WORLD_SETTINGS); !settings.empty())
             asset->settings.assign(settings.begin(), settings.end());
 
+        // world entity: [u32 codec][codec blob] ------------------------------------------------------------------------
+        if (const auto blob = reader.get(GLT::asset::world::CHUNK_WORLD_ENTITY); blob.size() > sizeof(u32)) {
+            std::memcpy(&asset->world_entity_codec, blob.data(), sizeof(u32));
+            asset->world_entity_data.assign(blob.begin() + sizeof(u32), blob.end());
+        }
+
         if (const auto cam = reader.get_as<u32>(GLT::asset::world::CHUNK_WORLD_ACTIVE_CAMERA); cam.size() == 2) {
             asset->active_camera_index = cam[0];
             asset->active_camera_generation = cam[1];
@@ -265,6 +271,13 @@ namespace GLT::world::world_ecs_entt {
 
         if (!asset.settings.empty())
             out.write_chunk(GLT::asset::world::CHUNK_WORLD_SETTINGS, std::span<const std::byte>(asset.settings));
+
+        if (!asset.world_entity_data.empty()) {
+            std::vector<std::byte> blob(sizeof(u32) + asset.world_entity_data.size());
+            std::memcpy(blob.data(), &asset.world_entity_codec, sizeof(u32));
+            std::memcpy(blob.data() + sizeof(u32), asset.world_entity_data.data(), asset.world_entity_data.size());
+            out.write_chunk(GLT::asset::world::CHUNK_WORLD_ENTITY, blob);
+        }
 
         if (asset.active_camera_index != 0xFFFFFFFFu) {
 

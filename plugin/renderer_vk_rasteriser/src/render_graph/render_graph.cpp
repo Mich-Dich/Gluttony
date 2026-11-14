@@ -2,6 +2,11 @@
 #include "util/pch.h"
 #include "render_graph.h"
 
+#include <debug/trace.h>
+#if defined(GLT_TRACY_ENABLED)
+    #include <tracy/TracyVulkan.hpp>
+#endif
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -65,19 +70,21 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // CLASS PUBLIC ====================================================================================================
 
     void render_graph::begin_frame() {
+        GLT_PROFILE_SCOPE("render_graph::begin_frame");
 
         // Non-persistent resources are per-frame. Transient resources own their memory; imported ones are references to
         // caller-owned memory. Either way the slot is reset so the next create_*() reuses it
+        // The previous frame(s) may still be executing on the GPU, so graph-owned memory is retired, not destroyed
         for (auto& texture : m_textures) {
             if (!texture.desc.persistent) {
-                destroy_texture(texture);             // imported: just nulls pointers
+                release_texture(texture);             // imported: just nulls pointers
                 texture = texture_resource{};         // wipe the slot so it can be reused
             }
         }
 
         for (auto& buffer : m_buffers) {
             if (!buffer.desc.persistent) {
-                destroy_buffer(buffer);
+                release_buffer(buffer);
                 buffer = buffer_resource{};
             }
         }
@@ -91,6 +98,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // Resource creation -----------------------------------------------------------------------------------------------
 
     texture_handle render_graph::create_texture(const texture_desc& desc) {
+        GLT_PROFILE_SCOPE("render_graph::create_texture");
 
         u32 texture_index = UINT32_MAX;
 
@@ -139,7 +147,8 @@ namespace GLT::renderer::vk_rasterizer::graph {
                 texture.desc.depth          != desc.depth        ||
                 texture.desc.mip_levels     != desc.mip_levels   ||
                 texture.desc.array_layers   != desc.array_layers ||
-                texture.desc.samples        != desc.samples;
+                texture.desc.samples        != desc.samples      ||
+                texture.desc.cube           != desc.cube;
         }
 
         if (!is_fresh && !needs_recreate) {
@@ -151,16 +160,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
         // Either a fresh slot or a structural change on a graph-owned persistent. Tear down the old backing image if there is one
         if (!is_fresh) {
 
-            for (auto& [_, view] : texture.view_cache)
-                if (view) m_device->get_device().destroyImageView(view);
-            texture.view_cache.clear();
-
-            if (texture.default_view)
-                m_device->get_device().destroyImageView(texture.default_view);
-
-            if (texture.allocated.image)
-                m_device->destroy_image(texture.allocated);
-
+            release_texture(texture);
             texture = texture_resource{};
         }
 
@@ -196,13 +196,16 @@ namespace GLT::renderer::vk_rasterizer::graph {
         image_ci.usage = usage;
         image_ci.sharingMode = vk::SharingMode::eExclusive;
         image_ci.initialLayout = vk::ImageLayout::eUndefined;
+        if (desc.cube)
+            image_ci.flags = vk::ImageCreateFlagBits::eCubeCompatible;
 
         texture.allocated = m_device->create_image(image_ci, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
         texture.image = texture.allocated.image;
 
         vk::ImageViewCreateInfo image_view_ci{};
         image_view_ci.image = texture.image;
-        image_view_ci.viewType = (desc.array_layers > 1) ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
+        image_view_ci.viewType = desc.cube ? vk::ImageViewType::eCube
+                               : (desc.array_layers > 1) ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
         image_view_ci.format = desc.format;
         image_view_ci.subresourceRange = { aspect_for(desc.format), 0, desc.mip_levels, 0, desc.array_layers };
         texture.default_view = m_device->get_device().createImageView(image_view_ci);
@@ -215,6 +218,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     buffer_handle render_graph::create_buffer(const buffer_desc& desc) {
+        GLT_PROFILE_SCOPE("render_graph::create_buffer");
 
         if (desc.persistent) {
             auto it = m_persistent_buffers.find(desc.name);
@@ -228,8 +232,8 @@ namespace GLT::renderer::vk_rasterizer::graph {
                 if (!needs_rebuild)
                     return handle;
 
-                // destroy the old allocation and rebuild in place, so the handle the caller is holding stays valid across the resize
-                destroy_buffer(buffer);
+                // retire the old allocation and rebuild in place, so the handle the caller is holding stays valid across the resize
+                release_buffer(buffer);
                 buffer = buffer_resource{};
                 buffer.desc = desc;
                 buffer.allocated = m_device->create_buffer(desc.size, desc.usage, desc.vma_flags);
@@ -267,27 +271,15 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::import_texture(texture_handle h, vk::Image image, vk::ImageView view, resource_state s) {
+        GLT_PROFILE_SCOPE("render_graph::import_texture");
 
         auto& texture = m_textures[h.id];
 
         // The slot was created via create_texture(), which allocated a graph-owned VMA image and a default view
         // Now the caller is handing us an external image instead. Destroy what create_texture() made, otherwise it leaks:
         // destroy_texture() short-circuits on imported resources, so it would never clean this up either
-        if (!texture.imported) {
-
-            for (auto& [_, image_view] : texture.view_cache)
-                if (image_view)
-                    m_device->get_device().destroyImageView(image_view);
-            texture.view_cache.clear();
-
-            if (texture.default_view) {
-                m_device->get_device().destroyImageView(texture.default_view);
-                texture.default_view = nullptr;
-            }
-
-            if (texture.allocated.image)
-                m_device->destroy_image(texture.allocated);
-        }
+        if (!texture.imported)
+            release_texture(texture);
 
         texture.imported = true;
         texture.image = image;
@@ -299,13 +291,14 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::import_buffer(buffer_handle h, const util::allocated_buffer& buf) {
+        GLT_PROFILE_SCOPE("render_graph::import_buffer");
 
         auto& buffer = m_buffers[h.id];
 
         // If the graph owns a buffer here, destroy it — we're replacing it with an external one. Without this, every import
         // leaks a graph-allocated VMA buffer
         if (!buffer.imported && buffer.allocated.buffer)
-            m_device->destroy_buffer(buffer.allocated);
+            release_buffer(buffer);
 
         buffer.imported = true;
         buffer.allocated = buf;
@@ -313,6 +306,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     buffer_handle render_graph::import_buffer(const buffer_desc& desc, const util::allocated_buffer& buf) {
+        GLT_PROFILE_SCOPE("render_graph::import_buffer");
 
         u32 buffer_index = UINT32_MAX;
         for (u32 i = 0; i < m_buffers.size(); ++i) {
@@ -338,6 +332,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     texture_handle render_graph::import_texture(const texture_desc& desc, vk::Image image, vk::ImageView view, resource_state s) {
+        GLT_PROFILE_SCOPE("render_graph::import_texture");
 
         u32 texture_index = UINT32_MAX;
         for (u32 i = 0; i < m_textures.size(); ++i) {
@@ -366,6 +361,8 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
     void render_graph::compile() {
 
+        GLT_PROFILE_SCOPE_C("Graph compile", GLT::debug::trace::COLOR_RENDER);
+
         for (u32 index = 0; index < m_passes.size(); ++index) 
             m_passes[index].index = index;
 
@@ -382,11 +379,30 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
     void render_graph::execute(vk::CommandBuffer cmd) {
 
+        GLT_PROFILE_SCOPE_C("Graph execute (record)", GLT::debug::trace::COLOR_RENDER);
+
+#if defined(GLT_TRACY_ENABLED)
+        auto* const tracy_ctx = static_cast<tracy::VkCtx*>(m_gpu_profiler);
+        if (tracy_ctx)
+            tracy_ctx->Collect(static_cast<VkCommandBuffer>(cmd));     // outside any rendering scope: resets its queries
+#endif
+
         // Reset tracked state for transient images (their old layouts mean nothing after we destroyed them last frame)
         // Persistent and imported images keep whatever state they had
         for (auto& texture : m_textures) {
             if (!texture.desc.persistent && !texture.imported)
                 texture.state = {vk::ImageLayout::eUndefined, {}, vk::PipelineStageFlagBits2::eNone};
+        }
+
+        // GPU timing: one timestamp up front, one after each live pass
+        m_timed_pass_names.clear();
+        m_timestamps_written = 0;
+        if (m_timestamp_pool && m_query_count >= 2) {
+            cmd.resetQueryPool(m_timestamp_pool, m_first_query, m_query_count);
+            // ALL_COMMANDS (not TOP_OF_PIPE): the start mark waits for earlier submissions, so this target's numbers no longer
+            // include the tail of the previous target's GPU work (the window's "imgui" used to absorb the whole viewport)
+            cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, m_timestamp_pool, m_first_query);
+            m_timestamps_written = 1;
         }
 
         for (auto& pass : m_passes) {
@@ -408,8 +424,32 @@ namespace GLT::renderer::vk_rasterizer::graph {
                 ctx.render_area = texture_extent(pass.builder.m_depth_attachment->handle);
 
             ctx.set_attachments(&pass.builder);
-            pass.execute(ctx);
+            {
+                // Per-pass CPU zone (recording cost; Tracy + Tracing window) and Tracy GPU zone (execution)
+                GLT_PROFILE_SCOPE_DYNAMIC(pass.name.c_str());
+#if defined(GLT_TRACY_ENABLED)
+                std::optional<tracy::VkCtxScope> tracy_pass_gpu;
+                if (tracy_ctx)
+                    tracy_pass_gpu.emplace(tracy_ctx, TracyLine, TracyFile, std::strlen(TracyFile), TracyFunction,
+                        std::strlen(TracyFunction), pass.name.c_str(), pass.name.size(), static_cast<VkCommandBuffer>(cmd), true);
+#endif
+                pass.execute(ctx);
+            }
+
+            if (m_timestamps_written > 0 && m_timestamps_written < m_query_count) {
+                cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, m_timestamp_pool, m_first_query + m_timestamps_written);
+                m_timestamps_written++;
+                m_timed_pass_names.push_back(pass.name);
+            }
         }
+    }
+
+
+    void render_graph::set_timestamp_queries(vk::QueryPool pool, u32 first_query, u32 query_count) {
+
+        m_timestamp_pool = pool;
+        m_first_query = first_query;
+        m_query_count = pool ? query_count : 0;
     }
 
 
@@ -582,6 +622,25 @@ namespace GLT::renderer::vk_rasterizer::graph {
     }
 
 
+    vk::ImageView render_graph::texture_mip_array_view(texture_handle h, u32 mip) {
+
+        auto& texture = m_textures[h.id];
+        const u64 key = (u64(mip) << 32) | 0xFFFFFFFFull;          // layer = all (distinct from texture_view keys)
+        if (auto it = texture.view_cache.find(key); it != texture.view_cache.end())
+            return it->second;
+
+        vk::ImageViewCreateInfo image_view_ci{};
+        image_view_ci.image = texture.image;
+        image_view_ci.viewType = vk::ImageViewType::e2DArray;
+        image_view_ci.format = texture.desc.format;
+        image_view_ci.subresourceRange = { aspect_for(texture.desc.format), mip, 1, 0, texture.desc.array_layers };
+
+        vk::ImageView image_view = m_device->get_device().createImageView(image_view_ci);
+        texture.view_cache[key] = image_view;
+        return image_view;
+    }
+
+
     vk::ImageView render_graph::texture_default_view(texture_handle h) const { return m_textures[h.id].default_view; }
 
 
@@ -679,6 +738,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::emit_barriers(vk::CommandBuffer cmd, const pass& p) {
+        GLT_PROFILE_SCOPE("render_graph::emit_barriers");
 
         std::vector<vk::ImageMemoryBarrier2> image_barriers;
         std::vector<vk::BufferMemoryBarrier2> buffer_barriers;
@@ -791,6 +851,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // Compile ---------------------------------------------------------------------------------------------------------
 
     void render_graph::cull() {
+        GLT_PROFILE_SCOPE("render_graph::cull");
 
         // A pass is live if it has side effects, or if at least one of its written resources is read (or written) by a
         // live pass downstream. Start from side-effect / present passes and walk backwards.
@@ -853,6 +914,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::compute_lifetimes() {
+        GLT_PROFILE_SCOPE("render_graph::compute_lifetimes");
 
         for (auto& texture : m_textures) {
             texture.first_use = UINT32_MAX; 
@@ -900,6 +962,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
     // Destruction -----------------------------------------------------------------------------------------------------
 
     void render_graph::destroy_texture(texture_resource& texture_resource) {
+        GLT_PROFILE_SCOPE("render_graph::destroy_texture");
 
         if (texture_resource.imported) {
 
@@ -927,6 +990,7 @@ namespace GLT::renderer::vk_rasterizer::graph {
 
 
     void render_graph::destroy_buffer(buffer_resource& buffer_resource) {
+        GLT_PROFILE_SCOPE("render_graph::destroy_buffer");
 
         if (buffer_resource.imported) { 
             buffer_resource.allocated = {};
@@ -934,6 +998,51 @@ namespace GLT::renderer::vk_rasterizer::graph {
         }
         if (buffer_resource.allocated.buffer)
             m_device->destroy_buffer(buffer_resource.allocated);
+    }
+
+
+    void render_graph::release_texture(texture_resource& texture_resource) {
+        GLT_PROFILE_SCOPE("render_graph::release_texture");
+
+        if (texture_resource.imported || !m_retire) {
+            destroy_texture(texture_resource);
+            return;
+        }
+
+        std::vector<vk::ImageView> views;
+        views.reserve(texture_resource.view_cache.size() + 1);
+        for (auto& [_, image_view] : texture_resource.view_cache)
+            if (image_view)
+                views.push_back(image_view);
+        if (texture_resource.default_view)
+            views.push_back(texture_resource.default_view);
+
+        if (!views.empty() || texture_resource.allocated.image) {
+            m_retire([device = m_device, views = std::move(views), image = texture_resource.allocated]() mutable {
+                for (auto view : views)
+                    device->get_device().destroyImageView(view);
+                if (image.image)
+                    device->destroy_image(image);
+            });
+        }
+
+        texture_resource.view_cache.clear();
+        texture_resource.default_view = nullptr;
+        texture_resource.image = nullptr;
+        texture_resource.allocated = {};
+    }
+
+
+    void render_graph::release_buffer(buffer_resource& buffer_resource) {
+        GLT_PROFILE_SCOPE("render_graph::release_buffer");
+
+        if (buffer_resource.imported || !m_retire || !buffer_resource.allocated.buffer) {
+            destroy_buffer(buffer_resource);
+            return;
+        }
+
+        m_retire([device = m_device, buffer = buffer_resource.allocated]() mutable { device->destroy_buffer(buffer); });
+        buffer_resource.allocated = {};
     }
 
 }

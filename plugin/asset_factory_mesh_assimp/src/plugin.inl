@@ -4,8 +4,11 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #include <glm/gtc/type_ptr.hpp>
+#include <cmath>
 
 #include <asset/mesh.h>
+#include <asset/mesh_lod.h>
+#include <asset/mesh_cluster.h>
 
 
 
@@ -49,6 +52,8 @@ namespace GLT::asset::factory::mesh_assimp {
         bool                            swap_uvs = false;
         bool                            generate_lightmap_uvs = false;                      // stub for now
         u8                              compression_quality = 85;                           // 0..100, future vertex codec hint
+        u32                             lod_count = 4;                                      // levels incl. LOD 0, 1 = no LODs
+        bool                            virtual_geometry = false;                           // build the cluster hierarchy + enable the path
     };
 
     // STATIC VARIABLES ================================================================================================
@@ -227,6 +232,13 @@ namespace GLT::asset::factory::mesh_assimp {
         if (take(&q, sizeof(q)))
             out.compression_quality = static_cast<u8>(std::clamp(q, 0, 100));
 
+        i32 lods = 4;                               // field 10: lod_count (integer -> i32)
+        if (take(&lods, sizeof(lods)))
+            out.lod_count = static_cast<u32>(std::clamp<i32>(lods, 1, static_cast<i32>(GLT::asset::mesh::MAX_LODS)));
+
+        if (take(&b, 1))                            // field 11: virtual_geometry (boolean -> u8)
+            out.virtual_geometry = (b != 0);
+
         return out;
     }
 
@@ -289,6 +301,30 @@ namespace GLT::asset::factory::mesh_assimp {
 
                     const aiVector3D& uv = mesh->mTextureCoords[0][v];
                     out.uv0 = { uv.x, uv.y };
+                }
+
+                // aiProcess_CalcTangentSpace writes qNaN tangents where the UVs are degenerate, and GenSmoothNormals /
+                // glm::normalize produce NaN for zero-area faces. A NaN frame turns the whole fragment's shading NaN
+                // (renders black). Repair: unit normal (fallback +Y), tangent orthogonal to it, sign +-1
+                {
+                    auto finite = [](const glm::vec3& x) { return std::isfinite(x.x) && std::isfinite(x.y) && std::isfinite(x.z); };
+                    auto usable = [&](const glm::vec3& x) { return finite(x) && glm::dot(x, x) > 1e-12f; };
+
+                    if (!usable(out.normal))
+                        out.normal = glm::vec3(0.f, 1.f, 0.f);
+                    out.normal = glm::normalize(out.normal);
+
+                    glm::vec3 t(out.tangent);
+                    t -= out.normal * glm::dot(out.normal, t);
+                    if (!usable(t)) {
+                        const glm::vec3 axis = std::abs(out.normal.x) < 0.9f ? glm::vec3(1.f, 0.f, 0.f) : glm::vec3(0.f, 1.f, 0.f);
+                        t = glm::cross(axis, out.normal);
+                    }
+                    const f32 sign = (std::isfinite(out.tangent.w) && out.tangent.w < 0.f) ? -1.f : 1.f;
+                    out.tangent = glm::vec4(glm::normalize(t), sign);
+
+                    if (!std::isfinite(out.uv0.x) || !std::isfinite(out.uv0.y))
+                        out.uv0 = glm::vec2(0.f);
                 }
 
                 vertices.push_back(out);
@@ -463,6 +499,22 @@ namespace GLT::asset::factory::mesh_assimp {
                 .enumeration_values = "",
                 .tooltip = "0 = smallest (most lossy), 100 = best fidelity. Reserved - consumed once vertex-data quantization is implemented.",
             },
+            {   // 10
+                .key = "lod_count",
+                .label = "LOD levels",
+                .type = desc::kind::integer,
+                .default_value = "4",
+                .enumeration_values = "",
+                .tooltip = "Levels of detail generated on import, LOD 0 included (1 = none, max 8). Each level is simplified within an error limit so the silhouette stays intact; screen sizes, ratios and limits can be tuned and regenerated in the mesh editor.",
+            },
+            {   // 11
+                .key = "virtual_geometry",
+                .label = "Virtual geometry",
+                .type = desc::kind::boolean,
+                .default_value = "false",
+                .enumeration_values = "",
+                .tooltip = "Use virtual geometry instead of discrete LODs for this mesh: detail is chosen per cluster and per frame, so dense meshes only cost the triangles that are visible at their size on screen. Meant for meshes with many triangles. The LOD levels above are then only the fallback (shadows, translucent parts). A mesh uses one of the two; the mesh editor can switch it later (Geometry Detail).",
+            },
         };
         return schema;
     }
@@ -552,12 +604,54 @@ namespace GLT::asset::factory::mesh_assimp {
             bounds.max = glm::max(bounds.max, v.position);
         }
 
+        // ---- level of detail -----------------------------------------------------------------------
+        // Generated once here with the default settings (lod_count from the import options); the mesh editor regenerates
+        // with user settings. Screen sizes are fitted to the achieved error (1 px at 1080p by default)
+        GLT::asset::mesh::lod_settings lod_settings{};
+        lod_settings.lod_count = option.lod_count;
+        GLT::asset::mesh::sanitize(lod_settings);
+
+        GLT::asset::mesh::lod_build_output lods = GLT::asset::mesh::build_lods(vertices, indices, submeshes, lod_settings);
+        if (lod_settings.flags & GLT::asset::mesh::LOD_FLAG_AUTO_SCREEN_SIZE)
+            GLT::asset::mesh::fit_screen_sizes(lod_settings, lods.lods, bounds);
+
+        // ---- virtual geometry (opt-in) --------------------------------------------------------------
+        // Cluster hierarchy with the default settings; the mesh editor rebuilds with user settings. Without the option
+        // only the (disabled) default settings are written, so the mesh editor shows the section ready to be switched on
+        GLT::asset::mesh::cluster_settings cluster_settings{};
+        GLT::asset::mesh::cluster_build_output clusters{};
+        if (option.virtual_geometry) {
+
+            clusters = GLT::asset::mesh::build_clusters(vertices, indices, submeshes, cluster_settings);
+            if (!clusters.clusters.empty())
+                cluster_settings.flags |= GLT::asset::mesh::CLUSTER_FLAG_ENABLED;
+            else
+                LOG(warn, "mesh_assimp: [{}] virtual geometry requested but no clusters could be built - using the LODs",
+                    source.generic_string());
+        }
+
         // ---- write the chunks. Registry owns header / string table / deps --------------------------
         out.set_name(source.stem().string());
         out.write_chunk(GLT::asset::mesh::CHUNK_VERTICES, std::as_bytes(std::span{ vertices }));
         out.write_chunk(GLT::asset::mesh::CHUNK_INDICES, std::as_bytes(std::span{ indices }));
         out.write_chunk(GLT::asset::mesh::CHUNK_SUBMESHES, std::as_bytes(std::span{ submeshes }));
         out.write_chunk(GLT::asset::mesh::CHUNK_BOUNDS, std::as_bytes(std::span{ &bounds, 1 }));
+        out.write_chunk(GLT::asset::mesh::CHUNK_LOD_SETTINGS, std::as_bytes(std::span{ &lod_settings, 1 }));
+        if (lods.lods.size() > 1) {
+            out.write_chunk(GLT::asset::mesh::CHUNK_LOD_LEVELS,  std::as_bytes(std::span{ lods.lods }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_LOD_RANGES,  std::as_bytes(std::span{ lods.ranges }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_LOD_INDICES, std::as_bytes(std::span{ lods.indices }));
+            if (!lods.vertices.empty())
+                out.write_chunk(GLT::asset::mesh::CHUNK_LOD_VERTICES, std::as_bytes(std::span{ lods.vertices }));
+        }
+        out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_SETTINGS, std::as_bytes(std::span{ &cluster_settings, 1 }));
+        if (!clusters.clusters.empty()) {
+            out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTERS,          std::as_bytes(std::span{ clusters.clusters }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_INDICES,   std::as_bytes(std::span{ clusters.indices }));
+            out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_SUBMESHES, std::as_bytes(std::span{ clusters.submeshes }));
+            if (!clusters.vertices.empty())
+                out.write_chunk(GLT::asset::mesh::CHUNK_CLUSTER_VERTICES, std::as_bytes(std::span{ clusters.vertices }));
+        }
 
         // Dependencies: one per submesh, in submesh order so material_slot lines up with info.dependencies[N] on load
         //
@@ -575,6 +669,8 @@ namespace GLT::asset::factory::mesh_assimp {
         u64 hash = hash_bytes(std::as_bytes(std::span{ vertices }));
         hash ^= hash_bytes(std::as_bytes(std::span{ indices }))   * 0x9E3779B97F4A7C15ull;
         hash ^= hash_bytes(std::as_bytes(std::span{ submeshes })) * 0xC2B2AE3D27D4EB4Full;
+        hash ^= hash_bytes(std::as_bytes(std::span{ lods.indices })) * 0x165667B19E3779F9ull;
+        hash ^= hash_bytes(std::as_bytes(std::span{ clusters.indices })) * 0x27D4EB2F165667C5ull;
 
         GLT::asset::factory::import_result result{          // result metadata
 
@@ -583,6 +679,13 @@ namespace GLT::asset::factory::mesh_assimp {
             .source_hash = hash_bytes(bytes),
             .payload_hash = hash,
         };
+
+        LOG(info, "mesh_assimp: [{}] -> {} LODs ({} -> {} tris) in {:.1f} ms", source.generic_string(), lods.lods.size(),
+            lods.lods.front().index_count / 3, lods.lods.back().index_count / 3, lods.build_ms);
+
+        if (!clusters.clusters.empty())
+            LOG(info, "mesh_assimp: [{}] -> virtual geometry: {} clusters in {} levels ({} -> {} tris) in {:.1f} ms", source.generic_string(),
+                clusters.clusters.size(), clusters.level_count, clusters.source_triangles, clusters.coarsest_triangles, clusters.build_ms);
 
         LOG(info, "mesh_assimp: [{}] -> {} verts, {} tris, {} submeshes [scale={}, unit={}, weld={}, opt={}, nt={}, swap_uv={}, lmuv={}, q={}]",
             source.generic_string(), vertices.size(), indices.size() / 3, submeshes.size(),

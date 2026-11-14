@@ -38,6 +38,7 @@ namespace GLT::renderer::vk_rasterizer {
     // pipelines + resources -------------------------------------------------------------------------------------------
 
     void scene_renderer::create_blit_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::create_blit_pipeline");
 
         auto* dev = m_plugin.get_dev();
         using VKDT = vk::DescriptorType;
@@ -103,6 +104,7 @@ namespace GLT::renderer::vk_rasterizer {
         ri.pColorAttachmentFormats = &color_format;
 
         vk::GraphicsPipelineCreateInfo pi{};
+        pi.flags = vk::PipelineCreateFlagBits::eDescriptorBufferEXT;        // bound via descriptor buffers (spec: mandatory)
         pi.pNext = &ri;
         pi.stageCount = 2;
         pi.pStages = stages;
@@ -126,6 +128,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
     void scene_renderer::destroy_blit_pipeline() {
+        GLT_PROFILE_SCOPE("scene_renderer::destroy_blit_pipeline");
 
         auto* dev = m_plugin.get_dev();
         for (auto& d : m_blit_desc_buffers)
@@ -150,6 +153,7 @@ namespace GLT::renderer::vk_rasterizer {
     // passes ----------------------------------------------------------------------------------------------------------
 
     void scene_renderer::add_blit_to_backbuffer_pass() {
+        GLT_PROFILE_SCOPE("scene_renderer::add_blit_to_backbuffer_pass");
 
         m_graph->add_pass("blit_to_backbuffer",
             [&](graph::pass_builder& b) {

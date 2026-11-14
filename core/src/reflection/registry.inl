@@ -12,51 +12,50 @@ namespace GLT::reflect {
 
     // MACROS ==========================================================================================================
 
-    namespace detail {
+    // TYPES =======================================================================================================
 
-        // TYPES =======================================================================================================
+    struct migration_entry {
+        u16                                         from_version;
+        migrate_fn                                  fn;
+    };
 
-        struct migration_entry {
-            u16                 from_version;
-            migrate_fn          fn;
-        };
+    // STATIC VARIABLES ============================================================================================
 
-        // STATIC VARIABLES ============================================================================================
+    // INTERNAL TEMPLATE DECLARATION ===============================================================================
 
-        // INTERNAL TEMPLATE DECLARATION ===============================================================================
+    // INTERNAL FUNCTION DECLARATION ===============================================================================
 
-        // INTERNAL FUNCTION DECLARATION ===============================================================================
+    inline std::unordered_map<u32, serialization_override>& ser_overrides();
 
-        inline std::unordered_map<u32, serialization_override>& ser_overrides();
-        
-        
-        inline std::unordered_map<u32, editor_draw_override>& edt_overrides();
 
-        // INTERNAL TEMPLATE IMPLEMENTATION ============================================================================
+    inline std::unordered_map<u32, editor_draw_override>& edt_overrides();
 
-        // INTERNAL FUNCTION IMPLEMENTATION ============================================================================
-        
-        inline std::unordered_map<u32, serialization_override>& ser_overrides() {
-        
-            static std::unordered_map<u32, serialization_override> m;
-            return m;
-        }
-        
-        
-        inline std::unordered_map<u32, editor_draw_override>& edt_overrides() {
-        
-            static std::unordered_map<u32, editor_draw_override> m;
-            return m;
-        }
 
-        // migration table -----------------------------------------------------------------------------
+    inline std::unordered_map<u32, std::vector<migration_entry>>& migration_table();
 
-        inline std::unordered_map<u32, std::vector<migration_entry>>& migration_table() {
+    // INTERNAL TEMPLATE IMPLEMENTATION ============================================================================
 
-            static std::unordered_map<u32, std::vector<migration_entry>> t;
-            return t;
-        }
+    // INTERNAL FUNCTION IMPLEMENTATION ============================================================================
+    
+    inline std::unordered_map<u32, serialization_override>& ser_overrides() {
+    
+        static std::unordered_map<u32, serialization_override> m;
+        return m;
+    }
+    
+    
+    inline std::unordered_map<u32, editor_draw_override>& edt_overrides() {
+    
+        static std::unordered_map<u32, editor_draw_override> m;
+        return m;
+    }
 
+    // migration table -----------------------------------------------------------------------------
+
+    inline std::unordered_map<u32, std::vector<migration_entry>>& migration_table() {
+
+        static std::unordered_map<u32, std::vector<migration_entry>> t;
+        return t;
     }
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -103,15 +102,13 @@ namespace GLT::reflect {
     }
 
 
-    inline void register_migration(u32 h, u16 from_v, migrate_fn fn) {
-        detail::migration_table()[h].push_back({ from_v, fn });
-    }
+    inline void register_migration(u32 h, u16 from_v, migrate_fn fn) { migration_table()[h].push_back({ from_v, fn }); }
 
 
     inline bool run_migrations(u32 h, u16 from_v, void* obj) {
 
-        auto it = detail::migration_table().find(h);
-        if (it == detail::migration_table().end())
+        auto it = migration_table().find(h);
+        if (it == migration_table().end())
             return from_v == 1;
         // Apply in ascending order from `from_v` up to the current version.
         auto& steps = it->second;
@@ -124,15 +121,15 @@ namespace GLT::reflect {
     }
 
 
-    inline void register_serializer(u32 h, serialization_override o) { detail::ser_overrides()[h] = o; }
+    inline void register_serializer(u32 h, serialization_override o) { ser_overrides()[h] = o; }
 
 
-    inline void register_editor_draw(u32 h, editor_draw_override o)       { detail::edt_overrides()[h] = o; }
+    inline void register_editor_draw(u32 h, editor_draw_override o) { edt_overrides()[h] = o; }
 
 
     inline const serialization_override* serializer_override(u32 h) noexcept {
 
-        auto& m = detail::ser_overrides();
+        auto& m = ser_overrides();
         auto it = m.find(h);
         return it == m.end() ? nullptr : &it->second;
     }
@@ -140,7 +137,7 @@ namespace GLT::reflect {
 
     inline const editor_draw_override* editor_draw_override_for(u32 h) noexcept {
 
-        auto& m = detail::edt_overrides();
+        auto& m = edt_overrides();
         auto it = m.find(h);
         return it == m.end() ? nullptr : &it->second;
     }
@@ -217,12 +214,9 @@ namespace GLT::reflect {
     }
 
 
-    inline std::span<const type_descriptor* const> reflection_registry::all() const noexcept {
-
-        // Deliberately no lock here - the span is only safe while no registration is happening
-        // Consumers call finalize() and then freeze the registry
-        return { m_all.data(), m_all.size() };
-    }
+    // Deliberately no lock here - the span is only safe while no registration is happening
+    // Consumers call finalize() and then freeze the registry
+    inline std::span<const type_descriptor* const> reflection_registry::all() const noexcept { return { m_all.data(), m_all.size() }; }
 
 
     inline bool reflection_registry::empty() const noexcept {

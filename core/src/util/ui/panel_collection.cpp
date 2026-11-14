@@ -1419,6 +1419,1084 @@ namespace GLT::UI {
 
 	void end_collapsing_header_section() { ImGui::Unindent(); }
 
+	// ---- modern controls ----------------------------------------------------------------------------------------------
+
+	namespace {
+
+		ImVec4 lighten(ImVec4 color, const f32 amount) {
+
+			color.x = std::min(1.f, color.x + amount);
+			color.y = std::min(1.f, color.y + amount);
+			color.z = std::min(1.f, color.z + amount);
+			return color;
+		}
+
+	}
+
+
+	bool toggle_switch(const char* id, bool& value) {
+
+		const f32 height = ImGui::GetFrameHeight();
+		const f32 width = height * 1.8f;
+		const f32 radius = height * 0.5f;
+
+		const ImVec2 pos = ImGui::GetCursorScreenPos();
+		const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
+		if (clicked)
+			value = !value;
+
+		const bool hovered = ImGui::IsItemHovered();
+
+		// knob position, animated towards its target
+		const ImGuiID anim_id = ImGui::GetItemID();
+		f32* t = ImGui::GetStateStorage()->GetFloatRef(anim_id, value ? 1.f : 0.f);
+		const f32 target = value ? 1.f : 0.f;
+		const f32 step = ImGui::GetIO().DeltaTime * 10.f;
+		*t = (*t < target) ? std::min(target, *t + step) : std::max(target, *t - step);
+
+		const ImVec4 on_color = hovered ? GLT::imgui_config::get_action_color00_hover_ref() : GLT::imgui_config::get_action_color00_default_ref();
+		const ImVec4 off_color = hovered ? GLT::imgui_config::get_action_color_gray_hover_ref() : GLT::imgui_config::get_action_color_gray_active_ref();
+		const ImVec4 bg = ImLerp(off_color, on_color, *t);
+
+		ImDrawList* draw_list = ImGui::GetWindowDrawList();
+		draw_list->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(bg), radius);
+
+		const f32 knob_radius = radius - 3.f;
+		const f32 knob_x = ImLerp(pos.x + radius, pos.x + width - radius, *t);
+		draw_list->AddCircleFilled(ImVec2(knob_x, pos.y + radius), knob_radius, IM_COL32(240, 240, 240, 255));
+
+		return clicked;
+	}
+
+
+	bool segmented_control(const char* id, i32& index, std::span<const char* const> options, f32 width) {
+
+		if (options.empty())
+			return false;
+
+		if (width <= 0.f)
+			width = ImGui::CalcItemWidth();
+
+		const f32 height = ImGui::GetFrameHeight();
+		const f32 rounding = ImGui::GetStyle().FrameRounding + 2.f;
+		const f32 segment_w = width / static_cast<f32>(options.size());
+		const ImVec2 pos = ImGui::GetCursorScreenPos();
+		ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+		draw_list->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(ImGuiCol_FrameBg), rounding);
+
+		bool changed = false;
+		ImGui::PushID(id);
+		ImGui::BeginGroup();
+		for (size_t x = 0; x < options.size(); ++x) {
+
+			ImGui::PushID(static_cast<int>(x));
+			const ImVec2 seg_min = ImVec2(pos.x + segment_w * static_cast<f32>(x), pos.y);
+			const ImVec2 seg_max = ImVec2(seg_min.x + segment_w, pos.y + height);
+
+			ImGui::SetCursorScreenPos(seg_min);
+			if (ImGui::InvisibleButton("##segment", ImVec2(segment_w, height)) && index != static_cast<i32>(x)) {
+				index = static_cast<i32>(x);
+				changed = true;
+			}
+
+			const bool selected = index == static_cast<i32>(x);
+			const bool hovered = ImGui::IsItemHovered();
+			if (selected)
+				draw_list->AddRectFilled(ImVec2(seg_min.x + 2.f, seg_min.y + 2.f), ImVec2(seg_max.x - 2.f, seg_max.y - 2.f),
+					ImGui::GetColorU32(hovered ? GLT::imgui_config::get_action_color00_hover_ref() : GLT::imgui_config::get_action_color00_default_ref()), rounding - 1.f);
+			else if (hovered)
+				draw_list->AddRectFilled(ImVec2(seg_min.x + 2.f, seg_min.y + 2.f), ImVec2(seg_max.x - 2.f, seg_max.y - 2.f),
+					ImGui::GetColorU32(GLT::imgui_config::get_action_color_gray_hover_ref()), rounding - 1.f);
+
+			const ImVec2 text_size = ImGui::CalcTextSize(options[x]);
+			const ImVec2 text_pos = ImVec2(seg_min.x + (segment_w - text_size.x) * 0.5f, seg_min.y + (height - text_size.y) * 0.5f);
+			draw_list->AddText(text_pos, ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_TextDisabled), options[x]);
+
+			ImGui::PopID();
+		}
+		ImGui::EndGroup();
+		ImGui::PopID();
+
+		return changed;
+	}
+
+
+	bool color_palette(ImVec4& color) {
+
+		constexpr int COUNT = 16;
+		constexpr int PER_ROW = 8;
+		const f32 swatch = ImGui::GetFrameHeight();
+
+		bool changed = false;
+		ImGui::PushID("##palette");
+		for (int x = 0; x < COUNT; ++x) {
+
+			ImVec4 preset{ 0.f, 0.f, 0.f, 1.f };
+			ImGui::ColorConvertHSVtoRGB(static_cast<f32>(x) / static_cast<f32>(COUNT), .75f, .8f, preset.x, preset.y, preset.z);
+
+			ImGui::PushID(x);
+			if ((x % PER_ROW) != 0)
+				ImGui::SameLine(0.f, 4.f);
+
+			if (ImGui::ColorButton("##swatch", preset, ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(swatch, swatch))) {
+				color = ImVec4(preset.x, preset.y, preset.z, color.w);
+				changed = true;
+			}
+			ImGui::PopID();
+		}
+		ImGui::PopID();
+		return changed;
+	}
+
+
+	bool reset_button(const char* id, const f32 size, const char* tooltip) {
+
+		const ImVec2 pos = ImGui::GetCursorScreenPos();
+		const bool clicked = ImGui::InvisibleButton(id, ImVec2(size, size));
+		const bool hovered = ImGui::IsItemHovered();
+
+		ImDrawList* draw_list = ImGui::GetWindowDrawList();
+		const ImU32 color = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+		const ImVec2 center = ImVec2(pos.x + size * 0.5f, pos.y + size * 0.5f);
+		const f32 radius = size * 0.26f;
+
+		if (hovered)
+			draw_list->AddCircleFilled(center, size * 0.48f, ImGui::GetColorU32(ImGuiCol_ButtonHovered, 0.35f));
+
+		// 3/4 circle + arrow head at its open end
+		constexpr f32 PI = 3.14159265f;
+		const f32 a_min = -PI * 0.25f;
+		const f32 a_max = PI * 1.25f;
+		draw_list->PathArcTo(center, radius, a_min, a_max, 16);
+		draw_list->PathStroke(color, ImDrawFlags_None, 1.6f);
+
+		const ImVec2 tip = ImVec2(center.x + std::cos(a_min) * radius, center.y + std::sin(a_min) * radius);
+		const f32 head = size * 0.16f;
+		draw_list->AddTriangleFilled(
+			ImVec2(tip.x - head, tip.y - head * 0.9f),
+			ImVec2(tip.x + head * 0.9f, tip.y - head * 0.2f),
+			ImVec2(tip.x - head * 0.1f, tip.y + head),
+			color);
+
+		if (hovered && tooltip)
+			ImGui::SetTooltip("%s", tooltip);
+
+		return clicked;
+	}
+
+	bool accent_button(const char* label, const ImVec2& size) {
+
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.f);
+		ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
+		ImGui::PushStyleColor(ImGuiCol_Button, GLT::imgui_config::get_action_color00_default_ref());
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, GLT::imgui_config::get_action_color00_hover_ref());
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, GLT::imgui_config::get_action_color00_active_ref());
+		const bool clicked = ImGui::Button(label, size);
+		ImGui::PopStyleColor(3);
+		ImGui::PopStyleVar(2);
+		return clicked;
+	}
+
+
+	bool subtle_button(const char* label, const ImVec2& size) {
+
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.f);
+		ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
+		ImGui::PushStyleColor(ImGuiCol_Button, GLT::imgui_config::get_action_color_gray_hover_ref());
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, GLT::imgui_config::get_action_color_gray_active_ref());
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, lighten(GLT::imgui_config::get_action_color_gray_active_ref(), 0.06f));
+		const bool clicked = ImGui::Button(label, size);
+		ImGui::PopStyleColor(3);
+		ImGui::PopStyleVar(2);
+		return clicked;
+	}
+
+
+	bool search_field(const char* id, char* buffer, const size_t buffer_size, const char* hint, f32 width) {
+
+		if (width <= 0.f)
+			width = ImGui::GetContentRegionAvail().x;
+
+		const f32 height = ImGui::GetFrameHeight();
+		const f32 icon_space = height * 1.1f;
+		const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+		ImGui::PushID(id);
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, height * 0.5f);
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(icon_space, ImGui::GetStyle().FramePadding.y));
+		ImGui::SetNextItemWidth(width);
+		bool changed = ImGui::InputTextWithHint("##search", hint, buffer, buffer_size);
+		ImGui::PopStyleVar(2);
+
+		// magnifier: circle + handle
+		ImDrawList* draw_list = ImGui::GetWindowDrawList();
+		const ImU32 icon_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+		const f32 r = height * 0.2f;
+		const ImVec2 c = ImVec2(pos.x + icon_space * 0.5f, pos.y + height * 0.46f);
+		draw_list->AddCircle(c, r, icon_color, 12, 1.5f);
+		draw_list->AddLine(ImVec2(c.x + r * 0.7f, c.y + r * 0.7f), ImVec2(c.x + r * 1.6f, c.y + r * 1.6f), icon_color, 1.5f);
+
+		// clear button
+		if (buffer[0] != '\0') {
+
+			const f32 size = height * 0.7f;
+			const ImVec2 clear_pos = ImVec2(pos.x + width - size - height * 0.2f, pos.y + (height - size) * 0.5f);
+			ImGui::SetCursorScreenPos(clear_pos);
+			if (ImGui::InvisibleButton("##clear", ImVec2(size, size))) {
+				buffer[0] = '\0';
+				changed = true;
+			}
+			const bool hovered = ImGui::IsItemHovered();
+			const ImVec2 cc = ImVec2(clear_pos.x + size * 0.5f, clear_pos.y + size * 0.5f);
+			if (hovered)
+				draw_list->AddCircleFilled(cc, size * 0.5f, ImGui::GetColorU32(GLT::imgui_config::get_action_color_gray_hover_ref()));
+			const f32 x = size * 0.18f;
+			const ImU32 cross = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+			draw_list->AddLine(ImVec2(cc.x - x, cc.y - x), ImVec2(cc.x + x, cc.y + x), cross, 1.5f);
+			draw_list->AddLine(ImVec2(cc.x - x, cc.y + x), ImVec2(cc.x + x, cc.y - x), cross, 1.5f);
+
+			ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + height));
+			ImGui::Dummy(ImVec2(0.f, 0.f));
+		}
+		ImGui::PopID();
+
+		return changed;
+	}
+
+
+	bool drag_axes(const char* id, f32* values, const int components, const f32 speed, const f32 min_value, const f32 max_value,
+		const char* format, f32 width) {
+
+		static constexpr ImU32 AXIS_COLORS[4] = {
+			IM_COL32(222, 72, 72, 255),         // X
+			IM_COL32(110, 190, 70, 255),        // Y
+			IM_COL32(70, 120, 230, 255),        // Z
+			IM_COL32(160, 160, 160, 255),       // W
+		};
+		static constexpr const char* AXIS_NAMES[4] = { "X", "Y", "Z", "W" };
+
+		if (width <= 0.f)
+			width = ImGui::CalcItemWidth();
+
+		const f32 spacing = 4.f;
+		const f32 field_w = std::max(10.f, (width - spacing * static_cast<f32>(components - 1)) / static_cast<f32>(components));
+		const ImGuiSliderFlags flags = (min_value < max_value) ? ImGuiSliderFlags_AlwaysClamp : ImGuiSliderFlags_None;
+
+		bool changed = false;
+		ImGui::PushID(id);
+		ImGui::BeginGroup();
+		for (int x = 0; x < components; ++x) {
+
+			ImGui::PushID(x);
+			if (x > 0)
+				ImGui::SameLine(0.f, spacing);
+
+			ImGui::SetNextItemWidth(field_w);
+			changed |= ImGui::DragFloat("##axis", &values[x], speed, min_value, max_value, format, flags);
+
+			// colored stripe on the left edge of the field
+			const ImVec2 min = ImGui::GetItemRectMin();
+			const ImVec2 max = ImGui::GetItemRectMax();
+			ImGui::GetWindowDrawList()->AddRectFilled(min, ImVec2(min.x + 3.f, max.y), AXIS_COLORS[x & 3],
+				ImGui::GetStyle().FrameRounding, ImDrawFlags_RoundCornersLeft);
+
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive())
+				ImGui::SetTooltip("%s", AXIS_NAMES[x & 3]);
+			ImGui::PopID();
+		}
+		ImGui::EndGroup();
+		ImGui::PopID();
+
+		return changed;
+	}
+
+
+	bool menu_button(const char* id, f32 size, const char* tooltip) {
+
+		if (size <= 0.f)
+			size = ImGui::GetFrameHeight();
+
+		const ImVec2 pos = ImGui::GetCursorScreenPos();
+		const bool clicked = ImGui::InvisibleButton(id, ImVec2(size, size));
+		const bool hovered = ImGui::IsItemHovered();
+		const bool active = ImGui::IsItemActive();
+
+		ImDrawList* draw_list = ImGui::GetWindowDrawList();
+		const ImVec2 center = ImVec2(pos.x + size * 0.5f, pos.y + size * 0.5f);
+		if (hovered || active)
+			draw_list->AddCircleFilled(center, size * 0.45f, ImGui::GetColorU32(active
+				? GLT::imgui_config::get_action_color_gray_active_ref() : GLT::imgui_config::get_action_color_gray_hover_ref()));
+
+		const ImU32 color = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+		const f32 gap = size * 0.18f;
+		const f32 dot = std::max(1.2f, size * 0.06f);
+		for (int x = -1; x <= 1; ++x)
+			draw_list->AddCircleFilled(ImVec2(center.x + gap * static_cast<f32>(x), center.y), dot, color);
+
+		if (hovered && tooltip)
+			ImGui::SetTooltip("%s", tooltip);
+
+		return clicked;
+	}
+
+
+	void empty_state(const char* title, const char* hint) {
+
+		const ImVec2 avail = ImGui::GetContentRegionAvail();
+		const f32 wrap = std::max(80.f, avail.x - 32.f);
+		const ImVec2 title_size = ImGui::CalcTextSize(title, nullptr, false, wrap);
+		const ImVec2 hint_size = hint ? ImGui::CalcTextSize(hint, nullptr, false, wrap) : ImVec2(0.f, 0.f);
+		const f32 block_h = title_size.y + (hint ? hint_size.y + 4.f : 0.f);
+
+		const ImVec2 start = ImGui::GetCursorPos();
+		ImGui::SetCursorPos(ImVec2(start.x + std::max(0.f, (avail.x - title_size.x) * 0.5f), start.y + std::max(0.f, (avail.y - block_h) * 0.4f)));
+		ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
+		ImGui::TextUnformatted(title);
+		ImGui::PopTextWrapPos();
+
+		if (hint) {
+			ImGui::SetCursorPosX(start.x + std::max(0.f, (avail.x - hint_size.x) * 0.5f));
+			ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
+			ImGui::TextDisabled("%s", hint);
+			ImGui::PopTextWrapPos();
+		}
+	}
+
+
+	std::string pretty_name(std::string_view identifier) {
+
+		std::string out;
+		out.reserve(identifier.size());
+		bool new_word = true;
+		for (const char c : identifier) {
+
+			if (c == '_' || c == ' ' || c == '-') {
+				if (!out.empty() && out.back() != ' ')
+					out.push_back(' ');
+				new_word = true;
+				continue;
+			}
+			out.push_back(new_word ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : c);
+			new_word = false;
+		}
+		while (!out.empty() && out.back() == ' ')
+			out.pop_back();
+		return out;
+	}
+
+	// ---- cards + property rows ----------------------------------------------------------------------------------------
+
+	namespace {
+
+		// Row context. A stack so property blocks can nest (a settings page inside a popup inside a panel, ...)
+		struct property_state {
+
+			property_layout                                     layout = property_layout::compact;
+			std::string                                         filter{};               // lower case
+			bool                                                reset = false;
+			u32                                                 visible_rows = 0;
+
+			// settings pages: page header and sections are drawn lazily, so filtered-out sections disappear
+			bool                                                is_page = false;
+			const char*                                         page_title = nullptr;
+			const char*                                         page_desc = nullptr;
+			bool                                                page_header_pending = false;
+			bool                                                page_matches = true;
+			const char*                                         section_title = nullptr;
+			const char*                                         section_desc = nullptr;
+			bool                                                section_pending = false;
+			bool                                                section_matches = true;
+			bool                                                section_card_open = false;
+		};
+
+		struct card_frame {
+
+			u32                                                 rows = 0;               // rows drawn in this card (for dividers)
+		};
+
+		std::vector<property_state>                             s_property_stack{};
+		property_state                                          s_default_state{};
+		std::vector<card_frame>                                 s_card_stack{};
+
+
+		property_state& props()                                 { return s_property_stack.empty() ? s_default_state : s_property_stack.back(); }
+
+
+		bool contains_ci(const char* haystack, const std::string& needle_lower) {
+
+			if (needle_lower.empty())
+				return true;
+			if (!haystack)
+				return false;
+
+			std::string lower(haystack);
+			std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			return lower.find(needle_lower) != std::string::npos;
+		}
+
+
+		ImVec4 card_color()                                     { return lighten(ImGui::GetStyleColorVec4(ImGuiCol_WindowBg), 0.035f); }
+
+
+		// Longest prefix of [text] that fits [max_width] with "..." appended
+		std::string ellipsize(const char* text, const f32 max_width) {
+
+			if (ImGui::CalcTextSize(text).x <= max_width)
+				return text;
+
+			std::string out = text;
+			while (!out.empty()) {
+				do { out.pop_back(); } while (!out.empty() && (static_cast<unsigned char>(out.back()) & 0xC0) == 0x80);
+				if (ImGui::CalcTextSize((out + "...").c_str()).x <= max_width)
+					return out + "...";
+			}
+			return "...";
+		}
+
+
+		void draw_page_header(const property_state& state) {
+
+			if (!state.page_title)
+				return;
+
+			ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::header1));
+			ImGui::TextUnformatted(state.page_title);
+			ImGui::PopFont();
+
+			if (state.page_desc && *state.page_desc) {
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+				ImGui::TextWrapped("%s", state.page_desc);
+				ImGui::PopStyleColor();
+			}
+			ImGui::Dummy(ImVec2(0.f, 6.f));
+		}
+
+
+		// Draws a lazily pending page header / settings section card before the first visible row
+		void flush_pending() {
+
+			auto& state = props();
+			if (state.page_header_pending) {
+				draw_page_header(state);
+				state.page_header_pending = false;
+			}
+
+			if (state.section_pending) {
+				state.section_pending = false;
+				state.section_card_open = true;
+				begin_card(state.section_title, card_options{ .description = state.section_desc, .title_above = true });
+			}
+		}
+
+
+		// The shared row: label (+ description), reset arrow, control. [control_width] > 0 = fixed size control (switch)
+		bool property_row(const char* label, const char* desc, bool is_default, const std::function<void()>& reset,
+			const std::function<bool(f32)>& control, const f32 control_width = 0.f) {
+
+			auto& state = props();
+			const bool visible = state.filter.empty() || state.section_matches || contains_ci(label, state.filter) || contains_ci(desc, state.filter);
+			if (!visible)
+				return false;
+
+			flush_pending();
+
+			bool changed = false;
+			if (state.reset && !is_default && reset) {
+				reset();
+				is_default = true;
+				changed = true;
+			}
+
+			ImGui::PushID(label);
+
+			const ImGuiStyle& style = ImGui::GetStyle();
+			const f32 frame_h = ImGui::GetFrameHeight();
+			const f32 full_w = ImGui::GetContentRegionAvail().x;
+			const bool described = state.layout == property_layout::described;
+			card_frame* card = s_card_stack.empty() ? nullptr : &s_card_stack.back();
+
+			// thin divider between the rows of one card (described layout only, compact rows stay dense)
+			if (described && card && card->rows > 0) {
+				ImGui::Dummy(ImVec2(0.f, 3.f));
+				const ImVec2 p = ImGui::GetCursorScreenPos();
+				ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, p.y), ImVec2(p.x + full_w, p.y), ImGui::GetColorU32(ImGuiCol_Separator, 0.35f));
+				ImGui::Dummy(ImVec2(0.f, 4.f));
+			}
+
+			const ImVec2 start = ImGui::GetCursorScreenPos();
+			f32 label_bottom = 0.f;
+			f32 ctrl_x = 0.f;
+			f32 ctrl_w = 0.f;
+
+			if (described) {
+
+				const f32 area_w = std::clamp(full_w * 0.42f, 120.f, 340.f);
+				ctrl_w = control_width > 0.f ? std::min(control_width, area_w) : area_w;
+				ctrl_x = start.x + full_w - ctrl_w;
+				const f32 text_w = std::max(40.f, full_w - area_w - frame_h - style.ItemSpacing.x * 3.f);
+
+				ImGui::BeginGroup();
+				ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + text_w);
+				ImGui::SetCursorPosY(ImGui::GetCursorPosY() + style.FramePadding.y);
+				ImGui::TextUnformatted(label);
+				if (desc && *desc) {
+					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+					ImGui::TextUnformatted(desc);
+					ImGui::PopStyleColor();
+				}
+				ImGui::PopTextWrapPos();
+				ImGui::EndGroup();
+				label_bottom = ImGui::GetItemRectMax().y;
+
+				ImGui::SetCursorScreenPos(ImVec2(ctrl_x - frame_h - style.ItemSpacing.x, start.y));
+				if (!is_default) {
+					if (reset_button("##reset", frame_h)) {
+						reset();
+						changed = true;
+					}
+				} else
+					ImGui::Dummy(ImVec2(frame_h, frame_h));
+
+			} else {
+
+				// compact: fixed label column, the control fills the rest
+				const f32 label_w = std::clamp(full_w * 0.36f, 60.f, 170.f);
+				const f32 reset_size = frame_h * 0.8f;
+				const f32 text_max = label_w - style.ItemSpacing.x - (is_default ? 0.f : reset_size);
+				ctrl_x = start.x + label_w;
+				ctrl_w = std::max(20.f, full_w - label_w);
+
+				const std::string shown = ellipsize(label, text_max);
+				const ImVec2 text_size = ImGui::CalcTextSize(shown.c_str());
+				ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + style.FramePadding.y));
+				ImGui::TextUnformatted(shown.c_str());
+				if ((desc && *desc) || shown.size() != std::strlen(label)) {
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+						ImGui::BeginTooltip();
+						ImGui::PushTextWrapPos(ImGui::GetFontSize() * 25.f);
+						ImGui::TextUnformatted(label);
+						if (desc && *desc)
+							ImGui::TextDisabled("%s", desc);
+						ImGui::PopTextWrapPos();
+						ImGui::EndTooltip();
+					}
+				}
+				label_bottom = start.y + text_size.y + style.FramePadding.y * 2.f;
+
+				if (!is_default) {
+					ImGui::SetCursorScreenPos(ImVec2(ctrl_x - reset_size - style.ItemSpacing.x * 0.5f, start.y + (frame_h - reset_size) * 0.5f));
+					if (reset_button("##reset", reset_size)) {
+						reset();
+						changed = true;
+					}
+				}
+			}
+
+			// control
+			ImGui::SetCursorScreenPos(ImVec2(ctrl_x, start.y));
+			ImGui::BeginGroup();
+			ImGui::SetNextItemWidth(ctrl_w);
+			changed |= control(ctrl_w);
+			ImGui::EndGroup();
+			const f32 bottom = std::max(label_bottom, ImGui::GetItemRectMax().y);
+
+			// accent marker for values that differ from their default
+			if (!is_default) {
+				const f32 marker_x = start.x - (described ? 9.f : 6.f);
+				ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(marker_x, start.y + 2.f), ImVec2(marker_x + 3.f, bottom - 2.f),
+					ImGui::GetColorU32(GLT::imgui_config::get_action_color00_hover_ref()), 1.5f);
+			}
+
+			ImGui::SetCursorScreenPos(ImVec2(start.x, bottom));
+			ImGui::Dummy(ImVec2(0.f, 0.f));
+			ImGui::PopID();
+
+			if (card)
+				card->rows++;
+			state.visible_rows++;
+			return changed;
+		}
+
+
+		bool drag_floats(const char* label, const char* desc, f32* value, const f32* default_value, const int components,
+			const f32 speed, const f32 min_value, const f32 max_value, const char* format) {
+
+			const bool is_default = !default_value || std::equal(value, value + components, default_value);
+			return property_row(label, desc, is_default,
+				[&]() { std::copy(default_value, default_value + components, value); },
+				[&](f32 width) {
+					if (components == 1)
+						return ImGui::DragScalar("##value", ImGuiDataType_Float, value, speed, &min_value, &max_value, format,
+							(min_value < max_value) ? ImGuiSliderFlags_AlwaysClamp : ImGuiSliderFlags_None);
+					return drag_axes("##value", value, components, speed, min_value, max_value, format, width);
+				});
+		}
+
+
+		int string_resize_callback(ImGuiInputTextCallbackData* data) {
+
+			if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+				auto* str = static_cast<std::string*>(data->UserData);
+				str->resize(static_cast<size_t>(data->BufTextLen));
+				data->Buf = str->data();
+			}
+			return 0;
+		}
+
+	}
+
+	// ---- cards ----
+
+	bool begin_card(const char* title, const card_options& options) {
+
+		ImGui::PushID(title ? title : "##card");
+
+		if (options.title_above && title) {
+
+			ImGui::Dummy(ImVec2(0.f, 4.f));
+			ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+			ImGui::TextUnformatted(title);
+			ImGui::PopFont();
+
+			if (options.description && *options.description) {
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+				ImGui::TextWrapped("%s", options.description);
+				ImGui::PopStyleColor();
+			}
+			ImGui::Dummy(ImVec2(0.f, 2.f));
+		}
+
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, card_color());
+		ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, options.title_above ? ImVec2(14.f, 10.f) : ImVec2(10.f, 7.f));
+		ImGui::BeginChild("##card", ImVec2(0.f, 0.f), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+			ImGuiWindowFlags_NoScrollWithMouse);
+		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor();
+
+		s_card_stack.push_back({});
+
+		if (options.title_above || !title)
+			return true;
+
+		// ---- header row: chevron, icon, title, summary, actions ----
+		const f32 frame_h = ImGui::GetFrameHeight();
+		const f32 width = ImGui::GetContentRegionAvail().x;
+		const ImVec2 pos = ImGui::GetCursorScreenPos();
+		ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+		bool open = true;
+		if (options.collapsible) {
+
+			ImGuiStorage* storage = ImGui::GetStateStorage();
+			const ImGuiID open_id = ImGui::GetID("##open");
+			open = storage->GetBool(open_id, options.default_open);
+
+			const f32 hit_w = std::max(10.f, width - options.header_actions_width);
+			if (ImGui::InvisibleButton("##header", ImVec2(hit_w, frame_h))) {
+				open = !open;
+				storage->SetBool(open_id, open);
+			}
+			if (ImGui::IsItemHovered())
+				draw_list->AddRectFilled(ImVec2(pos.x - 4.f, pos.y), ImVec2(pos.x + hit_w, pos.y + frame_h),
+					ImGui::GetColorU32(GLT::imgui_config::get_action_color_gray_hover_ref()), 4.f);
+		} else
+			ImGui::Dummy(ImVec2(std::max(10.f, width - options.header_actions_width), frame_h));
+
+		f32 x = pos.x;
+		const f32 text_y = pos.y + (frame_h - ImGui::GetTextLineHeight()) * 0.5f;
+
+		if (options.collapsible) {
+			ImGui::RenderArrow(draw_list, ImVec2(x, text_y), ImGui::GetColorU32(ImGuiCol_TextDisabled), open ? ImGuiDir_Down : ImGuiDir_Right, 0.8f);
+			x += ImGui::GetFontSize() * 0.9f + 2.f;
+		}
+
+		if (options.has_icon) {
+			const f32 icon = ImGui::GetTextLineHeight();
+			draw_list->AddImage(options.icon, ImVec2(x, text_y), ImVec2(x + icon, text_y + icon), options.icon_uv0, options.icon_uv1);
+			x += icon + 6.f;
+		}
+
+		ImFont* bold = GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold);
+		ImGui::PushFont(bold);
+		draw_list->AddText(ImVec2(x, text_y), ImGui::GetColorU32(ImGuiCol_Text), title);
+		x += ImGui::CalcTextSize(title).x;
+		ImGui::PopFont();
+
+		if (options.summary && *options.summary) {
+			const f32 space = pos.x + width - options.header_actions_width - (x + 10.f) - 6.f;
+			if (space > 20.f) {
+				const std::string summary = ellipsize(options.summary, space);
+				draw_list->AddText(ImVec2(x + 10.f, text_y), ImGui::GetColorU32(ImGuiCol_TextDisabled), summary.c_str());
+			}
+		}
+
+		if (options.header_actions && options.header_actions_width > 0.f) {
+			ImGui::SetCursorScreenPos(ImVec2(pos.x + width - options.header_actions_width, pos.y));
+			ImGui::BeginGroup();
+			options.header_actions();
+			ImGui::EndGroup();
+		}
+
+		ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + frame_h));
+		ImGui::Dummy(ImVec2(0.f, 0.f));
+
+		if (open && options.description && *options.description) {
+			ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+			ImGui::TextWrapped("%s", options.description);
+			ImGui::PopStyleColor();
+		}
+
+		if (open) {
+			const ImVec2 p = ImGui::GetCursorScreenPos();
+			draw_list->AddLine(ImVec2(p.x, p.y), ImVec2(p.x + width, p.y), ImGui::GetColorU32(ImGuiCol_Separator, 0.3f));
+			ImGui::Dummy(ImVec2(0.f, 3.f));
+		}
+
+		return open;
+	}
+
+
+	void end_card() {
+
+		if (!s_card_stack.empty())
+			s_card_stack.pop_back();
+
+		ImGui::EndChild();
+		ImGui::PopID();
+		ImGui::Dummy(ImVec2(0.f, 6.f));
+	}
+
+	// ---- property blocks ----
+
+	void begin_properties(const property_layout layout, std::string_view filter) {
+
+		property_state state{};
+		state.layout = layout;
+		state.filter.assign(filter.begin(), filter.end());
+		std::transform(state.filter.begin(), state.filter.end(), state.filter.begin(),
+			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		s_property_stack.push_back(std::move(state));
+	}
+
+
+	u32 end_properties() {
+
+		if (s_property_stack.empty())
+			return 0;
+
+		const u32 rows = s_property_stack.back().visible_rows;
+		s_property_stack.pop_back();
+		return rows;
+	}
+
+
+	void reset_properties()                     { props().reset = true; }
+
+	// ---- property rows ----
+
+	bool property_toggle(const char* label, bool& value, const char* desc, const bool* default_value) {
+
+		const f32 switch_w = ImGui::GetFrameHeight() * 1.8f;
+		return property_row(label, desc, !default_value || value == *default_value,
+			[&]() { value = *default_value; },
+			[&](f32) { return toggle_switch("##value", value); },
+			switch_w);
+	}
+
+
+	bool property_slider(const char* label, f32& value, const f32 min_value, const f32 max_value, const char* format,
+		const char* desc, const f32* default_value, ImGuiSliderFlags flags) {
+
+		return property_row(label, desc, !default_value || value == *default_value,
+			[&]() { value = *default_value; },
+			[&](f32) { return ImGui::SliderFloat("##value", &value, min_value, max_value, format, flags | ImGuiSliderFlags_AlwaysClamp); });
+	}
+
+
+	bool property_slider(const char* label, i32& value, const i32 min_value, const i32 max_value, const char* format,
+		const char* desc, const i32* default_value, ImGuiSliderFlags flags) {
+
+		return property_row(label, desc, !default_value || value == *default_value,
+			[&]() { value = *default_value; },
+			[&](f32) { return ImGui::SliderInt("##value", &value, min_value, max_value, format, flags | ImGuiSliderFlags_AlwaysClamp); });
+	}
+
+
+	bool property_drag(const char* label, f32& value, const f32 speed, const f32 min_value, const f32 max_value, const char* format,
+		const char* desc, const f32* default_value) {
+
+		return drag_floats(label, desc, &value, default_value, 1, speed, min_value, max_value, format);
+	}
+
+
+	bool property_drag(const char* label, glm::vec2& value, const f32 speed, const f32 min_value, const f32 max_value, const char* format,
+		const char* desc, const glm::vec2* default_value) {
+
+		return drag_floats(label, desc, &value.x, default_value ? &default_value->x : nullptr, 2, speed, min_value, max_value, format);
+	}
+
+
+	bool property_drag(const char* label, glm::vec3& value, const f32 speed, const f32 min_value, const f32 max_value, const char* format,
+		const char* desc, const glm::vec3* default_value) {
+
+		return drag_floats(label, desc, &value.x, default_value ? &default_value->x : nullptr, 3, speed, min_value, max_value, format);
+	}
+
+
+	bool property_combo(const char* label, i32& index, std::span<const char* const> options, const char* desc, const i32* default_index) {
+
+		return property_row(label, desc, !default_index || index == *default_index,
+			[&]() { index = *default_index; },
+			[&](f32) {
+				bool changed = false;
+				const char* preview = (index >= 0 && index < static_cast<i32>(options.size())) ? options[static_cast<size_t>(index)] : "";
+				ImGui::PushStyleColor(ImGuiCol_Button, GLT::imgui_config::get_action_color_gray_hover_ref());
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, GLT::imgui_config::get_action_color_gray_active_ref());
+				const bool combo_open = ImGui::BeginCombo("##value", preview);
+				ImGui::PopStyleColor(2);
+				if (combo_open) {
+					for (size_t x = 0; x < options.size(); ++x) {
+						const bool selected = static_cast<i32>(x) == index;
+						if (ImGui::Selectable(options[x], selected) && !selected) {
+							index = static_cast<i32>(x);
+							changed = true;
+						}
+						if (selected)
+							ImGui::SetItemDefaultFocus();
+					}
+					ImGui::EndCombo();
+				}
+				return changed;
+			});
+	}
+
+
+	bool property_segmented(const char* label, i32& index, std::span<const char* const> options, const char* desc, const i32* default_index) {
+
+		return property_row(label, desc, !default_index || index == *default_index,
+			[&]() { index = *default_index; },
+			[&](f32 width) { return segmented_control("##value", index, options, width); });
+	}
+
+
+	bool property_color(const char* label, ImVec4& color, const bool alpha, const char* desc, const ImVec4* default_color) {
+
+		const bool is_default = !default_color || (color.x == default_color->x && color.y == default_color->y && color.z == default_color->z
+			&& (!alpha || color.w == default_color->w));
+
+		return property_row(label, desc, is_default,
+			[&]() { color = alpha ? *default_color : ImVec4(default_color->x, default_color->y, default_color->z, color.w); },
+			[&](f32 width) {
+
+				const ImVec2 pos = ImGui::GetCursorScreenPos();
+				const f32 height = ImGui::GetFrameHeight();
+				const ImGuiColorEditFlags swatch_flags = ImGuiColorEditFlags_NoTooltip
+					| (alpha ? ImGuiColorEditFlags_AlphaPreviewHalf : ImGuiColorEditFlags_NoAlpha);
+
+				if (ImGui::ColorButton("##swatch", color, swatch_flags, ImVec2(width, height)))
+					ImGui::OpenPopup("##color_popup");
+
+				// hex code on top of the swatch, in black or white depending on the brightness
+				const f32 luminance = 0.299f * color.x + 0.587f * color.y + 0.114f * color.z;
+				const std::string hex = std::format("#{:02X}{:02X}{:02X}",
+					static_cast<int>(std::clamp(color.x, 0.f, 1.f) * 255.f + .5f),
+					static_cast<int>(std::clamp(color.y, 0.f, 1.f) * 255.f + .5f),
+					static_cast<int>(std::clamp(color.z, 0.f, 1.f) * 255.f + .5f));
+				const ImVec2 text_size = ImGui::CalcTextSize(hex.c_str());
+				if (text_size.x < width - 4.f)
+					ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x + (width - text_size.x) * 0.5f, pos.y + (height - text_size.y) * 0.5f),
+						luminance > 0.55f ? IM_COL32(20, 20, 20, 255) : IM_COL32(240, 240, 240, 255), hex.c_str());
+
+				bool changed = false;
+				ImGui::SetNextWindowPos(ImVec2(pos.x + width, pos.y + height + 4.f), ImGuiCond_Appearing, ImVec2(1.f, 0.f));
+				if (ImGui::BeginPopup("##color_popup")) {
+
+					ImGui::SetNextItemWidth(230.f);
+					changed |= ImGui::ColorPicker4("##picker", &color.x, ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_NoSmallPreview
+						| ImGuiColorEditFlags_PickerHueWheel | (alpha ? ImGuiColorEditFlags_AlphaBar : ImGuiColorEditFlags_NoAlpha));
+
+					ImGui::Dummy(ImVec2(0.f, 2.f));
+					ImGui::TextDisabled("Presets");
+					changed |= color_palette(color);
+					ImGui::EndPopup();
+				}
+				return changed;
+			});
+	}
+
+
+	bool property_color(const char* label, glm::vec4& color, const bool alpha, const char* desc, const glm::vec4* default_color) {
+
+		ImVec4 buffer{ color.x, color.y, color.z, color.w };
+		const ImVec4 def = default_color ? ImVec4(default_color->x, default_color->y, default_color->z, default_color->w) : ImVec4();
+		const bool changed = property_color(label, buffer, alpha, desc, default_color ? &def : nullptr);
+		if (changed)
+			color = glm::vec4(buffer.x, buffer.y, buffer.z, buffer.w);
+		return changed;
+	}
+
+
+	bool property_color(const char* label, glm::vec3& color, const char* desc, const glm::vec3* default_color) {
+
+		ImVec4 buffer{ color.x, color.y, color.z, 1.f };
+		const ImVec4 def = default_color ? ImVec4(default_color->x, default_color->y, default_color->z, 1.f) : ImVec4();
+		const bool changed = property_color(label, buffer, false, desc, default_color ? &def : nullptr);
+		if (changed)
+			color = glm::vec3(buffer.x, buffer.y, buffer.z);
+		return changed;
+	}
+
+
+	bool property_text(const char* label, std::string& value, const char* desc, const char* hint) {
+
+		return property_row(label, desc, true, {},
+			[&](f32) {
+				return ImGui::InputTextWithHint("##value", hint ? hint : "", value.data(), value.capacity() + 1,
+					ImGuiInputTextFlags_CallbackResize, &string_resize_callback, &value);
+			});
+	}
+
+
+	void property_value(const char* label, std::string_view value, const char* desc) {
+
+		property_row(label, desc, true, {},
+			[&](f32) {
+				ImGui::AlignTextToFramePadding();
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+				ImGui::TextUnformatted(value.data(), value.data() + value.size());
+				ImGui::PopStyleColor();
+				return false;
+			});
+	}
+
+
+	bool property_custom(const char* label, const std::function<bool(f32 width)>& control, const char* desc, const bool is_default,
+		const std::function<void()>& reset) {
+
+		return property_row(label, desc, is_default, reset, control);
+	}
+
+	// ---- settings pages ----
+
+	void settings_begin_page(const char* title, std::string_view filter, const char* description) {
+
+		begin_properties(property_layout::described, filter);
+		auto& state = props();
+		state.is_page = true;
+		state.page_title = title;
+		state.page_desc = description;
+		state.page_matches = state.filter.empty() || (title && contains_ci(title, state.filter));
+		state.section_matches = state.page_matches;
+
+		ImGui::PushID(title ? title : "##settings_page");
+
+		if (state.filter.empty())
+			draw_page_header(state);
+		else
+			state.page_header_pending = title != nullptr;
+	}
+
+
+	u32 settings_end_page() {
+
+		settings_end_section();
+		ImGui::PopID();
+		return end_properties();
+	}
+
+
+	void settings_reset_page()                  { reset_properties(); }
+
+
+	void settings_begin_section(const char* title, const char* description) {
+
+		settings_end_section();
+		auto& state = props();
+		state.section_title = title;
+		state.section_desc = description;
+		state.section_pending = true;
+		state.section_matches = state.page_matches || contains_ci(title, state.filter) || contains_ci(description, state.filter);
+	}
+
+
+	void settings_end_section() {
+
+		auto& state = props();
+		if (state.section_card_open) {
+			end_card();
+			ImGui::Dummy(ImVec2(0.f, 2.f));
+			state.section_card_open = false;
+		}
+		state.section_pending = false;
+		state.section_title = nullptr;
+		state.section_desc = nullptr;
+		state.section_matches = state.page_matches;
+	}
+
+
+	bool settings_toggle(const char* label, const char* desc, bool& value, const bool default_value) {
+		return property_toggle(label, value, desc, &default_value);
+	}
+
+
+	bool settings_slider(const char* label, const char* desc, f32& value, const f32 default_value, const f32 min_value, const f32 max_value,
+		const char* format, ImGuiSliderFlags flags) {
+		return property_slider(label, value, min_value, max_value, format, desc, &default_value, flags);
+	}
+
+
+	bool settings_slider(const char* label, const char* desc, i32& value, const i32 default_value, const i32 min_value, const i32 max_value,
+		const char* format, ImGuiSliderFlags flags) {
+		return property_slider(label, value, min_value, max_value, format, desc, &default_value, flags);
+	}
+
+
+	bool settings_drag(const char* label, const char* desc, f32& value, const f32 default_value, const f32 speed,
+		const f32 min_value, const f32 max_value, const char* format) {
+		return property_drag(label, value, speed, min_value, max_value, format, desc, &default_value);
+	}
+
+
+	bool settings_drag(const char* label, const char* desc, glm::vec2& value, const glm::vec2& default_value, const f32 speed,
+		const f32 min_value, const f32 max_value, const char* format) {
+		return property_drag(label, value, speed, min_value, max_value, format, desc, &default_value);
+	}
+
+
+	bool settings_drag(const char* label, const char* desc, glm::vec3& value, const glm::vec3& default_value, const f32 speed,
+		const f32 min_value, const f32 max_value, const char* format) {
+		return property_drag(label, value, speed, min_value, max_value, format, desc, &default_value);
+	}
+
+
+	bool settings_combo(const char* label, const char* desc, i32& index, const i32 default_index, std::span<const char* const> options) {
+		return property_combo(label, index, options, desc, &default_index);
+	}
+
+
+	bool settings_segmented(const char* label, const char* desc, i32& index, const i32 default_index, std::span<const char* const> options) {
+		return property_segmented(label, index, options, desc, &default_index);
+	}
+
+
+	bool settings_color(const char* label, const char* desc, ImVec4& color, const ImVec4& default_color, const bool alpha) {
+		return property_color(label, color, alpha, desc, &default_color);
+	}
+
+
+	bool settings_color(const char* label, const char* desc, glm::vec4& color, const glm::vec4& default_color, const bool alpha) {
+		return property_color(label, color, alpha, desc, &default_color);
+	}
+
+
+	bool settings_custom(const char* label, const char* desc, const bool is_default, const std::function<void()>& reset,
+		const std::function<bool()>& control) {
+		return property_custom(label, [&](f32) { return control(); }, desc, is_default, reset);
+	}
+
+
 	// CLASS IMPLEMENTATION ============================================================================================
 
 	// CLASS PUBLIC ====================================================================================================

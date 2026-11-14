@@ -1,6 +1,10 @@
 
 #pragma once
 
+#include <string>
+#include <vector>
+#include <memory>
+
 #include <vulkan/vulkan.hpp>
 
 
@@ -71,6 +75,13 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         [[nodiscard]] instance_wrapper create_instance();
 
+        // Picks the device to render on. Every physical device is checked against the HARD requirements only (what the
+        // rasteriser cannot run without); among the devices that pass, a real GPU always wins over a software
+        // rasteriser: discrete > integrated > virtual > other > CPU (llvmpipe / lavapipe / SwiftShader).
+        // Every device and the reason it was rejected is logged. Features the renderer merely benefits from are enabled
+        // on the chosen device when it has them, they never disqualify a device.
+        // Override: environment variable GLT_VK_DEVICE (or `preferred_device`) = part of a device name (case
+        // insensitive) or its index in the logged list
         [[nodiscard]] vk::PhysicalDevice pick_physical_device(vk::SurfaceKHR surface);
 
         [[nodiscard]] vk::Device create_device();
@@ -89,7 +100,9 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         std::vector<const char*>                        instance_extensions;                     // Debug layers are added automatically if EnableDebug is true
         std::vector<const char*>                        instance_layers;
-        std::vector<const char*>                        device_extensions;                       // Raytracing extensions are added automatically, no need to add them
+        std::vector<const char*>                        device_extensions;                       // Extra REQUIRED device extensions (VK_EXT_descriptor_buffer is always added)
+        bool                                            require_ray_tracing = false;             // Also require the ray tracing extensions + features. The rasteriser uses none of them: requiring them rejected GPUs that are perfectly able to run it
+        std::string                                     preferred_device;                        // Optional: part of a device name or its index. The env var GLT_VK_DEVICE takes precedence
         PFN_vkDebugUtilsMessengerCallbackEXT            debug_callback = nullptr;                // set nullptr to use default callback
         void*                                           debug_callback_user_data = nullptr;      // The pointer to the debug callback user data
 

@@ -265,6 +265,10 @@ namespace GLT::asset::registry_default {
 
         GLT::event_bus::unsubscribe(m_save_subscription);
 
+        // Background save jobs (e.g. the save-on-exit) still write files and touch the slots: let them finish first
+        wait_for_save_jobs();
+        flush_catalog();                                    // path captured at scan time: no application access
+
         std::unique_lock lock(m_mutex);
 
         // Tear down every live slot. Handlers get the chance to flush / release
@@ -297,6 +301,8 @@ namespace GLT::asset::registry_default {
         if (relative.empty())
             return std::unexpected{ GLT::asset::load_error::not_found };
 
+        ensure_catalog();                                   // first load of a project: dependencies can then resolve by UUID
+
         std::unique_lock lock(m_mutex);
         std::unordered_set<std::string> in_flight;
         auto res = load_unlocked(relative, in_flight);
@@ -313,11 +319,29 @@ namespace GLT::asset::registry_default {
 
     std::expected<void, GLT::asset::load_error> plugin::save_as(GLT::asset::handle h, const std::filesystem::path& new_path) {
 
+        auto prepared = prepare_save(h, new_path);
+        if (!prepared)
+            return std::unexpected{ prepared.error() };
+        return commit_save(*prepared);
+    }
+
+
+    // Phase 1 (caller's thread, i.e. the thread that owns / mutates the asset): resolve paths and let the handler copy the
+    // asset into a writer. After this returns, nothing refers to the runtime asset any more, so it may be edited or
+    // unloaded while phase 2 runs on a worker.
+    //
+    // Before the split, serialize() ran on a thread-pool worker reading the live asset with no lock: an edit on the main
+    // thread, or plugin unload at shutdown (which frees every asset), let it read freed memory. That wrote corrupt files
+    // (stealth_ship: allocator bookkeeping in the index / submesh chunks) and crashed in get_project_path() on exit
+    std::expected<plugin::pending_save, GLT::asset::load_error> plugin::prepare_save(GLT::asset::handle h,
+        const std::filesystem::path& new_path) {
+
         // We deliberately do NOT hold m_mutex across handler->serialize(). Handlers are allowed to call back into the registry
 
         GLT::asset::info info_snap{};
-        asset_writer_impl writer;
-        std::filesystem::path target;
+        pending_save pending{};
+        pending.handle = h;
+        pending.writer = std::make_unique<asset_writer_impl>();
         GLT::asset::i_runtime_asset* asset_ptr = nullptr;
         GLT::asset::i_asset_handler* handler_ptr = nullptr;
 
@@ -333,16 +357,17 @@ namespace GLT::asset::registry_default {
 
             // resolve target (project-relative) -----------------------------------------------------------------------
             if (new_path.empty()) {
-                target = slot->canonical_path;
+                pending.target = slot->canonical_path;
             } else {
                 auto relative = GLT::project::to_content_relative(new_path);
                 if (relative.empty())
                     return std::unexpected{ GLT::asset::load_error::not_found };
-                target = relative;
+                pending.target = relative;
+                pending.renamed = true;
             }
 
             // seed the writer -----------------------------------------------------------------------------------------
-            writer.set_name(slot->asset_info.name);
+            pending.writer->set_name(slot->asset_info.name);
 
             // Re-declare every dependency so the file stays self-describing. Dep paths on disk are content-dir-relative
             // the same namespace as [virtual_path] - so a dep row is position-independent: the dependent can be moved or renamed
@@ -353,7 +378,7 @@ namespace GLT::asset::registry_default {
                 if (!dep_slot)
                     continue;
 
-                writer.declare_dependency(dep_slot->asset_info.id, dep_slot->canonical_path.generic_string(), 
+                pending.writer->declare_dependency(dep_slot->asset_info.id, dep_slot->canonical_path.generic_string(),
                     dep_slot->asset_info.asset_type);
             }
 
@@ -362,16 +387,36 @@ namespace GLT::asset::registry_default {
             handler_ptr = slot->handler;
         }
 
-        // handler serialize + compose + write (no lock held) ----------------------------------------------------------
-
-        if (auto result = handler_ptr->serialize(info_snap, *asset_ptr, writer); !result)
+        // handler serialize (no lock held, but on the owning thread: the asset cannot change or die meanwhile) ----------
+        if (auto result = handler_ptr->serialize(info_snap, *asset_ptr, *pending.writer); !result)
             return std::unexpected{ result.error() };
 
-        const GLT::asset::content_hash new_hash = hash_writer(writer);
-        auto composed = compose_asset_file(info_snap.id, info_snap.asset_type, new_hash, info_snap.source_path, writer);
+        // Plain values only from here on: the snapshot's spans point into slot storage
+        pending.id = info_snap.id;
+        pending.asset_type = info_snap.asset_type;
+        pending.source_path = info_snap.source_path;
+        pending.previous_hash = info_snap.hash;
+        pending.abs_target = PROJECT_CONTENT_DIR / pending.target;           // resolved here: the application may be gone later
+        pending.abs_tmp = PROJECT_CONTENT_DIR / (pending.target.string() + ".tmp");
+        return pending;
+    }
 
-        const std::filesystem::path abs_target = PROJECT_CONTENT_DIR / target;
-        const std::filesystem::path abs_tmp = PROJECT_CONTENT_DIR / (target.string() + ".tmp");
+
+    // Phase 2 (any thread): hash, compose, write, then re-anchor the slot if it still exists. Touches no runtime asset
+    std::expected<void, GLT::asset::load_error> plugin::commit_save(pending_save& pending) {
+
+        const GLT::asset::handle h = pending.handle;
+        const asset_writer_impl& writer = *pending.writer;
+        const std::filesystem::path& target = pending.target;
+
+        const GLT::asset::content_hash new_hash = hash_writer(writer);
+        if (!pending.renamed && new_hash == pending.previous_hash)
+            return {};                                                      // unchanged: don't rewrite (and re-trigger watchers)
+
+        auto composed = compose_asset_file(pending.id, pending.asset_type, new_hash, pending.source_path, writer);
+
+        const std::filesystem::path& abs_target = pending.abs_target;
+        const std::filesystem::path& abs_tmp = pending.abs_tmp;
 
         if (!write_blob(abs_tmp, composed.bytes))
             return std::unexpected{ GLT::asset::load_error::out_of_memory };
@@ -405,6 +450,7 @@ namespace GLT::asset::registry_default {
             m_by_path.emplace(new_key, h);
         }
 
+        catalog_note(pending.id, target, pending.asset_type);   // first save of a runtime asset / save as
         return {};
     }
 
@@ -555,6 +601,7 @@ namespace GLT::asset::registry_default {
             }
         }
 
+        catalog_move(from_str, to_str);                     // loaded or not, the files under [from] keep their UUIDs
         return {};
     }
 
@@ -816,6 +863,7 @@ namespace GLT::asset::registry_default {
                 .payload_hash = result.payload_hash,
             };
         }
+        catalog_note(result.id, out_rel, target_type);
 
         auto ref_res = load(out_rel);
         VALIDATE(ref_res, return std::unexpected{ GLT::asset::import_error::handler_rejected },
@@ -1116,13 +1164,41 @@ namespace GLT::asset::registry_default {
 
         // save_as() already keeps the heavy work (serialize + compose + write) outside the lock, so per-asset tasks actually parallelize
         // The write-back section serializes briefly, which is fine
+        // Serialize every asset HERE (main thread: the thread that edits and unloads assets), only hash / compose / write on
+        // the workers. Each job is counted so on_unload() can wait for them before tearing the registry down
         for (GLT::asset::handle handle : handles) {
-            GLT::thread_pool::push([this, handle]() {
-                if (auto res = save(handle); !res) {
-                    LOG(warn, "asset [{}] failed to persist [{}]", info(handle).name, GLT::util::enum_to_string(res.error()));
+
+            auto prepared = prepare_save(handle, {});
+            if (!prepared) {
+                if (prepared.error() != GLT::asset::load_error::not_found)       // not_found: no handler / data, nothing to save
+                    LOG(warn, "asset [{}] failed to serialize [{}]", info(handle).name, GLT::util::enum_to_string(prepared.error()));
+                continue;
+            }
+
+            {
+                std::lock_guard lock(m_save_jobs_mutex);
+                ++m_save_jobs;
+            }
+            auto job = std::make_shared<pending_save>(std::move(*prepared));
+            GLT::thread_pool::push([this, job]() {
+                if (auto res = commit_save(*job); !res)
+                    LOG(warn, "asset [{}] failed to persist [{}]", job->target.generic_string(), GLT::util::enum_to_string(res.error()));
+                {
+                    std::lock_guard lock(m_save_jobs_mutex);
+                    --m_save_jobs;
                 }
+                m_save_jobs_done.notify_all();
             });
         }
+    }
+
+
+    void plugin::wait_for_save_jobs() {
+
+        std::unique_lock lock(m_save_jobs_mutex);
+        if (m_save_jobs > 0)
+            LOG(info, "waiting for {} background asset save(s)", m_save_jobs);
+        m_save_jobs_done.wait(lock, [this] { return m_save_jobs == 0; });
     }
 
 
@@ -1217,29 +1293,38 @@ namespace GLT::asset::registry_default {
                     continue;
                 }
 
-                // slow path - resolve by path relative to the importing asset
-                if (dep.path_offset == 0) {
-                    LOG(warn, "[{}] dependency id={:#x} has no path and is not resident", key, static_cast<unsigned long long>(dep.id));
-                    resolved_deps.push_back(INVALID_HANDLE);
-                    continue;
+                // slow path - resolve by path relative to the importing asset, then by UUID through the catalog (the
+                // dependency was moved / renamed since this file was written, or the row has no path)
+                const std::string dep_path = dep.path_offset != 0 ? read_cstr(dep.path_offset) : std::string{};
+                const std::filesystem::path catalog_path = catalog_lookup(dep.id);
+
+                std::expected<GLT::asset::handle, GLT::asset::load_error> child = std::unexpected{ GLT::asset::load_error::not_found };
+                std::filesystem::path child_path{};
+                if (!dep_path.empty()) {
+
+                    // [dep_path] is content-dir-relative (see the on-disk contract above), so it feeds straight into
+                    // load_unlocked, which is itself content-relative
+                    child_path = std::filesystem::path{ dep_path }.lexically_normal();
+                    child = load_unlocked(child_path, in_flight);
                 }
+                if (!child && !catalog_path.empty() && catalog_path != child_path) {
 
-                const std::string dep_path = read_cstr(dep.path_offset);
-                if (dep_path.empty()) {
-                    LOG(warn, "[{}] dependency id={:#x} has an empty path", key, static_cast<unsigned long long>(dep.id));
-                    resolved_deps.push_back(INVALID_HANDLE);
-                    continue;
+                    if (!dep_path.empty()) {
+                        LOG(info, "[{}] dependency [{}] is now at [{}] (found by UUID {:#x})", key, dep_path, catalog_path.generic_string(),
+                            static_cast<unsigned long long>(dep.id));
+                    }
+                    child_path = catalog_path;
+                    child = load_unlocked(child_path, in_flight);
                 }
-
-                // recurse
-
-                // [dep_path] is content-dir-relative (see the on-disk contract above), so it feeds straight into load_unlocked,
-                // which is itself content-relative
-                const std::filesystem::path child_path = std::filesystem::path{ dep_path }.lexically_normal();
-
-                auto child = load_unlocked(child_path, in_flight);
                 if (!child) {
-                    LOG(warn, "[{}] dependency [{}] failed to load (error={})", key, dep_path, static_cast<int>(child.error()));
+                    if (dep_path.empty() && catalog_path.empty()) {
+                        LOG(warn, "[{}] dependency id={:#x} has no path, is not resident and not in the asset catalog", key,
+                            static_cast<unsigned long long>(dep.id));
+                    } else {
+                        LOG(warn, "[{}] dependency [{}] (id={:#x}) failed to load (error={})", key,
+                            child_path.empty() ? dep_path : child_path.generic_string(), static_cast<unsigned long long>(dep.id),
+                            static_cast<int>(child.error()));
+                    }
                     resolved_deps.push_back(INVALID_HANDLE);
                     continue;
                 }
@@ -1309,7 +1394,13 @@ namespace GLT::asset::registry_default {
                 retain_unlocked(dep);
 
         m_by_path.emplace(key, handle);
-        m_by_id.emplace(hdr.id, handle);
+        if (m_by_id.emplace(hdr.id, handle).second) {
+            catalog_note(hdr.id, path, hdr.asset_type);
+        } else {
+            LOG(warn, "[{}] has the same UUID {:#x} as the loaded asset [{}] - look it up by path; the asset catalog gives it its own "
+                "UUID on its next scan (registry refresh_catalog())", key, static_cast<unsigned long long>(hdr.id),
+                slot_for(m_by_id[hdr.id]) ? slot_for(m_by_id[hdr.id])->canonical_path.generic_string() : std::string("?"));
+        }
 
         for (GLT::asset::handle dep : slot->deps_storage) {
             if (GLT::asset::registry_default::slot* dep_slot = slot_for(dep)) {

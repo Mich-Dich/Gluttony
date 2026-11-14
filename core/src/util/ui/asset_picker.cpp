@@ -496,6 +496,18 @@ namespace GLT::UI {
 
     // ---- table-row entry point --------------------------------------------------------------------
 
+    bool property_asset(const char* label, GLT::asset::asset_ref& in_out, GLT::asset::type filter, const char* desc, bool allow_clear) {
+
+        return property_custom(label, [&](f32 width) {
+            asset_picker_options opts{};
+            opts.label = label;
+            opts.filter = filter;
+            opts.allow_clear = allow_clear;
+            return asset_picker_widget(opts, in_out, width);
+        }, desc);
+    }
+
+
     bool table_row_asset_picker(std::string_view label, GLT::asset::handle& in_out, GLT::asset::type filter, const char* desc,
         bool allow_clear) {
 

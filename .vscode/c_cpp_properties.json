@@ -14,7 +14,7 @@
                 "IMGUI_DEFINE_MATH_OPERATORS",
                 "RENDER_API_VULKAN"
             ],
-            "compilerPath": "/opt/gcc-16.2/bin/gcc-16.2",
+            "compilerPath": "${env:GCC16_ROOT}/bin/gcc-16.2",
             "cStandard": "c11",
             "cppStandard": "c++26",
             "intelliSenseMode": "linux-gcc-x64"
@@ -33,7 +33,7 @@
                 "DEBUG",
                 "IMGUI_DEFINE_MATH_OPERATORS"
             ],
-            "compilerPath": "/opt/gcc-16.2/bin/gcc-16.2",
+            "compilerPath": "${env:GCC16_ROOT}/bin/gcc-16.2",
             "cStandard": "c11",
             "cppStandard": "c++26",
             "intelliSenseMode": "linux-gcc-x64"

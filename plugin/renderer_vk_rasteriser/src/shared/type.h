@@ -23,6 +23,9 @@ namespace GLT::renderer::vk_rasterizer {
 
     static constexpr u32                                            INDEX_HEADROOM_MIN = 128 * 1024;
 
+    // Virtual geometry: records of the cluster pool (one per geometry cluster of every resident mesh that has them)
+    static constexpr u32                                            CLUSTER_HEADROOM_MIN = 16 * 1024;
+
     // mesh capacity ---------------------------------------------------------------------------------------------------
 
     static constexpr u32                                            MAX_MESHES = 4096;
@@ -51,7 +54,16 @@ namespace GLT::renderer::vk_rasterizer {
 
     // codegen revision (bump to invalidate bytecode) ------------------------------------------------------------------
 
-    static constexpr u32                                            VK_MATERIAL_CODEGEN_REVISION = 1;
+    // Bump whenever shading_strings.h changes: it is mixed into the implementation hash, so materials recompile
+    // rev 2: HDR output (linear radiance, tonemapping moved to a post pass), hemispherical sky ambient
+    // rev 3: SV_IsFrontFace normal flip (double-sided materials)
+    // rev 5: local shadow atlas projection + clip distances in the vertex shader, instance index without SV_InstanceID
+    // rev 6: shadow view in firstInstance bits 20..30 (up to 1536 views), single-tap sampling of small shadow tiles
+    // rev 7: sun shadows from cascades (shadow views), 3 x 3 tent filter with four taps
+    static constexpr u32                                            VK_MATERIAL_CODEGEN_REVISION = 7;
+
+    // Lit scene colour target. Material "main" pipelines are created against this format
+    inline constexpr vk::Format                                     HDR_COLOR_FORMAT = vk::Format::eR16G16B16A16Sfloat;
 
     inline constexpr shared_mesh_id                                 INVALID_SHARED_MESH = 0xFFFFFFFFu;
 
@@ -106,9 +118,27 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         index_offset = 0;   // in indices
         u32                                                         index_count = 0;
         u32                                                         submesh_offset = 0;  // in gpu_submesh_data
-        u32                                                         submesh_count = 0;
+        u32                                                         submesh_count = 0;   // per LOD level
+        u32                                                         lod_count = 1;       // levels uploaded (>= 1)
         bool                                                        alive = false;
         std::vector<u32>                                            material_slots{};
+        // [lod * submesh_count + submesh]: {first_index, index_count} into this slot's index range (CPU copy for direct
+        // draws). The index range holds [indices ++ lod_indices] of the asset, the GPU submesh table the same layout
+        std::vector<glm::uvec2>                                     submesh_ranges{};
+        const void*                                                 source = nullptr;   // mesh_asset uploaded from (change detection only)
+        u32                                                         source_revision = 0;
+        u64                                                         source_geometry = 0; // hash of the geometry arrays' data pointers + sizes
+        std::array<f32, 8>                                          lod_screen{};       // CPU copy of gpu_mesh_data::lod_screen (translucents)
+
+        // Virtual geometry (asset/mesh_cluster.h). cluster_count == 0: the mesh has no clusters or does not use them, and
+        // renders with the levels above only. The cluster triangle lists sit at the end of this slot's index range
+        // ([indices ++ lod_indices ++ cluster_indices]), the cluster records in the cluster pool
+        u32                                                         cluster_offset = 0;     // in cluster records
+        u32                                                         cluster_count = 0;
+        u32                                                         cluster_index_base = 0; // first cluster index, relative to index_offset
+        u32                                                         cluster_vertex_base = 0;    // first cluster vertex (recomputed normals), relative to vertex_offset
+        u32                                                         cluster_vertex_count = 0;
+        std::vector<u32>                                            cluster_max_visible{};  // per submesh: most cluster draws at once
         glm::vec3                                                   local_min{0.0f};
         glm::vec3                                                   local_max{0.0f};
         u32                                                         ref_count = 0;
@@ -133,6 +163,18 @@ namespace GLT::renderer::vk_rasterizer {
         bool                                                        alive = false;
     };
 
+    // GPU timing of one completed frame (or the sum of several scene renderers' frames)
+    struct gpu_frame_report {
+
+        f32                                                         gpu_time_ms = 0.0f;
+        u32                                                         render_passes = 0;
+        u32                                                         draw_calls = 0;     // visible draws emitted by GPU culling (main view)
+        u32                                                         triangles = 0;      // triangles of those draws
+        u32                                                         virtual_clusters = 0;   // of the draws: virtual geometry clusters
+        u32                                                         virtual_triangles = 0;  // of the triangles: in those clusters
+        std::vector<std::pair<std::string, f32>>                    pass_times_ms{};
+    };
+
     // Resident material slot
     struct material_slot {
 
@@ -146,15 +188,35 @@ namespace GLT::renderer::vk_rasterizer {
 
         util::allocated_buffer                                      params_ubo{};
         u32                                                         params_size{0};
+        u64                                                         params_hash = 0;    // of the uploaded packed params (0 = none)
 
         vk::ShaderModule                                            vertex_module = nullptr;
         vk::ShaderModule                                            fragment_module = nullptr;
         vk::ShaderModule                                            depth_module = nullptr;
+
+        // True: the depth-only fragment shader of this bytecode runs the material's alpha_test (masked). False: it is the
+        // no-op variant, and the depth pipeline uses the manager's empty fragment shader instead of [depth_module]
+        bool                                                        depth_alpha_test = false;
+
         vk::Pipeline                                                pipeline = nullptr;
         vk::Pipeline                                                depth_pipeline = nullptr;
 
         GLT::asset::material::blend_mode                            blend{ GLT::asset::material::blend_mode::opaque };
+        u32                                                         flags = 0;          // material_flag bits
         u64                                                         bytecode_hash = 0;
+
+        // Blend + flags the current pipelines were built with (pack_material rebuilds them when the asset changes)
+        GLT::asset::material::blend_mode                            pipeline_blend{ GLT::asset::material::blend_mode::opaque };
+        u32                                                         pipeline_flags = 0;
+
+        // Translucent modes are drawn in the sorted translucent pass instead of the GPU-culled opaque path
+        [[nodiscard]] bool is_translucent() const noexcept {
+            using bm = GLT::asset::material::blend_mode;
+            return blend != bm::opaque && blend != bm::masked;
+        }
+        [[nodiscard]] bool is_double_sided() const noexcept {
+            return (flags & GLT::asset::material::material_flag::double_sided) != 0;
+        }
     };
 
     // Persistent per-mesh SSBO entry (read by the cull compute shader)
@@ -166,10 +228,12 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         submesh_count = 0;
         u32                                                         vertex_offset = 0;
         u32                                                         index_offset = 0;
-        u32                                                         _pad0 = 0;
+        u32                                                         lod_count = 1;          // submesh table holds [lod][submesh_count]
         u32                                                         _pad1 = 0;
+        // [0] = cull screen size (0 = never), [1..7] = screen size below which LOD n takes over (asset lod_settings)
+        f32                                                         lod_screen[8]{};
     };
-    static_assert(sizeof(gpu_mesh_data) == 48, "gpu_mesh_data layout mismatch");
+    static_assert(sizeof(gpu_mesh_data) == 80, "gpu_mesh_data layout mismatch");
 
     // Persistent per-submesh SSBO entry
     struct gpu_submesh_data {
@@ -180,6 +244,18 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         _pad0 = 0;
     };
     static_assert(sizeof(gpu_submesh_data) == 16, "gpu_submesh_data layout mismatch");
+
+    // Persistent per-mesh entry of the virtual geometry table (same index as gpu_mesh_data). Layout matches
+    // MeshClusterData in virtual_geometry_cull.comp.glsl. The cluster records themselves are GLT::asset::mesh::cluster,
+    // uploaded unchanged
+    struct gpu_mesh_cluster_data {
+
+        u32                                                         first_cluster = 0;      // into the cluster buffer
+        u32                                                         cluster_count = 0;      // 0 = mesh without virtual geometry
+        u32                                                         index_base = 0;         // + gpu_mesh_data::index_offset + cluster::first_index
+        f32                                                         error_scale = 1.0f;     // asset cluster_settings::error_scale
+    };
+    static_assert(sizeof(gpu_mesh_cluster_data) == 16, "gpu_mesh_cluster_data layout mismatch");
 
     // STATIC VARIABLES ================================================================================================
 
