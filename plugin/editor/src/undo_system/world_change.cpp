@@ -11,6 +11,9 @@ namespace GLT::undo_system {
 
     // CONSTANTS =======================================================================================================
 
+    // Edits of more entities than this are not compared frame by frame while a widget is held (world_edit_tracker::end)
+    constexpr size_t                            LARGE_EDIT = 64;
+
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
@@ -140,8 +143,19 @@ namespace GLT::undo_system {
             return;
         }
 
-        world_state now = capture(*m_world, m_ids);
+        // Many entities (a large selection edited at once): a snapshot of them takes long enough to be felt, and one per
+        // frame turns a drag into a slide show. While the user holds on to the widget the edit stays open anyway, so the
+        // state is only looked at again when they let go. The world still has to hear about the changes every frame
+        if (m_open && interacting && m_ids.size() > LARGE_EDIT) {
+            for (const world::entity_id id : m_ids)
+                m_world->mark_changed(id);
+            if (!m_name_override.empty())
+                m_name = std::move(m_name_override);
+            m_name_override.clear();
+            return;
+        }
 
+        world_state now = capture(*m_world, m_ids);
         // Widgets write components through raw pointers. The world caches render data of fixed entities, so tell it what
         // changed (on any frame the state differs, user input or not). Compared against the state before this frame
         if (!(now == (m_open ? m_latest : m_frame_before)))

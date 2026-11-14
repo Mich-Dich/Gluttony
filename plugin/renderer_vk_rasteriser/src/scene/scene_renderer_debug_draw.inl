@@ -115,24 +115,46 @@ namespace GLT::renderer::vk_rasterizer {
 
         if (ids.empty()) return;
         std::lock_guard lock(m_debug_mutex);
+
+        // An editor re-sends its whole selection every frame. Looking every id up in the list one after the other is
+        // quadratic (6000 selected entities: 36 million compares, 18 ms per frame): index the list once instead
+        std::unordered_map<GLT::world::entity_id, size_t> index_of;
+        const bool indexed = ids.size() > 8;
+        if (indexed) {
+            index_of.reserve(m_watched_entities.size() + ids.size());
+            for (size_t index = 0; index < m_watched_entities.size(); ++index)
+                index_of.emplace(m_watched_entities[index].id, index);
+        }
+
         for (const auto& id : ids) {
             if (!id.is_valid()) continue;
-            bool found = false;
-            for (auto& entry : m_watched_entities) {
-                if (entry.id == id) {
-                    entry.color = color;
-                    entry.remaining_lifetime = lifetime;
-                    entry.depth_test = depth_test;
-                    found = true;
-                    break;
-                }
+
+            watched_entity* entry = nullptr;
+            if (indexed) {
+                if (const auto it = index_of.find(id); it != index_of.end())
+                    entry = &m_watched_entities[it->second];
+            } else {
+                for (auto& candidate : m_watched_entities)
+                    if (candidate.id == id) {
+                        entry = &candidate;
+                        break;
+                    }
             }
-            if (found) continue;
+
+            if (entry) {
+                entry->color = color;
+                entry->remaining_lifetime = lifetime;
+                entry->depth_test = depth_test;
+                continue;
+            }
+
             watched_entity w{};
             w.id = id;
             w.color = color;
             w.remaining_lifetime = lifetime;
             w.depth_test = depth_test;
+            if (indexed)
+                index_of.emplace(id, m_watched_entities.size());
             m_watched_entities.push_back(w);
         }
     }
@@ -179,7 +201,9 @@ namespace GLT::renderer::vk_rasterizer {
             watched_entities_snapshot = m_watched_entities;
         }
 
-        auto emit_line = [&pending](const glm::vec3& a, const glm::vec3& b,
+        // [inside_view]: the caller knows the line lies completely inside the view frustum (it is not clipped below)
+        bool lines_inside_view = false;
+        auto emit_line = [&pending, &lines_inside_view](const glm::vec3& a, const glm::vec3& b,
             const glm::vec4& color, bool depth_test) {
             debug_primitive_record rec;
             rec.type = debug_primitive_record::kind::line;
@@ -188,6 +212,7 @@ namespace GLT::renderer::vk_rasterizer {
             rec.vertex_count = 2;
             rec.remaining_lifetime = 0.0f;
             rec.depth_test = depth_test;
+            rec.inside_view = lines_inside_view;
             pending.push_back(rec);
         };
 
@@ -308,19 +333,64 @@ namespace GLT::renderer::vk_rasterizer {
 
         // Path 2: watched entities (highlight_entity) ----------------------------------------------------------------------------
     
-        for (const auto& watch : watched_entities_snapshot) {
+        // One pass over the scene with a lookup per instance, not one pass per watched entity (a selection of 6000
+        // entities in a scene of 6000 instances was 36 million compares: 50 ms per frame). Boxes that are not on screen
+        // are dropped here already: 12 lines each that the clip below would only throw away again
+        if (!watched_entities_snapshot.empty()) {
+
+            std::unordered_map<GLT::world::entity_id, u32> watch_of;
+            watch_of.reserve(watched_entities_snapshot.size());
+            for (u32 index = 0; index < watched_entities_snapshot.size(); ++index)
+                watch_of.emplace(watched_entities_snapshot[index].id, index);
+
+            const glm::mat4 box_view_proj = camera_projection() * m_active_camera.view;
+            glm::vec4 planes[6];
+            shadow_frustum_planes(box_view_proj, planes);       // normalised, pointing inwards
+
+            // Their near plane is z > -w. The line clip below uses z > 0 (the stricter one of the two depth conventions):
+            // "completely inside" has to hold for that one too
+            glm::vec4 near_plane = glm::transpose(box_view_proj)[2];
+            if (const f32 length = glm::length(glm::vec3(near_plane)); length > 0.f)
+                near_plane /= length;
+            // 0: not in view, 1: partly, 2: completely inside (its lines need no clipping)
+            const auto box_in_view = [&planes, &near_plane](const glm::vec3& lmin, const glm::vec3& lmax, const glm::mat4& xform) -> u32 {
+                const glm::vec3 center = glm::vec3(xform * glm::vec4(0.5f * (lmin + lmax), 1.0f));
+                const f32 scale = std::max(glm::length(glm::vec3(xform[0])), std::max(glm::length(glm::vec3(xform[1])), glm::length(glm::vec3(xform[2]))));
+                const f32 radius = 0.5f * glm::length(lmax - lmin) * scale;
+                if (!std::isfinite(radius) || !std::isfinite(center.x + center.y + center.z))
+                    return 1u;                                  // let the line clip decide
+                u32 result = 2u;
+                for (const glm::vec4& plane : planes) {
+                    const f32 distance = glm::dot(glm::vec3(plane), center) + plane.w;
+                    if (distance < -radius)
+                        return 0u;
+                    if (distance < radius)
+                        result = 1u;
+                }
+                if (glm::dot(glm::vec3(near_plane), center) + near_plane.w < radius)
+                    result = 1u;
+                return result;
+            };
 
             for (const auto& inst : m_scene_instances) {
-                if (inst.entity != watch.id) continue;
+                const auto it = watch_of.find(inst.entity);
+                if (it == watch_of.end()) continue;
                 auto rit = m_resident_meshes.find(inst.mesh);
                 if (rit == m_resident_meshes.end()) continue;
                 const mesh_slot* slot = m_shared->get_mesh(rit->second);
                 if (!slot || !slot->alive) continue;
+                const u32 in_view = box_in_view(slot->local_min, slot->local_max, inst.transform);
+                if (in_view == 0u) continue;
+                const watched_entity& watch = watched_entities_snapshot[it->second];
+                lines_inside_view = in_view == 2u;
                 emit_aabb(slot->local_min, slot->local_max, inst.transform, watch.color, watch.depth_test);
+                lines_inside_view = false;
             }
 
             for (const auto& L : m_submitted_lights) {
-                if (L.entity != watch.id) continue;
+                const auto it = watch_of.find(L.entity);
+                if (it == watch_of.end()) continue;
+                const watched_entity& watch = watched_entities_snapshot[it->second];
                 emit_light(L, watch.color, watch.depth_test);
             }
         }
@@ -338,7 +408,7 @@ namespace GLT::renderer::vk_rasterizer {
             GLT_PROFILE_SCOPE("Debug line frustum clip");
             const glm::mat4 view_proj = camera_projection() * m_active_camera.view;
             std::erase_if(pending, [&view_proj](debug_primitive_record& p) {
-                if (p.type != debug_primitive_record::kind::line)
+                if (p.type != debug_primitive_record::kind::line || p.inside_view)
                     return false;
 
                 const glm::vec4 c0 = view_proj * glm::vec4(p.verts[0].position, 1.0f);
@@ -368,7 +438,8 @@ namespace GLT::renderer::vk_rasterizer {
         }
 
         std::vector<debug_vertex> vertices;
-        vertices.reserve(pending.size() * 3);
+        vertices.reserve(std::min<size_t>(pending.size() * 3, MAX_DEBUG_VERTICES));
+        bool over_budget = false;
 
         auto append_bucket = [&](debug_primitive_record::kind kind, bool depth) -> std::pair<u32, u32> {
             const u32 offset = static_cast<u32>(vertices.size());
@@ -376,6 +447,10 @@ namespace GLT::renderer::vk_rasterizer {
             for (const auto& p : pending) {
                 if (p.type != kind || p.depth_test != depth)
                     continue;
+                if (vertices.size() + p.vertex_count > MAX_DEBUG_VERTICES) {
+                    over_budget = true;                         // draw what fits (never half a primitive)
+                    break;
+                }
                 for (u8 i = 0; i < p.vertex_count; ++i) vertices.push_back(p.verts[i]);
                 count += p.vertex_count;
             }
@@ -390,11 +465,11 @@ namespace GLT::renderer::vk_rasterizer {
         if (vertices.empty())
             return;
 
-        if (vertices.size() > MAX_DEBUG_VERTICES) {
-            LOG(warn, "Debug draw budget exceeded ({} > {}), skipping frame", vertices.size(), MAX_DEBUG_VERTICES);
-            layout = {};
-            return;
-        }
+        // More than the vertex buffer holds: the rest is left out. (The whole frame used to be skipped instead, which
+        // made a large selection flicker: over the budget with everything in view, under it after turning away)
+        if (over_budget && !m_debug_budget_warned)
+            LOG(warn, "Debug draw: more than {} vertices in one frame, the rest is not drawn", MAX_DEBUG_VERTICES);
+        m_debug_budget_warned = over_budget;
 
         util::allocated_buffer& buffer = m_debug_vertex_buffers[m_current_frame];
         VALIDATE(buffer.buffer, return, "", "Debug vertex buffer not initialised")

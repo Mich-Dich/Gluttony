@@ -105,6 +105,14 @@ namespace GLT::world {
         [[nodiscard]] virtual bool is_visible(entity_id /*id*/) const { return true; }
         virtual void set_visible(entity_id /*id*/, bool /*visible*/) {}
 
+        // Editor-side hiding, on top of the flag above and independent of it: the entity AND everything below it in the
+        // hierarchy stops being drawn (meshes) and stops giving light. Nothing about the entity changes: the state is
+        // not part of the world's data, is not saved with it and survives the entity being streamed out and in again.
+        // Hidden entities are still handed to the renderers, marked as hidden (asset::mesh::INSTANCE_FLAG_HIDDEN,
+        // light_snapshot::hidden), so tools can outline them. [is_hidden] is the entity's own flag, not the inherited one
+        [[nodiscard]] virtual bool is_hidden(entity_id /*id*/) const { return false; }
+        virtual void set_hidden(entity_id /*id*/, bool /*hidden*/) {}
+
         // mobility ----------------------------------------------------------------------------------------------------
         // Performance hint for render data caching, see world/mobility.h. Worlds without caching treat everything as movable
         [[nodiscard]] virtual mobility get_mobility(entity_id /*id*/) const { return mobility::movable; }

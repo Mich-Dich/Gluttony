@@ -132,6 +132,9 @@ namespace GLT::editor {
 
     private:
 
+        static constexpr f32                            MIN_CAM_DISTANCE = 0.05f;
+        static constexpr f32                            MAX_CAM_DISTANCE = 1500.0f;
+
         enum class inspector_target : u8 {
 
             mesh = 0,
@@ -139,24 +142,20 @@ namespace GLT::editor {
             collider,
         };
 
-        // What the left panel shows: the outliner (mesh, submeshes, colliders, levels) or the rendering analysis of the
-        // whole mesh. The inspector on the right always shows the properties of the selection, so settings can be changed
-        // while the analysis is in view
+
         enum class left_panel_view : u8 {
 
             outliner = 0,
             rendering,
         };
 
-        // Preview camera range (wheel zoom, distance slider, analysis sweep)
-        static constexpr f32                            MIN_CAM_DISTANCE = 0.05f;
-        static constexpr f32                            MAX_CAM_DISTANCE = 1500.0f;
 
         struct submesh_bounds {
 
             glm::vec3                                   min{ 0.0f };
             glm::vec3                                   max{ 0.0f };
         };
+
 
         struct preview_camera_state {
             glm::vec3                                   target{ 0.0f };
@@ -166,10 +165,7 @@ namespace GLT::editor {
             f32                                         fov_deg = 45.0f;
         };
 
-        // A cluster selection (what a view picks of a hierarchy) kept between frames. The editor needs it in several places
-        // per frame (statistics, preview overlay, wireframe, cluster bounds, rendering analysis); computing it visits every
-        // cluster, which in a Debug build costs milliseconds for a large mesh. Recomputed when the view or the clusters
-        // change, at most every CUT_REFRESH_SECONDS while the camera moves (the numbers may lag a moving camera by that)
+
         struct cut_cache {
 
             const GLT::asset::mesh::cluster*            clusters = nullptr;     // identity of the hierarchy it was made for
@@ -182,7 +178,7 @@ namespace GLT::editor {
             bool                                        valid = false;
         };
 
-        // Per-hierarchy statistics of the "Virtual Geometry" card (one pass over the clusters per build, not per frame)
+
         struct cluster_stats_cache {
 
             const GLT::asset::mesh::cluster*            clusters = nullptr;
@@ -193,6 +189,7 @@ namespace GLT::editor {
             u32                                         coarsest_triangles = 0;
             u32                                         levels = 0;
         };
+
 
         struct preview_lighting_state {
             f32                                         key_intensity = 0.3f;

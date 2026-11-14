@@ -67,6 +67,22 @@ namespace GLT::world::component {
         virtual void save(entity_id id, std::vector<std::byte>& out) const = 0;
 
         virtual void load(entity_id id, std::span<const std::byte> in) = 0;
+
+        // ---- editing several entities at once ----
+        // An editor draws the component of ONE entity and wants the edit to reach the others that are selected:
+        //
+        //      auto before = storage->capture(shown);          // before drawing
+        //      descriptor.draw(shown);
+        //      for (other : selection) storage->apply_changes(shown, before.get(), other);
+        //
+        // apply_changes() copies only what differs between [before] and the current value of [source] (the field the
+        // user touched), so the other entities keep their own values everywhere else. It also does whatever the
+        // component needs after a direct write (e.g. rebuild a physics body) and returns true if [target] changed.
+        // Default: not supported (capture returns null), the edit stays on the entity that was drawn
+
+        [[nodiscard]] virtual std::shared_ptr<void> capture(entity_id /*id*/) const { return {}; }
+
+        virtual bool apply_changes(entity_id /*source*/, const void* /*before*/, entity_id /*target*/) { return false; }
     };
 
     // ---- registration payload ---------------------------------------------------------------------------------------

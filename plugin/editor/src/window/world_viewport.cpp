@@ -47,6 +47,13 @@ namespace GLT::editor {
         constexpr f32 ROW_ICON_SIZE = 14.f;   // square size of visibility + component icons
         constexpr f32 TYPE_ICON_GAP = 3.f;    // space between adjacent component icons
 
+        // Drag and drop inside the outliner
+        constexpr const char* OUTLINER_ENTITY_PAYLOAD = "GLT_OUTLINER_ENTITIES";    // the entities are in m_dragged_entities
+        constexpr const char* OUTLINER_FOLDER_PAYLOAD = "GLT_OUTLINER_FOLDER";      // folder_id
+
+        // <project>/metadata/<this>/<world asset id>.txt: folders and hidden entities of a world (window/outliner_layout.h)
+        constexpr const char* OUTLINER_LAYOUT_DIR = "outliner";
+
         // Zebra stripe + hover
         constexpr ImU32 ZEBRA_COLOR = IM_COL32(255, 255, 255, 5);
         constexpr f32   HOVER_ALPHA = 0.8f;
@@ -356,6 +363,8 @@ namespace GLT::editor {
         if (world != m_world) {
 
             // Another world got loaded: the history and the selection belong to the old one
+            if (m_layout_unsaved)
+                save_outliner_layout();                         // folders of the old world, while it is still known
             m_details_edit.reset();
             m_gizmo_edit.reset();
             m_undo_stack.clear();
@@ -364,7 +373,9 @@ namespace GLT::editor {
 
             m_world = world;
             m_inspector = m_world ? m_world->as<GLT::world::i_world_inspector>() : nullptr;
+            load_outliner_layout();
         }
+        update_outliner_layout();
 
         if (m_scene) {
 
@@ -566,6 +577,10 @@ namespace GLT::editor {
 
             const bool image_hovered = ImGui::IsItemHovered();
 
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && !m_cursor_captured
+                && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
+                frame_selection();
+
             const bool mode_popup_open = render_mode_selector_overlay(image_min);
             const bool settings_popup_open = render_settings_overlay();
             const bool overlay_active = mode_popup_open || settings_popup_open;
@@ -573,19 +588,24 @@ namespace GLT::editor {
 
             render_gizmo_toolbar(image_min, image_size);
             {
-                // One undo step per gizmo drag
+                // One undo step per gizmo drag, for everything the gizmo moves (the whole selection)
                 const GLT::world::entity_id target = primary_selection();
-                const std::span<const GLT::world::entity_id> ids = target.is_valid()
-                    ? std::span<const GLT::world::entity_id>(&target, 1) : std::span<const GLT::world::entity_id>{};
+                collect_gizmo_targets(target);
 
-                m_gizmo_edit.begin(m_world, ids);
+                // The tracker compares the entities' state before and after the gizmo. With many of them that is only
+                // done while the gizmo can change something: the mouse is on it or it is being dragged
+                const bool track = m_gizmo_targets.size() <= 64 || m_gizmo_edit.is_open() || ImGuizmo::IsOver() || ImGuizmo::IsUsing();
+                if (track)
+                    m_gizmo_edit.begin(m_world, m_gizmo_targets);
                 render_gizmo(image_min, image_size);
 
                 const bool using_gizmo = ImGuizmo::IsUsing();
                 const char* verb = m_gizmo_operation == ImGuizmo::ROTATE ? "Rotate"
                                  : m_gizmo_operation == ImGuizmo::SCALE  ? "Scale" : "Move";
-                m_gizmo_edit.end(using_gizmo ? std::format("{} {}", verb, entity_display_name(target)) : std::string{},
-                    using_gizmo, using_gizmo);
+                if (track || m_gizmo_edit.is_open())
+                    m_gizmo_edit.end(!using_gizmo ? std::string{} : (m_gizmo_targets.size() > 1
+                            ? std::format("{} {} entities", verb, m_gizmo_targets.size()) : std::format("{} {}", verb, entity_display_name(target))),
+                        using_gizmo, using_gizmo);
             }
 
             auto* game_layer = GLT::application::get().get_game_layer_ptr();
@@ -712,29 +732,41 @@ namespace GLT::editor {
             return;
         }
 
-        const auto primary = primary_selection();
-        const size_t sel_count = m_selected_entities.size();
-
-        if (!primary.is_valid() || !m_world->alive(primary)) {
+        // What is edited: one entity, or several at once (the primary one is shown, see below)
+        const std::vector<GLT::world::entity_id> targets = details_targets();
+        if (targets.empty()) {
             UI::empty_state("Nothing selected", "Click an entity in the Outliner to see its components");
             ImGui::End();
             return;
         }
 
-        if (sel_count > 1) {
-            const std::string title = std::format("{} entities selected", sel_count);
-            UI::empty_state(title.c_str(), "Select a single entity to edit its components.\nCtrl-click toggles, Shift-click selects a range.");
-            ImGui::End();
-            return;
-        }
-
-        const auto id = primary;
-
-        // Everything drawn from here on may change the entity. The tracker turns each interaction into one undo step
-        m_details_edit.begin(m_world, std::span<const GLT::world::entity_id>(&id, 1));
-
-        const auto& components = m_inspector->components_on(id);
+        const auto id = targets.front();                        // the primary selection: its values are the ones shown
+        const bool multi = targets.size() > 1;
         const bool is_world = m_world->is_world_entity(id);
+
+        // Everything drawn from here on may change the entities. The tracker turns each interaction into one undo step.
+        // It compares the entities' state before and after the frame: with a large selection only on frames in which
+        // the user does something (nothing can change on the others)
+        // "Something the user does" has to be in THIS panel: flying the camera or clicking in the viewport is input too,
+        // and a snapshot of thousands of entities for every such frame made the editor crawl
+        const bool input = user_input_this_frame();
+        const bool panel_in_use = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)
+            || ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+        const bool track = targets.size() <= 64 || m_details_edit.is_open() || (input && panel_in_use);
+        m_details_tracking = track;
+        if (track)
+            m_details_edit.begin(m_world, targets);
+
+        // ---- which components ----
+        if (multi)
+            refresh_multi_components(targets);
+        else {
+            m_multi_components.clear();
+            m_multi_key = 0;
+            for (const auto* comp : m_inspector->components_on(id))
+                m_multi_components.push_back({ comp, 1u });
+        }
+        const u32 target_count = static_cast<u32>(targets.size());
 
         // ---- header: icon, name, subtitle, add button ----
         {
@@ -756,25 +788,48 @@ namespace GLT::editor {
             const f32 text_x = start.x + icon_size + 8.f;
             const f32 text_w = std::max(20.f, start.x + width - add_w - 8.f - text_x);
 
-            const std::string name = is_world ? std::string("World") : entity_display_name(id);
+            const std::string name = multi ? std::format("{} entities", target_count)
+                : (is_world ? std::string("World") : entity_display_name(id));
             ImGui::SetCursorScreenPos(ImVec2(text_x, start.y - 1.f));
             ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
             ImGui::TextUnformatted(ellipsize_to_fit(name, text_w).c_str());
             ImGui::PopFont();
 
-            const std::string subtitle = std::format("{} \u00b7 {} component{}", is_world ? "World settings" : std::format("Entity {}", id.index),
-                components.size(), components.size() == 1 ? "" : "s");
+            const size_t component_count = m_multi_components.size();
+            const std::string subtitle = multi
+                ? std::format("Values of {}", entity_display_name(id))
+                : std::format("{} · {} component{}", is_world ? "World settings" : std::format("Entity {}", id.index),
+                    component_count, component_count == 1 ? "" : "s");
             ImGui::SetCursorScreenPos(ImVec2(text_x, ImGui::GetCursorScreenPos().y));
             ImGui::TextDisabled("%s", ellipsize_to_fit(subtitle, text_w).c_str());
 
             ImGui::SetCursorScreenPos(ImVec2(start.x + width - add_w, start.y + (icon_size - frame_h) * 0.5f));
             if (UI::accent_button(add_label, ImVec2(add_w, 0.f)))
                 ImGui::OpenPopup("##add_comp");
+            if (multi && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("Add a component to every selected entity that does not have it");
             const ImVec2 add_btn_max = ImGui::GetItemRectMax();
-            render_add_component_popup(id, add_btn_max);
+            render_add_component_popup(targets, add_btn_max);
 
             ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + icon_size + 10.f));
             ImGui::Dummy(ImVec2(0.f, 0.f));
+        }
+
+        // ---- several entities: which components to show ----
+        if (multi) {
+            static constexpr const char* MODES[] = { "Shared", "All" };
+            i32 mode = static_cast<i32>(m_multi_mode);
+            if (UI::segmented_control("##multi_mode", mode, MODES, ImGui::GetContentRegionAvail().x))
+                m_multi_mode = mode == 0 ? multi_edit_mode::shared : multi_edit_mode::all;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("Shared: only the components every selected entity has. A change goes to all of them.\n"
+                    "All: every component any of them has. A change goes to the entities that have the component.\n"
+                    "Only the value you change is applied, the entities keep their own values everywhere else");
+            ImGui::Dummy(ImVec2(0.f, 4.f));
+
+            if (m_multi_components.empty())
+                ImGui::TextDisabled(m_multi_mode == multi_edit_mode::shared
+                    ? "The selected entities have no component in common" : "The selected entities have no components");
         }
 
         // ---- components, one card each ----
@@ -782,15 +837,30 @@ namespace GLT::editor {
         UI::begin_properties(UI::property_layout::compact);
 
         const f32 menu_size = ImGui::GetFrameHeight();
-        for (const auto* comp : components) {
+        for (const auto& entry : m_multi_components) {
 
-            if (!comp->has || !comp->has(id))
+            const auto* comp = entry.descriptor;
+            if (!comp || !comp->has)
                 continue;
+
+            // The entity whose values are drawn: the primary one if it has the component, else the first that does
+            GLT::world::entity_id shown = id;
+            if (!comp->has(shown)) {
+                shown = GLT::world::INVALID_ENTITY;
+                for (const auto other : targets)
+                    if (comp->has(other)) {
+                        shown = other;
+                        break;
+                    }
+            }
+            if (!shown.is_valid())
+                continue;                                       // removed since the list was made
 
             ImGui::PushID(static_cast<int>(comp->hash));
 
             const std::string title = UI::pretty_name(comp->name);
-            const std::string summary = comp->summary ? comp->summary(id) : std::string{};
+            const std::string summary = !multi ? (comp->summary ? comp->summary(shown) : std::string{})
+                : (entry.count < target_count ? std::format("{} of {}", entry.count, target_count) : std::string{});
             bool removed = false;
 
             UI::card_options options{};
@@ -810,10 +880,20 @@ namespace GLT::editor {
                         m_clipboard_component = comp->hash;
 
                     ImGui::Separator();
-                    if (ImGui::MenuItem("Remove", nullptr, false, !comp->can_remove || comp->can_remove(id))) {
+                    bool removable = false;
+                    for (const auto target : targets)
+                        removable |= comp->has(target) && (!comp->can_remove || comp->can_remove(target));
+                    if (ImGui::MenuItem(multi ? "Remove from all" : "Remove", nullptr, false, removable)) {
+                        if (!m_details_tracking) {
+                            m_details_edit.begin(m_world, targets);
+                            m_details_tracking = true;
+                        }
                         m_details_edit.set_name(std::format("Remove {}", title));
-                        m_inspector->remove_component(id, comp->hash);
+                        for (const auto target : targets)
+                            if (comp->has(target) && (!comp->can_remove || comp->can_remove(target)))
+                                m_inspector->remove_component(target, comp->hash);
                         removed = true;
+                        m_multi_key = 0;                        // the list of components changed
                     }
                     ImGui::EndPopup();
                 }
@@ -828,10 +908,33 @@ namespace GLT::editor {
             }
 
             if (UI::begin_card(title.c_str(), options) && !removed) {
-                if (comp->draw)
-                    comp->draw(id);
-                else
+
+                if (!comp->draw)
                     ImGui::TextDisabled("Runtime only, nothing to edit");
+                else if (!multi)
+                    comp->draw(shown);
+                else {
+
+                    // Draw the component of ONE entity; what the user changed in it is then applied to the others
+                    // (i_storage::apply_changes: only the fields that differ from before the draw)
+                    auto* storage = m_world->storage_for(comp->hash);
+                    const std::shared_ptr<void> before = storage ? storage->capture(shown) : nullptr;
+
+                    comp->draw(shown);
+
+                    if (before && input) {
+                        for (const auto target : targets)
+                            if (target != shown && comp->has(target))
+                                storage->apply_changes(shown, before.get(), target);
+                    } else if (!before) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                        ImGui::PushTextWrapPos(0.f);
+                        ImGui::Text("Changes here only reach %s: this component cannot be edited for several entities at once",
+                            entity_display_name(shown).c_str());
+                        ImGui::PopTextWrapPos();
+                        ImGui::PopStyleColor();
+                    }
+                }
             }
             UI::end_card();
 
@@ -841,13 +944,86 @@ namespace GLT::editor {
         UI::end_properties();
         ImGui::EndChild();
 
-        m_details_edit.end(std::format("Edit {}", entity_display_name(id)), ImGui::IsAnyItemActive(), user_input_this_frame());
+        if (m_details_tracking || m_details_edit.is_open())
+            m_details_edit.end(multi ? std::format("Edit {} entities", target_count) : std::format("Edit {}", entity_display_name(id)),
+                ImGui::IsAnyItemActive(), input);
 
         ImGui::End();
     }
 
 
-    void world_viewport_window::render_add_component_popup(GLT::world::entity_id id, const ImVec2& btn_max) {
+    std::vector<GLT::world::entity_id> world_viewport_window::details_targets() const {
+
+        std::vector<GLT::world::entity_id> targets;
+        if (!m_world)
+            return targets;
+
+        const auto primary = primary_selection();
+        if (!primary.is_valid() || !m_world->alive(primary))
+            return targets;
+
+        // (the selection never holds an entity twice: no search for duplicates, that was quadratic with thousands selected)
+        targets.reserve(m_selected_entities.size());
+        targets.push_back(primary);
+        for (const auto id : m_selected_entities)
+            if (id != primary && m_world->alive(id))
+                targets.push_back(id);
+
+        // The world entity has its own kind of components: it is edited alone
+        if (targets.size() > 1)
+            std::erase_if(targets, [this](const GLT::world::entity_id id) { return m_world->is_world_entity(id); });
+        return targets;
+    }
+
+
+    // The components the Details panel shows for several entities, with how many of them have each. Asking every entity
+    // for every component type is too much to do each frame for a large selection: redone when the selection or the
+    // mode changes, and every few frames to follow components that were added / removed elsewhere
+    void world_viewport_window::refresh_multi_components(const std::span<const GLT::world::entity_id> targets) {
+
+        u64 key = 14695981039346656037ull ^ static_cast<u64>(m_multi_mode);
+        for (const auto id : targets)
+            key = (key ^ ((static_cast<u64>(id.generation) << 32) | id.index)) * 1099511628211ull;
+        key |= 1ull;                                            // 0 means "rebuild"
+
+        const u32 refresh_after = targets.size() > 256 ? 30u : 6u;
+        if (key == m_multi_key && ++m_multi_age < refresh_after)
+            return;
+        m_multi_key = key;
+        m_multi_age = 0;
+
+        m_multi_components.clear();
+        const u32 total = static_cast<u32>(targets.size());
+        for (const auto& descriptor : m_inspector->descriptors()) {
+
+            if (!descriptor.has)
+                continue;
+            u32 count = 0;
+            for (const auto id : targets)
+                count += descriptor.has(id) ? 1u : 0u;
+
+            if (count == total || (count > 0 && m_multi_mode == multi_edit_mode::all))
+                m_multi_components.push_back({ &descriptor, count });
+        }
+    }
+
+
+    // Adds to every entity of [ids] that can have the component and does not have it yet
+    void world_viewport_window::render_add_component_popup(const std::span<const GLT::world::entity_id> ids, const ImVec2& btn_max) {
+
+        // true if at least one of the entities can get the component
+        const auto addable = [&](const GLT::world::component::descriptor& d) {
+            for (const auto id : ids)
+                if (!d.has(id) && component_fits(d, id))
+                    return true;
+            return false;
+        };
+        const auto add_to_all = [&](const GLT::world::component::descriptor& d) {
+            for (const auto id : ids)
+                if (!d.has(id) && component_fits(d, id))
+                    m_inspector->add_component(id, d.hash);
+            m_multi_key = 0;                                    // the Details panel lists the components again
+        };
 
         ImGui::SetNextWindowPos(ImVec2(btn_max.x, btn_max.y + 3.f), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
 
@@ -881,14 +1057,18 @@ namespace GLT::editor {
         bool any = false;
         for (const auto& d : m_inspector->descriptors()) {
 
-            if (!matches(d) || d.has(id) || !component_fits(d, id))
+            if (!matches(d) || !addable(d))
                 continue;
 
             any = true;
             ImGui::PushID(static_cast<int>(d.hash));
             if (ImGui::Selectable(d.name.data())) {
+                if (!m_details_tracking) {                      // the panel skipped it this frame (large selection, no input)
+                    m_details_edit.begin(m_world, ids);
+                    m_details_tracking = true;
+                }
                 m_details_edit.set_name(std::format("Add {}", d.name));
-                m_inspector->add_component(id, d.hash);
+                add_to_all(d);
                 ImGui::CloseCurrentPopup();
             }
             if (!d.category.empty() && ImGui::IsItemHovered())
@@ -904,11 +1084,15 @@ namespace GLT::editor {
             for (const auto& e : m_inspector->descriptors())
                 if (e.hash == m_clipboard_component) { pasted = &e; break; }
 
-            if (pasted && !pasted->has(id) && component_fits(*pasted, id)) {
+            if (pasted && addable(*pasted)) {
                 ImGui::Separator();
                 if (ImGui::Selectable(std::string("Paste: " + std::string(pasted->name)).c_str())) {
+                    if (!m_details_tracking) {
+                        m_details_edit.begin(m_world, ids);
+                        m_details_tracking = true;
+                    }
                     m_details_edit.set_name(std::format("Paste {}", pasted->name));
-                    m_inspector->add_component(id, m_clipboard_component);
+                    add_to_all(*pasted);
                     ImGui::CloseCurrentPopup();
                 }
             }
@@ -948,6 +1132,23 @@ namespace GLT::editor {
             ImGui::OpenPopup("+ Entity Preset Popup");
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
             ImGui::SetTooltip("Add an entity from a preset");
+
+        ImGui::SameLine();
+        {
+            const auto folder_icon = icon_manager::get(icon_manager::icon::folder_add);
+            const f32 icon_size = ImGui::GetFrameHeight() - 2.f * ImGui::GetStyle().FramePadding.y;
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.10f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.20f));
+            const bool new_folder = ImGui::ImageButton("##new_folder", folder_icon.tex_ref, ImVec2(icon_size, icon_size), folder_icon.uv0, folder_icon.uv1);
+            ImGui::PopStyleColor(3);
+            if (new_folder)
+                create_folder(m_focused_folder, false);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("New folder (inside the folder that is selected)\n"
+                    "Folders only organise this list: drag entities or folders onto a folder.\n"
+                    "They are not part of the world and are not saved in it");
+        }
 
         ImGui::SameLine();
         const ImVec2 search_min = ImGui::GetCursorScreenPos();
@@ -1025,8 +1226,8 @@ namespace GLT::editor {
             ImGui::EndPopup();
         }
 
-        if (m_selected_entities.size() > 1)
-            ImGui::TextDisabled("%zu selected", m_selected_entities.size());
+        // (no "N selected" line here: it moved every row down under the mouse the moment a second entity got selected.
+        // The Details panel shows the count)
 
         ImGui::Dummy(ImVec2(0.f, 2.f));
 
@@ -1034,18 +1235,19 @@ namespace GLT::editor {
         const search_query query = parse_search(m_outliner_filter);
         const bool filter_mode = !query.empty();
 
-        // ---- build visible order (= the rows, flattened; depth per row for the indent) ----
-        std::vector<GLT::world::entity_id> visible_order;
-        std::vector<int> visible_depth;
+        // ---- build the rows (the open tree, flattened; depth per row for the indent) ----
+        std::vector<outliner_row> rows;
+        std::vector<GLT::world::entity_id> visible_order;               // the entity rows, for range selection
+        rows.reserve(64);
         visible_order.reserve(64);
 
-        for (auto root : m_world->root_entities()) {
-            if (filter_mode)
+        if (filter_mode) {
+            for (auto root : m_world->root_entities())
                 collect_filtered_matches_rec(root, query, m_world, m_inspector, visible_order);
-            else
-                collect_visible_tree_order(root, 0, visible_order, visible_depth);
-        }
-        visible_depth.resize(visible_order.size(), 0);                 // filter mode: flat
+            for (const auto id : visible_order)
+                rows.push_back({ id, NO_FOLDER, 0 });                    // filter mode: flat, no folders
+        } else
+            build_outliner_rows(rows, visible_order);
 
         if (filter_mode && visible_order.empty()) {
             UI::empty_state("No entities match", "Hover the filter field for the search syntax");
@@ -1061,11 +1263,24 @@ namespace GLT::editor {
         // Drawing every row (image buttons, icons, name ellipsizing) cost 12-22 ms per frame with 4k-27k entities. The
         // clipper measures the first row and skips the rest of the off-screen ones with a single cursor jump
         ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(visible_order.size()));
+        clipper.Begin(static_cast<int>(rows.size()));
         while (clipper.Step())
-            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
-                render_outliner_row(visible_order[row], visible_depth[row], row, visible_order, /*flat=*/filter_mode);
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                if (rows[row].folder != NO_FOLDER)
+                    render_folder_row(rows[row].folder, rows[row].depth, row);
+                else
+                    render_outliner_row(rows[row].entity, rows[row].depth, row, visible_order, /*flat=*/filter_mode);
+            }
         clipper.End();
+
+        // ---- the empty space below the rows: drop here to take something out of its folder ----
+        if (!filter_mode) {
+            const ImVec2 rest = ImGui::GetContentRegionAvail();
+            if (rest.y > 6.f) {
+                ImGui::Dummy(ImVec2(std::max(rest.x, 1.f), rest.y - 2.f));
+                accept_outliner_drop(NO_FOLDER);
+            }
+        }
 
         // ---- blank-click deselect ----
         if (!filter_mode
@@ -1073,14 +1288,53 @@ namespace GLT::editor {
             && !ImGui::IsAnyItemHovered()
             && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             clear_selection();
+            m_focused_folder = NO_FOLDER;
         }
 
-        // ---- Delete key ----
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
-            && ImGui::IsKeyPressed(ImGuiKey_Delete)
-            && !m_selected_entities.empty()) {
+        // ---- a press on a row of the selection that did not become a drag: select just that row ----
+        if (m_pending_click.is_valid() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            if (!m_entity_drag_started && m_world->alive(m_pending_click)) {
+                m_selected_entities = { m_pending_click };
+                m_selection_anchor = m_pending_click;
+            }
+            m_pending_click = GLT::world::INVALID_ENTITY;
+        }
 
-            delete_entities(m_selected_entities);
+        // ---- changes that move rows around (drops, folder removal): now that no row is being drawn ----
+        for (auto& change : m_outliner_deferred)
+            change();
+        m_outliner_deferred.clear();
+
+        const bool outliner_keys = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput;
+
+        // ---- Ctrl+A: every entity that has a row right now (with a filter: the ones that match it) ----
+        if (outliner_keys && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && !visible_order.empty()) {
+            m_selected_entities = visible_order;
+            if (!is_selected(m_selection_anchor))
+                m_selection_anchor = m_selected_entities.front();
+            m_focused_folder = NO_FOLDER;
+        }
+
+        // ---- Ctrl+F: bring the selection into view ----
+        if (outliner_keys && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
+            frame_selection();
+
+        // ---- F2: rename the folder ----
+        if (outliner_keys && ImGui::IsKeyPressed(ImGuiKey_F2, false) && m_layout.find(m_focused_folder))
+            begin_rename_folder(m_focused_folder);
+
+        // ---- Delete key: the selected entities, or (nothing selected) the folder. Its content moves up one level ----
+        if (outliner_keys && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+
+            if (!m_selected_entities.empty())
+                delete_entities(m_selected_entities);
+            else if (const outliner_folder* folder = m_layout.find(m_focused_folder)) {
+                outliner_layout before = m_layout;
+                const std::string name = std::format("Remove folder {}", folder->name);
+                m_layout.remove_folder(m_focused_folder);
+                m_focused_folder = NO_FOLDER;
+                commit_layout_change(name, std::move(before));
+            }
         }
 
         ImGui::End();
@@ -1115,9 +1369,11 @@ namespace GLT::editor {
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, GLT::imgui_config::get_action_color_gray_active_ref());
         const bool world_clicked = ImGui::Selectable("World", selected, ImGuiSelectableFlags_SpanAvailWidth);
         ImGui::PopStyleColor(3);
+        accept_outliner_drop(NO_FOLDER);                        // dropping on the World row takes things out of their folder
         if (world_clicked) {
             m_selected_entities = { world_id };
             m_selection_anchor = world_id;
+            m_focused_folder = NO_FOLDER;
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
             ImGui::SetTooltip("World settings: sky, sun (directional light), ambient, ...\n"
@@ -1176,7 +1432,11 @@ namespace GLT::editor {
         const std::string name = entity_display_name(id);
         const bool has_kids = m_world->has_children(id);
         const bool is_sel = is_selected(id);
-        const bool visible = m_world->is_visible(id);
+
+        // Hidden in the editor (outliner_layout): by its own eye, or because a parent / its folder is hidden
+        const bool own_hidden = m_layout.entity_hidden(id);
+        const bool inherited_hidden = entity_hidden_inherited(id);
+        const bool visible = !own_hidden && !inherited_hidden;
 
         const float text_h = ImGui::GetTextLineHeight();
         const float row_h = ImGui::GetTextLineHeightWithSpacing();
@@ -1203,9 +1463,10 @@ namespace GLT::editor {
             dl->AddRectFilled(row_start, row_end, ZEBRA_COLOR, ROW_ROUNDING);
 
         // ---- visibility toggle ----
+        // Hides the entity in the editor only (not saved in the world; the mesh component has its own "Visible" for the
+        // game). A hidden entity can still be selected: its outline keeps being drawn
         {
-            const auto vis_icon_type = visible ? icon_manager::icon::show : icon_manager::icon::hide;
-            const auto vis_data = icon_manager::get(vis_icon_type);
+            const auto vis_data = icon_manager::get(own_hidden ? icon_manager::icon::hide : icon_manager::icon::show);
 
             ImGui::SetCursorScreenPos({ row_start.x, row_start.y });
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
@@ -1213,16 +1474,21 @@ namespace GLT::editor {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.10f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.20f));
 
-            if (ImGui::ImageButton("##vis", vis_data.tex_ref, ImVec2(ROW_ICON_SIZE, ROW_ICON_SIZE), vis_data.uv0, vis_data.uv1)) {
-                flush_edits();
-                undo_system::world_change change(*m_world, std::span<const GLT::world::entity_id>(&id, 1));
-                m_world->set_visible(id, !visible);
-                change.commit(m_undo_stack, std::format("{} {}", visible ? "Hide" : "Show", name),
-                    [this](const undo_system::world_state& state) { select_after_undo(state); });
+            // hidden through a parent / folder: the eye is still "on" for the entity itself, shown faint
+            const ImVec4 tint(1.f, 1.f, 1.f, (!own_hidden && inherited_hidden) ? 0.35f : 1.f);
+            if (ImGui::ImageButton("##vis", vis_data.tex_ref, ImVec2(ROW_ICON_SIZE, ROW_ICON_SIZE), vis_data.uv0, vis_data.uv1,
+                ImVec4(0, 0, 0, 0), tint)) {
+
+                // The eye of a selected row acts on the whole selection
+                if (is_sel && m_selected_entities.size() > 1)
+                    set_entities_hidden(m_selected_entities, !own_hidden);
+                else
+                    set_entities_hidden(std::span<const GLT::world::entity_id>(&id, 1), !own_hidden);
             }
 
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-                ImGui::SetTooltip(visible ? "Hide entity" : "Show entity");
+                ImGui::SetTooltip(own_hidden ? "Show in the editor"
+                    : (inherited_hidden ? "Hidden because its parent or folder is hidden" : "Hide in the editor (it stays selectable)"));
 
             ImGui::PopStyleColor(3);
             ImGui::PopStyleVar();
@@ -1245,6 +1511,7 @@ namespace GLT::editor {
             ImGui::TreeNodeEx("##node", flags);
             ImGui::PopStyleColor(2);
             clicked = ImGui::IsItemClicked();
+            begin_entity_drag(id);
             content_x = ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
 
         } else {
@@ -1261,7 +1528,8 @@ namespace GLT::editor {
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.f, 0.f, 0.f, 0.f));
             open = ImGui::TreeNodeEx("##node", flags);
             ImGui::PopStyleColor(2);
-            clicked = ImGui::IsItemClicked();
+            clicked = ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen();
+            begin_entity_drag(id);
             content_x = ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
         }
 
@@ -1305,10 +1573,20 @@ namespace GLT::editor {
             }
         }
 
-        if (clicked)
-            handle_outliner_click(id, visible_order);
+        if (clicked) {
+            const ImGuiIO& io = ImGui::GetIO();
+            m_entity_drag_started = false;
+            if (is_sel && m_selected_entities.size() > 1 && !io.KeyCtrl && !io.KeyShift)
+                m_pending_click = id;                           // maybe the start of dragging the selection: decided on release
+            else
+                handle_outliner_click(id, visible_order);
+            m_focused_folder = NO_FOLDER;
+        }
 
-        render_entity_context_menu(id, visible);
+        // Right click anywhere on the row (it used to open only on the last thing drawn in it, a small icon)
+        if (hovered && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseReleased(ImGuiMouseButton_Right))
+            ImGui::OpenPopup("##row_ctx");
+        render_entity_context_menu(id, !own_hidden);
 
         ImGui::SetCursorScreenPos({ row_start.x, row_end.y });
         ImGui::Dummy(ImVec2());
@@ -1321,7 +1599,7 @@ namespace GLT::editor {
 
     void world_viewport_window::render_entity_context_menu(GLT::world::entity_id id, bool visible) {
 
-        if (!ImGui::BeginPopupContextItem("##row_ctx"))
+        if (!ImGui::BeginPopup("##row_ctx"))                    // opened by the row (render_outliner_row)
             return;
 
         // Right-click selects (unless already part of a multi-selection)
@@ -1356,12 +1634,10 @@ namespace GLT::editor {
             m_selection_anchor = copy;
         }
 
-        if (ImGui::MenuItem(visible ? "Hide" : "Show")) {
-            flush_edits();
-            undo_system::world_change change(*m_world, just_this);
-            m_world->set_visible(id, !visible);
-            change.commit(m_undo_stack, std::format("{} {}", visible ? "Hide" : "Show", entity_display_name(id)), on_applied);
-        }
+        if (ImGui::MenuItem(visible ? "Hide" : "Show"))        // the whole selection (the right-clicked row is part of it)
+            set_entities_hidden(m_selected_entities, visible);
+
+        render_move_to_folder_menu();
 
         if (ImGui::MenuItem("Delete", "Del"))
             delete_entities(m_selected_entities);
@@ -1517,6 +1793,604 @@ namespace GLT::editor {
         if (m_selection_anchor.is_valid() && !m_world->alive(m_selection_anchor)) {
             m_selection_anchor = m_selected_entities.empty() ? GLT::world::INVALID_ENTITY : m_selected_entities.front();
         }
+    }
+
+    // ---- outliner (folders) ---------------------------------------------------------------------------------------
+    //
+    // Folders exist only in the editor (window/outliner_layout.h): they group the top-level entities of the list.
+    // Entities below another entity stay with their parent
+
+    void world_viewport_window::build_outliner_rows(std::vector<outliner_row>& rows, std::vector<GLT::world::entity_id>& entity_order) {
+
+        const auto add_entity = [&](const auto& self, const GLT::world::entity_id id, const int depth) -> void {
+
+            if (!m_world->alive(id))
+                return;
+            rows.push_back({ id, NO_FOLDER, depth });
+            entity_order.push_back(id);
+            if (!is_tree_node_open(id))
+                return;
+            for (const auto child : m_world->children_of(id))
+                self(self, child, depth + 1);
+        };
+
+        m_folder_entity_counts.clear();
+        const auto roots = m_world->root_entities();
+
+        if (!m_layout.has_folders()) {                          // the usual case: no lookups at all
+            for (const auto root : roots)
+                add_entity(add_entity, root, 0);
+            return;
+        }
+
+        std::unordered_map<folder_id, std::vector<GLT::world::entity_id>> in_folder;
+        std::vector<GLT::world::entity_id> top_level;
+        for (const auto root : roots) {
+            if (const folder_id folder = m_layout.folder_of(root); folder != NO_FOLDER)
+                in_folder[folder].push_back(root);
+            else
+                top_level.push_back(root);
+        }
+        for (const auto& [folder, entities] : in_folder)
+            m_folder_entity_counts[folder] = static_cast<u32>(entities.size());
+
+        const auto add_folders = [&](const auto& self, const folder_id parent, const int depth) -> void {
+
+            for (const auto& folder : m_layout.folders()) {
+
+                if (folder.parent != parent)
+                    continue;
+                rows.push_back({ {}, folder.id, depth });
+                if (!folder.open)
+                    continue;
+                self(self, folder.id, depth + 1);
+                if (const auto it = in_folder.find(folder.id); it != in_folder.end())
+                    for (const auto entity : it->second)
+                        add_entity(add_entity, entity, depth + 1);
+            }
+        };
+        add_folders(add_folders, NO_FOLDER, 0);
+
+        for (const auto entity : top_level)
+            add_entity(add_entity, entity, 0);
+    }
+
+
+    void world_viewport_window::render_folder_row(const folder_id id, const int depth, const int row_index) {
+
+        const outliner_folder* folder = m_layout.find(id);
+        if (!folder)
+            return;
+
+        // Copies: what happens in this row may change the layout
+        const std::string name = folder->name;
+        const bool is_open = folder->open;
+        const bool own_hidden = folder->hidden;
+        const bool inherited_hidden = !own_hidden && m_layout.folder_effectively_hidden(folder->parent);
+
+        bool has_content = m_folder_entity_counts.contains(id);
+        for (const auto& other : m_layout.folders())
+            has_content |= other.parent == id;
+        const u32 entity_count = m_folder_entity_counts.contains(id) ? m_folder_entity_counts.at(id) : 0u;
+
+        ImGui::PushID("##outliner_folder");
+        ImGui::PushID(static_cast<int>(id));
+
+        const f32 text_h = ImGui::GetTextLineHeight();
+        const f32 row_h = ImGui::GetTextLineHeightWithSpacing();
+        const ImVec2 row_start = ImGui::GetCursorScreenPos();
+        const ImVec2 row_end = { row_start.x + ImGui::GetContentRegionAvail().x, row_start.y + row_h };
+
+        // ---- background ----
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (m_focused_folder == id) {
+            dl->AddRectFilled(row_start, row_end, ImGui::GetColorU32(GLT::imgui_config::get_action_color00_faded_ref()), ROW_ROUNDING);
+            dl->AddRectFilled(ImVec2(row_start.x, row_start.y + 3.f), ImVec2(row_start.x + 3.f, row_end.y - 3.f),
+                ImGui::GetColorU32(GLT::imgui_config::get_action_color00_hover_ref()), 1.5f);
+        } else if (ImGui::IsMouseHoveringRect(row_start, row_end)) {
+            ImVec4 hover_color = GLT::imgui_config::get_action_color_gray_hover_ref();
+            hover_color.w *= HOVER_ALPHA;
+            dl->AddRectFilled(row_start, row_end, ImGui::GetColorU32(hover_color), ROW_ROUNDING);
+        } else if ((row_index % 2) != 0)
+            dl->AddRectFilled(row_start, row_end, ZEBRA_COLOR, ROW_ROUNDING);
+
+        // ---- visibility toggle: everything in the folder ----
+        {
+            const auto vis_data = icon_manager::get(own_hidden ? icon_manager::icon::hide : icon_manager::icon::show);
+
+            ImGui::SetCursorScreenPos({ row_start.x, row_start.y });
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.10f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.20f));
+            const ImVec4 tint(1.f, 1.f, 1.f, inherited_hidden ? 0.35f : 1.f);
+            if (ImGui::ImageButton("##vis", vis_data.tex_ref, ImVec2(ROW_ICON_SIZE, ROW_ICON_SIZE), vis_data.uv0, vis_data.uv1,
+                ImVec4(0, 0, 0, 0), tint)) {
+                outliner_layout before = m_layout;
+                m_layout.set_folder_hidden(id, !own_hidden);
+                commit_layout_change(std::format("{} folder {}", own_hidden ? "Show" : "Hide", name), std::move(before));
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip(own_hidden ? "Show the entities in this folder"
+                    : (inherited_hidden ? "Hidden because the folder it is in is hidden" : "Hide the entities in this folder (they stay selectable)"));
+            ImGui::PopStyleColor(3);
+            ImGui::PopStyleVar();
+        }
+
+        // ---- arrow + the row's item (click, drag, drop, context menu) ----
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth
+            | ImGuiTreeNodeFlags_AllowOverlap;                  // the rename field lies on top of it
+        if (!has_content)
+            flags |= ImGuiTreeNodeFlags_Leaf;
+
+        ImGui::SetCursorScreenPos({ row_start.x + VIS_COL_WIDTH + static_cast<f32>(depth) * ImGui::GetStyle().IndentSpacing, row_start.y });
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.f, 0.f, 0.f, 0.f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.f, 0.f, 0.f, 0.f));
+        ImGui::SetNextItemOpen(is_open, ImGuiCond_Always);      // the layout owns the open state (it is saved with the folders)
+        const bool open_now = ImGui::TreeNodeEx("##node", flags);
+        ImGui::PopStyleColor(2);
+        const bool toggled = ImGui::IsItemToggledOpen();
+        const bool clicked = ImGui::IsItemClicked() && !toggled;
+        const bool double_clicked = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !toggled;
+        const f32 content_x = ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing();
+
+        if (has_content && open_now != is_open)
+            m_layout.set_open(id, open_now);
+
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
+            ImGui::SetDragDropPayload(OUTLINER_FOLDER_PAYLOAD, &id, sizeof(id));
+            ImGui::TextUnformatted(name.c_str());
+            ImGui::EndDragDropSource();
+        }
+        accept_outliner_drop(id);
+        render_folder_context_menu(id);
+
+        // ---- icon ----
+        {
+            const auto icon = icon_manager::get((is_open && has_content) ? icon_manager::icon::folder_open : icon_manager::icon::folder);
+            const ImVec2 icon_min(content_x, row_start.y + (text_h - ROW_ICON_SIZE) * 0.5f);
+            dl->AddImage(icon.tex_ref, icon_min, ImVec2(icon_min.x + ROW_ICON_SIZE, icon_min.y + ROW_ICON_SIZE), icon.uv0, icon.uv1,
+                ImGui::GetColorU32(ImVec4(1.f, 1.f, 1.f, (own_hidden || inherited_hidden) ? 0.45f : 1.f)));
+        }
+        const f32 name_x = content_x + ROW_ICON_SIZE + 5.f;
+
+        // ---- number of entities (right) ----
+        const std::string count_text = entity_count > 0 ? std::to_string(entity_count) : std::string{};
+        const f32 count_w = count_text.empty() ? 0.f : ImGui::CalcTextSize(count_text.c_str()).x + 8.f;
+
+        // ---- name, or the field that renames it ----
+        if (m_renaming_folder == id) {
+
+            ImGui::SetCursorScreenPos({ name_x - 3.f, row_start.y - 1.f });
+            ImGui::SetNextItemWidth(std::max(40.f, row_end.x - name_x - 4.f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.f, 1.f));
+            if (m_rename_focus) {
+                ImGui::SetKeyboardFocusHere();
+                m_rename_focus = false;
+            }
+            const bool entered = ImGui::InputText("##rename", m_rename_buffer, sizeof(m_rename_buffer),
+                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+            ImGui::PopStyleVar();
+
+            const bool left = ImGui::IsItemDeactivated();
+            const bool cancelled = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+            if (entered || left) {
+                if (!cancelled && m_rename_buffer[0] != '\0' && name != m_rename_buffer) {
+                    outliner_layout before = m_layout;
+                    if (m_layout.rename_folder(id, m_rename_buffer))
+                        commit_layout_change(std::format("Rename folder {}", name), std::move(before));
+                }
+                m_renaming_folder = NO_FOLDER;
+            }
+
+        } else {
+
+            ImGui::SetCursorScreenPos({ name_x, row_start.y });
+            if (own_hidden || inherited_hidden)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextUnformatted(ellipsize_to_fit(name, row_end.x - name_x - count_w - 4.f).c_str());
+            if (own_hidden || inherited_hidden)
+                ImGui::PopStyleColor();
+
+            if (!count_text.empty()) {
+                ImGui::SetCursorScreenPos({ row_end.x - count_w + 2.f, row_start.y });
+                ImGui::TextDisabled("%s", count_text.c_str());
+            }
+        }
+
+        if (clicked) {
+            m_focused_folder = id;
+            if (!ImGui::GetIO().KeyCtrl)
+                clear_selection();                              // Ctrl keeps the entities selected, e.g. to drop them in afterwards
+        }
+        if (double_clicked)
+            begin_rename_folder(id);
+
+        ImGui::SetCursorScreenPos({ row_start.x, row_end.y });
+        ImGui::Dummy(ImVec2());
+
+        ImGui::PopID();
+        ImGui::PopID();
+    }
+
+
+    void world_viewport_window::render_folder_context_menu(const folder_id id) {
+
+        if (!ImGui::BeginPopupContextItem("##folder_ctx"))
+            return;
+
+        m_focused_folder = id;
+        const outliner_folder* folder = m_layout.find(id);
+        const std::string name = folder ? folder->name : std::string{};
+        const bool hidden = folder && folder->hidden;
+
+        if (ImGui::MenuItem("New Folder Inside"))
+            m_outliner_deferred.push_back([this, id]() { create_folder(id, false); });
+
+        if (ImGui::MenuItem("Rename", "F2"))
+            begin_rename_folder(id);
+
+        if (ImGui::MenuItem("Select Entities")) {
+            m_selected_entities = folder_entities(id);
+            m_selection_anchor = m_selected_entities.empty() ? GLT::world::INVALID_ENTITY : m_selected_entities.front();
+        }
+
+        if (ImGui::MenuItem("Add Selected Entities", nullptr, false, !m_selected_entities.empty()))
+            m_outliner_deferred.push_back([this, id]() { move_entities_to_folder(m_selected_entities, id); });
+
+        if (ImGui::MenuItem(hidden ? "Show" : "Hide")) {
+            outliner_layout before = m_layout;
+            m_layout.set_folder_hidden(id, !hidden);
+            commit_layout_change(std::format("{} folder {}", hidden ? "Show" : "Hide", name), std::move(before));
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Remove Folder", "Del"))
+            m_outliner_deferred.push_back([this, id, name]() {
+                outliner_layout before = m_layout;
+                m_layout.remove_folder(id);
+                if (m_focused_folder == id)
+                    m_focused_folder = NO_FOLDER;
+                commit_layout_change(std::format("Remove folder {}", name), std::move(before));
+            });
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("The entities and folders in it move up one level");
+
+        if (ImGui::MenuItem("Delete Folder and Entities"))
+            m_outliner_deferred.push_back([this, id, name]() {
+
+                const std::vector<GLT::world::entity_id> entities = folder_entities(id);
+                std::vector<folder_id> folders;
+                m_layout.collect_subtree(id, folders);
+
+                if (!entities.empty())
+                    delete_entities(entities);                  // its own undo step (the world changes)
+
+                outliner_layout before = m_layout;
+                for (auto it = folders.rbegin(); it != folders.rend(); ++it)
+                    m_layout.remove_folder(*it);
+                if (std::find(folders.begin(), folders.end(), m_focused_folder) != folders.end())
+                    m_focused_folder = NO_FOLDER;
+                commit_layout_change(std::format("Delete folder {}", name), std::move(before));
+            });
+
+        ImGui::EndPopup();
+    }
+
+
+    // "Move to Folder" of the entity context menu. Only top-level entities can be in a folder
+    void world_viewport_window::render_move_to_folder_menu() {
+
+        const bool any_root = std::any_of(m_selected_entities.begin(), m_selected_entities.end(), [this](const GLT::world::entity_id id) {
+            return m_world->alive(id) && !m_world->is_world_entity(id) && !m_world->parent_of(id).is_valid();
+        });
+
+        if (!ImGui::BeginMenu("Move to Folder", any_root)) {
+            if (!any_root && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("Entities below another entity stay with their parent");
+            return;
+        }
+
+        if (ImGui::MenuItem("New Folder..."))
+            m_outliner_deferred.push_back([this]() { create_folder(NO_FOLDER, true); });
+
+        if (ImGui::MenuItem("No Folder"))
+            m_outliner_deferred.push_back([this]() { move_entities_to_folder(m_selected_entities, NO_FOLDER); });
+
+        if (m_layout.has_folders())
+            ImGui::Separator();
+
+        // The folder tree, indented
+        const auto list = [this](const auto& self, const folder_id parent, const int depth) -> void {
+            for (const auto& folder : m_layout.folders()) {
+                if (folder.parent != parent)
+                    continue;
+                ImGui::PushID(static_cast<int>(folder.id));
+                const std::string label = std::string(static_cast<size_t>(depth) * 3, ' ') + folder.name;
+                if (ImGui::MenuItem(label.c_str()))
+                    m_outliner_deferred.push_back([this, target = folder.id]() { move_entities_to_folder(m_selected_entities, target); });
+                ImGui::PopID();
+                self(self, folder.id, depth + 1);
+            }
+        };
+        list(list, NO_FOLDER, 0);
+
+        ImGui::EndMenu();
+    }
+
+
+    void world_viewport_window::begin_entity_drag(const GLT::world::entity_id id) {
+
+        if (!ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers))
+            return;
+
+        // A drag that starts on a selected row carries the whole selection
+        if (ImGui::GetDragDropPayload() == nullptr || !ImGui::GetDragDropPayload()->IsDataType(OUTLINER_ENTITY_PAYLOAD)) {
+            m_dragged_entities = is_selected(id) ? m_selected_entities : std::vector<GLT::world::entity_id>{ id };
+            m_entity_drag_started = true;
+        }
+        const u32 count = static_cast<u32>(m_dragged_entities.size());
+        ImGui::SetDragDropPayload(OUTLINER_ENTITY_PAYLOAD, &count, sizeof(count));
+        if (count == 1)
+            ImGui::TextUnformatted(entity_display_name(m_dragged_entities.front()).c_str());
+        else
+            ImGui::Text("%u entities", count);
+        ImGui::EndDragDropSource();
+    }
+
+
+    void world_viewport_window::accept_outliner_drop(const folder_id target) {
+
+        if (!ImGui::BeginDragDropTarget())
+            return;
+
+        if (ImGui::AcceptDragDropPayload(OUTLINER_ENTITY_PAYLOAD))
+            m_outliner_deferred.push_back([this, target]() { move_entities_to_folder(m_dragged_entities, target); });
+
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(OUTLINER_FOLDER_PAYLOAD); payload && payload->DataSize == sizeof(folder_id)) {
+            folder_id moved = NO_FOLDER;
+            std::memcpy(&moved, payload->Data, sizeof(moved));
+            m_outliner_deferred.push_back([this, moved, target]() {
+                const outliner_folder* folder = m_layout.find(moved);
+                if (!folder)
+                    return;
+                const std::string name = folder->name;
+                outliner_layout before = m_layout;
+                if (m_layout.move_folder(moved, target))        // refuses to put a folder into itself
+                    commit_layout_change(std::format("Move folder {}", name), std::move(before));
+            });
+        }
+
+        ImGui::EndDragDropTarget();
+    }
+
+
+    void world_viewport_window::move_entities_to_folder(const std::vector<GLT::world::entity_id>& ids, const folder_id folder) {
+
+        if (!m_world)
+            return;
+
+        outliner_layout before = m_layout;
+        u32 moved = 0;
+        for (const auto id : ids) {
+            if (!m_world->alive(id) || m_world->is_world_entity(id) || m_world->parent_of(id).is_valid())
+                continue;                                       // children stay with their parent
+            m_layout.assign(id, folder);
+            ++moved;
+        }
+        if (moved == 0)
+            return;
+
+        const outliner_folder* target = m_layout.find(folder);
+        commit_layout_change(target ? std::format("Move {} to folder {}", moved == 1 ? std::string("entity") : std::format("{} entities", moved), target->name)
+            : std::string("Move out of folder"), std::move(before));
+    }
+
+
+    folder_id world_viewport_window::create_folder(const folder_id parent, const bool with_selection) {
+
+        outliner_layout before = m_layout;
+        const folder_id id = m_layout.add_folder("New Folder", parent);
+        if (with_selection && m_world)
+            for (const auto entity : m_selected_entities)
+                if (m_world->alive(entity) && !m_world->is_world_entity(entity) && !m_world->parent_of(entity).is_valid())
+                    m_layout.assign(entity, id);
+        commit_layout_change("New folder", std::move(before));
+
+        m_focused_folder = id;
+        begin_rename_folder(id);                                // type the name right away
+        return id;
+    }
+
+
+    void world_viewport_window::begin_rename_folder(const folder_id id) {
+
+        const outliner_folder* folder = m_layout.find(id);
+        if (!folder)
+            return;
+        m_renaming_folder = id;
+        m_rename_focus = true;
+        std::snprintf(m_rename_buffer, sizeof(m_rename_buffer), "%s", folder->name.c_str());
+    }
+
+
+    std::vector<GLT::world::entity_id> world_viewport_window::folder_entities(const folder_id id) const {
+
+        std::vector<folder_id> folders;
+        m_layout.collect_subtree(id, folders);
+
+        std::vector<GLT::world::entity_id> out;
+        if (!m_world || folders.empty())
+            return out;
+        for (const auto& [entity, folder] : m_layout.assignments())
+            if (std::find(folders.begin(), folders.end(), folder) != folders.end() && m_world->alive(entity))
+                out.push_back(entity);
+        std::sort(out.begin(), out.end());                      // the map has no order
+        return out;
+    }
+
+    // ---- outliner (hiding, saving the folders) ----------------------------------------------------------------------
+
+    void world_viewport_window::set_entities_hidden(const std::span<const GLT::world::entity_id> ids, const bool hidden) {
+
+        if (!m_world || ids.empty())
+            return;
+
+        outliner_layout before = m_layout;
+        std::string name;
+        for (const auto id : ids) {
+            if (m_world->is_world_entity(id))
+                continue;                                       // sun and sky
+            if (name.empty())
+                name = entity_display_name(id);
+            m_layout.set_entity_hidden(id, hidden);
+        }
+        commit_layout_change(std::format("{} {}", hidden ? "Hide" : "Show", ids.size() == 1 ? name : std::format("{} entities", ids.size())),
+            std::move(before));
+    }
+
+
+    bool world_viewport_window::entity_hidden_inherited(const GLT::world::entity_id id) const {
+
+        if (!m_world || m_layout.empty())
+            return false;
+
+        // Up the hierarchy; the top-most entity is the one that can sit in a folder
+        GLT::world::entity_id top = id;
+        for (u32 guard = 0; guard < 256; ++guard) {
+            const auto parent = m_world->parent_of(top);
+            if (!parent.is_valid())
+                break;
+            if (m_layout.entity_hidden(parent))
+                return true;
+            top = parent;
+        }
+        return m_layout.folder_effectively_hidden(m_layout.folder_of(top));
+    }
+
+
+    // The world does the actual hiding (i_world::set_hidden: the entity and what is below it, meshes and lights). It is
+    // told which entities: the ones with a closed eye and the ones in a hidden folder
+    void world_viewport_window::sync_hidden_to_world() {
+
+        if (!m_world)
+            return;
+
+        std::unordered_set<GLT::world::entity_id> wanted;
+        m_layout.collect_hidden(wanted);
+
+        for (const auto id : m_applied_hidden)
+            if (!wanted.contains(id))
+                m_world->set_hidden(id, false);
+        for (const auto id : wanted)
+            if (!m_applied_hidden.contains(id))
+                m_world->set_hidden(id, true);
+        m_applied_hidden = std::move(wanted);
+    }
+
+
+    void world_viewport_window::commit_layout_change(std::string name, outliner_layout before) {
+
+        if (before.same_content(m_layout))
+            return;
+
+        // Whole states, like the world steps: undo and redo just put one of them back
+        auto states = std::make_shared<std::pair<outliner_layout, outliner_layout>>(std::move(before), m_layout);
+        const auto put_back = [this](const outliner_layout& state) {
+            m_layout = state;
+            m_layout_unsynced = true;                           // the revision counter went back with the state: say so explicitly
+            m_layout_unsaved = true;
+            m_layout_seen_revision = m_layout.revision();
+            if (!m_layout.find(m_focused_folder))
+                m_focused_folder = NO_FOLDER;
+            m_renaming_folder = NO_FOLDER;
+        };
+
+        undo_system::step step;
+        step.name = std::move(name);
+        step.undo = [states, put_back]() { put_back(states->first); };
+        step.redo = [states, put_back]() { put_back(states->second); };
+        m_undo_stack.push(std::move(step));
+    }
+
+
+    void world_viewport_window::update_outliner_layout() {
+
+        if (m_layout.revision() != m_layout_seen_revision) {
+            m_layout_seen_revision = m_layout.revision();
+            m_layout_unsynced = true;
+            m_layout_unsaved = true;
+        }
+
+        if (m_layout_unsynced && m_world) {
+            sync_hidden_to_world();
+            m_layout_unsynced = false;
+        }
+
+        // Not while something is being dragged or typed (opening folders one after the other would write every time)
+        if (m_layout_unsaved && !ImGui::IsAnyItemActive() && m_renaming_folder == NO_FOLDER)
+            save_outliner_layout();
+    }
+
+
+    std::filesystem::path world_viewport_window::outliner_layout_path() const {
+
+        const std::filesystem::path project = GLT::application::get().get_project_path();
+        auto registry = GLT::asset::registry::get_ref();
+        if (!m_world || !registry || project.empty() || m_world->asset_handle() == INVALID_HANDLE)
+            return {};
+
+        const u64 world_id = static_cast<u64>(registry->info(m_world->asset_handle()).id);
+        if (world_id == 0)
+            return {};
+        return project / GLT::config::METADATA_DIR / OUTLINER_LAYOUT_DIR / std::format("{:016x}.txt", world_id);
+    }
+
+
+    void world_viewport_window::load_outliner_layout() {
+
+        m_layout.clear();
+        m_applied_hidden.clear();                               // a new world object: nothing is hidden in it yet
+        m_focused_folder = NO_FOLDER;
+        m_renaming_folder = NO_FOLDER;
+        m_dragged_entities.clear();
+        m_outliner_deferred.clear();
+
+        if (const auto path = outliner_layout_path(); !path.empty()) {
+            std::error_code error{};
+            if (GLT::vfs::exists(path, error) && !error) {
+                const std::string text = GLT::vfs::read_text_file(path, error);
+                if (!error)
+                    m_layout.from_text(text);
+                else
+                    LOG(warn, "outliner: could not read [{}] ({})", path.generic_string(), error.message())
+            }
+        }
+
+        m_layout_seen_revision = m_layout.revision();
+        m_layout_unsynced = true;
+        m_layout_unsaved = false;
+    }
+
+
+    void world_viewport_window::save_outliner_layout() {
+
+        const auto path = outliner_layout_path();
+        if (path.empty())
+            return;                                             // a world that was never saved: tried again once it has a file
+
+        m_layout_unsaved = false;
+        std::error_code error{};
+        if (m_layout.empty()) {                                 // nothing to remember: no file
+            if (GLT::vfs::exists(path, error) && !error)
+                std::filesystem::remove(path, error);
+            return;
+        }
+
+        std::filesystem::create_directories(path.parent_path(), error);
+        if (!GLT::vfs::write_text_file(path, m_layout.to_text()))
+            LOG(error, "outliner: could not write [{}]", path.generic_string())
     }
 
     // ---- outliner (hierarchy helpers) -----------------------------------------------------------------------------
@@ -2154,17 +3028,168 @@ namespace GLT::editor {
             glm::length(glm::vec3(model[1])),
             glm::length(glm::vec3(model[2])));
 
+        // The other selected entities get the same change (m_gizmo_targets: the primary one first, then the others;
+        // entities below a selected one are not in it, they follow their parent)
+        const std::span<const GLT::world::entity_id> others = m_gizmo_targets.size() > 1
+            ? std::span<const GLT::world::entity_id>(m_gizmo_targets).subspan(1) : std::span<const GLT::world::entity_id>{};
+
         const glm::vec3 world_delta = new_pos - position;
         if (glm::length(world_delta) > 1e-6f) {
             const glm::vec3 local_delta = glm::inverse(rotation) * world_delta;
             m_world->translate_local(id, local_delta);
+            for (const auto other : others)                     // the same distance in the same direction
+                m_world->translate_local(other, glm::inverse(m_world->get_local_rotation_q(other)) * world_delta);
         }
 
-        if (glm::abs(glm::dot(rotation, new_rot)) < 0.9999f)
+        if (glm::abs(glm::dot(rotation, new_rot)) < 0.9999f) {
             m_world->set_local_rotation_q(id, new_rot);
+            const glm::quat turn = new_rot * glm::inverse(rotation);
+            for (const auto other : others)                     // each one turns in place by the same amount
+                m_world->set_local_rotation_q(other, glm::normalize(turn * m_world->get_local_rotation_q(other)));
+        }
 
-        if (glm::distance(scale, new_scale) > 1e-6f)
+        if (glm::distance(scale, new_scale) > 1e-6f) {
             m_world->set_local_scale(id, new_scale);
+            const glm::vec3 factor(
+                std::abs(scale.x) > 1e-6f ? new_scale.x / scale.x : 1.f,
+                std::abs(scale.y) > 1e-6f ? new_scale.y / scale.y : 1.f,
+                std::abs(scale.z) > 1e-6f ? new_scale.z / scale.z : 1.f);
+            for (const auto other : others)                     // the same factor per axis
+                m_world->set_local_scale(other, m_world->get_local_scale(other) * factor);
+        }
+    }
+
+
+    // What the gizmo moves: the primary selection (its transform is the one the gizmo shows) and the other selected
+    // entities. An entity below another selected one is left out: it moves with its parent already
+    void world_viewport_window::collect_gizmo_targets(const GLT::world::entity_id primary) {
+
+        m_gizmo_targets.clear();
+        if (!m_world || !primary.is_valid() || !m_world->alive(primary))
+            return;
+        m_gizmo_targets.push_back(primary);
+        if (m_selected_entities.size() < 2 || m_world->is_world_entity(primary))
+            return;
+
+        const std::unordered_set<GLT::world::entity_id> selected(m_selected_entities.begin(), m_selected_entities.end());
+        for (const auto id : m_selected_entities) {
+
+            if (id == primary || !m_world->alive(id) || m_world->is_world_entity(id))
+                continue;
+            bool below_selected = false;
+            GLT::world::entity_id parent = m_world->parent_of(id);
+            for (u32 guard = 0; parent.is_valid() && guard < 256; ++guard) {
+                if (selected.contains(parent)) {
+                    below_selected = true;
+                    break;
+                }
+                parent = m_world->parent_of(parent);
+            }
+            if (!below_selected)
+                m_gizmo_targets.push_back(id);
+        }
+    }
+
+
+    // Ctrl+F: moves the editor camera (keeping its direction) to where the selection fills most of the view. How far
+    // away depends on how large the selected entities are: their meshes, lights, and everything below them
+    void world_viewport_window::frame_selection() {
+
+        auto* scene = m_world ? m_world->as<GLT::world::i_world_scene>() : nullptr;
+        if (!scene || m_selected_entities.empty())
+            return;
+
+        const GLT::world::entity_id camera = scene->get_active_camera();
+        GLT::world::camera_snapshot view{};
+        if (!camera.is_valid() || !scene->get_camera_view(view))
+            return;
+
+        // The selection with everything below it
+        std::vector<GLT::world::entity_id> entities;
+        for (const auto id : m_selected_entities)
+            if (!m_world->is_world_entity(id) && id != camera)
+                collect_subtree(id, entities);
+        if (entities.empty())
+            return;
+        const std::unordered_set<GLT::world::entity_id> wanted(entities.begin(), entities.end());
+        std::unordered_set<GLT::world::entity_id> measured;
+
+        glm::vec3 low(std::numeric_limits<f32>::max());
+        glm::vec3 high(std::numeric_limits<f32>::lowest());
+        const auto include = [&](const glm::vec3& point) {
+            if (!std::isfinite(point.x + point.y + point.z))
+                return;
+            low = glm::min(low, point);
+            high = glm::max(high, point);
+        };
+
+        // Meshes: the asset's bounding box where the instance is
+        std::vector<GLT::asset::mesh::instance> instances;
+        scene->gather_scene(instances);
+        auto registry = GLT::asset::registry::get_ref();
+        for (const auto& instance : instances) {
+
+            if (!wanted.contains(instance.entity))
+                continue;
+            const auto* mesh = (registry && instance.mesh != INVALID_HANDLE)
+                ? registry->data_as<GLT::asset::mesh::mesh_asset>(instance.mesh) : nullptr;
+            if (!mesh)
+                continue;
+            for (u32 corner = 0; corner < 8; ++corner) {
+                const glm::vec3 local((corner & 1u) ? mesh->bounds.max.x : mesh->bounds.min.x, (corner & 2u) ? mesh->bounds.max.y : mesh->bounds.min.y,
+                    (corner & 4u) ? mesh->bounds.max.z : mesh->bounds.min.z);
+                include(glm::vec3(instance.transform * glm::vec4(local, 1.f)));
+            }
+            measured.insert(instance.entity);
+        }
+
+        // Lights: where they are, with a little room (their range would put the camera far away from a small lamp)
+        std::vector<GLT::world::light_snapshot> lights;
+        scene->gather_lights(lights);
+        for (const auto& light : lights) {
+            if (!wanted.contains(light.entity))
+                continue;
+            const f32 room = std::clamp(light.radius * 0.1f, 0.25f, 1.5f);
+            include(light.position - glm::vec3(room));
+            include(light.position + glm::vec3(room));
+            measured.insert(light.entity);
+        }
+
+        // Anything else (an empty entity, a camera, a sound): its position, from the transforms up the hierarchy
+        for (const auto id : entities) {
+
+            if (measured.contains(id))
+                continue;
+            glm::mat4 world(1.f);
+            GLT::world::entity_id walk = id;
+            for (u32 guard = 0; walk.is_valid() && guard < 256; ++guard) {
+                const glm::mat4 local = glm::translate(glm::mat4(1.f), m_world->get_local_position(walk))
+                    * glm::mat4_cast(m_world->get_local_rotation_q(walk)) * glm::scale(glm::mat4(1.f), m_world->get_local_scale(walk));
+                world = local * world;
+                walk = m_world->parent_of(walk);
+            }
+            const glm::vec3 position(world[3]);
+            include(position - glm::vec3(0.5f));
+            include(position + glm::vec3(0.5f));
+        }
+
+        if (low.x > high.x)
+            return;
+
+        // A sphere around all of it has to fit the narrower of the two view angles
+        const glm::vec3 center = 0.5f * (low + high);
+        const f32 radius = std::max(0.5f * glm::length(high - low), 0.25f);
+        const f32 aspect = (m_viewport_size.y > 1.f) ? m_viewport_size.x / m_viewport_size.y : 1.f;
+        const f32 half_vertical = glm::radians(std::clamp(view.fov, 5.f, 170.f)) * 0.5f;
+        const f32 half_horizontal = std::atan(std::tan(half_vertical) * aspect);
+        const f32 distance = std::max(radius / std::sin(std::min(half_vertical, half_horizontal)) * 1.15f, view.near_plane * 2.f + radius);
+
+        const glm::mat3 camera_rotation = glm::transpose(glm::mat3(view.view));             // view = inverse of the camera's transform
+        const glm::vec3 forward = -camera_rotation[2];                                      // -Z is forward
+        const glm::vec3 wanted_position = center - forward * distance;
+
+        // translate_local() takes the step in the camera's own axes
+        m_world->translate_local(camera, glm::mat3(view.view) * (wanted_position - view.position));
     }
 
 
@@ -2349,19 +3374,19 @@ namespace GLT::editor {
     void world_viewport_window::update_selection_debug_draw() {
 
         auto* debug = m_scene ? m_scene->get_debug_draw() : nullptr;
-        if (!debug || !m_world)
+        if (!debug || !m_world || m_selected_entities.empty())
             return;
 
-        constexpr f32 lifetime = 0.1f;
-        const auto primary = primary_selection();
+        // Sent again every frame, so the outline disappears soon after an entity is deselected. "Soon" has to be longer
+        // than a frame takes: with a fixed 0.1 s the outline went out between two slow frames (flicker)
+        const f32 lifetime = std::max(0.1f, 3.f * ImGui::GetIO().DeltaTime);
 
-        for (auto id : m_selected_entities) {
-            if (!m_world->alive(id))
-                continue;
-            const auto& selection = editor_settings::get().selection;
-            const glm::vec4& color = (id == primary) ? selection.primary_color : selection.secondary_color;
-            debug->highlight_entity(id, color, lifetime, true);
-        }
+        // All at once: one call per entity made the renderer search its list once per entity
+        const auto& selection = editor_settings::get().selection;
+        const auto primary = primary_selection();
+        debug->highlight_entity(m_selected_entities, selection.secondary_color, lifetime, true);
+        if (primary.is_valid())
+            debug->highlight_entity(primary, selection.primary_color, lifetime, true);
     }
 
     // ---- misc -----------------------------------------------------------------------------------------------------

@@ -617,6 +617,37 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
+    bool ecs_world::is_hidden(entity_id id) const { return m_hidden.contains(id); }
+
+
+    void ecs_world::set_hidden(entity_id id, bool hidden) {
+
+        if (!id.is_valid() || id == m_world_entity)             // the world entity carries the sun and the sky
+            return;
+
+        const bool changed = hidden ? m_hidden.insert(id).second : m_hidden.erase(id) != 0;
+        if (changed)
+            mark_changed(id);                                   // rewrites the cached entries of the entity and its subtree
+    }
+
+
+    bool ecs_world::is_effectively_hidden(entity_id id) const {
+
+        if (m_hidden.empty())                                   // the usual case: one branch per written instance
+            return false;
+
+        for (u32 guard = 0; id.is_valid() && guard < 256; ++guard) {
+            if (m_hidden.contains(id))
+                return true;
+            const component::hierarchy* h = hierarchy_of(id);
+            if (!h)
+                break;
+            id = h->parent;
+        }
+        return false;
+    }
+
+
     mobility ecs_world::get_mobility(entity_id id) const {
 
         if (const auto* transform = m_registry.try_get<component::transform>(entt_of(id)))
@@ -1768,7 +1799,7 @@ namespace GLT::world::world_ecs_entt {
         const auto& mesh = m_registry.get<component::mesh>(entity);
         out.mesh = mesh.mesh;
         out.procedural_mesh = 0;
-        out.flags = 0;
+        out.flags = is_effectively_hidden(id) ? GLT::asset::mesh::INSTANCE_FLAG_HIDDEN : 0u;
         out.transform = world_transform_memo(id, entity);
         out.entity = id;
         out.material_overrides.resize(mesh.material_overrides.size());        // reused element: no allocation after the first frame
@@ -1791,6 +1822,7 @@ namespace GLT::world::world_ecs_entt {
         out.inner_cone_angle = light.inner_cone_angle;
         out.outer_cone_angle = light.outer_cone_angle;
         out.type = light.type;
+        out.hidden = is_effectively_hidden(id);
         out.entity = id;
     }
 

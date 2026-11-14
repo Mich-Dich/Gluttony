@@ -336,6 +336,7 @@ namespace GLT::renderer::vk_rasterizer {
         u8                                              vertex_count = 0;
         f32                                             remaining_lifetime = 0.f;
         bool                                            depth_test = true;
+        bool                                            inside_view = false;        // a line known to lie inside the view frustum: not clipped
     };
 
 

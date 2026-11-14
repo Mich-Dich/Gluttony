@@ -44,6 +44,10 @@ namespace GLT::world {
 
         light_type                      type{ light_type::point };
 
+        // Submitted but gives no light (hidden in the editor, i_world::set_hidden). Kept in the list so the renderer can
+        // still draw its outline when the entity is highlighted
+        bool                            hidden{ false };
+
         entity_id                       entity{};
     };
 

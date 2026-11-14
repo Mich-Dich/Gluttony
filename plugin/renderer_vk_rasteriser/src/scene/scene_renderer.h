@@ -555,6 +555,7 @@ namespace GLT::renderer::vk_rasterizer {
         std::vector<watched_mesh>                                           m_watched_meshes{};
         std::vector<watched_entity>                                         m_watched_entities{};
         f64                                                                 m_debug_last_frame_time = 0.0;
+        bool                                                                m_debug_budget_warned = false;  // the vertex budget was exceeded last frame (log once)
         std::array<frame_debug_layout, MAX_CONCURRENT_FRAMES>               m_debug_layouts{};
         std::array<util::allocated_buffer, MAX_CONCURRENT_FRAMES>           m_debug_vertex_buffers{};
         std::array<util::descriptor_buffer, MAX_CONCURRENT_FRAMES>          m_debug_desc_buffers{};

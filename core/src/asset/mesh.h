@@ -57,6 +57,11 @@ namespace GLT::asset::mesh {
     // LOD preview; clamped to the mesh's generated level count by the renderer
     inline constexpr u32                                INSTANCE_FLAG_FORCE_LOD_MASK = 0xFu;
 
+    // The instance is submitted but not drawn (hidden in the editor, i_world::set_hidden). Renderers skip it everywhere
+    // except for what they draw on request for an entity (i_debug_draw::highlight_entity), so a hidden entity can still
+    // be selected and outlined
+    inline constexpr u32                                INSTANCE_FLAG_HIDDEN = 1u << 4;
+
     // Triangles per cluster of the virtual geometry path (cluster_settings::cluster_triangles). The upper bound is
     // meshoptimizer's meshlet limit (256 vertices per cluster)
     inline constexpr u32                                MIN_CLUSTER_TRIANGLES = 32;
