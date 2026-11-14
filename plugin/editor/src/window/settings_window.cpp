@@ -155,6 +155,9 @@ namespace GLT::editor {
         if (UI::search_field("##search", m_search, sizeof(m_search), "Search   (Ctrl+F)"))
             m_scroll_to_top = true;
 
+        if (const auto& header = m_registry.sidebar_header())
+            header();
+
         ImGui::Dummy(ImVec2(0.f, 4.f));
 
         // page list

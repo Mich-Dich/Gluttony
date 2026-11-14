@@ -7,6 +7,7 @@
 #include "event/application_event.h"
 #include "platform/i_window.h"
 #include "reflection/registry.h"
+#include "settings/engine_settings.h"
 #include "render/image.h"
 #include "debug/profiler.h"
 #include "image.h"
@@ -24,6 +25,8 @@
 namespace GLT::renderer::vk_rasterizer {
 
     // CONSTANTS =======================================================================================================
+
+    constexpr const char*                           VISUAL_SETTINGS_BLOCK = "renderer.vk_rasterizer.visual";   // name in the engine settings files
 
     // MACROS ==========================================================================================================
 
@@ -100,10 +103,19 @@ namespace GLT::renderer::vk_rasterizer {
         // Register the visual settings type so the editor can walk it
         GLT::reflect::register_type<settings::visual>();
         GLT::reflect::finalize();
+
+        // Engine settings: the stored values (project file, changes on this computer) are written into
+        // m_visual_settings now and whenever they change. Read every frame, so there is nothing else to update
+        GLT::engine_settings::register_block({ VISUAL_SETTINGS_BLOCK, "Rendering", GLT::reflect::type_of<settings::visual>(),
+            &m_visual_settings, [this] { on_settings_changed(); } });
     }
 
 
-    void renderer::on_unload() { GLT::render::image::register_factory({}); }
+    void renderer::on_unload() {
+
+        GLT::engine_settings::unregister_block(VISUAL_SETTINGS_BLOCK);
+        GLT::render::image::register_factory({});
+    }
 
 
     bool renderer::create(GLT::platform::window_handle primary_window) {

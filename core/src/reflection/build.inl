@@ -272,6 +272,7 @@ namespace GLT::reflect {
         if (auto dn = find_annotation<annotations::display_name>(member))       md.display_name = std::define_static_string(std::string_view(dn->value));
         if (auto tt = find_annotation<annotations::tooltip>(member))            md.tooltip = std::define_static_string(std::string_view(tt->value));
         if (auto cat = find_annotation<annotations::category>(member))          md.category = std::define_static_string(std::string_view(cat->value));
+        if (auto opt = find_annotation<annotations::options>(member))           md.options = std::define_static_string(std::string_view(opt->value));
         if (auto r = find_annotation<annotations::range>(member)) {
             md.range_min = r->min;
             md.range_max = r->max;

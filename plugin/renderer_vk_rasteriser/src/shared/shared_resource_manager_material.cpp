@@ -632,8 +632,17 @@ namespace GLT::renderer::vk_rasterizer {
         if (asset->bytecode_hash != slot.bytecode_hash) {
             destroy_material_shaders(slot);
             bool ok = false;
-            if (asset->bytecode_hash != 0)
-                ok = load_material_shaders(slot, *asset);
+            if (asset->bytecode_hash != 0) {
+
+                // Bytecode stored in the asset was built by another version of this renderer's shader code (older
+                // lighting / shadow code baked in): build it again from the material's source, in memory. The file is
+                // left alone; compiling + saving it in the material editor makes it permanent
+                if (asset->compiler_hash != m_shader_compiler_hash)
+                    if (const stale_material_build* build = rebuild_stale_material(*asset))
+                        ok = load_material_shaders(slot, build->bytecode, build->alpha_test);
+                if (!ok)
+                    ok = load_material_shaders(slot, asset->bytecode, bytecode_has_alpha_test(*asset));
+            }
             if (ok)
                 slot.bytecode_hash = asset->bytecode_hash;
 
@@ -739,17 +748,61 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
-    bool shared_resource_manager::load_material_shaders(material_slot& slot, const GLT::asset::material::material_asset& asset) {
+    // Materials keep the shaders they were compiled to (asset bytecode). Those contain this renderer's lighting and shadow
+    // code as it was at that time, so after a renderer update they no longer match what the renderer draws (seen as:
+    // objects with such a material neither cast nor receive sun shadows). Compiles the material's source again; one
+    // compile per distinct (source, blend), shared by every material using it (e.g. colour variants of one material).
+    // Returns nullptr when that is not possible; the caller then uses the stored bytecode
+    const shared_resource_manager::stale_material_build* shared_resource_manager::rebuild_stale_material(
+        const GLT::asset::material::material_asset& asset) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::rebuild_stale_material");
+
+        namespace AM = GLT::asset::material;
+        if (asset.slang_source.empty())
+            return nullptr;
+
+        const u64 key = GLT::util::mix_u64(GLT::util::fnv1a_64(asset.slang_source), static_cast<u64>(asset.blend));
+        auto it = m_stale_material_builds.find(key);
+        if (it == m_stale_material_builds.end()) {
+
+            stale_material_build build{};
+            if (auto compiled = compile(asset.slang_source, asset.blend); compiled && compiled->reflection.size() >= sizeof(AM::reflection_header)) {
+                AM::reflection_header header{};
+                std::memcpy(&header, compiled->reflection.data(), sizeof(header));
+                build.bytecode = std::move(compiled->bytecode);
+                build.packed_param_size = header.packed_param_size;
+                build.alpha_test = (header.entry_flags & AM::alpha_test) != 0;
+                LOG(warn, "Material [{}] was compiled for an older version of the renderer: compiled again in memory (also used for "
+                    "other materials with the same source). Compile and save it in the material editor to update the file", asset.name)
+            } else
+                LOG(error, "Material [{}] was compiled for an older version of the renderer and could not be compiled again{}: "
+                    "using the stored shaders (lighting and shadows may be wrong)", asset.name,
+                    compiled ? std::string{} : std::format(" ({})", compiled.error().message))
+            it = m_stale_material_builds.emplace(key, std::move(build)).first;
+        }
+
+        const stale_material_build& build = it->second;
+        if (build.bytecode.empty())
+            return nullptr;
+        if (build.packed_param_size != asset.packed_params.size())      // parameter block changed: the stored values would be misread
+            return nullptr;
+        return &build;
+    }
+
+
+    bool shared_resource_manager::load_material_shaders(material_slot& slot, const std::span<const std::byte> bytecode, const bool alpha_test) {
         GLT_PROFILE_SCOPE("shared_resource_manager::load_material_shaders");
 
-        if (asset.bytecode.size() < 3 * sizeof(u64)) return false;
+        if (bytecode.size() < 3 * sizeof(u64)) return false;
 
         std::vector<std::byte> vs, fs, ds;
         {
-            const auto* blob = reinterpret_cast<const u64*>(asset.bytecode.data());
-            const u64 vs_s = blob[0], fs_s = blob[1], ds_s = blob[2];
-            const std::byte* base = asset.bytecode.data() + 3 * sizeof(u64);
-            if (3 * sizeof(u64) + vs_s + fs_s + ds_s > asset.bytecode.size()) return false;
+            u64 sizes[3]{};
+            std::memcpy(sizes, bytecode.data(), sizeof(sizes));
+            const u64 vs_s = sizes[0], fs_s = sizes[1], ds_s = sizes[2];
+            const std::byte* base = bytecode.data() + 3 * sizeof(u64);
+            if (vs_s > bytecode.size() || fs_s > bytecode.size() || ds_s > bytecode.size()
+                || 3 * sizeof(u64) + vs_s + fs_s + ds_s > bytecode.size()) return false;
             vs.assign(base, base + vs_s);
             fs.assign(base + vs_s, base + vs_s + fs_s);
             if (ds_s > 0) ds.assign(base + vs_s + fs_s, base + vs_s + fs_s + ds_s);
@@ -766,7 +819,7 @@ namespace GLT::renderer::vk_rasterizer {
             if (!slot.depth_module) { destroy_material_shaders(slot); return false; }
         }
 
-        slot.depth_alpha_test = bytecode_has_alpha_test(asset);
+        slot.depth_alpha_test = alpha_test;
         slot.pipeline = create_material_pipeline(slot, material_pipeline_kind::main);
         slot.depth_pipeline = create_material_pipeline(slot, material_pipeline_kind::depth);
         if (!slot.pipeline || !slot.depth_pipeline) { destroy_material_shaders(slot); return false; }

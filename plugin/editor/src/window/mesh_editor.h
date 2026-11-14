@@ -395,29 +395,67 @@ namespace GLT::editor {
         // rendering analysis (mesh_editor_analysis.cpp) ----------------------------------------------------------------
 
         void draw_rendering_analysis();
+
+        // Which detail system suits the mesh, why, and what else stands out. Measured GPU time decides if both systems
+        // were measured at the same distances, computed triangle counts otherwise, rules of thumb as the last resort
         void draw_analysis_recommendation(GLT::asset::mesh::mesh_asset& mesh);
+    
+        // The numbers of the view the preview shows right now
         void draw_analysis_view_section(const GLT::asset::mesh::mesh_asset& mesh);
+    
+        // Graphs over distance: triangles and draw commands (computed lines, measured dots) and measured GPU time
         void draw_analysis_charts_section(const GLT::asset::mesh::mesh_asset& mesh);
+    
+        // What has been looked at so far, and the reminder to look at the rest: near and far, all sides
         void draw_analysis_coverage_section(const GLT::asset::mesh::mesh_asset& mesh);
+    
+        // What the mesh occupies with each detail system (CPU side; the renderer uploads the same data)
         void draw_analysis_memory_section(const GLT::asset::mesh::mesh_asset& mesh);
 
+        // takes the preview's newest GPU statistics and files them under the system that drew the frame and the size the mesh had in it
+        // Runs whether the Rendering view is open or not: the data is there when it is opened [seconds]: time since the last update
         void update_analysis(f32 seconds);
+    
+        // Forgets what was collected. [keep_estimate] = false also drops the virtual geometry estimate (new mesh)
         void reset_analysis(bool keep_estimate);
         void load_analysis_data(GLT::UUID asset_id);
         void save_analysis_data();
+
+        // What each system selects at every distance: LOD level and cluster cut, the rules the renderer applies, without frustum and
+        // backface culling. Computed when the data changes, along the view direction of that moment (the cut depends on it only slightly);
+        // the LOD points at once, the cluster points CURVE_POINTS_PER_FRAME per frame. Only called while the Rendering view is open
         void update_analysis_curves(const GLT::asset::mesh::mesh_asset& mesh);
+
+        // A mesh in LOD mode carries no clusters. This builds them for the panel alone (nothing is saved, nothing is drawn),
+        // so it can say what virtual geometry would select and what it would cost in memory
         void start_analysis_estimate();
         void poll_analysis_estimate();
+    
+        // Starts the camera flight (analysis_sweep). The user's camera and level lock come back when it ends
         void start_analysis_sweep();
+    
+        // Ends the flight and gives the camera back
         void stop_analysis_sweep();
         void update_analysis_sweep(const GLT::asset::mesh::mesh_asset& mesh, f32 seconds);
+
+        // 0..1 over all passes
         [[nodiscard]] f32 analysis_sweep_progress() const noexcept;
+    
+        // Over the inactive "Collected Data" card while the camera flies: veil, what is happening, progress, Stop
         void draw_analysis_sweep_overlay(const ImVec2& card_min, const ImVec2& card_max);
 
+        // The clusters the panel computes with: the mesh's own, or the estimate built for a mesh in LOD mode
         [[nodiscard]] std::span<const GLT::asset::mesh::cluster> analysis_clusters(const GLT::asset::mesh::mesh_asset& mesh) const;
         [[nodiscard]] analysis_coverage analysis_coverage_of(const GLT::asset::mesh::mesh_asset& mesh) const;
+    
+        // Camera distance (to the mesh centre, with the preview's field of view) at [position] on the range axis
         [[nodiscard]] f32 analysis_range_distance(const GLT::asset::mesh::mesh_asset& mesh, f32 position) const;
+        
+        // Ranges worth looking at: the camera is outside the mesh's bounding sphere and within the preview's zoom limits
+        // The reminders ask for these and "Collect Data" visits them
         [[nodiscard]] bool analysis_range_reachable(const GLT::asset::mesh::mesh_asset& mesh, u32 range) const;
+    
+        // Screen size at [position] on the range axis: 0 = start of range 0, n + 0.5 = centre of range n
         [[nodiscard]] static f32 analysis_range_screen(f32 position) noexcept;
         [[nodiscard]] static u32 analysis_range_of(f32 screen_size) noexcept;
 

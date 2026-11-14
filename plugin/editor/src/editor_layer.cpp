@@ -37,6 +37,7 @@
 #include "window/world_topdown_editor.h"
 #include "window/plugin_manager.h"
 #include "window/settings_window.h"
+#include "settings/engine_settings_pages.h"
 #include "settings/editor_settings.h"
 #include "util/asset_editor_registry.h"
 #include "util/file_watcher.h"
@@ -53,6 +54,7 @@ namespace GLT::editor {
     constexpr const char*                   MAIN_MENU_BAR_POPUP = "MAIN_MENU_BAR_POPUP";
         
     constexpr const char*                   EDITOR_SETTINGS_TITLE = "Editor Settings";
+    constexpr const char*                   ENGINE_SETTINGS_TITLE = "Engine Settings";
 
     // MACROS ==========================================================================================================
 
@@ -277,8 +279,18 @@ namespace GLT::editor {
             GLT_PROFILE_SCOPE("Editor toolbar + dockspace");
             handle_undo_shortcuts();            // before any window draws, so trackers see the result as the new baseline
 
-            if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Comma, false))
-                open_settings_window();
+            if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Comma, false)) {
+                if (ImGui::GetIO().KeyShift)
+                    open_engine_settings_window();
+                else
+                    open_settings_window();
+            }
+
+            // A plugin was loaded / unloaded: its settings pages appear / disappear (the open window shows the new list)
+            if (const u64 signature = engine_settings_signature(); signature != m_engine_settings_signature) {
+                m_engine_settings_signature = signature;
+                build_engine_settings_pages(m_engine_settings_pages);
+            }
             render_toolbar();
             render_dockspace();
         }
@@ -432,6 +444,8 @@ namespace GLT::editor {
                 ImGui::Separator();
                 if (ImGui::MenuItem("Editor Settings...", "Ctrl + ,"))
                     open_settings_window();
+                if (ImGui::MenuItem("Engine Settings...", "Ctrl + Shift + ,"))
+                    open_engine_settings_window();
             });
 
             ImGui::SameLine();
@@ -728,6 +742,25 @@ namespace GLT::editor {
         if (!window) {
             // Not via add_window(): settings open as a floating window instead of docking into the main dockspace
             auto created = GLT::create_unique_ref<settings_window>(EDITOR_SETTINGS_TITLE, m_editor_settings_pages);
+            window = created.get();
+            m_windows.push_back(std::move(created));
+        } else
+            window->focus_window();
+
+        if (!page.empty())
+            window->select_page(page);
+    }
+
+
+    void editor_layer::open_engine_settings_window(std::string_view page) {
+
+        settings_window* window = nullptr;
+        for (auto& existing : m_windows)
+            if (!existing->should_close() && existing->get_window_title() == ENGINE_SETTINGS_TITLE)
+                window = static_cast<settings_window*>(existing.get());
+
+        if (!window) {
+            auto created = GLT::create_unique_ref<settings_window>(ENGINE_SETTINGS_TITLE, m_engine_settings_pages);     // floating, like the editor settings
             window = created.get();
             m_windows.push_back(std::move(created));
         } else

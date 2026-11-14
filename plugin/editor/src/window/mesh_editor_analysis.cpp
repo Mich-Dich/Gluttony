@@ -5,17 +5,6 @@
 #include <imgui_internal.h>
 #include <implot.h>
 
-#include <algorithm>
-#include <array>
-#include <bit>
-#include <cmath>
-#include <cstdio>
-#include <string>
-#include <vector>
-
-#include <fstream>
-#include <sstream>
-
 #include <util/util.h>
 #include <util/core_config.h>
 #include <util/io/serializer_yaml.h>
@@ -43,7 +32,7 @@
 //   rules     triangle count thresholds, used while nothing better is known
 //
 // One view says little about a mesh, so the panel keeps track of the distances and directions seen so far and asks
-// for the missing ones. "Measure distances" moves the camera through them
+// for the missing ones. "Collect Data" moves the camera through them
 
 // FORWARD DECLARATIONS ================================================================================================
 
@@ -53,21 +42,26 @@ namespace GLT::editor {
 
     // Samples that make a distance range / a view direction count as seen
     constexpr u32                                   RANGE_SEEN_SAMPLES = 8;
+
     constexpr u32                                   DIRECTION_SEEN_SAMPLES = 4;
 
-    // Statistics skipped after the preview setup changed (locked level, render mode): GPU results arrive a few frames
-    // late and those still belong to the old setup
+    // Statistics skipped after the preview setup changed (locked level, render mode): GPU results arrive a few frames late and those still belong to the old setup
     constexpr u32                                   SETTLE_STATISTICS = 6;
 
-    // "Measure distances" (analysis_sweep)
+    // "Collect Data" (analysis_sweep)
     constexpr f32                                   SWEEP_SECONDS_PER_RANGE = 2.8f;        // pace of the zoom: a distance range (half an octave) per half second
+
     constexpr f32                                   SWEEP_MIN_TURNS_PER_SECOND = 0.12f;     // auto rotate during the flight: at least this fast
+
     constexpr f32                                   SWEEP_PITCH_SECONDS = 9.0f;             // one up / down swing of the camera height
+
     constexpr f32                                   SWEEP_PITCH_AMPLITUDE = 0.85f;          // radians: reaches "from above" and "from below"
 
     // Collected samples are written at the latest this long after they were taken (and when the mesh closes, a measurement ends, the data is reset)
     constexpr f32                                   ANALYSIS_SAVE_INTERVAL = 10.0f;
+
     constexpr u32                                   ANALYSIS_FILE_VERSION = 2;              // 2: YAML (serializer::yaml)
+
     inline const std::filesystem::path              ANALYSIS_DATA_DIR("asset_stats");       // under <project>/metadata
 
     // Cluster selections computed per frame for the curves (each one visits every cluster: spread over frames)
@@ -77,170 +71,270 @@ namespace GLT::editor {
 
     // Rules of thumb for the recommendation while no numbers exist
     constexpr u32                                   SMALL_MESH_TRIANGLES = 10'000;          // below: clusters cannot pay off
+
     constexpr u32                                   DENSE_MESH_TRIANGLES = 250'000;         // above: clusters usually do
+
     constexpr f64                                   DECISIVE_TIME_DIFFERENCE = 0.10;        // measured GPU time: smaller differences are a tie
+
     constexpr f32                                   NEAR_SCREEN_SIZE = 0.25f;               // "close up" for the near / far split
+
+    constexpr const char*                           ANALYSIS_SECTION = "render_samples";
+
+    // One colour per detail system, everywhere in the panel
+    const ImVec4                                    COLOR_LODS{ 0.38f, 0.65f, 1.00f, 1.00f };
+
+    const ImVec4                                    COLOR_CLUSTERS{ 1.00f, 0.62f, 0.30f, 1.00f };
+
+    const ImVec4                                    COLOR_GOOD{ 0.47f, 0.80f, 0.52f, 1.00f };
+
+    const ImVec4                                    COLOR_WARNING{ 0.90f, 0.78f, 0.43f, 1.00f };
 
     // MACROS ==========================================================================================================
 
     // TYPES ===========================================================================================================
 
+    struct mesh_sphere {
+
+        glm::vec3                               centre{ 0.0f };
+        f32                                     radius = 1.0f;
+    };
+
+
+    // Rows of the file: flat records, which is what serializer::yaml::vector() handles
+    struct analysis_series_row {
+
+        u32                                         id = 0;
+        std::string                                 signature{};            // hex
+        u32                                         samples = 0;
+    };
+
+
+    struct analysis_range_row {
+
+        u32                                         series = 0;
+        u32                                         range = 0;
+        u32                                         samples = 0;
+        u32                                         timed_samples = 0;
+        f64                                         geometry_ms = 0.0;
+        f64                                         gpu_ms = 0.0;
+        f64                                         triangles = 0.0;
+        f64                                         draws = 0.0;
+    };
+
     // STATIC VARIABLES ================================================================================================
+
+    // INTERNAL TEMPLATE DECLARATION ===================================================================================
+
+    // INTERNAL FUNCTION DECLARATION ===================================================================================
+
+    std::string hex_text(const u64 value);
+
+    bool parse_hex(const std::string& text, u64& value);
+    // Both directions through one function: the serializer reads into or writes from the same variables
+
+    void serialize_analysis(GLT::serializer::yaml& yaml, u32& version, std::string& asset, std::string& path, std::string& geometry,
+        glm::uvec2& extent, std::vector<u32>& directions, std::vector<analysis_series_row>& series, std::vector<analysis_range_row>& ranges);
+
+    // 1234 -> "1,234", 1234567 -> "1.23M"
+    std::string count_text(const u64 value);
+
+    // GPU times of single passes are small: three decimals below a tenth of a millisecond
+    std::string ms_text(const f64 milliseconds);
+
+    // Axis labels of the log scaled count axes: 1, 10, 100, 1k, 10k, 100k, 1M
+    int count_axis_format(const double value, char* buffer, const int size, void* /*user_data*/);
+
+    // The sphere both detail systems measure the mesh's screen size with
+    mesh_sphere sphere_of(const GLT::asset::mesh::mesh_asset& mesh);
+
+    // |P11| of the projection: cot(fov_y / 2)
+    f32 projection_scale(const f32 fov_deg);
+
+    u64 float_bits(const f32 value);
+
+    // The source geometry. A change (reimport) makes everything collected worthless
+    u64 geometry_signature(const GLT::asset::mesh::mesh_asset& mesh);
+
+    // What the discrete levels draw at which size
+    u64 lod_signature(const GLT::asset::mesh::mesh_asset& mesh);
+
+    // What the cluster selection draws at which size
+    u64 cluster_signature(const GLT::asset::mesh::mesh_asset& mesh);
+
+    // Submeshes that have triangles in [level]: the draw commands of one instance in LOD mode
+    u32 lod_draw_count(const GLT::asset::mesh::mesh_asset& mesh, const u32 level);
+
+    u64 cluster_bytes(const size_t clusters, const size_t indices, const size_t vertices, const size_t submeshes);
+
+    void dim_text(const char* text);
+
+    // Bullet + wrapped text, the bullet in [color]
+    void bullet_text(const ImVec4& color, const std::string& text);
+
+    // Coloured dot + label: legend entry of a detail system
+    void series_label(const ImVec4& color, const char* label);
+
+    // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-    namespace {
-
-        // One colour per detail system, everywhere in the panel
-        const ImVec4 COLOR_LODS{ 0.38f, 0.65f, 1.00f, 1.00f };
-        const ImVec4 COLOR_CLUSTERS{ 1.00f, 0.62f, 0.30f, 1.00f };
-        const ImVec4 COLOR_GOOD{ 0.47f, 0.80f, 0.52f, 1.00f };
-        const ImVec4 COLOR_WARNING{ 0.90f, 0.78f, 0.43f, 1.00f };
-
-        struct mesh_sphere {
-
-            glm::vec3                               centre{ 0.0f };
-            f32                                     radius = 1.0f;
-        };
+    std::string hex_text(const u64 value) { return std::format("{:016x}", value); }
 
 
-        // 1234 -> "1,234", 1234567 -> "1.23M"
-        std::string count_text(const u64 value) {
+    bool parse_hex(const std::string& text, u64& value) {
 
-            char buffer[32];
-            if (value >= 10'000'000ull)
-                std::snprintf(buffer, sizeof(buffer), "%.1fM", static_cast<f64>(value) / 1e6);
-            else if (value >= 1'000'000ull)
-                std::snprintf(buffer, sizeof(buffer), "%.2fM", static_cast<f64>(value) / 1e6);
-            else if (value >= 100'000ull)
-                std::snprintf(buffer, sizeof(buffer), "%.0fk", static_cast<f64>(value) / 1e3);
-            else if (value >= 1'000ull)
-                std::snprintf(buffer, sizeof(buffer), "%llu,%03llu", static_cast<unsigned long long>(value / 1000), static_cast<unsigned long long>(value % 1000));
-            else
-                std::snprintf(buffer, sizeof(buffer), "%llu", static_cast<unsigned long long>(value));
-            return buffer;
-        }
-
-
-        // GPU times of single passes are small: three decimals below a tenth of a millisecond
-        std::string ms_text(const f64 milliseconds) {
-
-            return milliseconds < 0.1 ? std::format("{:.3f}", milliseconds) : std::format("{:.2f}", milliseconds);
-        }
-
-
-        // Axis labels of the log scaled count axes: 1, 10, 100, 1k, 10k, 100k, 1M
-        int count_axis_format(const double value, char* buffer, const int size, void* /*user_data*/) {
-
-            if (value >= 999'999.5)
-                return std::snprintf(buffer, static_cast<size_t>(size), "%gM", value / 1e6);
-            if (value >= 999.5)
-                return std::snprintf(buffer, static_cast<size_t>(size), "%gk", value / 1e3);
-            return std::snprintf(buffer, static_cast<size_t>(size), "%g", value);
-        }
-
-
-        // The sphere both detail systems measure the mesh's screen size with
-        mesh_sphere sphere_of(const GLT::asset::mesh::mesh_asset& mesh) {
-
-            return { 0.5f * (mesh.bounds.min + mesh.bounds.max), std::max(GLT::asset::mesh::lod_sphere_radius(mesh.bounds), 1e-4f) };
-        }
-
-
-        // |P11| of the projection: cot(fov_y / 2)
-        f32 projection_scale(const f32 fov_deg) {
-
-            return 1.0f / std::tan(glm::radians(fov_deg) * 0.5f);
-        }
-
-
-        u64 float_bits(const f32 value) {
-
-            return std::bit_cast<u32>(value);
-        }
-
-
-        // The source geometry. A change (reimport) makes everything collected worthless
-        u64 geometry_signature(const GLT::asset::mesh::mesh_asset& mesh) {
-
-            u64 hash = GLT::util::mix_u64(0x6d657368ull, mesh.vertices.size());
-            hash = GLT::util::mix_u64(hash, mesh.indices.size());
-            return GLT::util::mix_u64(hash, mesh.submeshes.size());
-        }
-
-
-        // What the discrete levels draw at which size
-        u64 lod_signature(const GLT::asset::mesh::mesh_asset& mesh) {
-
-            u64 hash = GLT::util::mix_u64(0x6c6f64ull, mesh.lod_count());
-            hash = GLT::util::mix_u64(hash, float_bits(mesh.lod.cull_screen_size));
-            for (u32 level = 1; level < mesh.lod_count(); ++level) {
-                hash = GLT::util::mix_u64(hash, mesh.lods[level].index_count);
-                hash = GLT::util::mix_u64(hash, float_bits(mesh.lod.levels[level].screen_size));
-            }
-            return hash;
-        }
-
-
-        // What the cluster selection draws at which size
-        u64 cluster_signature(const GLT::asset::mesh::mesh_asset& mesh) {
-
-            u64 hash = GLT::util::mix_u64(0x636c7573ull, mesh.clusters.size());
-            hash = GLT::util::mix_u64(hash, mesh.cluster_indices.size());
-            hash = GLT::util::mix_u64(hash, mesh.cluster_vertices.size());
-            hash = GLT::util::mix_u64(hash, float_bits(mesh.virtual_geometry.error_scale));
-            return GLT::util::mix_u64(hash, float_bits(mesh.lod.cull_screen_size));
-        }
-
-
-        // Submeshes that have triangles in [level]: the draw commands of one instance in LOD mode
-        u32 lod_draw_count(const GLT::asset::mesh::mesh_asset& mesh, const u32 level) {
-
-            u32 draws = 0;
-            for (u32 submesh = 0; submesh < mesh.submesh_count(); ++submesh)
-                if (mesh.range(level, submesh).index_count > 0)
-                    draws++;
-            return draws;
-        }
-
-
-        u64 cluster_bytes(const size_t clusters, const size_t indices, const size_t vertices, const size_t submeshes) {
-
-            return clusters * sizeof(GLT::asset::mesh::cluster) + indices * sizeof(u32) + vertices * sizeof(GLT::asset::mesh::vertex)
-                + submeshes * sizeof(GLT::asset::mesh::cluster_submesh);
-        }
-
-
-        void dim_text(const char* text) {
-
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            ImGui::TextWrapped("%s", text);
-            ImGui::PopStyleColor();
-        }
-
-
-        // Bullet + wrapped text, the bullet in [color]
-        void bullet_text(const ImVec4& color, const std::string& text) {
-
-            ImGui::PushStyleColor(ImGuiCol_Text, color);
-            ImGui::Bullet();
-            ImGui::PopStyleColor();
-            ImGui::TextWrapped("%s", text.c_str());
-        }
-
-
-        // Coloured dot + label: legend entry of a detail system
-        void series_label(const ImVec4& color, const char* label) {
-
-            const f32 height = ImGui::GetTextLineHeight();
-            const ImVec2 position = ImGui::GetCursorScreenPos();
-            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(position.x + 5.f, position.y + height * 0.5f), 4.f, ImGui::GetColorU32(color));
-            ImGui::Dummy(ImVec2(12.f, height));
-            ImGui::SameLine(0.f, 4.f);
-            ImGui::TextDisabled("%s", label);
-        }
-
+        const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, 16);
+        return error == std::errc{} && end == text.data() + text.size();
     }
+
+
+    void serialize_analysis(GLT::serializer::yaml& yaml, u32& version, std::string& asset, std::string& path, std::string& geometry,
+        glm::uvec2& extent, std::vector<u32>& directions, std::vector<analysis_series_row>& series, std::vector<analysis_range_row>& ranges) {
+
+        yaml.entry("version", version)
+            .entry("asset", asset)
+            .entry("path", path)
+            .entry("geometry", geometry)
+            .entry("extent_width", extent.x)
+            .entry("extent_height", extent.y)
+            .entry("directions", directions)
+            .vector("series", series, [&](GLT::serializer::yaml& row, const u64 index) {
+                row.entry("id", series[index].id)
+                    .entry("signature", series[index].signature)
+                    .entry("samples", series[index].samples);
+            })
+            .vector("ranges", ranges, [&](GLT::serializer::yaml& row, const u64 index) {
+                analysis_range_row& r = ranges[index];
+                row.entry("series", r.series)
+                    .entry("range", r.range)
+                    .entry("samples", r.samples)
+                    .entry("timed_samples", r.timed_samples)
+                    .entry("geometry_ms", r.geometry_ms)
+                    .entry("gpu_ms", r.gpu_ms)
+                    .entry("triangles", r.triangles)
+                    .entry("draws", r.draws);
+            });
+    }
+
+    std::string count_text(const u64 value) {
+
+        char buffer[32];
+        if (value >= 10'000'000ull)
+            std::snprintf(buffer, sizeof(buffer), "%.1fM", static_cast<f64>(value) / 1e6);
+        else if (value >= 1'000'000ull)
+            std::snprintf(buffer, sizeof(buffer), "%.2fM", static_cast<f64>(value) / 1e6);
+        else if (value >= 100'000ull)
+            std::snprintf(buffer, sizeof(buffer), "%.0fk", static_cast<f64>(value) / 1e3);
+        else if (value >= 1'000ull)
+            std::snprintf(buffer, sizeof(buffer), "%llu,%03llu", static_cast<unsigned long long>(value / 1000), static_cast<unsigned long long>(value % 1000));
+        else
+            std::snprintf(buffer, sizeof(buffer), "%llu", static_cast<unsigned long long>(value));
+        return buffer;
+    }
+
+
+    std::string ms_text(const f64 milliseconds) { return milliseconds < 0.1 ? std::format("{:.3f}", milliseconds) : std::format("{:.2f}", milliseconds); }
+
+
+    int count_axis_format(const double value, char* buffer, const int size, void* /*user_data*/) {
+
+        if (value >= 999'999.5)
+            return std::snprintf(buffer, static_cast<size_t>(size), "%gM", value / 1e6);
+        if (value >= 999.5)
+            return std::snprintf(buffer, static_cast<size_t>(size), "%gk", value / 1e3);
+        return std::snprintf(buffer, static_cast<size_t>(size), "%g", value);
+    }
+
+
+    mesh_sphere sphere_of(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        return { 0.5f * (mesh.bounds.min + mesh.bounds.max), std::max(GLT::asset::mesh::lod_sphere_radius(mesh.bounds), 1e-4f) };
+    }
+
+
+    f32 projection_scale(const f32 fov_deg) { return 1.0f / std::tan(glm::radians(fov_deg) * 0.5f); }
+
+
+    u64 float_bits(const f32 value) { return std::bit_cast<u32>(value); }
+
+
+    u64 geometry_signature(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        u64 hash = GLT::util::mix_u64(0x6d657368ull, mesh.vertices.size());
+        hash = GLT::util::mix_u64(hash, mesh.indices.size());
+        return GLT::util::mix_u64(hash, mesh.submeshes.size());
+    }
+
+
+    u64 lod_signature(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        u64 hash = GLT::util::mix_u64(0x6c6f64ull, mesh.lod_count());
+        hash = GLT::util::mix_u64(hash, float_bits(mesh.lod.cull_screen_size));
+        for (u32 level = 1; level < mesh.lod_count(); ++level) {
+            hash = GLT::util::mix_u64(hash, mesh.lods[level].index_count);
+            hash = GLT::util::mix_u64(hash, float_bits(mesh.lod.levels[level].screen_size));
+        }
+        return hash;
+    }
+
+
+    u64 cluster_signature(const GLT::asset::mesh::mesh_asset& mesh) {
+
+        u64 hash = GLT::util::mix_u64(0x636c7573ull, mesh.clusters.size());
+        hash = GLT::util::mix_u64(hash, mesh.cluster_indices.size());
+        hash = GLT::util::mix_u64(hash, mesh.cluster_vertices.size());
+        hash = GLT::util::mix_u64(hash, float_bits(mesh.virtual_geometry.error_scale));
+        return GLT::util::mix_u64(hash, float_bits(mesh.lod.cull_screen_size));
+    }
+
+
+    u32 lod_draw_count(const GLT::asset::mesh::mesh_asset& mesh, const u32 level) {
+
+        u32 draws = 0;
+        for (u32 submesh = 0; submesh < mesh.submesh_count(); ++submesh)
+            if (mesh.range(level, submesh).index_count > 0)
+                draws++;
+        return draws;
+    }
+
+
+    u64 cluster_bytes(const size_t clusters, const size_t indices, const size_t vertices, const size_t submeshes) {
+
+        return clusters * sizeof(GLT::asset::mesh::cluster) + indices * sizeof(u32) + vertices * sizeof(GLT::asset::mesh::vertex)
+            + submeshes * sizeof(GLT::asset::mesh::cluster_submesh);
+    }
+
+
+    void dim_text(const char* text) {
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", text);
+        ImGui::PopStyleColor();
+    }
+
+
+    void bullet_text(const ImVec4& color, const std::string& text) {
+
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::Bullet();
+        ImGui::PopStyleColor();
+        ImGui::TextWrapped("%s", text.c_str());
+    }
+
+
+    void series_label(const ImVec4& color, const char* label) {
+
+        const f32 height = ImGui::GetTextLineHeight();
+        const ImVec2 position = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(position.x + 5.f, position.y + height * 0.5f), 4.f, ImGui::GetColorU32(color));
+        ImGui::Dummy(ImVec2(12.f, height));
+        ImGui::SameLine(0.f, 4.f);
+        ImGui::TextDisabled("%s", label);
+    }
+
+    // TEMPLATE IMPLEMENTATION =========================================================================================
+
+    // FUNCTION IMPLEMENTATION =========================================================================================
 
     // CLASS IMPLEMENTATION ============================================================================================
 
@@ -252,7 +346,6 @@ namespace GLT::editor {
 
     // distance ranges --------------------------------------------------------------------------------------------------
 
-    // Screen size at [position] on the range axis: 0 = start of range 0, n + 0.5 = centre of range n
     f32 mesh_editor_window::analysis_range_screen(const f32 position) noexcept {
 
         return ANALYSIS_SCREEN_MAX * std::exp2(-0.5f * position);
@@ -268,15 +361,12 @@ namespace GLT::editor {
     }
 
 
-    // Camera distance (to the mesh centre, with the preview's field of view) at [position] on the range axis
     f32 mesh_editor_window::analysis_range_distance(const GLT::asset::mesh::mesh_asset& mesh, const f32 position) const {
 
         return sphere_of(mesh).radius * projection_scale(m_preview_camera.fov_deg) / analysis_range_screen(position);
     }
 
 
-    // Ranges worth looking at: the camera is outside the mesh's bounding sphere and within the preview's zoom limits.
-    // The reminders ask for these and "Measure distances" visits them
     bool mesh_editor_window::analysis_range_reachable(const GLT::asset::mesh::mesh_asset& mesh, const u32 range) const {
 
         const f32 distance = analysis_range_distance(mesh, static_cast<f32>(range) + 0.5f);
@@ -284,7 +374,6 @@ namespace GLT::editor {
     }
 
 
-    // The clusters the panel computes with: the mesh's own, or the estimate built for a mesh in LOD mode
     std::span<const GLT::asset::mesh::cluster> mesh_editor_window::analysis_clusters(const GLT::asset::mesh::mesh_asset& mesh) const {
 
         if (mesh.has_clusters())
@@ -333,9 +422,6 @@ namespace GLT::editor {
 
     // sampling ---------------------------------------------------------------------------------------------------------
 
-    // Every update: takes the preview's newest GPU statistics and files them under the system that drew the frame and
-    // the size the mesh had in it. Runs whether the Rendering view is open or not: the data is there when it is opened
-    // [seconds]: time since the last update
     void mesh_editor_window::update_analysis(const f32 seconds) {
         GLT_PROFILE_SCOPE("mesh_editor: analysis update");
 
@@ -465,7 +551,6 @@ namespace GLT::editor {
     }
 
 
-    // Forgets what was collected. [keep_estimate] = false also drops the virtual geometry estimate (new mesh)
     void mesh_editor_window::reset_analysis(const bool keep_estimate) {
 
         analysis_state& analysis = m_analysis;
@@ -525,71 +610,6 @@ namespace GLT::editor {
     // The signatures are the ones update_analysis() compares every frame, so data that no longer fits the mesh is
     // dropped on the first update after loading, exactly as in-session. GPU timings are only meaningful on the machine
     // that measured them: the folder belongs out of version control
-
-    namespace {
-
-        constexpr const char*                       ANALYSIS_SECTION = "render_samples";
-
-        // Rows of the file: flat records, which is what serializer::yaml::vector() handles
-        struct analysis_series_row {
-
-            u32                                     id = 0;
-            std::string                             signature{};            // hex
-            u32                                     samples = 0;
-        };
-
-        struct analysis_range_row {
-
-            u32                                     series = 0;
-            u32                                     range = 0;
-            u32                                     samples = 0;
-            u32                                     timed_samples = 0;
-            f64                                     geometry_ms = 0.0;
-            f64                                     gpu_ms = 0.0;
-            f64                                     triangles = 0.0;
-            f64                                     draws = 0.0;
-        };
-
-        std::string hex_text(const u64 value) { return std::format("{:016x}", value); }
-
-        bool parse_hex(const std::string& text, u64& value) {
-
-            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, 16);
-            return error == std::errc{} && end == text.data() + text.size();
-        }
-
-
-        // Both directions through one function: the serializer reads into or writes from the same variables
-        void serialize_analysis(GLT::serializer::yaml& yaml, u32& version, std::string& asset, std::string& path, std::string& geometry,
-            glm::uvec2& extent, std::vector<u32>& directions, std::vector<analysis_series_row>& series, std::vector<analysis_range_row>& ranges) {
-
-            yaml.entry("version", version)
-                .entry("asset", asset)
-                .entry("path", path)
-                .entry("geometry", geometry)
-                .entry("extent_width", extent.x)
-                .entry("extent_height", extent.y)
-                .entry("directions", directions)
-                .vector("series", series, [&](GLT::serializer::yaml& row, const u64 index) {
-                    row.entry("id", series[index].id)
-                        .entry("signature", series[index].signature)
-                        .entry("samples", series[index].samples);
-                })
-                .vector("ranges", ranges, [&](GLT::serializer::yaml& row, const u64 index) {
-                    analysis_range_row& r = ranges[index];
-                    row.entry("series", r.series)
-                        .entry("range", r.range)
-                        .entry("samples", r.samples)
-                        .entry("timed_samples", r.timed_samples)
-                        .entry("geometry_ms", r.geometry_ms)
-                        .entry("gpu_ms", r.gpu_ms)
-                        .entry("triangles", r.triangles)
-                        .entry("draws", r.draws);
-                });
-        }
-
-    }
-
 
     void mesh_editor_window::load_analysis_data(const GLT::UUID asset_id) {
         GLT_PROFILE_SCOPE("mesh_editor: load collected data");
@@ -710,10 +730,6 @@ namespace GLT::editor {
 
     // computed curves --------------------------------------------------------------------------------------------------
 
-    // What each system selects at every distance: LOD level and cluster cut, the rules the renderer applies, without
-    // frustum and backface culling. Computed when the data changes, along the view direction of that moment (the cut
-    // depends on it only slightly); the LOD points at once, the cluster points CURVE_POINTS_PER_FRAME per frame.
-    // Only called while the Rendering view is open
     void mesh_editor_window::update_analysis_curves(const GLT::asset::mesh::mesh_asset& mesh) {
 
         using namespace GLT::asset::mesh;
@@ -776,8 +792,6 @@ namespace GLT::editor {
 
     // virtual geometry estimate ----------------------------------------------------------------------------------------
 
-    // A mesh in LOD mode carries no clusters. This builds them for the panel alone (nothing is saved, nothing is drawn),
-    // so it can say what virtual geometry would select and what it would cost in memory
     void mesh_editor_window::start_analysis_estimate() {
 
         if (m_analysis.estimate_job.valid())
@@ -825,9 +839,8 @@ namespace GLT::editor {
         analysis.estimate_serial++;
     }
 
-    // measure distances ------------------------------------------------------------------------------------------------
+    // Collect Data ----------------------------------------------------------------------------------------------------
 
-    // Starts the camera flight (analysis_sweep). The user's camera and level lock come back when it ends
     void mesh_editor_window::start_analysis_sweep() {
 
         auto registry = GLT::asset::registry::get_ref();
@@ -865,7 +878,6 @@ namespace GLT::editor {
     }
 
 
-    // Ends the flight and gives the camera back
     void mesh_editor_window::stop_analysis_sweep() {
 
         analysis_sweep& sweep = m_analysis.sweep;
@@ -880,7 +892,6 @@ namespace GLT::editor {
     }
 
 
-    // 0..1 over all passes
     f32 mesh_editor_window::analysis_sweep_progress() const noexcept {
 
         const analysis_sweep& sweep = m_analysis.sweep;
@@ -959,8 +970,6 @@ namespace GLT::editor {
     }
 
 
-    // Which detail system suits the mesh, why, and what else stands out. Measured GPU time decides if both systems
-    // were measured at the same distances, computed triangle counts otherwise, rules of thumb as the last resort
     void mesh_editor_window::draw_analysis_recommendation(GLT::asset::mesh::mesh_asset& mesh) {
 
         using namespace GLT::asset::mesh;
@@ -1173,7 +1182,7 @@ namespace GLT::editor {
             if (few_distances) {
                 ImGui::Dummy(ImVec2(0.f, 2.f));
                 bullet_text(COLOR_WARNING, std::format("Seen at few distances so far ({} of {} ranges{}). A mesh that is cheap from here can "
-                    "be expensive close up, or the other way round: zoom in and out{}, or press 'Measure distances' below.",
+                    "be expensive close up, or the other way round: zoom in and out{}, or press 'Collect Data' below.",
                     coverage.ranges_seen, coverage.ranges_expected,
                     few_directions ? std::format(", {} of {} directions", coverage.directions_seen, ANALYSIS_YAW_BINS * ANALYSIS_PITCH_BINS) : std::string(),
                     few_directions ? " and orbit it" : ""));
@@ -1182,7 +1191,7 @@ namespace GLT::editor {
                 bullet_text(COLOR_WARNING, std::format("Seen from few sides so far ({} of {} directions). Orbit the mesh: back sides and "
                     "undersides can be denser.", coverage.directions_seen, ANALYSIS_YAW_BINS * ANALYSIS_PITCH_BINS));
             } else if (!measured && virtual_mode && mesh.lod_count() > 1)
-                bullet_text(COLOR_WARNING, "GPU time is only measured for virtual geometry so far. 'Measure distances' below also "
+                bullet_text(COLOR_WARNING, "GPU time is only measured for virtual geometry so far. 'Collect Data' below also "
                     "draws the fallback levels and compares the two.");
 
             if (!keep) {
@@ -1228,7 +1237,6 @@ namespace GLT::editor {
     }
 
 
-    // The numbers of the view the preview shows right now
     void mesh_editor_window::draw_analysis_view_section(const GLT::asset::mesh::mesh_asset& mesh) {
 
         using namespace GLT::asset::mesh;
@@ -1310,7 +1318,6 @@ namespace GLT::editor {
     }
 
 
-    // What has been looked at so far, and the reminder to look at the rest: near and far, all sides
     void mesh_editor_window::draw_analysis_coverage_section(const GLT::asset::mesh::mesh_asset& mesh) {
 
         const analysis_state& analysis = m_analysis;
@@ -1323,7 +1330,7 @@ namespace GLT::editor {
 
         const std::string summary = std::format("{} of {} distances", coverage.ranges_seen, coverage.ranges_expected);
 
-        // While "Measure distances" flies the camera the content of the card is inactive and a Stop button floats over
+        // While "Collect Data" flies the camera the content of the card is inactive and a Stop button floats over
         // it. Cards are child windows: the overlay is drawn inside the card, over its content, so nothing covers it
         const bool measuring = analysis.sweep.active;
         if (UI::begin_card("Collected Data", UI::card_options{ .description = "Sampled while you look at the mesh in the preview",
@@ -1473,7 +1480,7 @@ namespace GLT::editor {
             // ---- actions ----
             ImGui::Dummy(ImVec2(0.f, 4.f));
             const f32 half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-            if (UI::accent_button("Measure distances", ImVec2(half, 0.f)))
+            if (UI::accent_button("Collect Data", ImVec2(half, 0.f)))
                 start_analysis_sweep();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
                 ImGui::SetTooltip("Zooms the preview camera smoothly from close up to far away with auto rotate on, collecting samples\n"
@@ -1494,7 +1501,6 @@ namespace GLT::editor {
     }
 
 
-    // Over the inactive "Collected Data" card while the camera flies: veil, what is happening, progress, Stop
     void mesh_editor_window::draw_analysis_sweep_overlay(const ImVec2& card_min, const ImVec2& card_max) {
 
         const analysis_sweep& sweep = m_analysis.sweep;
@@ -1546,7 +1552,6 @@ namespace GLT::editor {
     }
 
 
-    // Graphs over distance: triangles and draw commands (computed lines, measured dots) and measured GPU time
     void mesh_editor_window::draw_analysis_charts_section(const GLT::asset::mesh::mesh_asset& mesh) {
 
         const analysis_state& analysis = m_analysis;
@@ -1731,7 +1736,7 @@ namespace GLT::editor {
             if (measured[series_lods].timed_count + measured[series_virtual_geometry].timed_count == 0)
                 dim_text(analysis.live.serial != 0 && analysis.live.gpu_time_ms <= 0.0f
                     ? "This device reports no GPU timings. Triangles and draw commands are still measured."
-                    : "No timings yet. Look at the mesh from different distances, or press 'Measure distances' above.");
+                    : "No timings yet. Look at the mesh from different distances, or press 'Collect Data' above.");
             else if (ImPlot::BeginPlot("##analysis_time", ImVec2(-1.0f, CHART_HEIGHT), plot_flags | ImPlotFlags_NoLegend)) {
 
                 ImPlot::SetupAxes(nullptr, nullptr, axis_flags, axis_flags);
@@ -1760,7 +1765,6 @@ namespace GLT::editor {
     }
 
 
-    // What the mesh occupies with each detail system (CPU side; the renderer uploads the same data)
     void mesh_editor_window::draw_analysis_memory_section(const GLT::asset::mesh::mesh_asset& mesh) {
 
         using namespace GLT::asset::mesh;

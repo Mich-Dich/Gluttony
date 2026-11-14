@@ -245,7 +245,14 @@ namespace GLT::renderer::vk_rasterizer {
 
         void pack_material(u32 slot_index);
         void destroy_material_shaders(material_slot& slot);
-        bool load_material_shaders(material_slot& slot, const GLT::asset::material::material_asset& asset);
+        // Shaders of a material whose stored bytecode is out of date, built again from its source (see rebuild_stale_material())
+        struct stale_material_build {
+            std::vector<std::byte>                                          bytecode{};             // empty: compile failed
+            u32                                                             packed_param_size = 0;
+            bool                                                            alpha_test = false;
+        };
+        [[nodiscard]] const stale_material_build* rebuild_stale_material(const GLT::asset::material::material_asset& asset);
+        bool load_material_shaders(material_slot& slot, std::span<const std::byte> bytecode, bool alpha_test);
         vk::Pipeline create_material_pipeline(const material_slot& slot, material_pipeline_kind kind);
         void rebuild_material_pipelines(material_slot& slot);
 
@@ -327,6 +334,7 @@ namespace GLT::renderer::vk_rasterizer {
 
         util::slang_compiler                                                m_slang{};
         u64                                                                 m_shader_compiler_hash = 0;
+        std::unordered_map<u64, stale_material_build>                       m_stale_material_builds{};     // by hash of (source, blend)
         bool                                                                m_local_shadow_atlas = false;   // see local_shadow_atlas_supported()
 
         // stats -------------------------------------------------------------------------------------------------------

@@ -205,6 +205,7 @@ namespace GLT::renderer::vk_rasterizer {
         if (!m_active)                      // Surface target, inactive: keep ImGui, skip 3D CPU work
             return;
 
+        apply_visual_settings();
         ensure_scene_meshes();
         build_instance_buffer();
         update_shadow_casters();

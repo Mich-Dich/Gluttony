@@ -60,6 +60,7 @@ namespace GLT::editor {
     // Cluster bounds overlay: one wire sphere (3 circles of CLUSTER_BOUNDS_SEGMENTS lines) per selected cluster, the
     // nearest ones first
     constexpr u32                                   MAX_CLUSTER_BOUNDS = 1000;
+
     constexpr u32                                   CLUSTER_BOUNDS_SEGMENTS = 16;
 
     // Render modes of this category are the renderer's virtual geometry debug views (the editor only knows the name)

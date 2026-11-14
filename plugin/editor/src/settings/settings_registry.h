@@ -34,6 +34,13 @@ namespace GLT::editor {
 
         void add(settings_page page)                                    { m_pages.push_back(std::move(page)); }
 
+        void clear()                                                    { m_pages.clear(); }
+
+        // Optional: drawn in the sidebar between the search field and the page list (e.g. a switch that changes what
+        // all pages edit)
+        void set_sidebar_header(std::function<void()> draw)             { m_sidebar_header = std::move(draw); }
+        [[nodiscard]] const std::function<void()>& sidebar_header() const { return m_sidebar_header; }
+
         [[nodiscard]] std::span<const settings_page> pages() const      { return m_pages; }
 
         // Calls every save callback (they write small files, a few per change is fine)
@@ -47,6 +54,7 @@ namespace GLT::editor {
     private:
 
         std::vector<settings_page>              m_pages{};
+        std::function<void()>                   m_sidebar_header{};
     };
 
     // STATIC VARIABLES ================================================================================================

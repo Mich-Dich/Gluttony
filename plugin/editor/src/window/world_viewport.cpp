@@ -24,6 +24,7 @@
 #include <render/i_scene_renderer.h>
 #include <application.h>
 #include <config/project.h>
+#include <settings/engine_settings.h>
 
 #include "util/ui/panel_collection.h"
 #include "resource_manager/icon_manager.h"
@@ -1974,8 +1975,10 @@ namespace GLT::editor {
                     if (member_descriptor.flags & (u32)GLT::reflect::member_flags::skip)
                         return true;
 
-                    const std::string_view cat = (member_descriptor.category && member_descriptor.category[0])
+                    // "Page|Section" (sections of the Engine Settings window): one card per page here
+                    std::string_view cat = (member_descriptor.category && member_descriptor.category[0])
                         ? std::string_view(member_descriptor.category) : std::string_view("General");
+                    cat = cat.substr(0, cat.find('|'));
 
                     if (!card_open || cat != current_cat) {
                         if (card_open)
@@ -1999,7 +2002,17 @@ namespace GLT::editor {
             if (changed)
                 m_renderer->on_settings_changed();
 
+            m_render_settings_edited |= changed;
+
             ImGui::EndPopup();
+        }
+
+        // These are engine settings: keep what was changed here as a change on this computer (Edit > Engine Settings
+        // shows it and can put it back). Once the user lets go, not on every frame of a drag
+        if (m_render_settings_edited && !ImGui::IsAnyItemActive()) {
+            m_render_settings_edited = false;
+            if (type_data->name)
+                GLT::engine_settings::adopt_live(type_data->name);
         }
 
         ImGui::PopStyleColor();

@@ -85,8 +85,10 @@ namespace GLT::renderer::vk_rasterizer {
 
     // Local (point / spot) lights with shadow maps at once, and their views (a point light has six). All of them are
     // sampled; how many are DRAWN per frame is limited separately below
-    constexpr u32                                       MAX_SHADOW_LIGHTS = 256;
-    constexpr u32                                       MAX_SHADOW_VIEWS = MAX_SHADOW_LIGHTS * 6;
+    // The views are what is limited: a view index travels in firstInstance (11 bits, see SHADOW_VIEW_CAPACITY below),
+    // which leaves room for 340 point lights, or 1024 spot lights, or a mix
+    constexpr u32                                       MAX_SHADOW_LIGHTS = 1024;
+    constexpr u32                                       MAX_SHADOW_VIEWS = 2040;
 
     // Sun shadows: nested maps around the camera (scene/sun_shadow_cascades.h). Their views sit behind the local lights'
     // views in the shadow view buffer, so the cull shader, the atlas vertex shader and the sampling code treat both alike
@@ -307,7 +309,8 @@ namespace GLT::renderer::vk_rasterizer {
         f32                                             normal_bias = 2.0f;         // texels, along the surface normal (the filter's radius)
         f32                                             bias = 1.0f;                // texels, towards the sun
 
-        // Local lights (scene/local_shadow_cache.h). How many of them: settings::visual
+        // Local lights (scene/local_shadow_cache.h). How many of them: settings::visual. The three below and
+        // [resolution] follow settings::visual every frame (scene_renderer::apply_visual_settings)
         u32                                             atlas_size = 4096;
         f32                                             local_distance = 80.0f;     // camera to a light's sphere: these lights share the atlas first
         f32                                             local_far_distance = 320.0f;    // ... and up to here, lights use what the near ones leave free

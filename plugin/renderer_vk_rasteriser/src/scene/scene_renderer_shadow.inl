@@ -90,6 +90,19 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    // The shadow values a user can change (settings::visual, engine settings) into m_shadow_settings. Sizes are brought
+    // to what the textures can be; a changed size replaces the texture (import_frame_textures), which the shadow caches
+    // notice by the new image and draw their maps again
+    void scene_renderer::apply_visual_settings() {
+
+        const settings::visual& visual = m_plugin.visual_settings();
+        m_shadow_settings.resolution = std::clamp(std::bit_floor(std::max(visual.sun_shadow_resolution, 1u)), 1024u, 4096u);
+        m_shadow_settings.atlas_size = std::clamp(std::bit_floor(std::max(visual.local_shadow_atlas, 1u)), 2048u, 8192u);
+        m_shadow_settings.local_distance = std::clamp(visual.local_shadow_distance, 1.f, 1000.f);
+        m_shadow_settings.local_far_distance = std::clamp(visual.local_shadow_far_distance, 0.f, 4000.f);
+    }
+
+
     // Sun shadows of this frame: the cascades decide which of their maps are out of date and where they sit now
     // (scene/sun_shadow_cascades.h). Uploads one view per cascade behind the local lights' views; the material shaders
     // find them through camera_ubo_data::shadow_params

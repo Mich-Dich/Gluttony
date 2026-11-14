@@ -56,6 +56,11 @@ namespace GLT::reflect::annotations {
     };
 
 
+    // An integer member that is a choice: one entry per value, '|' separated, optionally "value=label" for values that
+    // are not 0, 1, 2, ... in order. Examples: options{"ACES|AgX|Reinhard|None"}, options{"1024=Low|2048=Medium|4096=High"}
+    struct options {
+        const char*             value;
+    };
     struct color {};
 
 

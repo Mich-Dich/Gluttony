@@ -171,6 +171,7 @@ namespace GLT::editor {
         std::vector<GLT::save_as_request_event>         m_save_as_event_buffer{};
         std::deque<pending_save_request>                m_save_as_queue{};
         bool                                            m_save_as_open{ false };
+        bool                                            m_render_settings_edited{ false };      // quick settings changed, not yet stored
 
         ImGuizmo::OPERATION                             m_gizmo_operation = ImGuizmo::TRANSLATE;
         // gizmo space + snapping live in editor_settings (persisted, also editable in the settings window)

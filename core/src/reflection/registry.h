@@ -78,6 +78,7 @@ namespace GLT::reflect {
         const char*                                     display_name{};
         const char*                                     tooltip{};
         const char*                                     category{};
+        const char*                                     options{};          // annotations::options: choices of an integer member
         f64                                             range_min{};
         f64                                             range_max{};
         type_kind                                       kind{ type_kind::unknown };

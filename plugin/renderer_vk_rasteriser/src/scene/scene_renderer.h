@@ -156,6 +156,7 @@ namespace GLT::renderer::vk_rasterizer {
         void ensure_scene_meshes();
         void build_instance_buffer();
         void upload_instance_data();
+        void apply_visual_settings();               // user-adjustable shadow values -> m_shadow_settings
         void update_lights();
         void update_shadow();
         void update_shadow_casters();               // which casters moved since the last frame (drives every shadow cache)

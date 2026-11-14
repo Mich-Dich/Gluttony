@@ -137,6 +137,7 @@ namespace GLT::editor {
 
         // Opens (or focuses) the editor settings window, optionally on a specific page ("Appearance", ...)
         void open_settings_window(std::string_view page = {});
+        void open_engine_settings_window(std::string_view page = {});
 
 
         // Rows of the "Play in Editor" settings page, also used by the simulation settings popup in the toolbar.
@@ -235,6 +236,8 @@ namespace GLT::editor {
 
         GLT::unique_ref<GLT::render::image>             m_logo{};
         settings_registry                               m_editor_settings_pages{};      // declared before m_windows: the settings window references it
+        settings_registry                               m_engine_settings_pages{};      // same; rebuilt when plugins register / remove settings
+        u64                                             m_engine_settings_signature = 0;
         std::vector<GLT::unique_ref<base_window>>       m_windows{};
 
         bool                                            m_show_stats_window = false;
