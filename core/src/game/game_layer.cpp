@@ -1,6 +1,7 @@
 
 #include "util/pch.h"
 #include "game_layer.h"
+#include "render/procedural_mesh.h"
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -109,6 +110,9 @@ namespace GLT::game {
 
 
     void game_layer::update(f32 dt) {
+
+        // Background LOD / cluster builds of procedural meshes that stopped changing (cheap when nothing is waiting)
+        GLT::render::procedural_meshes().tick();
 
         // Primary first, then sim sessions in slot order. Deterministic and cheap — the slot table usually has 1..4 live entries
         for (auto& slot : m_slots)

@@ -15,6 +15,7 @@
 #include <world/component_registry.h>
 #include <game/game_layer.h>
 #include <game/game_session.h>
+#include <render/procedural_mesh.h>
 
 #include "ecs_world_plugin.h"
 #include "ecs_world.h"
@@ -161,6 +162,61 @@ namespace GLT::world::world_ecs_entt::component {
     }
 
 
+    // Inspector section of a mesh component that draws a procedural mesh: what the store knows about it, and "Bake to
+    // static mesh" (copies the current version, incl. its LODs / clusters, into a new asset and points the component
+    // at it). Returns the submesh count for the material override rows (0 = unknown)
+    static u32 draw_procedural_mesh_section(i_world& world, entity_id id, component::mesh& mr) {
+
+        auto& store = GLT::render::procedural_meshes();
+        const auto info = store.info(mr.procedural_mesh);
+        if (!info) {
+            GLT::UI::property_value("Procedural mesh", "gone (destroyed by its generator)");
+            if (GLT::UI::subtle_button("Remove the reference", ImVec2(-FLT_MIN, 0.f))) {
+                mr.procedural_mesh = 0;
+                world.mark_changed(id);
+            }
+            return 0;
+        }
+
+        static constexpr const char* update_names[] = { "immutable", "occasional", "streaming" };
+        static constexpr const char* detail_names[] = { "nothing to build", "waiting to settle", "building", "built", "build failed" };
+        const u32 update_index = std::min<u32>(static_cast<u32>(info->desc.update_class), 2u);
+        const u32 detail_index = std::min<u32>(static_cast<u32>(info->detail), 4u);
+
+        const std::string label = info->desc.debug_name.empty() ? std::format("{:#x}", mr.procedural_mesh) : info->desc.debug_name;
+        GLT::UI::property_value("Procedural mesh", label, "Generated at runtime and owned by its generator. Not saved with the world");
+        GLT::UI::property_value("Updates", std::format("{}, version {}", update_names[update_index], info->version));
+        GLT::UI::property_value("Geometry", std::format("{} vertices, {} triangles, {} submesh(es)", info->vertices, info->triangles, info->submeshes));
+        GLT::UI::property_value("Detail", std::format("{} LOD level(s){}{}, {}", info->lod_count, info->provided_lods ? " from the generator" : "",
+            info->clusters > 0 ? std::format(", {} clusters", info->clusters) : std::string{}, detail_names[detail_index]));
+
+        // Bake path: per inspected entity, reset when another entity is shown
+        static entity_id path_owner = INVALID_ENTITY;
+        static std::string path;
+        static std::string status;
+        if (path_owner != id) {
+            path_owner = id;
+            path = std::format("mesh/{}", info->desc.debug_name.empty() ? std::format("baked_{:x}", mr.procedural_mesh) : info->desc.debug_name);
+            status.clear();
+        }
+
+        GLT::UI::property_text("Bake path", path, "Content-dir relative path of the new static mesh asset (extension added)");
+        if (GLT::UI::subtle_button("Bake to static mesh", ImVec2(-FLT_MIN, 0.f))) {
+            if (auto baked = store.bake(mr.procedural_mesh, path)) {
+                mr.mesh = std::move(*baked);
+                mr.procedural_mesh = 0;                     // from now on an ordinary static mesh: saved with the world
+                world.mark_changed(id);
+                status = "Baked: the entity now uses the new asset";
+            } else
+                status = "Bake failed (path already taken or not writable?)";
+        }
+        if (!status.empty())
+            ImGui::TextDisabled("%s", status.c_str());
+
+        return info->submeshes;
+    }
+
+
     void register_mesh_renderer_descriptor(GLT::world::world_ecs_entt::ecs_world_plugin& plugin) {
 
         plugin.register_component_type(
@@ -180,13 +236,20 @@ namespace GLT::world::world_ecs_entt::component {
 
                     ImGui::PushID("mesh_component");
 
+                    // A procedural mesh replaces the asset picker (it wins over [mesh] when both are set)
+                    const bool procedural = mr->procedural_mesh != 0;
+                    u32 procedural_submeshes = 0;
+                    if (procedural)
+                        procedural_submeshes = draw_procedural_mesh_section(world, id, *mr);
+
                     const GLT::asset::handle old_mesh_handle = mr->mesh.get();
-                    GLT::UI::property_asset("Mesh", mr->mesh, GLT::asset::core_types::static_mesh);
+                    if (!procedural)
+                        GLT::UI::property_asset("Mesh", mr->mesh, GLT::asset::core_types::static_mesh);
                     const bool mesh_changed = mr->mesh.get() != old_mesh_handle;
 
-                    u32  submesh_count = 0;
+                    u32  submesh_count = procedural ? procedural_submeshes : 0u;
                     bool has_colliders = false;
-                    if (auto registry = GLT::asset::registry::get_ref(); registry && mr->mesh != INVALID_HANDLE) {
+                    if (auto registry = GLT::asset::registry::get_ref(); registry && !procedural && mr->mesh != INVALID_HANDLE) {
                         if (const auto* asset = registry->data_as<GLT::asset::mesh::mesh_asset>(mr->mesh)) {
                             submesh_count = asset->submesh_count();
                             has_colliders = !asset->colliders.empty();
@@ -256,6 +319,8 @@ namespace GLT::world::world_ecs_entt::component {
                 [](i_world& world, entity_id id) {
                     const auto* mr = fetch<component::mesh>(world, id);
                     if (!mr) return std::string{};
+                    if (mr->procedural_mesh != 0)
+                        return std::string{ "(procedural)" };
 
                     const char* motion_tag = nullptr;
                     if (mr->motion == physics::motion_type::dynamic_body)   motion_tag = "dyn";

@@ -91,7 +91,6 @@ namespace GLT::renderer::vk_rasterizer::util {
 
             define_u("MAX_MATERIALS",               MAX_MATERIALS);
             define_u("MAX_SUBMESHES_PER_MESH",      MAX_SUBMESHES_PER_MESH);
-            define_u("MAX_MESHES",                  MAX_MESHES);
             define_u("MAX_INSTANCES",               MAX_INSTANCES);
             define_u("MAX_LIGHTS",                  MAX_LIGHTS);
             define_u("CLUSTER_TILE_SIZE_X",         CLUSTER_TILE_SIZE_X);

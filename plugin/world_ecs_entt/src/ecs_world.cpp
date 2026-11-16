@@ -19,6 +19,9 @@ namespace GLT::world::world_ecs_entt {
 
     // CONSTANTS =======================================================================================================
 
+    // Marks the procedural-mesh trailer that snapshot_entities appends to a codec blob ("PMSH")
+    static constexpr u32 PROCEDURAL_TRAILER_MAGIC = 0x48534D50u;
+
     // Minimum scale magnitude any shape component can reach. Chosen safely above Jolt's internal
     // IsValidScale epsilon (which is typically 1.0e-4 or 1.0e-6 depending on the build). Going below
     // this in a ScaledShape leads to asserts in SphereShape / CapsuleShape / CylinderShape
@@ -617,6 +620,38 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
+    // procedural meshes -----------------------------------------------------------------------------------------------
+
+    void ecs_world::set_procedural_mesh(entity_id id, u32 procedural_mesh_id) {
+
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null)
+            return;
+
+        // The mesh component carries it, so visibility, hiding, mobility, material overrides and the render cache work
+        // exactly as for asset meshes. patch() fires on_update: the render cache rebuilds its membership
+        if (auto* mesh_comp = m_registry.try_get<component::mesh>(entity)) {
+            if (mesh_comp->procedural_mesh == procedural_mesh_id)
+                return;
+            m_registry.patch<component::mesh>(entity, [procedural_mesh_id](component::mesh& m) { m.procedural_mesh = procedural_mesh_id; });
+        } else if (procedural_mesh_id != 0) {
+            component::mesh mesh_comp{};
+            mesh_comp.procedural_mesh = procedural_mesh_id;
+            m_registry.emplace<component::mesh>(entity, std::move(mesh_comp));
+        }
+    }
+
+
+    u32 ecs_world::get_procedural_mesh(entity_id id) const {
+
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null)
+            return 0;
+        const auto* mesh_comp = m_registry.try_get<component::mesh>(entity);
+        return mesh_comp ? mesh_comp->procedural_mesh : 0u;
+    }
+
+
     bool ecs_world::is_hidden(entity_id id) const { return m_hidden.contains(id); }
 
 
@@ -1036,14 +1071,58 @@ namespace GLT::world::world_ecs_entt {
                 return INVALID_ENTITY;
             }, blob);
 
+        // Runtime-only trailer: procedural mesh references (not part of the codec payload, never saved with the world).
+        // Layout: { u32 index, u32 generation, u32 procedural_mesh } x count, u32 count, u32 PROCEDURAL_TRAILER_MAGIC.
+        // Always written, so restore_entities can tell "had none" from "old blob"
+        u32 count = 0;
+        auto put = [&blob](u32 value) {
+            const auto* bytes = reinterpret_cast<const std::byte*>(&value);
+            blob.insert(blob.end(), bytes, bytes + sizeof(value));
+        };
+        for (size_t i = 0; i < handles.size(); ++i) {
+            const auto* mesh_comp = m_registry.try_get<component::mesh>(handles[i]);
+            if (!mesh_comp || mesh_comp->procedural_mesh == 0)
+                continue;
+            put(alive_ids[i].index);
+            put(alive_ids[i].generation);
+            put(mesh_comp->procedural_mesh);
+            ++count;
+        }
+        put(count);
+        put(PROCEDURAL_TRAILER_MAGIC);
+
         return blob;
     }
 
 
-    std::vector<entity_id> ecs_world::restore_entities(std::span<const std::byte> blob) {
+    std::vector<entity_id> ecs_world::restore_entities(std::span<const std::byte> in_blob) {
 
-        if (blob.empty())
+        if (in_blob.empty())
             return {};
+
+        // Procedural mesh references stored by snapshot_entities (trailer), as they were when the snapshot was taken
+        std::unordered_map<entity_id, u32> procedural;
+        std::span<const std::byte> blob = in_blob;
+        auto get = [](std::span<const std::byte> bytes, size_t offset) {
+            u32 value = 0;
+            std::memcpy(&value, bytes.data() + offset, sizeof(value));
+            return value;
+        };
+        if (blob.size() >= 8 && get(blob, blob.size() - 4) == PROCEDURAL_TRAILER_MAGIC) {
+            const u64 count = get(blob, blob.size() - 8);
+            const u64 trailer = 8 + count * 12;
+            if (trailer <= blob.size()) {
+                const size_t start = blob.size() - static_cast<size_t>(trailer);
+                for (u64 i = 0; i < count; ++i) {
+                    const size_t at = start + static_cast<size_t>(i) * 12;
+                    entity_id id{};
+                    id.index = get(blob, at);
+                    id.generation = get(blob, at + 4);
+                    procedural[id] = get(blob, at + 8);
+                }
+                blob = blob.first(start);
+            }
+        }
 
         // Links of the entities we are about to replace. Kept so an undo doesn't reshuffle the outliner order
         struct old_links {
@@ -1126,6 +1205,9 @@ namespace GLT::world::world_ecs_entt {
                 assign_entity_to_cell(id);
 
             create_physics_body_for(id);
+
+            if (auto it = procedural.find(id); it != procedural.end() && m_registry.all_of<component::mesh>(e))
+                set_procedural_mesh(id, it->second);        // only onto a restored mesh component, never adds one
         }
 
         return restored;
@@ -1610,7 +1692,7 @@ namespace GLT::world::world_ecs_entt {
         u32 count = 0;
         for (const auto [entity, mesh, transform] : mesh_view.each()) {
 
-            if (!mesh.visible || mesh.mesh == INVALID_HANDLE)          // == emits_instance(), components already in hand
+            if (!mesh.visible || !mesh.draws_something())               // == emits_instance(), components already in hand
                 continue;
             const entity_id id = id_of(entity);
             if (!id.is_valid())
@@ -1790,7 +1872,7 @@ namespace GLT::world::world_ecs_entt {
     bool ecs_world::emits_instance(entt::entity entity) const {
 
         const auto* mesh = m_registry.try_get<component::mesh>(entity);
-        return mesh && mesh->visible && mesh->mesh != INVALID_HANDLE && m_registry.all_of<component::transform>(entity);
+        return mesh && mesh->visible && mesh->draws_something() && m_registry.all_of<component::transform>(entity);
     }
 
 
@@ -1798,7 +1880,7 @@ namespace GLT::world::world_ecs_entt {
 
         const auto& mesh = m_registry.get<component::mesh>(entity);
         out.mesh = mesh.mesh;
-        out.procedural_mesh = 0;
+        out.procedural_mesh = mesh.procedural_mesh;     // non-zero: the renderer draws this instead of [mesh]
         out.flags = is_effectively_hidden(id) ? GLT::asset::mesh::INSTANCE_FLAG_HIDDEN : 0u;
         out.transform = world_transform_memo(id, entity);
         out.entity = id;

@@ -75,7 +75,7 @@ namespace GLT::renderer::vk_rasterizer {
                 for (u32 slot : m_scene_materials) {
                     const glm::uvec2 range = m_material_ranges[slot];
                     if (range.y == 0)
-                        continue;                               // no culled draws use this material (e.g. procedural only)
+                        continue;                               // no culled draws use this material (translucent only)
 
                     const auto& entry = m_shared->get_material(slot);
                     if (!entry.alive || !entry.depth_pipeline)
@@ -93,30 +93,6 @@ namespace GLT::renderer::vk_rasterizer {
 
                 // ---- Virtual geometry (cluster draws, same buffers + materials) ---------------
                 draw_virtual_geometry(ctx, material_pipeline_kind::depth);
-
-                // ---- Procedural draws ---------------------------------------------------------
-                for (size_t i = 0; i < m_procedural_draw_slots.size(); ++i) {
-
-                    const u32 pm_slot = m_procedural_draw_slots[i];
-                    const auto& pm = m_procedural_meshes[pm_slot];
-                    if (!pm.alive || !pm.vertex_buffer.buffer || !pm.index_buffer.buffer)
-                        continue;
-
-                    const auto& entry = m_shared->get_material(pm.material_slot);
-                    if (!entry.alive || !entry.depth_pipeline || entry.is_translucent())
-                        continue;                               // translucent procedurals: translucent pass
-
-                    ctx.cmd.bindVertexBuffers(0, { pm.vertex_buffer.buffer }, { 0 });
-                    ctx.cmd.bindIndexBuffer(pm.index_buffer.buffer, 0, vk::IndexType::eUint32);
-
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.depth_pipeline);
-                    const u32 offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(pm.material_slot);
-                    m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 1, 1, offset, ctx.cmd,
-                        vk::PipelineBindPoint::eGraphics);
-
-                    const u32 base_instance = (m_asset_instance_count + static_cast<u32>(i)) | INSTANCE_PROCEDURAL;
-                    ctx.cmd.drawIndexed(pm.index_count, 1, 0, 0, base_instance);
-                }
 
                 ctx.end_rendering();
             });
@@ -170,7 +146,7 @@ namespace GLT::renderer::vk_rasterizer {
                 for (u32 slot : m_scene_materials) {
                     const glm::uvec2 range = m_material_ranges[slot];
                     if (range.y == 0)
-                        continue;                               // no culled draws use this material (e.g. procedural only)
+                        continue;                               // no culled draws use this material (translucent only)
 
                     const auto& entry = m_shared->get_material(slot);
                     if (!entry.alive || !entry.pipeline)
@@ -188,30 +164,6 @@ namespace GLT::renderer::vk_rasterizer {
 
                 // ---- Virtual geometry (cluster draws, same buffers + materials) ---------------
                 draw_virtual_geometry(ctx, material_pipeline_kind::main);
-
-                // ---- Procedural draws ---------------------------------------------------------
-                for (size_t i = 0; i < m_procedural_draw_slots.size(); ++i) {
-
-                    const u32 pm_slot = m_procedural_draw_slots[i];
-                    const auto& pm = m_procedural_meshes[pm_slot];
-                    if (!pm.alive || !pm.vertex_buffer.buffer || !pm.index_buffer.buffer)
-                        continue;
-
-                    const auto& entry = m_shared->get_material(pm.material_slot);
-                    if (!entry.alive || !entry.pipeline || entry.is_translucent())
-                        continue;                               // translucent procedurals: translucent pass
-
-                    ctx.cmd.bindVertexBuffers(0, { pm.vertex_buffer.buffer }, { 0 });
-                    ctx.cmd.bindIndexBuffer(pm.index_buffer.buffer, 0, vk::IndexType::eUint32);
-
-                    ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, entry.pipeline);
-                    const u32 offset = m_material_desc_buffers[m_current_frame].get_offset_to_set(pm.material_slot);
-                    m_plugin.get_dev()->bind_descriptor_set(m_shared->get_mesh_pipeline_layout(), 1, 1, offset, ctx.cmd,
-                        vk::PipelineBindPoint::eGraphics);
-
-                    const u32 base_instance = (m_asset_instance_count + static_cast<u32>(i)) | INSTANCE_PROCEDURAL;
-                    ctx.cmd.drawIndexed(pm.index_count, 1, 0, 0, base_instance);
-                }
 
                 ctx.end_rendering();
             });
@@ -270,34 +222,22 @@ namespace GLT::renderer::vk_rasterizer {
                         bound_material = draw.material;
                     }
 
-                    if (draw.procedural) {
+                    const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
+                    const size_t range_index = static_cast<size_t>(draw.lod) * (slot ? slot->submesh_count : 0u) + draw.submesh;
+                    if (!slot || !slot->alive || draw.submesh >= slot->submesh_count || range_index >= slot->submesh_ranges.size())
+                        continue;
+                    const glm::uvec2 range = slot->submesh_ranges[range_index];        // {first_index, index_count}
+                    if (range.y < 3)
+                        continue;
 
-                        const auto& pm = m_procedural_meshes[draw.mesh];
-                        if (!pm.alive || !pm.vertex_buffer.buffer || !pm.index_buffer.buffer)
-                            continue;
-                        ctx.cmd.bindVertexBuffers(0, { pm.vertex_buffer.buffer }, { 0 });
-                        ctx.cmd.bindIndexBuffer(pm.index_buffer.buffer, 0, vk::IndexType::eUint32);
-                        shared_geometry_bound = false;
-                        ctx.cmd.drawIndexed(pm.index_count, 1, 0, 0, draw.instance | INSTANCE_PROCEDURAL);
-
-                    } else {
-
-                        const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
-                        const size_t range_index = static_cast<size_t>(draw.lod) * (slot ? slot->submesh_count : 0u) + draw.submesh;
-                        if (!slot || !slot->alive || draw.submesh >= slot->submesh_count || range_index >= slot->submesh_ranges.size())
-                            continue;
-                        const glm::uvec2 range = slot->submesh_ranges[range_index];        // {first_index, index_count}
-                        if (range.y < 3)
-                            continue;
-
-                        if (!shared_geometry_bound) {
-                            ctx.cmd.bindVertexBuffers(0, { m_shared->get_vertex_buffer() }, { 0 });
-                            ctx.cmd.bindIndexBuffer(m_shared->get_index_buffer(), 0, vk::IndexType::eUint32);
-                            shared_geometry_bound = true;
-                        }
-                        ctx.cmd.drawIndexed(range.y, 1, slot->index_offset + range.x, static_cast<i32>(slot->vertex_offset),
-                            draw.instance | (draw.lod << INSTANCE_LOD_SHIFT) | (slot->lod_count > 1 ? INSTANCE_HAS_LODS : 0u));
+                    if (!shared_geometry_bound) {
+                        ctx.cmd.bindVertexBuffers(0, { m_shared->get_vertex_buffer() }, { 0 });
+                        ctx.cmd.bindIndexBuffer(m_shared->get_index_buffer(), 0, vk::IndexType::eUint32);
+                        shared_geometry_bound = true;
                     }
+                    ctx.cmd.drawIndexed(range.y, 1, slot->index_offset + range.x, static_cast<i32>(slot->vertex_offset),
+                        draw.instance | (draw.lod << INSTANCE_LOD_SHIFT) | (slot->lod_count > 1 ? INSTANCE_HAS_LODS : 0u)
+                        | (slot->procedural ? INSTANCE_PROCEDURAL : 0u));
                 }
 
                 ctx.end_rendering();

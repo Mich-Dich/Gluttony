@@ -125,6 +125,7 @@ namespace GLT::renderer::vk_rasterizer {
 
 
         create_immediate_submit();
+        create_upload_context();                // before create_mesh_buffers(): the mesh tables are zeroed through it
         create_samplers();
         create_shader_compiler();
         create_layouts();
@@ -159,6 +160,7 @@ namespace GLT::renderer::vk_rasterizer {
         GLT_PROFILE_SCOPE("shared_resource_manager::destroy");
 
         m_device.waitIdle();
+        destroy_upload_context();               // drops an unsubmitted recording, hands its held-back retires to the queue
         m_retire.flush();                       // device is idle: everything retired so far can go now
 
         for (auto& slot : m_material_slots) {
@@ -196,30 +198,17 @@ namespace GLT::renderer::vk_rasterizer {
         m_failed_mesh_loads.clear();
         m_mesh_id_by_asset.clear();
 
-        if (m_vertex_buffer.buffer) {
-            m_dev->destroy_buffer(m_vertex_buffer);
-            m_vertex_buffer = {}; 
-        }
-        if (m_index_buffer.buffer) {
-            m_dev->destroy_buffer(m_index_buffer);
-            m_index_buffer = {}; 
-        }
-        if (m_mesh_data_buffer.buffer) {
-            m_dev->destroy_buffer(m_mesh_data_buffer);
-            m_mesh_data_buffer = {}; 
-        }
-        if (m_submesh_data_buffer.buffer) {
-            m_dev->destroy_buffer(m_submesh_data_buffer);
-            m_submesh_data_buffer = {}; 
-        }
-        if (m_cluster_data_buffer.buffer) {                 // virtual geometry
-            m_dev->destroy_buffer(m_cluster_data_buffer);
-            m_cluster_data_buffer = {};
-        }
-        if (m_mesh_cluster_buffer.buffer) {
-            m_dev->destroy_buffer(m_mesh_cluster_buffer);
-            m_mesh_cluster_buffer = {};
-        }
+        // Procedural meshes: their slots went with m_mesh_slots; stop listening to the store (a renderer created again
+        // registers anew and gets every existing mesh as a change)
+        if (m_procedural_registered)
+            GLT::render::procedural_meshes().unregister_consumer(m_procedural_consumer);
+        m_procedural_registered = false;
+        m_procedural_entries.clear();
+        m_procedural_pending.clear();
+        m_procedural_order.clear();
+        m_procedural_attempts.clear();
+
+        destroy_mesh_buffers();                // pools + mesh tables (and their allocator state)
 
         destroy_depth_only_fragment_module();
         destroy_layouts();
@@ -227,10 +216,6 @@ namespace GLT::renderer::vk_rasterizer {
         destroy_shader_compiler();
         destroy_immediate_submit();
 
-        m_vertex_pool = {};
-        m_index_pool = {};
-        m_submesh_pool = {};
-        m_cluster_pool = {};
         m_live_buffer_count = 0;
         m_live_pipeline_count = 0;
         m_live_descriptor_set_count = 0;
@@ -244,7 +229,16 @@ namespace GLT::renderer::vk_rasterizer {
     void shared_resource_manager::begin_frame(u64 /*frame_number*/) {
         GLT_PROFILE_SCOPE("shared_resource_manager::begin_frame");
 
+        // Uploads recorded last frame that no scene renderer submitted (all minimized / inactive): submit them now, so
+        // held-back retires, staging memory and the command buffer cannot pile up. No scene has reserved a retire value
+        // yet this frame, so the timeline order stays intact
+        if (m_upload_recording)
+            (void)flush_uploads();
+
         m_retire.collect();                     // destroy everything the GPU is done with
+        trim_staging_blocks();                  // staging memory beyond the cache, once the GPU has read it
+
+        sync_procedural();                      // new / changed / destroyed procedural meshes (before any scene's update())
 
         m_last_gpu_stats = std::move(m_accum_gpu_stats);
         m_accum_gpu_stats = {};
@@ -254,12 +248,10 @@ namespace GLT::renderer::vk_rasterizer {
         if ((++m_material_poll_counter % MATERIAL_POLL_INTERVAL) == 0)
             poll_material_changes();
 
-        // Opportunistic compaction: a growable pool is >2x its live size && at least 10 frames between hiccups
-        if (should_opportunistic_compact() && can_compact()) {
-
+        // Opportunistic compaction: a pool is >2x its live size && at least 10 frames since the last one. GPU copies into
+        // right-sized buffers (no stall), submitted with the first scene renderer's frame
+        if (should_opportunistic_compact() && can_compact())
             try_compact();
-            shrink_pools();
-        }
     }
 
 
@@ -721,7 +713,7 @@ namespace GLT::renderer::vk_rasterizer {
         if (!buffer.buffer)
             return;
 
-        m_retire.retire([dev = m_dev, dead = buffer]() mutable { dev->destroy_buffer(dead); });
+        retire([dev = m_dev, dead = buffer]() mutable { dev->destroy_buffer(dead); });
         buffer = {};
     }
 

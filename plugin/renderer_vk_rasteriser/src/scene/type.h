@@ -27,7 +27,7 @@ namespace GLT::renderer::vk_rasterizer {
     constexpr u32                                       INSTANCE_INDEX_MASK = (1u << 20) - 1u;
     constexpr u32                                       INSTANCE_LOD_SHIFT = 20;            // 4 bits
     constexpr u32                                       INSTANCE_HAS_LODS = 1u << 24;       // mesh has generated levels
-    constexpr u32                                       INSTANCE_PROCEDURAL = 1u << 25;     // procedural mesh (debug colouring)
+    constexpr u32                                       INSTANCE_PROCEDURAL = 1u << 25;     // procedural mesh (debug colouring, set by cull.comp from MESH_FLAG_PROCEDURAL)
     // Local shadow atlas pass only (shadow_cull.comp.glsl): bit 31 marks the pass, bits 20..30 hold the shadow view instead
     // of the LOD info (which only colours debug views)
     constexpr u32                                       INSTANCE_SHADOW_PASS = 1u << 31;
@@ -126,10 +126,6 @@ namespace GLT::renderer::vk_rasterizer {
     constexpr u32                                       MAX_DEBUG_VERTICES = 131072;
 
     constexpr u32                                       MAX_PREVIEW_DEBUG_VERTICES = 16384;
-
-    // procedural meshes -----------------------------------------------------------------------------------------------
-
-    inline constexpr u32                                MAX_PROCEDURAL_MESHES = 64;
 
     // MACROS ==========================================================================================================
 
@@ -347,23 +343,6 @@ namespace GLT::renderer::vk_rasterizer {
         glm::vec4                                       color{1.f};
         f32                                             remaining_lifetime = 0.f;
         bool                                            depth_test = true;
-    };
-
-
-    // One resident procedural mesh. Buffers are owned by this slot; each slot has its own vertex/index allocation so different
-    // procedural meshes can have wildly different sizes without churning a shared arena
-    struct procedural_mesh_slot {
-
-        u8                                              update_class = 0;       // GLT::render::mesh_update_class
-        bool                                            alive = false;
-        bool                                            finalized = false;      // true after the first upload; locks immutable slots
-        u32                                             material_slot = 0;      // DEFAULT_MATERIAL_SLOT until acquire_material succeeds
-        u32                                             vertex_count = 0;
-        u32                                             index_count = 0;
-        util::allocated_buffer                          vertex_buffer{};
-        util::allocated_buffer                          index_buffer{};
-        glm::vec3                                       local_min{0.0f};
-        glm::vec3                                       local_max{0.0f};
     };
 
 

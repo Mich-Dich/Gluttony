@@ -321,8 +321,6 @@ namespace GLT::renderer::vk_rasterizer {
 
                 // Translucent asset draws (CPU list, same LOD as the translucent pass)
                 for (const translucent_draw& draw : m_translucent_draws) {
-                    if (draw.procedural)
-                        continue;
                     const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
                     if (!slot || !slot->alive || draw.submesh >= slot->submesh_count)
                         continue;
@@ -331,16 +329,6 @@ namespace GLT::renderer::vk_rasterizer {
                         continue;
                     const glm::uvec2 range = slot->submesh_ranges[index];
                     ctx.cmd.drawIndexed(range.y, 1, slot->index_offset + range.x, static_cast<i32>(slot->vertex_offset), draw.instance);
-                }
-
-                // Procedural meshes (own buffers; the instance SSBO holds them after the asset instances)
-                for (size_t i = 0; i < m_procedural_draw_slots.size(); ++i) {
-                    const auto& pm = m_procedural_meshes[m_procedural_draw_slots[i]];
-                    if (!pm.alive || !pm.vertex_buffer.buffer || !pm.index_buffer.buffer)
-                        continue;
-                    ctx.cmd.bindVertexBuffers(0, { pm.vertex_buffer.buffer }, { 0 });
-                    ctx.cmd.bindIndexBuffer(pm.index_buffer.buffer, 0, vk::IndexType::eUint32);
-                    ctx.cmd.drawIndexed(pm.index_count, 1, 0, 0, m_asset_instance_count + static_cast<u32>(i));
                 }
 
                 ctx.end_rendering();

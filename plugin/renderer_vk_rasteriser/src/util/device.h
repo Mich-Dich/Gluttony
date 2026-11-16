@@ -52,8 +52,11 @@ namespace GLT::renderer::vk_rasterizer::util {
         VmaAllocator get_allocator() const { return m_vma_allocator; }
 
         [[nodiscard]] allocated_image  create_image(const vk::ImageCreateInfo& imgInfo, VmaAllocationCreateFlags flags, VmaPool pool = nullptr);
+        // [memory_usage]: VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE fits almost everything. Staging buffers (CPU writes, GPU
+        // only copies from them) pass VMA_MEMORY_USAGE_AUTO so they land in system RAM instead of the small BAR heap
         [[nodiscard]] allocated_buffer create_buffer(vk::DeviceSize size, vk::BufferUsageFlags bufferUsage,
-            VmaAllocationCreateFlags flags = 0, u32 alignment = 0, VmaPool pool = nullptr);
+            VmaAllocationCreateFlags flags = 0, u32 alignment = 0, VmaPool pool = nullptr,
+            VmaMemoryUsage memory_usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
         [[nodiscard]] descriptor_buffer create_descriptor_buffer(vk::DescriptorSetLayout layout,
             std::vector<descriptor_item>& items, descriptor_buffer_type type, u32 setCount = 1);

@@ -74,9 +74,10 @@ namespace GLT::renderer::vk_rasterizer {
     void scene_renderer::ensure_scene_meshes() {
         GLT_PROFILE_SCOPE("scene_renderer::ensure_scene_meshes");
 
+        // Asset meshes only: procedural meshes are resident in the shared manager for as long as their store entry lives
         std::unordered_set<GLT::asset::handle> current;
         for (const auto& inst : m_scene_instances)
-            if (inst.mesh != INVALID_HANDLE)
+            if (inst.mesh != INVALID_HANDLE && inst.procedural_mesh == GLT::render::INVALID_PROCEDURAL_MESH)
                 current.insert(inst.mesh);
 
         // Release meshes no longer used
@@ -122,7 +123,7 @@ namespace GLT::renderer::vk_rasterizer {
         // Sun shadows: the cascades are shadow views (scene/sun_shadow_cascades.h), the material shaders only need to know
         // how many there are and where they start
         cam.shadow_params = glm::vec4(m_shadow.active ? static_cast<f32>(m_shadow.cascades) : 0.f, static_cast<f32>(SUN_SHADOW_VIEW_FIRST), 0.f, 0.f);
-        cam.flags.x = m_asset_instance_count;   // cull.comp: only the asset-backed prefix of this frame's instance SSBO is valid
+        cam.flags.x = m_instance_count;         // cull.comp: instances of this frame in the SSBO (it holds stale data past them)
         cam.flags.y = 1u;                       // cull.comp: main view writes the draw statistics (shadow cull does not)
         cam.flags.z = debug_shading_mode();     // material fragment shaders: 0 lit, 1 LOD colours, 2 flat grey
 
@@ -173,18 +174,11 @@ namespace GLT::renderer::vk_rasterizer {
         m_translucent_draws.reserve(m_translucent_candidates.size());
         for (translucent_draw draw : m_translucent_candidates) {
 
-            glm::vec3 local_min, local_max;
-            if (draw.procedural) {
-                const auto& pm = m_procedural_meshes[draw.mesh];
-                local_min = pm.local_min;
-                local_max = pm.local_max;
-            } else {
-                const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
-                if (!slot || !slot->alive || draw.submesh >= slot->submesh_ranges.size())
-                    continue;
-                local_min = slot->local_min;
-                local_max = slot->local_max;
-            }
+            const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
+            if (!slot || !slot->alive || draw.submesh >= slot->submesh_ranges.size())
+                continue;
+            const glm::vec3 local_min = slot->local_min;
+            const glm::vec3 local_max = slot->local_max;
 
             // World AABB of the transformed local box
             const glm::mat4& model = m_packed_instances[draw.instance].model;
@@ -200,8 +194,7 @@ namespace GLT::renderer::vk_rasterizer {
             }
 
             // LOD + "cull below", same rule as cull.comp (sphere of the local AABB, largest axis scale)
-            if (!draw.procedural && !draw.forced_lod) {
-                const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
+            if (!draw.forced_lod) {
                 const glm::vec3 center = glm::vec3(model * glm::vec4(0.5f * (local_min + local_max), 1.f));
                 const f32 scale = std::max({ glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])), glm::length(glm::vec3(model[2])) });
                 const f32 radius = 0.5f * glm::length(local_max - local_min) * scale;
@@ -379,21 +372,6 @@ namespace GLT::renderer::vk_rasterizer {
         for (auto& b : m_light_meta_ubos)
             if (b.buffer)
                 dev->destroy_buffer(b);
-
-        // Procedural meshes
-        for (auto& pm : m_procedural_meshes) {
-            if (!pm.alive)
-                continue;
-            if (pm.vertex_buffer.buffer)
-                m_plugin.get_dev()->destroy_buffer(pm.vertex_buffer);
-            if (pm.index_buffer.buffer)
-                m_plugin.get_dev()->destroy_buffer(pm.index_buffer);
-            if (pm.material_slot != DEFAULT_MATERIAL_SLOT)
-                m_shared->release_material(pm.material_slot);
-        }
-        m_procedural_meshes.clear();
-        m_free_procedural_slots.clear();
-        m_procedural_draw_slots.clear();
 
         m_camera_ubos.fill({});
         m_globals_ubos.fill({});

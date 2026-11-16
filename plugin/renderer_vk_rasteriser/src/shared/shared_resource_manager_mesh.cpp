@@ -82,25 +82,16 @@ namespace GLT::renderer::vk_rasterizer {
 
         // In-flight frames still draw from these ranges (and read the mesh-table entry). Only hand the ranges and the slot
         // back once the GPU is done, otherwise the next upload overwrites geometry that is still being rendered
-        m_retire.retire([this, id,
-            vertex_offset = slot.vertex_offset, vertex_count = slot.vertex_count,
-            index_offset = slot.index_offset, index_count = slot.index_count,
-            submesh_offset = slot.submesh_offset, submesh_count = slot.submesh_count * slot.lod_count,
-            cluster_offset = slot.cluster_offset, cluster_count = slot.cluster_count]() {
-            pool_free(m_vertex_pool, vertex_offset, vertex_count);
-            pool_free(m_index_pool, index_offset, index_count);
-            pool_free(m_submesh_pool, submesh_offset, submesh_count);
-            pool_free(m_cluster_pool, cluster_offset, cluster_count);
-            m_free_slots.push_back(id);
-        });
+        retire_slot_ranges(slot);
+        retire([this, id]() { m_free_slots.push_back(id); });
 
         // Release material slots owned by the submeshes
         for (u32 ms : slot.material_slots)
             release_material(ms);
         slot.material_slots.clear();
 
-        // NOTE: SSBO entry is intentionally NOT zeroed here. In-flight frames may still reference this slot. The slot only
-        // becomes reusable (m_free_slots) once the retire callback above has run
+        // NOTE: the table entry is intentionally NOT cleared here. In-flight frames may still reference this slot. The slot
+        // only becomes reusable (m_free_slots) once the retire callback above has run
 
         m_mesh_id_by_asset.erase(slot.asset);
         slot = {};
@@ -116,6 +107,48 @@ namespace GLT::renderer::vk_rasterizer {
         return &m_mesh_slots[id];
     }
 
+
+    bool shared_resource_manager::refresh_mesh(shared_mesh_id id) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::refresh_mesh");
+
+        if (id >= m_mesh_slots.size() || !m_mesh_slots[id].alive)
+            return false;
+
+        auto registry = GLT::asset::registry::get_ref();
+        if (!registry)
+            return false;
+        auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(m_mesh_slots[id].asset);
+        if (!mesh)
+            return false;
+        if (mesh == m_mesh_slots[id].source && mesh->revision == m_mesh_slots[id].source_revision)
+            return false;
+
+        // The editor also bumps the revision for settings-only edits (LOD switch sizes, bias: every frame while a slider
+        // is dragged). The renderer does not use those, so only re-upload when the geometry arrays were replaced/resized
+        const u64 geometry = geometry_signature(*mesh);
+        if (mesh == m_mesh_slots[id].source && geometry == m_mesh_slots[id].source_geometry) {
+            // Settings only: the switch sizes may have changed. Patch them into the mesh table entry (an in-place write:
+            // the upload waits for the frames in flight that read the old entry)
+            mesh_slot& slot = m_mesh_slots[id];
+            slot.source_revision = mesh->revision;
+            slot.lod_screen = lod_screen_sizes(*mesh, slot.lod_count);
+            if (id < m_mesh_table_capacity) {
+                std::copy(slot.lod_screen.begin(), slot.lod_screen.end(), m_mesh_table[id].lod_screen);
+                mark_mesh_table_dirty(id, true);
+            }
+            write_mesh_cluster_entry(id, slot, mesh->virtual_geometry.error_scale, true);    // live: detail scale
+            return false;
+        }
+
+        const bool uploaded = reupload_slot(id, *mesh);
+
+        mesh_slot& slot = m_mesh_slots[id];
+        slot.source = mesh;
+        slot.source_revision = mesh->revision;     // also on failure: don't retry every frame
+        slot.source_geometry = geometry;
+        return uploaded;
+    }
+
     // CLASS PROTECTED =================================================================================================
 
     // CLASS PRIVATE ===================================================================================================
@@ -125,6 +158,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_vertex_pool = {
             .buffer = &m_vertex_buffer,
+            .name = "vertices",
+            .usage = vk::BufferUsageFlagBits::eVertexBuffer,
             .element_size = sizeof(GLT::asset::mesh::vertex),
             .min_headroom = VERTEX_HEADROOM_MIN,
             .growable = true,
@@ -132,6 +167,8 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_index_pool = {
             .buffer = &m_index_buffer,
+            .name = "indices",
+            .usage = vk::BufferUsageFlagBits::eIndexBuffer,
             .element_size = sizeof(u32),
             .min_headroom = INDEX_HEADROOM_MIN,
             .growable = true,
@@ -139,14 +176,15 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_submesh_pool = {
             .buffer = &m_submesh_data_buffer,
+            .name = "submeshes",
             .element_size = sizeof(gpu_submesh_data),
-            .capacity = MAX_SUBMESHES,   // fixed size
-            .min_headroom = 0,
-            .growable = false,
+            .min_headroom = SUBMESH_HEADROOM_MIN,
+            .growable = true,
         };
 
         m_cluster_pool = {
             .buffer = &m_cluster_data_buffer,
+            .name = "clusters",
             .element_size = sizeof(GLT::asset::mesh::cluster),
             .min_headroom = CLUSTER_HEADROOM_MIN,
             .growable = true,
@@ -242,6 +280,29 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    void shared_resource_manager::pool_free_deferred(linear_pool& p, u32 generation, u32 offset, u32 count) {
+
+        // Compaction rebuilt the pool from the live slots only: a range that was pending release is not in it any more
+        if (p.generation != generation)
+            return;
+        pool_free(p, offset, count);
+    }
+
+
+    util::allocated_buffer shared_resource_manager::create_pool_buffer(const linear_pool& p, u32 capacity) {
+
+        // Device-local, no host access: VRAM on a discrete GPU. Written through staging copies, grown / compacted with
+        // buffer-to-buffer copies (hence transfer src + dst)
+        const vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc
+            | vk::BufferUsageFlagBits::eTransferDst | p.usage;
+
+        util::allocated_buffer buffer = m_dev->create_buffer(static_cast<vk::DeviceSize>(capacity) * p.element_size, usage, 0);
+        if (buffer.buffer)
+            log_buffer_memory(p.name, buffer);
+        return buffer;
+    }
+
+
     bool shared_resource_manager::pool_resize(linear_pool& p, u32 new_capacity) {
         GLT_PROFILE_SCOPE("shared_resource_manager::pool_resize");
 
@@ -249,40 +310,34 @@ namespace GLT::renderer::vk_rasterizer {
             return true;
         if (!p.growable && new_capacity > p.capacity)
             return false;
-        if (new_capacity < p.high_water)
+        if (new_capacity < p.high_water || new_capacity == 0)
             return false;
 
         // Clamp to device limit
         const u64 max_bytes = m_physical_device.getProperties().limits.maxStorageBufferRange;
         if (static_cast<u64>(new_capacity) * p.element_size > max_bytes) {
             new_capacity = static_cast<u32>(max_bytes / p.element_size);
-            if (new_capacity < p.high_water)
+            if (new_capacity < p.high_water || new_capacity == p.capacity)
                 return false;
         }
 
-        // Usage bits depend on which pool (the cluster pool is a plain storage buffer)
-        vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer;
-        if (&p == &m_vertex_pool)
-            usage |= vk::BufferUsageFlagBits::eVertexBuffer;
-        else if (&p == &m_index_pool)
-            usage |= vk::BufferUsageFlagBits::eIndexBuffer;
-
-        util::allocated_buffer new_buf = m_dev->create_buffer(static_cast<vk::DeviceSize>(new_capacity) * p.element_size,
-            usage, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-
+        util::allocated_buffer new_buf = create_pool_buffer(p, new_capacity);
         if (!new_buf.buffer || !new_buf.allocation)
             return false;
 
-        // Copy live data ([0, high_water))
+        // Copy live data ([0, high_water)) on the GPU. Writes staged into the old buffer earlier in this recording land
+        // first; writes staged into the new buffer later come after the copy
         if (p.high_water > 0 && p.buffer->buffer) {
-            const void* src = m_dev->map_buffer(*p.buffer);
-            void* dst = m_dev->map_buffer(new_buf);
-            std::memcpy(dst, src, static_cast<size_t>(p.high_water) * p.element_size);
-            m_dev->unmap_buffer(new_buf);
-            m_dev->unmap_buffer(*p.buffer);
+            upload_transfer_barrier();
+            vk::BufferCopy region{};
+            region.srcOffset = 0;
+            region.dstOffset = 0;
+            region.size = static_cast<vk::DeviceSize>(p.high_water) * p.element_size;
+            upload_cmd().copyBuffer(p.buffer->buffer, new_buf.buffer, region);
+            upload_transfer_barrier();
         }
 
-        // In-flight frames have the old buffer bound: retire it instead of stalling the GPU
+        // In-flight frames (and the copy above) still use the old buffer: retire it instead of stalling the GPU
         std::swap(*p.buffer, new_buf);
         if (new_buf.buffer)
             retire_buffer(new_buf);
@@ -299,17 +354,21 @@ namespace GLT::renderer::vk_rasterizer {
     bool shared_resource_manager::should_opportunistic_compact() const {
         GLT_PROFILE_SCOPE("shared_resource_manager::should_opportunistic_compact");
 
-        const bool v = m_vertex_pool.capacity > 0 && static_cast<u64>(m_vertex_pool.live) * 2 < m_vertex_pool.capacity;
-        const bool i = m_index_pool.capacity > 0 && static_cast<u64>(m_index_pool.live) * 2 < m_index_pool.capacity;
-        return v || i;
+        // Worth it only when the pool is well above what compaction would size it to (live + slack, see try_compact).
+        // Comparing against live alone would fire after every compaction in small scenes, where the slack dominates
+        auto oversized = [](const linear_pool& p) {
+            const u64 target = static_cast<u64>(p.live) + std::max<u64>(p.live / 2, p.min_headroom);
+            return p.capacity > 0 && p.capacity > target * 2;
+        };
+        return oversized(m_vertex_pool) || oversized(m_index_pool);
     }
 
 
+    // Moves every live range to the front of a fresh, right-sized buffer (GPU copies in the upload command buffer) and
+    // retires the old buffers. No waitIdle and no CPU access to GPU memory: frames in flight keep drawing from the old
+    // buffers with the old table entries; the rewritten table entries are an in-place write (upload_war_barrier)
     void shared_resource_manager::try_compact() {
         GLT_PROFILE_SCOPE("shared_resource_manager::try_compact");
-
-        m_device.waitIdle();
-        m_retire.flush();           // pending range frees must land before compaction rewrites the pools (device is idle)
 
         // Gather live mesh indices
         std::vector<u32> live;
@@ -318,33 +377,64 @@ namespace GLT::renderer::vk_rasterizer {
             if (m_mesh_slots[i].alive)
                 live.push_back(i);
 
-        // Compact one pool: sort by current offset, memmove each live range to a contiguous span from 0
-        auto compact_pool = [this, &live](linear_pool& p,
-            auto get_offset, auto get_size, auto set_offset) {
+        const u64 max_bytes = m_physical_device.getProperties().limits.maxStorageBufferRange;
+
+        auto compact_pool = [this, &live, max_bytes](linear_pool& p, auto get_offset, auto get_size, auto set_offset) {
+
+            if (!p.buffer->buffer)
+                return;
+
+            u64 live_elements = 0;
+            for (u32 idx : live)
+                live_elements += get_size(idx);
+
+            u64 capacity = live_elements + std::max<u64>(live_elements / 2, p.min_headroom);
+            capacity = std::min<u64>(capacity, max_bytes / p.element_size);
+            capacity = std::min<u64>(capacity, UINT32_MAX);
+            if (capacity < live_elements || capacity == 0) {
+                LOG(warn, "compaction of the {} pool skipped: {} live elements do not fit a buffer", p.name, live_elements)
+                return;
+            }
+
+            util::allocated_buffer new_buf = create_pool_buffer(p, static_cast<u32>(capacity));
+            if (!new_buf.buffer) {
+                LOG(warn, "compaction of the {} pool skipped: no memory for the new buffer", p.name)
+                return;
+            }
 
             std::vector<u32> order = live;
-            std::sort(order.begin(), order.end(),
-                [&](u32 a, u32 b) { return get_offset(a) < get_offset(b); });
+            std::sort(order.begin(), order.end(), [&](u32 a, u32 b) { return get_offset(a) < get_offset(b); });
 
-            void* mapped = m_dev->map_buffer(*p.buffer);
+            std::vector<vk::BufferCopy> regions;
+            regions.reserve(order.size());
             u32 cursor = 0;
-
             for (u32 idx : order) {
-                const u32 old_off = get_offset(idx);
-                const u32 sz = get_size(idx);
-                if (old_off != cursor && sz > 0) {
-                    std::memmove(
-                        static_cast<std::byte*>(mapped) + static_cast<size_t>(cursor)  * p.element_size,
-                        static_cast<std::byte*>(mapped) + static_cast<size_t>(old_off) * p.element_size,
-                        static_cast<size_t>(sz) * p.element_size);
-                    set_offset(idx, cursor);
+                const u32 size = get_size(idx);
+                if (size > 0) {
+                    vk::BufferCopy region{};
+                    region.srcOffset = static_cast<vk::DeviceSize>(get_offset(idx)) * p.element_size;
+                    region.dstOffset = static_cast<vk::DeviceSize>(cursor) * p.element_size;
+                    region.size = static_cast<vk::DeviceSize>(size) * p.element_size;
+                    regions.push_back(region);
                 }
-                cursor += sz;
+                set_offset(idx, cursor);
+                cursor += size;
             }
-            m_dev->unmap_buffer(*p.buffer);
 
+            if (!regions.empty()) {
+                upload_transfer_barrier();
+                upload_cmd().copyBuffer(p.buffer->buffer, new_buf.buffer, regions);
+                upload_transfer_barrier();
+            }
+
+            std::swap(*p.buffer, new_buf);
+            retire_buffer(new_buf);
+
+            p.capacity = static_cast<u32>(capacity);
             p.high_water = cursor;
+            p.live = cursor;
             p.free_ranges.clear();
+            p.generation++;             // frees still pending in the retire queue refer to the old layout
         };
 
         compact_pool(m_vertex_pool,
@@ -362,56 +452,25 @@ namespace GLT::renderer::vk_rasterizer {
             [this](u32 i) { return m_mesh_slots[i].submesh_count * m_mesh_slots[i].lod_count; },
             [this](u32 i, u32 o) { m_mesh_slots[i].submesh_offset = o; });
 
-        if (m_cluster_data_buffer.buffer)
-            compact_pool(m_cluster_pool,
-                [this](u32 i) { return m_mesh_slots[i].cluster_offset; },
-                [this](u32 i) { return m_mesh_slots[i].cluster_count; },
-                [this](u32 i, u32 o) { m_mesh_slots[i].cluster_offset = o; });
+        compact_pool(m_cluster_pool,
+            [this](u32 i) { return m_mesh_slots[i].cluster_offset; },
+            [this](u32 i) { return m_mesh_slots[i].cluster_count; },
+            [this](u32 i, u32 o) { m_mesh_slots[i].cluster_offset = o; });
 
-        // Rewrite the SSBO entries whose offsets just changed
-        if (!live.empty()) {
-            auto* m = static_cast<gpu_mesh_data*>(m_dev->map_buffer(m_mesh_data_buffer));
-            for (u32 idx : live) {
-                const auto& slot = m_mesh_slots[idx];
-                m[idx].vertex_offset = slot.vertex_offset;
-                m[idx].index_offset = slot.index_offset;
-                m[idx].first_submesh = slot.submesh_offset;
-            }
-            m_dev->unmap_buffer(m_mesh_data_buffer);
-
-            // Cluster records moved too (their index ranges are relative to the mesh's index offset: nothing to patch there)
-            if (m_mesh_cluster_buffer.buffer) {
-                auto* c = static_cast<gpu_mesh_cluster_data*>(m_dev->map_buffer(m_mesh_cluster_buffer));
-                for (u32 idx : live)
-                    c[idx].first_cluster = m_mesh_slots[idx].cluster_offset;
-                m_dev->unmap_buffer(m_mesh_cluster_buffer);
-            }
+        // Table entries whose offsets just changed (cluster index ranges are relative to the mesh's index offset: nothing
+        // to patch there)
+        for (u32 idx : live) {
+            if (idx >= m_mesh_table_capacity)
+                continue;
+            const auto& slot = m_mesh_slots[idx];
+            m_mesh_table[idx].vertex_offset = slot.vertex_offset;
+            m_mesh_table[idx].index_offset = slot.index_offset;
+            m_mesh_table[idx].first_submesh = slot.submesh_offset;
+            m_mesh_cluster_table[idx].first_cluster = slot.cluster_offset;
+            mark_mesh_table_dirty(idx, true);
         }
 
         m_frames_since_compact = 0;
-    }
-
-
-    void shared_resource_manager::shrink_pools() {
-        GLT_PROFILE_SCOPE("shared_resource_manager::shrink_pools");
-
-        // Only the growable pools ever need shrinking. After compaction, high_water == live, so we target
-        // live + max(live/2, headroom) — matches the growth step, so shrink is stable (won't immediately
-        // re-grow on the next allocation).
-        for (auto* p : { &m_vertex_pool, &m_index_pool }) {
-
-            if (!p->growable)
-                continue;
-
-            const u64 target64 = static_cast<u64>(p->high_water) +
-                std::max<u64>(p->high_water / 2, p->min_headroom);
-
-            if (target64 >= p->capacity)
-                continue;
-
-            if (!pool_resize(*p, static_cast<u32>(target64)))
-                LOG(warn, "pool shrink failed");
-        }
     }
 
     // mesh allocation transaction -------------------------------------------------------------------------------------
@@ -437,25 +496,38 @@ namespace GLT::renderer::vk_rasterizer {
         if (auto r = try_all())
             return r;
 
-        // Consolidate before growing — this is the "free list cannot satisfy and tail would need to grow" path
-        if (can_compact()) {
+        // Consolidate before growing — this is the "free list cannot satisfy and tail would need to grow" path. Only when
+        // the holes add up to the request in some pool that cannot fit it: otherwise compaction would just copy every pool
+        // and growth would follow anyway (e.g. the first big load into near-empty pools)
+        auto fragmented = [this](const linear_pool& p, u32 count) {
+            if (count == 0 || pool_can_fit(p, count))
+                return false;
+            u64 holes = 0;
+            for (const auto& r : p.free_ranges)
+                holes += r.size;
+            return holes + (static_cast<u64>(p.capacity) - p.high_water) >= count;
+        };
+        const bool compaction_helps = fragmented(m_vertex_pool, v) || fragmented(m_index_pool, i)
+            || fragmented(m_submesh_pool, s) || fragmented(m_cluster_pool, c);
+
+        if (compaction_helps && can_compact()) {
             try_compact();
             if (auto r = try_all())
                 return r;
         }
 
-        // Growth (only vertex and index are growable — submesh is capped at MAX_SUBMESHES)
         auto grow = [this](linear_pool& p, u32 min_additional) -> bool {
             if (!p.growable) return false;
             const u64 need = static_cast<u64>(p.high_water) + min_additional;
             if (need <= p.capacity) return true;
             const u64 new_cap = std::max<u64>(need,
                 static_cast<u64>(p.capacity) + std::max<u64>(p.capacity / 2, p.min_headroom));
-            return pool_resize(p, static_cast<u32>(new_cap));
+            return pool_resize(p, static_cast<u32>(std::min<u64>(new_cap, UINT32_MAX)));
         };
 
         if (!grow(m_vertex_pool, v)) return std::nullopt;
         if (!grow(m_index_pool,  i)) return std::nullopt;
+        if (!grow(m_submesh_pool, s)) return std::nullopt;
         if (c > 0 && !grow(m_cluster_pool, c)) return std::nullopt;
 
         return try_all();
@@ -466,54 +538,168 @@ namespace GLT::renderer::vk_rasterizer {
     void shared_resource_manager::create_mesh_buffers() {
         GLT_PROFILE_SCOPE("shared_resource_manager::create_mesh_buffers");
 
-        m_mesh_data_buffer = m_dev->create_buffer(MAX_MESHES * sizeof(gpu_mesh_data),
-            vk::BufferUsageFlagBits::eStorageBuffer,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        m_live_buffer_count++;
-
-        m_submesh_data_buffer = m_dev->create_buffer(MAX_SUBMESHES * sizeof(gpu_submesh_data),
-            vk::BufferUsageFlagBits::eStorageBuffer,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        m_live_buffer_count++;
-
-        // Virtual geometry: one table entry per mesh slot (zero = no clusters), cluster records in a growable pool
-        m_mesh_cluster_buffer = m_dev->create_buffer(MAX_MESHES * sizeof(gpu_mesh_cluster_data),
-            vk::BufferUsageFlagBits::eStorageBuffer,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-        m_live_buffer_count++;
-        std::memset(m_dev->map_buffer(m_mesh_cluster_buffer), 0, MAX_MESHES * sizeof(gpu_mesh_cluster_data));
-        m_dev->unmap_buffer(m_mesh_cluster_buffer);
-
-        std::memset(m_dev->map_buffer(m_mesh_data_buffer),    0, MAX_MESHES   * sizeof(gpu_mesh_data));
-        m_dev->unmap_buffer(m_mesh_data_buffer);
-        std::memset(m_dev->map_buffer(m_submesh_data_buffer), 0, MAX_SUBMESHES * sizeof(gpu_submesh_data));
-        m_dev->unmap_buffer(m_submesh_data_buffer);
-
         init_pools();
 
-        // Kick off the initial vertex / index buffers
+        if (!ensure_mesh_table_capacity(0))
+            LOG(fatal, "Failed to create the mesh tables")
+
+        // Kick off the initial pool buffers
         if (!pool_resize(m_vertex_pool, VERTEX_HEADROOM_MIN))
-            LOG(fatal, "Failed to create initial vertex buffer");
+            LOG(fatal, "Failed to create initial vertex buffer")
         if (!pool_resize(m_index_pool,  INDEX_HEADROOM_MIN))
-            LOG(fatal, "Failed to create initial index buffer");
+            LOG(fatal, "Failed to create initial index buffer")
+        if (!pool_resize(m_submesh_pool, SUBMESH_HEADROOM_MIN))
+            LOG(fatal, "Failed to create initial submesh buffer")
         if (!pool_resize(m_cluster_pool, CLUSTER_HEADROOM_MIN))
-            LOG(error, "Failed to create the cluster buffer: virtual geometry is unavailable, meshes use their LODs");
+            LOG(error, "Failed to create the cluster buffer: virtual geometry is unavailable, meshes use their LODs")
     }
 
 
     void shared_resource_manager::destroy_mesh_buffers() {
         GLT_PROFILE_SCOPE("shared_resource_manager::destroy_mesh_buffers");
 
-        if (m_mesh_data_buffer.buffer)    { m_dev->destroy_buffer(m_mesh_data_buffer);    m_mesh_data_buffer = {}; }
-        if (m_submesh_data_buffer.buffer) { m_dev->destroy_buffer(m_submesh_data_buffer); m_submesh_data_buffer = {}; }
-        if (m_mesh_cluster_buffer.buffer) { m_dev->destroy_buffer(m_mesh_cluster_buffer); m_mesh_cluster_buffer = {}; }
-        if (m_cluster_data_buffer.buffer) { m_dev->destroy_buffer(m_cluster_data_buffer); m_cluster_data_buffer = {}; }
+        // Device is idle (destroy())
+        for (util::allocated_buffer* buffer : { &m_vertex_buffer, &m_index_buffer, &m_mesh_data_buffer, &m_submesh_data_buffer,
+            &m_mesh_cluster_buffer, &m_cluster_data_buffer })
+            if (buffer->buffer)
+                m_dev->destroy_buffer(*buffer);
 
         // Clear allocator state — buffers are gone
         m_vertex_pool = {};
         m_index_pool = {};
         m_submesh_pool = {};
         m_cluster_pool = {};
+
+        m_mesh_table_capacity = 0;
+        m_mesh_table.clear();
+        m_mesh_cluster_table.clear();
+        m_mesh_table_dirty.clear();
+        m_mesh_table_dirty_flag.clear();
+    }
+
+    // mesh tables -----------------------------------------------------------------------------------------------------
+
+    bool shared_resource_manager::ensure_mesh_table_capacity(u32 mesh_index) {
+
+        if (mesh_index < m_mesh_table_capacity)
+            return true;
+        if (mesh_index >= MESH_SLOT_LIMIT) {
+            LOG(error, "mesh slot {} exceeds the sanity limit of {} resident meshes", mesh_index, MESH_SLOT_LIMIT)
+            return false;
+        }
+
+        u32 new_capacity = std::max(INITIAL_MESH_TABLE_CAPACITY, m_mesh_table_capacity);
+        while (new_capacity <= mesh_index)
+            new_capacity *= 2;
+
+        const vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc
+            | vk::BufferUsageFlagBits::eTransferDst;
+        util::allocated_buffer mesh_table = m_dev->create_buffer(static_cast<vk::DeviceSize>(new_capacity) * sizeof(gpu_mesh_data), usage, 0);
+        util::allocated_buffer cluster_table = m_dev->create_buffer(static_cast<vk::DeviceSize>(new_capacity) * sizeof(gpu_mesh_cluster_data), usage, 0);
+        if (!mesh_table.buffer || !cluster_table.buffer) {
+            m_dev->destroy_buffer(mesh_table);
+            m_dev->destroy_buffer(cluster_table);
+            LOG(error, "could not grow the mesh tables to {} entries", new_capacity)
+            return false;
+        }
+        log_buffer_memory("mesh table", mesh_table);
+        log_buffer_memory("mesh cluster table", cluster_table);
+
+        // Zero the new tables; the live entries follow from the CPU copies at the next flush (emit_mesh_table_uploads)
+        const vk::CommandBuffer cmd = upload_cmd();
+        cmd.fillBuffer(mesh_table.buffer, 0, VK_WHOLE_SIZE, 0u);
+        cmd.fillBuffer(cluster_table.buffer, 0, VK_WHOLE_SIZE, 0u);
+        upload_transfer_barrier();
+
+        // Frames in flight keep reading the old tables
+        std::swap(m_mesh_data_buffer, mesh_table);
+        std::swap(m_mesh_cluster_buffer, cluster_table);
+        retire_buffer(mesh_table);
+        retire_buffer(cluster_table);
+
+        const u32 old_capacity = m_mesh_table_capacity;
+        m_mesh_table.resize(new_capacity);
+        m_mesh_cluster_table.resize(new_capacity);
+        m_mesh_table_dirty_flag.resize(new_capacity, 0u);
+        m_mesh_table_capacity = new_capacity;
+
+        for (u32 i = 0; i < old_capacity && i < m_mesh_slots.size(); ++i)
+            if (m_mesh_slots[i].alive)
+                mark_mesh_table_dirty(i, false);        // new buffer: nobody reads it yet
+
+        if (old_capacity > 0)
+            LOG(trace, "mesh tables grown: {} -> {} entries", old_capacity, new_capacity)
+        return true;
+    }
+
+
+    void shared_resource_manager::mark_mesh_table_dirty(u32 mesh_index, bool in_place) {
+
+        if (mesh_index >= m_mesh_table_capacity)
+            return;
+
+        (void)upload_cmd();                             // the entry goes out with the next flush
+        if (in_place)
+            m_upload_war_pending = true;
+        if (!m_mesh_table_dirty_flag[mesh_index]) {
+            m_mesh_table_dirty_flag[mesh_index] = 1u;
+            m_mesh_table_dirty.push_back(mesh_index);
+        }
+    }
+
+
+    void shared_resource_manager::emit_mesh_table_uploads() {
+
+        if (m_mesh_table_dirty.empty())
+            return;
+
+        // Rewriting entries that frames in flight may read: wait for them first
+        if (m_upload_war_pending) {
+            upload_war_barrier();
+            m_upload_war_pending = false;
+        }
+
+        std::sort(m_mesh_table_dirty.begin(), m_mesh_table_dirty.end());
+
+        // Entries that could not be staged stay dirty for the next flush: a skipped entry would leave the GPU table pointing
+        // into retired or compacted ranges
+        std::vector<u32> failed;
+
+        // One copy per contiguous run of dirty entries, for each of the two tables
+        size_t run_start = 0;
+        while (run_start < m_mesh_table_dirty.size()) {
+
+            size_t run_end = run_start + 1;
+            while (run_end < m_mesh_table_dirty.size() && m_mesh_table_dirty[run_end] == m_mesh_table_dirty[run_end - 1] + 1)
+                ++run_end;
+
+            const u32 first = m_mesh_table_dirty[run_start];
+            const u32 count = static_cast<u32>(run_end - run_start);
+
+            std::byte* mesh_dst = stage(m_mesh_data_buffer, static_cast<vk::DeviceSize>(first) * sizeof(gpu_mesh_data),
+                static_cast<vk::DeviceSize>(count) * sizeof(gpu_mesh_data));
+            if (mesh_dst)
+                std::memcpy(mesh_dst, &m_mesh_table[first], static_cast<size_t>(count) * sizeof(gpu_mesh_data));
+
+            std::byte* cluster_dst = stage(m_mesh_cluster_buffer, static_cast<vk::DeviceSize>(first) * sizeof(gpu_mesh_cluster_data),
+                static_cast<vk::DeviceSize>(count) * sizeof(gpu_mesh_cluster_data));
+            if (cluster_dst)
+                std::memcpy(cluster_dst, &m_mesh_cluster_table[first], static_cast<size_t>(count) * sizeof(gpu_mesh_cluster_data));
+
+            if (!mesh_dst || !cluster_dst)
+                failed.insert(failed.end(), m_mesh_table_dirty.begin() + static_cast<std::ptrdiff_t>(run_start),
+                    m_mesh_table_dirty.begin() + static_cast<std::ptrdiff_t>(run_end));
+
+            run_start = run_end;
+        }
+
+        for (u32 index : m_mesh_table_dirty)
+            m_mesh_table_dirty_flag[index] = 0u;
+        m_mesh_table_dirty.clear();
+        for (u32 index : failed) {
+            m_mesh_table_dirty_flag[index] = 1u;
+            m_mesh_table_dirty.push_back(index);
+        }
     }
 
     // mesh upload -----------------------------------------------------------------------------------------------------
@@ -533,40 +719,64 @@ namespace GLT::renderer::vk_rasterizer {
     }
 
 
+    void shared_resource_manager::retire_slot_ranges(const mesh_slot& slot) {
+
+        retire([this,
+            vertex_generation = m_vertex_pool.generation, vertex_offset = slot.vertex_offset, vertex_count = slot.vertex_count,
+            index_generation = m_index_pool.generation, index_offset = slot.index_offset, index_count = slot.index_count,
+            submesh_generation = m_submesh_pool.generation, submesh_offset = slot.submesh_offset,
+            submesh_count = slot.submesh_count * slot.lod_count,
+            cluster_generation = m_cluster_pool.generation, cluster_offset = slot.cluster_offset, cluster_count = slot.cluster_count]() {
+            pool_free_deferred(m_vertex_pool, vertex_generation, vertex_offset, vertex_count);
+            pool_free_deferred(m_index_pool, index_generation, index_offset, index_count);
+            pool_free_deferred(m_submesh_pool, submesh_generation, submesh_offset, submesh_count);
+            pool_free_deferred(m_cluster_pool, cluster_generation, cluster_offset, cluster_count);
+        });
+    }
+
+
     void shared_resource_manager::upload_mesh_slice(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh) {
         GLT_PROFILE_SCOPE("shared_resource_manager::upload_mesh_slice");
-        {
-            auto* dst = static_cast<GLT::asset::mesh::vertex*>(m_dev->map_buffer(m_vertex_buffer));
-            // [vertices ++ lod_vertices ++ cluster_vertices]: the two optional parts hold the recomputed normals of the
-            // LOD levels / of the simplified clusters
-            std::memcpy(dst + slot.vertex_offset, mesh.vertices.data(), mesh.vertices.size() * sizeof(GLT::asset::mesh::vertex));
+
+        using GLT::asset::mesh::vertex;
+
+        // NOTE: the stage() pointers point into staging memory that may be uncached / write-combined: write only, never read
+
+        // [vertices ++ lod_vertices ++ cluster_vertices]: the two optional parts hold the recomputed normals of the LOD
+        // levels / of the simplified clusters. Together they fill exactly slot.vertex_count vertices
+        if (auto* dst = reinterpret_cast<vertex*>(stage(m_vertex_buffer, static_cast<vk::DeviceSize>(slot.vertex_offset) * sizeof(vertex),
+            static_cast<vk::DeviceSize>(slot.vertex_count) * sizeof(vertex)))) {
+
+            const size_t source_vertices = std::min<size_t>(mesh.vertices.size(), slot.vertex_count);
+            std::memcpy(dst, mesh.vertices.data(), source_vertices * sizeof(vertex));
             const size_t lod_vertex_end = slot.cluster_vertex_count > 0 ? slot.cluster_vertex_base : slot.vertex_count;
             if (lod_vertex_end > mesh.vertices.size())
-                std::memcpy(dst + slot.vertex_offset + mesh.vertices.size(), mesh.lod_vertices.data(),
-                    (lod_vertex_end - mesh.vertices.size()) * sizeof(GLT::asset::mesh::vertex));
+                std::memcpy(dst + mesh.vertices.size(), mesh.lod_vertices.data(),
+                    (lod_vertex_end - mesh.vertices.size()) * sizeof(vertex));
             if (slot.cluster_vertex_count > 0)
-                std::memcpy(dst + slot.vertex_offset + slot.cluster_vertex_base, mesh.cluster_vertices.data(),
-                    static_cast<size_t>(slot.cluster_vertex_count) * sizeof(GLT::asset::mesh::vertex));
-            m_dev->unmap_buffer(m_vertex_buffer);
+                std::memcpy(dst + slot.cluster_vertex_base, mesh.cluster_vertices.data(),
+                    static_cast<size_t>(slot.cluster_vertex_count) * sizeof(vertex));
         }
-        {
-            // [indices ++ lod_indices ++ cluster_indices]: the LOD ranges address the first two as one stream (asset/mesh.h
-            // lod_range), the virtual geometry clusters the third part (starting at slot.cluster_index_base)
+
+        // [indices ++ lod_indices ++ cluster_indices]: the LOD ranges address the first two as one stream (asset/mesh.h
+        // lod_range), the virtual geometry clusters the third part (starting at slot.cluster_index_base)
+        if (u32* dst = reinterpret_cast<u32*>(stage(m_index_buffer, static_cast<vk::DeviceSize>(slot.index_offset) * sizeof(u32),
+            static_cast<vk::DeviceSize>(slot.index_count) * sizeof(u32)))) {
+
             const size_t base_count = mesh.indices.size();
             const size_t lod_end = slot.cluster_count > 0 ? slot.cluster_index_base : slot.index_count;
             const size_t lod_index_count = (slot.lod_count > 1 && lod_end > base_count) ? lod_end - base_count : 0;
             const size_t cluster_index_count = slot.cluster_count > 0 ? slot.index_count - slot.cluster_index_base : 0;
 
-            auto* dst = static_cast<u32*>(m_dev->map_buffer(m_index_buffer));
-            std::memcpy(dst + slot.index_offset, mesh.indices.data(), mesh.indices.size() * sizeof(u32));
+            std::memcpy(dst, mesh.indices.data(), base_count * sizeof(u32));
             if (lod_index_count > 0)
-                std::memcpy(dst + slot.index_offset + base_count, mesh.lod_indices.data(), lod_index_count * sizeof(u32));
+                std::memcpy(dst + base_count, mesh.lod_indices.data(), lod_index_count * sizeof(u32));
             // Cluster indices address [vertices ++ cluster_vertices] in the asset. In the vertex range the cluster
             // vertices sit behind the LOD vertices, so indices at or above the source vertex count are moved up
             if (cluster_index_count > 0) {
                 const u32 source_vertices = static_cast<u32>(mesh.vertices.size());
                 const u32 shift = slot.cluster_vertex_base - source_vertices;
-                u32* out = dst + slot.index_offset + slot.cluster_index_base;
+                u32* out = dst + slot.cluster_index_base;
                 for (size_t i = 0; i < cluster_index_count; ++i) {
                     const u32 index = mesh.cluster_indices[i];
                     out[i] = index < source_vertices ? index : index + shift;
@@ -574,17 +784,16 @@ namespace GLT::renderer::vk_rasterizer {
             }
 
             // Never let the GPU fetch past this mesh's vertices (another mesh's data / uninitialised pool memory: huge
-            // NaN-shaded triangles). Out-of-range triangles become degenerate. Checks the CPU copy (the mapped buffer is
-            // write-combined: reading it back would be slow) and only patches the uploaded triangles that are bad
+            // NaN-shaded triangles). Out-of-range triangles become degenerate. Checks the CPU copy and only patches the
+            // staged triangles that are bad (writes only)
             u32 bad_triangles = 0;
-            u32* uploaded = dst + slot.index_offset;
             const u32 checked_count = static_cast<u32>(base_count + lod_index_count);   // cluster indices: checked below
             const u32 lod_vertex_limit = slot.cluster_vertex_count > 0 ? slot.cluster_vertex_base : slot.vertex_count;  // [vertices ++ lod_vertices]
             auto source_index = [&](u32 i) { return i < base_count ? mesh.indices[i] : mesh.lod_indices[i - base_count]; };
             for (u32 t = 0; t + 2 < checked_count; t += 3) {
                 if (source_index(t) < lod_vertex_limit && source_index(t + 1) < lod_vertex_limit && source_index(t + 2) < lod_vertex_limit)
                     continue;
-                uploaded[t] = uploaded[t + 1] = uploaded[t + 2] = 0u;
+                dst[t] = dst[t + 1] = dst[t + 2] = 0u;
                 ++bad_triangles;
             }
 
@@ -595,35 +804,40 @@ namespace GLT::renderer::vk_rasterizer {
                 const u32* tri = &mesh.cluster_indices[t];
                 if (tri[0] < cluster_stream_vertices && tri[1] < cluster_stream_vertices && tri[2] < cluster_stream_vertices)
                     continue;
-                u32* out = uploaded + slot.cluster_index_base + t;
+                u32* out = dst + slot.cluster_index_base + t;
                 out[0] = out[1] = out[2] = 0u;
                 ++bad_triangles;
             }
             if (bad_triangles > 0)
                 LOG(warn, "mesh slot: {} triangle(s) with out-of-range vertex indices dropped (corrupt mesh data)", bad_triangles);
-            m_dev->unmap_buffer(m_index_buffer);
         }
 
         // Virtual geometry cluster records, as they are in the asset
-        if (slot.cluster_count > 0 && m_cluster_data_buffer.buffer) {
-            auto* dst = static_cast<GLT::asset::mesh::cluster*>(m_dev->map_buffer(m_cluster_data_buffer));
-            std::memcpy(dst + slot.cluster_offset, mesh.clusters.data(), static_cast<size_t>(slot.cluster_count) * sizeof(GLT::asset::mesh::cluster));
-            m_dev->unmap_buffer(m_cluster_data_buffer);
-        }
+        if (slot.cluster_count > 0 && m_cluster_data_buffer.buffer)
+            if (std::byte* dst = stage(m_cluster_data_buffer, static_cast<vk::DeviceSize>(slot.cluster_offset) * sizeof(GLT::asset::mesh::cluster),
+                static_cast<vk::DeviceSize>(slot.cluster_count) * sizeof(GLT::asset::mesh::cluster)))
+                std::memcpy(dst, mesh.clusters.data(), static_cast<size_t>(slot.cluster_count) * sizeof(GLT::asset::mesh::cluster));
     }
 
 
-    void shared_resource_manager::pack_mesh_into_ssbo(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh) {
+    void shared_resource_manager::pack_mesh_into_ssbo(mesh_slot& slot, const GLT::asset::mesh::mesh_asset& mesh, bool in_place) {
         GLT_PROFILE_SCOPE("shared_resource_manager::pack_mesh_into_ssbo");
 
         const u32 mesh_index = static_cast<u32>(&slot - m_mesh_slots.data());
-        VALIDATE(mesh_index < MAX_MESHES, return, "", "Mesh SSBO capacity exceeded")
+        VALIDATE(mesh_index < m_mesh_table_capacity, return, "", "Mesh table capacity exceeded")
 
+        // Culling box. Procedural meshes: the store's bounds (validated, cover every LOD's vertices, or what the generator
+        // passed). Assets: LOD 0's vertices, as before
         glm::vec3 local_min(std::numeric_limits<f32>::max());
         glm::vec3 local_max(std::numeric_limits<f32>::lowest());
-        for (const auto& v : mesh.vertices) {
-            local_min = glm::min(local_min, v.position);
-            local_max = glm::max(local_max, v.position);
+        if (mesh.asset_type == GLT::asset::core_types::procedural_mesh) {
+            local_min = mesh.bounds.min;
+            local_max = mesh.bounds.max;
+        } else {
+            for (const auto& v : mesh.vertices) {
+                local_min = glm::min(local_min, v.position);
+                local_max = glm::max(local_max, v.position);
+            }
         }
 
         const u32 submesh_count = slot.submesh_count;
@@ -650,17 +864,20 @@ namespace GLT::renderer::vk_rasterizer {
                     valid ? glm::uvec2(r.first_index, r.index_count) : glm::uvec2(0u);
             }
 
-        // Submesh SSBO — write at the pool-allocated offset
-        {
-            auto* sub = static_cast<gpu_submesh_data*>(m_dev->map_buffer(m_submesh_data_buffer));
-            for (u32 i = 0; i < submesh_count * lod_count; ++i) {
-                sub[slot.submesh_offset + i].first_index = slot.submesh_ranges[i].x;
-                sub[slot.submesh_offset + i].index_count = slot.submesh_ranges[i].y;
+        // Submesh table — at the pool-allocated offset (a fresh range: never read by a frame in flight)
+        const u32 submesh_entries = submesh_count * lod_count;
+        if (auto* sub = reinterpret_cast<gpu_submesh_data*>(stage(m_submesh_data_buffer,
+            static_cast<vk::DeviceSize>(slot.submesh_offset) * sizeof(gpu_submesh_data),
+            static_cast<vk::DeviceSize>(submesh_entries) * sizeof(gpu_submesh_data)))) {
+            for (u32 i = 0; i < submesh_entries; ++i) {
+                gpu_submesh_data entry{};
+                entry.first_index = slot.submesh_ranges[i].x;
+                entry.index_count = slot.submesh_ranges[i].y;
+                std::memcpy(sub + i, &entry, sizeof(entry));
             }
-            m_dev->unmap_buffer(m_submesh_data_buffer);
         }
 
-        // Mesh SSBO
+        // Mesh table
         {
             gpu_mesh_data md{};
             md.local_min = local_min;
@@ -673,9 +890,8 @@ namespace GLT::renderer::vk_rasterizer {
             slot.lod_screen = lod_screen_sizes(mesh, lod_count);
             std::copy(slot.lod_screen.begin(), slot.lod_screen.end(), md.lod_screen);
 
-            auto* m = static_cast<gpu_mesh_data*>(m_dev->map_buffer(m_mesh_data_buffer));
-            m[mesh_index] = md;
-            m_dev->unmap_buffer(m_mesh_data_buffer);
+            m_mesh_table[mesh_index] = md;
+            mark_mesh_table_dirty(mesh_index, in_place);
         }
 
         // Virtual geometry: draw bound per submesh (CPU, sizes the indirect ranges) + table entry (GPU). Written for
@@ -702,13 +918,13 @@ namespace GLT::renderer::vk_rasterizer {
                 slot.cluster_max_visible[i] = std::min(std::max(stored, source_clusters[i]), all_clusters[i]);
             }
         }
-        write_mesh_cluster_entry(mesh_index, slot, mesh.virtual_geometry.error_scale);
+        write_mesh_cluster_entry(mesh_index, slot, mesh.virtual_geometry.error_scale, in_place);
     }
 
 
-    void shared_resource_manager::write_mesh_cluster_entry(u32 mesh_index, const mesh_slot& slot, f32 error_scale) {
+    void shared_resource_manager::write_mesh_cluster_entry(u32 mesh_index, const mesh_slot& slot, f32 error_scale, bool in_place) {
 
-        if (!m_mesh_cluster_buffer.buffer || mesh_index >= MAX_MESHES)
+        if (mesh_index >= m_mesh_table_capacity)
             return;
 
         gpu_mesh_cluster_data entry{};
@@ -717,9 +933,8 @@ namespace GLT::renderer::vk_rasterizer {
         entry.index_base = slot.cluster_index_base;
         entry.error_scale = std::isfinite(error_scale) ? std::clamp(error_scale, 0.05f, 20.0f) : 1.0f;
 
-        auto* table = static_cast<gpu_mesh_cluster_data*>(m_dev->map_buffer(m_mesh_cluster_buffer));
-        table[mesh_index] = entry;
-        m_dev->unmap_buffer(m_mesh_cluster_buffer);
+        m_mesh_cluster_table[mesh_index] = entry;
+        mark_mesh_table_dirty(mesh_index, in_place);
     }
 
 
@@ -739,47 +954,66 @@ namespace GLT::renderer::vk_rasterizer {
             m_failed_mesh_loads.insert(handle);
             return INVALID_SHARED_MESH;
         }
-        if (mesh->vertices.size() > UINT32_MAX || mesh->indices.size() > UINT32_MAX) {
+
+        const shared_mesh_id id = upload_new_slot(*mesh, handle);
+        if (id == INVALID_SHARED_MESH) {
             m_failed_mesh_loads.insert(handle);
             return INVALID_SHARED_MESH;
         }
 
-        mesh_upload_layout layout = mesh_layout_of(*mesh);
+        mesh_slot& slot = m_mesh_slots[id];
+        slot.source = mesh;
+        slot.source_revision = mesh->revision;
+        slot.source_geometry = geometry_signature(*mesh);
+
+        m_mesh_id_by_asset[handle] = id;
+        return id;
+    }
+
+
+    shared_mesh_id shared_resource_manager::upload_new_slot(const GLT::asset::mesh::mesh_asset& mesh, GLT::asset::handle key) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::upload_new_slot");
+
+        if (mesh.vertices.size() > UINT32_MAX || mesh.indices.size() > UINT32_MAX)
+            return INVALID_SHARED_MESH;
+
+        mesh_upload_layout layout = mesh_layout_of(mesh);
         const u32 submesh_count = layout.submesh_count;
 
-        // Reserve a slot index up front so we know whether we're reusing
-        bool reusing_slot = false;
-        u32  slot_idx;
-
+        // Reserve a slot index up front. Recycled slots only reach m_free_slots after the GPU finished with them (see
+        // release_mesh), so their table entries can be rewritten without waiting
+        u32 slot_idx;
         if (!m_free_slots.empty()) {
             slot_idx = m_free_slots.back();
             m_free_slots.pop_back();
-            reusing_slot = true;
         } else {
-            if (m_mesh_slots.size() >= MAX_MESHES) {
-                m_failed_mesh_loads.insert(handle);
+            if (m_mesh_slots.size() >= MESH_SLOT_LIMIT)
                 return INVALID_SHARED_MESH;
-            }
             slot_idx = static_cast<u32>(m_mesh_slots.size());
             m_mesh_slots.emplace_back();
+        }
+
+        if (!ensure_mesh_table_capacity(slot_idx)) {
+            m_mesh_slots[slot_idx] = {};
+            m_free_slots.push_back(slot_idx);
+            return INVALID_SHARED_MESH;
         }
 
         // Allocate buffer ranges (may compact / grow / fail). When the pools are full the optional parts are given up
         // one by one: first the virtual geometry clusters, then the LOD levels (LOD 0 only)
         auto alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, submesh_count * layout.lod_count, layout.cluster_count);
-        while (!alloc && reduce_layout(layout, *mesh))
+        while (!alloc && reduce_layout(layout, mesh))
             alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, submesh_count * layout.lod_count, layout.cluster_count);
         if (!alloc) {
             // Return the slot — no ranges were allocated
             m_mesh_slots[slot_idx] = {};
             m_free_slots.push_back(slot_idx);
-            m_failed_mesh_loads.insert(handle);
             return INVALID_SHARED_MESH;
         }
 
         mesh_slot& slot = m_mesh_slots[slot_idx];
         slot = {};
-        slot.asset = handle;
+        slot.asset = key;
         slot.vertex_offset = alloc->vertex_offset;
         slot.vertex_count = layout.vertex_count;
         slot.index_offset = alloc->index_offset;
@@ -792,23 +1026,60 @@ namespace GLT::renderer::vk_rasterizer {
         slot.cluster_index_base = layout.cluster_index_base;
         slot.cluster_vertex_base = layout.cluster_vertex_base;
         slot.cluster_vertex_count = layout.cluster_vertex_count;
-        slot.source = mesh;
-        slot.source_revision = mesh->revision;
-        slot.source_geometry = geometry_signature(*mesh);
         slot.alive = true;
-        slot.local_min = mesh->bounds.min;
-        slot.local_max = mesh->bounds.max;
+        slot.local_min = mesh.bounds.min;
+        slot.local_max = mesh.bounds.max;
         slot.ref_count = 1;
 
-        upload_mesh_slice(slot, *mesh);
-
-        // Recycled slots only reach m_free_slots after the GPU finished with them (see release_mesh), no wait needed
-        (void)reusing_slot;
-
-        pack_mesh_into_ssbo(slot, *mesh);
-
-        m_mesh_id_by_asset[handle] = slot_idx;
+        upload_mesh_slice(slot, mesh);
+        pack_mesh_into_ssbo(slot, mesh, false);
         return slot_idx;
+    }
+
+
+    bool shared_resource_manager::reupload_slot(shared_mesh_id id, const GLT::asset::mesh::mesh_asset& mesh) {
+        GLT_PROFILE_SCOPE("shared_resource_manager::reupload_slot");
+
+        if (id >= m_mesh_slots.size() || !m_mesh_slots[id].alive)
+            return false;
+        if (mesh.vertices.size() > UINT32_MAX || mesh.indices.size() > UINT32_MAX)
+            return false;
+
+        mesh_upload_layout layout = mesh_layout_of(mesh);
+        auto alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, layout.submesh_count * layout.lod_count, layout.cluster_count);
+        while (!alloc && reduce_layout(layout, mesh))
+            alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, layout.submesh_count * layout.lod_count, layout.cluster_count);
+
+        mesh_slot& slot = m_mesh_slots[id];        // after allocate: compaction may have moved this slot's ranges
+        if (!alloc) {
+            LOG(warn, "reupload_slot: no room to re-upload mesh slot {}, keeping the previous geometry", id);
+            return false;
+        }
+
+        // In-flight frames still draw from the old ranges: free them once the GPU is done. The new data goes to fresh
+        // ranges; the table entry is rewritten in place, behind a wait for the frames that read the old one
+        retire_slot_ranges(slot);
+
+        slot.vertex_offset = alloc->vertex_offset;
+        slot.vertex_count = layout.vertex_count;
+        slot.index_offset = alloc->index_offset;
+        slot.index_count = layout.index_count;
+        slot.submesh_offset = alloc->submesh_offset;
+        slot.submesh_count = layout.submesh_count;
+        slot.lod_count = layout.lod_count;
+        slot.cluster_offset = alloc->cluster_offset;
+        slot.cluster_count = layout.cluster_count;
+        slot.cluster_index_base = layout.cluster_index_base;
+        slot.cluster_vertex_base = layout.cluster_vertex_base;
+        slot.cluster_vertex_count = layout.cluster_vertex_count;
+        slot.local_min = mesh.bounds.min;
+        slot.local_max = mesh.bounds.max;
+
+        upload_mesh_slice(slot, mesh);
+        pack_mesh_into_ssbo(slot, mesh, true);
+        LOG(trace, "reupload_slot: slot {} re-uploaded ({} LOD levels, {} clusters, {} indices)", id, slot.lod_count, slot.cluster_count,
+            slot.index_count);
+        return true;
     }
 
 
@@ -900,90 +1171,6 @@ namespace GLT::renderer::vk_rasterizer {
             sizes[level] = std::isfinite(s) ? std::max(s, 0.0f) : 0.0f;
         }
         return sizes;
-    }
-
-
-    bool shared_resource_manager::refresh_mesh(shared_mesh_id id) {
-        GLT_PROFILE_SCOPE("shared_resource_manager::refresh_mesh");
-
-        if (id >= m_mesh_slots.size() || !m_mesh_slots[id].alive)
-            return false;
-
-        auto registry = GLT::asset::registry::get_ref();
-        if (!registry)
-            return false;
-        auto* mesh = registry->data_as<GLT::asset::mesh::mesh_asset>(m_mesh_slots[id].asset);
-        if (!mesh)
-            return false;
-        if (mesh == m_mesh_slots[id].source && mesh->revision == m_mesh_slots[id].source_revision)
-            return false;
-
-        // The editor also bumps the revision for settings-only edits (LOD switch sizes, bias: every frame while a slider
-        // is dragged). The renderer does not use those, so only re-upload when the geometry arrays were replaced/resized
-        const u64 geometry = geometry_signature(*mesh);
-        if (mesh == m_mesh_slots[id].source && geometry == m_mesh_slots[id].source_geometry) {
-            // Settings only: the switch sizes may have changed. Patch them into the mesh table entry (a few floats; an
-            // in-flight frame sees either the old or the new sizes, both valid)
-            mesh_slot& slot = m_mesh_slots[id];
-            slot.source_revision = mesh->revision;
-            slot.lod_screen = lod_screen_sizes(*mesh, slot.lod_count);
-            auto* m = static_cast<gpu_mesh_data*>(m_dev->map_buffer(m_mesh_data_buffer));
-            std::copy(slot.lod_screen.begin(), slot.lod_screen.end(), m[id].lod_screen);
-            m_dev->unmap_buffer(m_mesh_data_buffer);
-            write_mesh_cluster_entry(id, slot, mesh->virtual_geometry.error_scale);    // live: detail scale
-            return false;
-        }
-
-        if (mesh->vertices.size() > UINT32_MAX || mesh->indices.size() > UINT32_MAX)
-            return false;
-
-        mesh_upload_layout layout = mesh_layout_of(*mesh);
-        auto alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, layout.submesh_count * layout.lod_count, layout.cluster_count);
-        while (!alloc && reduce_layout(layout, *mesh))
-            alloc = allocate_mesh_ranges(layout.vertex_count, layout.index_count, layout.submesh_count * layout.lod_count, layout.cluster_count);
-
-        mesh_slot& slot = m_mesh_slots[id];        // after allocate: compaction may have moved this slot's ranges
-        slot.source = mesh;
-        slot.source_revision = mesh->revision;     // also on failure: don't retry every frame
-        slot.source_geometry = geometry;
-        if (!alloc) {
-            LOG(warn, "refresh_mesh: no room to re-upload mesh slot {}, keeping the previous geometry", id);
-            return false;
-        }
-
-        // In-flight frames still draw from the old ranges: free them once the GPU is done. The new data goes to fresh
-        // ranges, and the mesh table entry is rewritten last, so any frame sees either the old or the new mesh
-        m_retire.retire([this,
-            vertex_offset = slot.vertex_offset, vertex_count = slot.vertex_count,
-            index_offset = slot.index_offset, index_count = slot.index_count,
-            submesh_offset = slot.submesh_offset, submesh_count = slot.submesh_count * slot.lod_count,
-            cluster_offset = slot.cluster_offset, cluster_count = slot.cluster_count]() {
-            pool_free(m_vertex_pool, vertex_offset, vertex_count);
-            pool_free(m_index_pool, index_offset, index_count);
-            pool_free(m_submesh_pool, submesh_offset, submesh_count);
-            pool_free(m_cluster_pool, cluster_offset, cluster_count);
-        });
-
-        slot.vertex_offset = alloc->vertex_offset;
-        slot.vertex_count = layout.vertex_count;
-        slot.index_offset = alloc->index_offset;
-        slot.index_count = layout.index_count;
-        slot.submesh_offset = alloc->submesh_offset;
-        slot.submesh_count = layout.submesh_count;
-        slot.lod_count = layout.lod_count;
-        slot.cluster_offset = alloc->cluster_offset;
-        slot.cluster_count = layout.cluster_count;
-        slot.cluster_index_base = layout.cluster_index_base;
-        slot.cluster_vertex_base = layout.cluster_vertex_base;
-        slot.cluster_vertex_count = layout.cluster_vertex_count;
-        slot.local_min = mesh->bounds.min;
-        slot.local_max = mesh->bounds.max;
-
-        upload_mesh_slice(slot, *mesh);
-        pack_mesh_into_ssbo(slot, *mesh);
-        LOG(trace, "refresh_mesh: slot {} re-uploaded ({} LOD levels, {} clusters, {} indices)", id, slot.lod_count, slot.cluster_count,
-            slot.index_count);
-        return true;
     }
 
 }

@@ -326,7 +326,7 @@ namespace GLT::renderer::vk_rasterizer {
             if (!slot || !slot->alive) continue;
 
             for (const auto& inst : m_scene_instances) {
-                if (inst.mesh != watch.handle) continue;
+                if (inst.mesh != watch.handle || inst.procedural_mesh != GLT::render::INVALID_PROCEDURAL_MESH) continue;
                 emit_aabb(slot->local_min, slot->local_max, inst.transform, watch.color, watch.depth_test);
             }
         }
@@ -375,9 +375,14 @@ namespace GLT::renderer::vk_rasterizer {
             for (const auto& inst : m_scene_instances) {
                 const auto it = watch_of.find(inst.entity);
                 if (it == watch_of.end()) continue;
-                auto rit = m_resident_meshes.find(inst.mesh);
-                if (rit == m_resident_meshes.end()) continue;
-                const mesh_slot* slot = m_shared->get_mesh(rit->second);
+                // Same resolution as build_instance_buffer: procedural meshes through the shared manager
+                shared_mesh_id mesh_id = INVALID_SHARED_MESH;
+                if (inst.procedural_mesh != GLT::render::INVALID_PROCEDURAL_MESH) {
+                    mesh_id = m_shared->procedural_mesh(inst.procedural_mesh);
+                } else if (auto rit = m_resident_meshes.find(inst.mesh); rit != m_resident_meshes.end()) {
+                    mesh_id = rit->second;
+                }
+                const mesh_slot* slot = m_shared->get_mesh(mesh_id);
                 if (!slot || !slot->alive) continue;
                 const u32 in_view = box_in_view(slot->local_min, slot->local_max, inst.transform);
                 if (in_view == 0u) continue;

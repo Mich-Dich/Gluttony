@@ -84,14 +84,6 @@ namespace GLT::renderer::vk_rasterizer {
         void set_active(bool active) override { m_active = active; }
         [[nodiscard]] bool is_active() const override { return m_active; }
 
-        // procedural meshes -------------------------------------------------------------------------------------------
-
-        [[nodiscard]] GLT::render::procedural_mesh_id create_procedural_mesh(GLT::render::mesh_update_class cls) override;
-        std::expected<void, GLT::render::procedural_mesh_error> update_procedural_mesh(GLT::render::procedural_mesh_id id,
-            std::span<const GLT::asset::mesh::vertex> vertices, std::span<const u32> indices, 
-            GLT::asset::handle material = INVALID_HANDLE) override;
-        void destroy_procedural_mesh(GLT::render::procedural_mesh_id id) override;
-
     public: // i_debug_draw --------------------------------------------------------------------------------------------
 
         void draw_line(const GLT::render::debug_line_primitive& line) override;
@@ -119,10 +111,9 @@ namespace GLT::renderer::vk_rasterizer {
             f32                                         sort_depth = 0.f;       // view-space distance along the camera forward
             u32                                         instance = 0;           // index into the instance SSBO (firstInstance)
             u32                                         material = 0;           // material slot
-            u32                                         mesh = 0;               // shared_mesh_id, or procedural slot index
+            u32                                         mesh = 0;               // shared_mesh_id (asset or procedural mesh)
             u32                                         submesh = 0;
-            bool                                        procedural = false;
-            u32                                         lod = 0;                // LOD level (forced, else chosen in prepare_translucent_draws)
+            u32                                         lod = 0;               // LOD level (forced, else chosen in prepare_translucent_draws)
             bool                                        forced_lod = false;
         };
 
@@ -583,13 +574,6 @@ namespace GLT::renderer::vk_rasterizer {
             VkDescriptorSet                                                 set = VK_NULL_HANDLE;
         };
         std::unordered_map<const void*, imgui_texture>                      m_imgui_textures{};
-
-        // Procedural meshes -------------------------------------------------------------------------------------------
-
-        std::vector<procedural_mesh_slot>                                   m_procedural_meshes{};
-        std::vector<u32>                                                    m_free_procedural_slots{};
-        std::vector<u32>                                                    m_procedural_draw_slots{};   // per-frame: mesh slot per procedural instance
-        u32                                                                 m_asset_instance_count = 0;  // instance SSBO prefix used by cull
 
     };
 

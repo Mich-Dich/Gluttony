@@ -336,8 +336,6 @@ namespace GLT::renderer::vk_rasterizer {
 
                 // ---- translucent asset draws (CPU list, same LOD as the translucent pass) -------------------------------------
                 for (const translucent_draw& draw : m_translucent_draws) {
-                    if (draw.procedural)
-                        continue;
                     const mesh_slot* slot = m_shared->get_mesh(draw.mesh);
                     if (!slot || !slot->alive || draw.submesh >= slot->submesh_count)
                         continue;
@@ -361,17 +359,6 @@ namespace GLT::renderer::vk_rasterizer {
                         ctx.cmd.drawIndexedIndirectCount(cmd_buf, static_cast<vk::DeviceSize>(range.x) * stride,
                             cnt_buf, static_cast<vk::DeviceSize>(slot) * sizeof(u32), range.y, stride);
                     }
-                }
-
-                // ---- procedural meshes (own buffers; the instance SSBO holds them after the asset instances) -----------------
-                push_kind(VIRTUAL_DEBUG_KIND_PROCEDURAL, 0);
-                for (size_t i = 0; i < m_procedural_draw_slots.size(); ++i) {
-                    const auto& pm = m_procedural_meshes[m_procedural_draw_slots[i]];
-                    if (!pm.alive || !pm.vertex_buffer.buffer || !pm.index_buffer.buffer || pm.index_count == 0)
-                        continue;
-                    ctx.cmd.bindVertexBuffers(0, { pm.vertex_buffer.buffer }, { 0 });
-                    ctx.cmd.bindIndexBuffer(pm.index_buffer.buffer, 0, vk::IndexType::eUint32);
-                    ctx.cmd.drawIndexed(pm.index_count, 1, 0, 0, m_asset_instance_count + static_cast<u32>(i));
                 }
 
                 ctx.end_rendering();

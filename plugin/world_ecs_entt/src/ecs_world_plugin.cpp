@@ -234,7 +234,15 @@ namespace GLT::world::world_ecs_entt {
             [](entt::registry& entity_registry, entt::entity entity_handle, std::span<const std::byte> in_bytes) {
 
                 auto asset_registry = GLT::asset::registry::get_ref();
+
+                // The procedural mesh reference is runtime state and not in the payload: keep it when an existing
+                // component is overwritten (editor undo / redo restores entities in place)
+                u32 procedural_mesh = 0;
+                if (const auto* existing = entity_registry.try_get<component::mesh>(entity_handle))
+                    procedural_mesh = existing->procedural_mesh;
+
                 auto& mesh_component = entity_registry.emplace_or_replace<component::mesh>(entity_handle);
+                mesh_component.procedural_mesh = procedural_mesh;
 
                 size_t offset = 0;
                 mesh_component.mesh = read_asset_handle(asset_registry, in_bytes, offset);

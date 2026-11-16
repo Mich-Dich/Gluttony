@@ -67,7 +67,9 @@ namespace GLT::world::world_ecs_entt {
             bool changed = false;
             bool body_changed = false;
 
-            if (before.mesh.get() != now.mesh.get() && target.mesh.get() != now.mesh.get()) {
+            // A bake (procedural -> asset) belongs to the baked entity only, never spread to the rest of the selection
+            const bool baked = before.procedural_mesh != now.procedural_mesh;
+            if (!baked && before.mesh.get() != now.mesh.get() && target.mesh.get() != now.mesh.get()) {
                 target.mesh = now.mesh;
                 target.material_overrides.clear();              // they belonged to the submeshes of the old mesh
                 changed = body_changed = true;
@@ -81,7 +83,8 @@ namespace GLT::world::world_ecs_entt {
             if (!same_overrides(before, now) && !same_overrides(target, now)) {
 
                 // One slot per submesh: the list only fits a target with the same mesh. "No overrides" fits everything
-                if (now.material_overrides.empty() || target.mesh.get() == now.mesh.get()) {
+                if (now.material_overrides.empty()
+                    || (target.mesh.get() == now.mesh.get() && target.procedural_mesh == now.procedural_mesh)) {
                     target.material_overrides = now.material_overrides;
                     changed = true;
                 }

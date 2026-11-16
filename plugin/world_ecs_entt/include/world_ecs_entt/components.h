@@ -78,6 +78,12 @@ namespace GLT::world::world_ecs_entt::component {
         physics::physics_material                   physics_material{};
         bool                                        use_mesh_material = true;
 
+        // Runtime only (NOT serialized): a render::procedural_mesh_id drawn instead of [mesh]. Owned by its generator, see
+        // i_world::set_procedural_mesh. Baking it into an asset (inspector) fills [mesh] and clears this
+        u32                                         procedural_mesh = 0;
+
+        [[nodiscard]] bool draws_something() const noexcept { return mesh != INVALID_HANDLE || procedural_mesh != 0; }
+
 
         // Empty is always valid. Otherwise every slot must have an entry, with INVALID_HANDLE meaning "use the mesh asset's default 
         // for this slot"

@@ -317,8 +317,9 @@ namespace GLT::renderer::vk_rasterizer {
         // frames, most important lights first)
         constexpr size_t MAX_DIRTY_SPHERES = 4096;
 
-        // Only the asset-backed prefix casts shadows (procedural instances are not in the shadow passes)
-        const size_t count = m_asset_instance_count;
+        // Every packed instance casts shadows (asset and procedural meshes alike). A procedural mesh's new version has a new
+        // mesh index, so it shows up below as a changed caster: only the maps around it are drawn again
+        const size_t count = m_instance_count;
         const gpu_instance_data* current = m_packed_instances.data();
         bool changed = false;
 
@@ -508,18 +509,17 @@ namespace GLT::renderer::vk_rasterizer {
                 },
                 [this, pass](graph::pass_context& ctx) {
 
-                    // Only the asset-backed prefix: procedural instances have no mesh-table entry (mesh_index 0 would alias a real mesh)
-                    if (m_asset_instance_count == 0)
+                    if (m_instance_count == 0)
                         return;
 
                     ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_local_shadow_cull_pipeline);
                     m_plugin.get_dev()->bind_descriptor_buffer({ *pass.cull_descriptors }, ctx.cmd);
                     m_plugin.get_dev()->bind_descriptor_set(m_local_shadow_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
-                    const std::array<u32, 4> push = { m_asset_instance_count, pass.view_first, pass.view_count,
+                    const std::array<u32, 4> push = { m_instance_count, pass.view_first, pass.view_count,
                         static_cast<u32>(pass.tiles->size()) };
                     ctx.cmd.pushConstants(m_local_shadow_cull_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
                         static_cast<u32>(sizeof(push)), push.data());
-                    ctx.cmd.dispatch((m_asset_instance_count + 63) / 64, 1, 1);     // one thread per instance, all views
+                    ctx.cmd.dispatch((m_instance_count + 63) / 64, 1, 1);     // one thread per instance, all views
                 });
         }
 
@@ -551,7 +551,7 @@ namespace GLT::renderer::vk_rasterizer {
                     ctx.cmd.clearAttachments(depth, rects);
                 }
 
-                if (m_instance_count == 0 || m_asset_instance_count == 0) {
+                if (m_instance_count == 0) {
                     ctx.end_rendering();
                     return;
                 }
@@ -573,7 +573,7 @@ namespace GLT::renderer::vk_rasterizer {
 
                     const glm::uvec2 range = m_material_ranges[mat_slot];
                     if (range.y == 0)
-                        continue;                               // no culled draws use this material (e.g. procedural only)
+                        continue;                               // no culled draws use this material (translucent only)
 
                     const material_slot& entry = m_shared->get_material(mat_slot);
                     if (!entry.alive || !entry.depth_pipeline)

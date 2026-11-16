@@ -113,6 +113,15 @@ namespace GLT::world {
         [[nodiscard]] virtual bool is_hidden(entity_id /*id*/) const { return false; }
         virtual void set_hidden(entity_id /*id*/, bool /*hidden*/) {}
 
+        // procedural meshes -------------------------------------------------------------------------------------------
+        // Draws [id] (a render::procedural_mesh_id, see render/procedural_mesh.h) on [entity] instead of a mesh asset. The
+        // generator owns the mesh: it creates / updates / destroys it in GLT::render::procedural_meshes(); the world only
+        // references it (several entities may share one). INVALID (0) removes the reference. The reference is runtime
+        // state: it is NOT saved with the world (a generator recreates its meshes on load), but it survives editor undo.
+        // Worlds without renderable meshes ignore it
+        virtual void set_procedural_mesh(entity_id /*entity*/, u32 /*procedural_mesh_id*/) {}
+        [[nodiscard]] virtual u32 get_procedural_mesh(entity_id /*entity*/) const { return 0; }
+
         // mobility ----------------------------------------------------------------------------------------------------
         // Performance hint for render data caching, see world/mobility.h. Worlds without caching treat everything as movable
         [[nodiscard]] virtual mobility get_mobility(entity_id /*id*/) const { return mobility::movable; }

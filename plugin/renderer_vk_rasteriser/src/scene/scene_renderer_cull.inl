@@ -146,9 +146,9 @@ namespace GLT::renderer::vk_rasterizer {
 
     // frame-time operations -------------------------------------------------------------------------------------------
 
-    // Pack every scene instance into the SSBO. Asset-backed instances come first ([0, m_asset_instance_count)); procedural
-    // instances append after that. Cull only dispatches over the asset-backed prefix, so procedural draws are handled by a
-    // manual loop in add_depth_prepass_pass / add_scene_pass
+    // Pack every scene instance into the SSBO. Asset meshes and procedural meshes alike: both are slots of the shared
+    // resource manager (a procedural instance resolves through m_shared->procedural_mesh()), so everything below, GPU
+    // culling, LODs, virtual geometry, translucency and shadows, treats them the same
     //
     // Cost is O(instances x submeshes) with O(1) work per entry: materials are resolved once per unique override handle
     // (one ref per scene, not per submesh), the mesh's own default materials are used directly (the mesh holds those refs)
@@ -168,11 +168,8 @@ namespace GLT::renderer::vk_rasterizer {
         m_material_table.clear();
         m_scene_materials.clear();
         m_translucent_candidates.clear();
-        m_procedural_draw_slots.clear();
-        m_asset_instance_count = 0;
 
-        // Dedup of scene materials without a set: a material is "seen" when its counter entry is non-zero, or it was
-        // registered by a procedural draw (which does not count). Use a small marker vector for the latter
+        // Dedup of scene materials (translucent ones have no counter entry, so the counters alone cannot tell)
         std::vector<bool> seen(MAX_MATERIALS, false);
         auto note_material = [&](u32 slot) {
             if (slot >= MAX_MATERIALS)
@@ -199,20 +196,22 @@ namespace GLT::renderer::vk_rasterizer {
 
         m_packed_instances.reserve(m_scene_instances.size());
 
-        // ---- Pass 1: asset-backed instances -------------------------------------------------------
         for (const auto& scene_instance : m_scene_instances) {
 
-            if (scene_instance.procedural_mesh != 0)
-                continue;
-            if (scene_instance.mesh == INVALID_HANDLE)
-                continue;
             if ((scene_instance.flags & GLT::asset::mesh::INSTANCE_FLAG_HIDDEN) != 0u)
                 continue;                                   // hidden in the editor: only its outline is drawn (debug draw)
 
-            auto rit = m_resident_meshes.find(scene_instance.mesh);
-            if (rit == m_resident_meshes.end())
-                continue;
-            const mesh_slot* slot = m_shared->get_mesh(rit->second);
+            // The mesh slot: a procedural mesh's newest uploaded version, or the asset's resident slot
+            shared_mesh_id mesh_id = INVALID_SHARED_MESH;
+            if (scene_instance.procedural_mesh != GLT::render::INVALID_PROCEDURAL_MESH) {
+                mesh_id = m_shared->procedural_mesh(scene_instance.procedural_mesh);
+            } else if (scene_instance.mesh != INVALID_HANDLE) {
+                if (auto rit = m_resident_meshes.find(scene_instance.mesh); rit != m_resident_meshes.end())
+                    mesh_id = rit->second;
+            }
+            if (mesh_id == INVALID_SHARED_MESH)
+                continue;                                   // not resident (yet)
+            const mesh_slot* slot = m_shared->get_mesh(mesh_id);
             if (!slot || !slot->alive)
                 continue;
 
@@ -224,7 +223,7 @@ namespace GLT::renderer::vk_rasterizer {
             gpu_instance_data inst{};
             inst.model = scene_instance.transform;
             inst.normal_matrix = glm::mat4(glm::transpose(glm::inverse(ul)));
-            inst.mesh_index = rit->second;
+            inst.mesh_index = mesh_id;
             inst.material_index = static_cast<u32>(m_material_table.size());     // first entry of this instance's material list
             const u32 force_bits = scene_instance.flags & GLT::asset::mesh::INSTANCE_FLAG_FORCE_LOD_MASK;   // forced LOD (mesh editor preview)
 
@@ -260,7 +259,7 @@ namespace GLT::renderer::vk_rasterizer {
                     const material_slot& material_entry = m_shared->get_material(material);
                     if (material_entry.is_translucent())
                         m_translucent_candidates.push_back({ 0.f, static_cast<u32>(m_packed_instances.size() - 1), material,
-                            rit->second, sm, false, forced_lod, force_bits != 0u });
+                            mesh_id, sm, forced_lod, force_bits != 0u });
                     else {
                         m_material_draw_counts[material]++;     // shadow views (and the main view without virtual geometry)
 
@@ -273,38 +272,6 @@ namespace GLT::renderer::vk_rasterizer {
                     }
                 }
             }
-        }
-
-        m_asset_instance_count = static_cast<u32>(m_packed_instances.size());
-
-        // ---- Pass 2: procedural instances ---------------------------------------------------------
-        for (const auto& scene_instance : m_scene_instances) {
-
-            if (scene_instance.procedural_mesh == 0)
-                continue;
-            const u32 id = scene_instance.procedural_mesh;
-            if (id > m_procedural_meshes.size())
-                continue;
-
-            const auto& pm = m_procedural_meshes[id - 1];
-            if (!pm.alive || pm.vertex_count == 0 || pm.index_count == 0)
-                continue;
-
-            VALIDATE(m_packed_instances.size() < MAX_INSTANCES, break, "", "Instance count exceeds MAX_INSTANCES (procedural), truncating", ())
-
-            const glm::mat3 ul(scene_instance.transform);
-            gpu_instance_data inst{};
-            inst.model = scene_instance.transform;
-            inst.normal_matrix = glm::mat4(glm::transpose(glm::inverse(ul)));
-            inst.mesh_index = 0;
-            inst.material_index = 0;                    // unused: procedural draws are issued directly, not via cull
-            m_packed_instances.push_back(inst);
-            m_procedural_draw_slots.push_back(id - 1);
-
-            note_material(pm.material_slot);
-            if (pm.material_slot < MAX_MATERIALS && m_shared->get_material(pm.material_slot).is_translucent())
-                m_translucent_candidates.push_back({ 0.f, static_cast<u32>(m_packed_instances.size() - 1), pm.material_slot,
-                    id - 1, 0u, true, 0u, false });
         }
 
         // ---- Material refs: drop last frame's set now that this frame's set is acquired ------------
@@ -520,15 +487,14 @@ namespace GLT::renderer::vk_rasterizer {
             },
             [this](graph::pass_context& ctx) {
 
-                if (m_asset_instance_count == 0)
+                if (m_instance_count == 0)
                     return;
 
                 ctx.cmd.bindPipeline(vk::PipelineBindPoint::eCompute, m_cull_pipeline);
                 m_plugin.get_dev()->bind_descriptor_buffer({ m_cull_desc_buffers[m_current_frame] }, ctx.cmd);
                 m_plugin.get_dev()->bind_descriptor_set(m_cull_pipeline_layout, 0, 0, 0, ctx.cmd, vk::PipelineBindPoint::eCompute);
 
-                // Only the asset-backed prefix
-                const u32 dispatch_count = (m_asset_instance_count + 63) / 64;
+                const u32 dispatch_count = (m_instance_count + 63) / 64;
                 ctx.cmd.dispatch(dispatch_count, 1, 1);
 
                 // Make the statistics visible to the host once the frame's fence signals (the graph has no host usage)

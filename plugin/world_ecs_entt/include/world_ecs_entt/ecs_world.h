@@ -61,6 +61,8 @@ namespace GLT::world::world_ecs_entt {
 
         [[nodiscard]] bool is_visible(entity_id id) const override;
         void set_visible(entity_id id, bool visible) override;
+        void set_procedural_mesh(entity_id id, u32 procedural_mesh_id) override;
+        [[nodiscard]] u32 get_procedural_mesh(entity_id id) const override;
         [[nodiscard]] bool is_hidden(entity_id id) const override;
         void set_hidden(entity_id id, bool hidden) override;
 

@@ -23,7 +23,7 @@ struct MeshData {
     uint vertex_offset;
     uint index_offset;
     uint lod_count;     // submesh table holds lod_count x submesh_count entries, [lod][submesh]
-    uint _pad1;
+    uint flags;         // bit 0: procedural mesh (MESH_FLAG_PROCEDURAL, debug colouring only)
     float lod_screen[8];    // [0] cull size (0 = never), [n] screen size below which LOD n is used
 };
 
@@ -61,6 +61,7 @@ layout(set = 0, binding = 5) uniform CameraUBO {
 const uint INSTANCE_INDEX_MASK = 0xFFFFFu;
 const uint INSTANCE_LOD_SHIFT  = 20u;           // 4 bits: LOD level
 const uint INSTANCE_HAS_LODS   = 1u << 24u;     // the mesh has generated levels (debug colouring)
+const uint INSTANCE_PROCEDURAL = 1u << 25u;     // the mesh comes from the procedural mesh store (debug colouring)
 // gpu_instance_data::flags bit 4 (scene/type.h INSTANCE_FLAG_VIRTUAL): in the main view this instance is drawn cluster by
 // cluster by virtual_geometry_cull.comp.glsl. Shadow views (camera.flags.y == 0) still draw its discrete levels here
 const uint INSTANCE_FLAG_VIRTUAL = 1u << 4u;
@@ -145,7 +146,8 @@ void main() {
             if (screen < mesh.lod_screen[level])
                 lod = level;
     }
-    const uint instance_info = instance_index | (lod << INSTANCE_LOD_SHIFT) | (lod_count > 1u ? INSTANCE_HAS_LODS : 0u);
+    const uint instance_info = instance_index | (lod << INSTANCE_LOD_SHIFT) | (lod_count > 1u ? INSTANCE_HAS_LODS : 0u)
+                             | ((mesh.flags & 1u) != 0u ? INSTANCE_PROCEDURAL : 0u);
     const uint first_submesh = mesh.first_submesh + lod * mesh.submesh_count;
 
     uint emitted_draws = 0u;

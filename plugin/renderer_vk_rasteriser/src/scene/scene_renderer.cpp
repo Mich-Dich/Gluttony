@@ -405,6 +405,22 @@ namespace GLT::renderer::vk_rasterizer {
             signal_si.stageMask = vk::PipelineStageFlagBits2::eAllCommands;
         }
 
+        // Mesh uploads (shared by every scene renderer) are submitted first, and this frame waits until their copies are
+        // done before anything reads the mesh buffers. Must come before next_retire_value(): timeline values have to be
+        // signalled in submission order. Waiting for a value the GPU already reached costs nothing
+        const u64 upload_value = m_shared->flush_uploads();
+        vk::SemaphoreSubmitInfo upload_wait_si{};
+        upload_wait_si.semaphore = m_shared->retire_timeline();
+        upload_wait_si.value = upload_value;
+        upload_wait_si.stageMask = vk::PipelineStageFlagBits2::eAllCommands;
+
+        std::array<vk::SemaphoreSubmitInfo, 2> wait_infos{};
+        u32 wait_count = 0;
+        if (!m_offscreen)
+            wait_infos[wait_count++] = wait_si;
+        if (upload_value > 0)
+            wait_infos[wait_count++] = upload_wait_si;
+
         // Every submission signals the shared retire timeline so deferred destruction knows when this frame is done
         vk::SemaphoreSubmitInfo retire_si{};
         retire_si.semaphore = m_shared->retire_timeline();
@@ -420,10 +436,8 @@ namespace GLT::renderer::vk_rasterizer {
         vk::SubmitInfo2 si{};
         si.commandBufferInfoCount = 1;
         si.pCommandBufferInfos = &cbsi;
-        if (!m_offscreen) {
-            si.waitSemaphoreInfoCount = 1;
-            si.pWaitSemaphoreInfos = &wait_si;
-        }
+        si.waitSemaphoreInfoCount = wait_count;
+        si.pWaitSemaphoreInfos = wait_count > 0 ? wait_infos.data() : nullptr;
         si.signalSemaphoreInfoCount = signal_count;
         si.pSignalSemaphoreInfos = signal_infos.data();
 
@@ -973,7 +987,6 @@ namespace GLT::renderer::vk_rasterizer {
 }
 
 #include "scene/scene_renderer_util.inl"
-#include "scene/scene_renderer_procedural.inl"
 #include "scene/scene_renderer_scene.inl"
 #include "scene/scene_renderer_material_bind.inl"
 #include "scene/scene_renderer_clusters.inl"

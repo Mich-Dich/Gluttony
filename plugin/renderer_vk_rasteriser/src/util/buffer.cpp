@@ -66,7 +66,7 @@ namespace GLT::renderer::vk_rasterizer::util {
 
 
     allocated_buffer device::create_buffer(vk::DeviceSize size, vk::BufferUsageFlags buffer_usage, VmaAllocationCreateFlags flags,
-        u32 alignment, VmaPool pool) {
+        u32 alignment, VmaPool pool, VmaMemoryUsage memory_usage) {
 
         allocated_buffer out_buffer = {};
 
@@ -76,7 +76,7 @@ namespace GLT::renderer::vk_rasterizer::util {
         }
 
         VmaAllocationCreateInfo alloc_inf = {};
-        alloc_inf.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        alloc_inf.usage = memory_usage;
         alloc_inf.flags = flags;
         alloc_inf.pool = pool == nullptr ? m_current_pool : pool;
 

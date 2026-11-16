@@ -26,13 +26,39 @@ namespace GLT::renderer::vk_rasterizer {
     // Virtual geometry: records of the cluster pool (one per geometry cluster of every resident mesh that has them)
     static constexpr u32                                            CLUSTER_HEADROOM_MIN = 16 * 1024;
 
+    // Submesh table entries (gpu_submesh_data, one per submesh and LOD level of every resident mesh)
+    static constexpr u32                                            SUBMESH_HEADROOM_MIN = 16 * 1024;
+
     // mesh capacity ---------------------------------------------------------------------------------------------------
 
-    static constexpr u32                                            MAX_MESHES = 4096;
+    // The mesh table (gpu_mesh_data) and the virtual geometry table (gpu_mesh_cluster_data) start with this many entries
+    // and double when a slot index does not fit. Both are indexed by shared_mesh_id
+    static constexpr u32                                            INITIAL_MESH_TABLE_CAPACITY = 4096;
+
+    // Sanity limit only, nothing is sized by it (same bound as the instance index in firstInstance)
+    static constexpr u32                                            MESH_SLOT_LIMIT = 1u << 20;
 
     static constexpr u32                                            MAX_SUBMESHES_PER_MESH = 32;
 
-    static constexpr u32                                            MAX_SUBMESHES = MAX_MESHES * MAX_SUBMESHES_PER_MESH;
+    // mesh uploads (shared_resource_manager_upload.cpp) ---------------------------------------------------------------
+
+    // Mesh data goes to device-local (VRAM) buffers through host-visible staging blocks of this size. An upload larger
+    // than half a block gets a staging buffer of its own
+    static constexpr u64                                            STAGING_BLOCK_SIZE = 16ull * 1024 * 1024;
+
+    // Free staging blocks kept around for the next uploads; more are released once the GPU is done with them
+    static constexpr u32                                            STAGING_MAX_CACHED_BLOCKS = 4;
+
+    // Procedural mesh versions uploaded per frame at most (bytes of geometry). A burst (world load, many regenerated
+    // chunks) is spread over several frames; meshes waiting for their turn keep drawing their previous version. At least
+    // one mesh is uploaded per frame, however large
+    static constexpr u64                                            PROCEDURAL_UPLOAD_BUDGET = 32ull * 1024 * 1024;
+
+    // A version whose upload fails (pools cannot grow) is retried on later frames this many times, then dropped
+    static constexpr u32                                            PROCEDURAL_UPLOAD_ATTEMPTS = 3;
+
+    // gpu_mesh_data::flags
+    static constexpr u32                                            MESH_FLAG_PROCEDURAL = 1u << 0;    // debug colouring (INSTANCE_PROCEDURAL)
 
     // material table --------------------------------------------------------------------------------------------------
 
@@ -142,6 +168,10 @@ namespace GLT::renderer::vk_rasterizer {
         glm::vec3                                                   local_min{0.0f};
         glm::vec3                                                   local_max{0.0f};
         u32                                                         ref_count = 0;
+        // Uploaded from the procedural mesh store (a version of render::procedural_mesh_id [procedural_id]), not from an
+        // asset. Owned by the shared manager, never ref-counted by scene renderers
+        bool                                                        procedural = false;
+        u32                                                         procedural_id = 0;
     };
 
 
@@ -229,7 +259,7 @@ namespace GLT::renderer::vk_rasterizer {
         u32                                                         vertex_offset = 0;
         u32                                                         index_offset = 0;
         u32                                                         lod_count = 1;          // submesh table holds [lod][submesh_count]
-        u32                                                         _pad1 = 0;
+        u32                                                         flags = 0;              // MESH_FLAG_* bits
         // [0] = cull screen size (0 = never), [1..7] = screen size below which LOD n takes over (asset lod_settings)
         f32                                                         lod_screen[8]{};
     };

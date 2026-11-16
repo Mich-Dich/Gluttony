@@ -9,6 +9,7 @@
 #include "render/i_debug_draw.h"
 #include "render/render_mode.h"
 #include "render/type.h"
+#include "render/procedural_mesh.h"
 
 
 
@@ -21,9 +22,6 @@ namespace GLT::platform {
 namespace GLT::render {
 
     // CONSTANTS =======================================================================================================
-
-    using procedural_mesh_id = u32;
-    inline constexpr procedural_mesh_id                 INVALID_PROCEDURAL_MESH = 0;
 
     // MACROS ==========================================================================================================
 
@@ -49,7 +47,6 @@ namespace GLT::render {
         scene_target                                    target;
         std::optional<glm::vec4>                        clear_color;
         u32                                             frames_in_flight = 3;
-        u64                                             procedural_mesh_capacity_bytes = 8ull * 1024 * 1024;
 
         // When false, this surface renderer will NOT touch ImGui at all — no backend init, no begin/end frame, no imgui pass
         // Required for secondary windows: the ImGui GLFW backend can only be bound to one native window per context, so a
@@ -82,32 +79,6 @@ namespace GLT::render {
         std::string                                     message{};
     };
 
-
-    // Update contract per class:
-    //   immutable  — update_procedural_mesh may be called exactly once. A second call returns already_finalized.
-    //   occasional — any number of updates. Buffers may be reallocated between calls.
-    //   streaming  — not implemented in v1; update_procedural_mesh returns not_supported.
-    enum class mesh_update_class : u8 {
-
-        immutable = 0,
-        occasional,
-        streaming,
-    };
-
-
-    struct procedural_mesh_error {
-
-        enum class code : u32 {
-            none = 0,
-            not_found,
-            not_supported,
-            already_finalized,
-            invalid_input,
-            out_of_memory,
-            backend,
-        }                                               kind = code::none;
-        std::string                                     message{};
-    };
 
     // @brief What one finished frame of a scene renderer cost on the GPU (i_scene_renderer::last_frame_stats())
     //
@@ -194,25 +165,8 @@ namespace GLT::render {
 
         [[nodiscard]] virtual bool is_active() const = 0;
 
-        // procedural meshes -----------------------------------------------------------
-
-        // Allocates a scene-local procedural mesh slot. Returns 0 on failure (slot table full).
-        [[nodiscard]] virtual procedural_mesh_id create_procedural_mesh(mesh_update_class cls) = 0;
-
-
-        // Uploads vertices + indices + binds a material. Preconditions:
-        //   - `vertices.size() > 0 && indices.size() > 0`
-        //   - `vertices` layout == GLT::asset::mesh::vertex
-        //   - every index is in [0, vertices.size())
-        // A second call on an immutable slot returns already_finalized. Passing INVALID_HANDLE for material falls back to the
-        // default material
-        virtual std::expected<void, procedural_mesh_error> update_procedural_mesh(procedural_mesh_id id,
-            std::span<const GLT::asset::mesh::vertex> vertices, std::span<const u32> indices, 
-            GLT::asset::handle material = INVALID_HANDLE) = 0;
-
-
-        // Releases GPU buffers and material. Implicitly called on scene renderer destruction.
-        virtual void destroy_procedural_mesh(procedural_mesh_id id) = 0;
+        // Procedural meshes are not created here: generators use GLT::render::procedural_meshes() (render/procedural_mesh.h)
+        // and reference them from mesh::instance::procedural_mesh. Every renderer plugin mirrors that store to the GPU
 
         // statistics ------------------------------------------------------------------
 
