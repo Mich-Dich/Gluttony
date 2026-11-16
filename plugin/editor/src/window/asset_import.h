@@ -56,6 +56,12 @@ namespace GLT::editor {
             i32                                                             int_value = 0;
             f32                                                             float_value = 0.0f;
             std::string                                                     string_value{};     // enumeration / path
+
+            // The schema's default, parsed once: drives the reset arrow of the row
+            bool                                                            default_bool = false;
+            i32                                                             default_int = 0;
+            f32                                                             default_float = 0.0f;
+            std::string                                                     default_string{};
         };
 
 
@@ -83,10 +89,19 @@ namespace GLT::editor {
 
         void rebuild_options_for(import_item& item);
 
+        // Header strip: icon, title, file count, "importing" pill
+        void draw_header();
+
+        // Card with the target folder and the overwrite switch
+        void draw_destination_card();
+
+        // One collapsible card per source file: name, type, output path, conflict hint, engine + factory options
         void draw_item_section(import_item& item, int index);
 
+        // One property row for a factory option (control chosen by the option's kind, reset arrow to the schema default)
         void draw_option_field(option_field& field, int index);
 
+        // Status text on the left, Cancel + Import All on the right
         void draw_footer();
 
         // only_index < 0  -> import every eligible item ("Import All").

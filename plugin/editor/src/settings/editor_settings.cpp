@@ -239,6 +239,10 @@ namespace GLT::editor {
                 .entry("select_after_undo", history.select_after_undo);
         });
 
+        file.sub_section("content_browser", [this](GLT::serializer::yaml& section) {
+            section.entry("hidden_types", content_browser.hidden_types);
+        });
+
         file.sub_section("notifications", [this](GLT::serializer::yaml& section) {
             section.entry("enabled", notifications.enabled)
                 .entry("max_visible", notifications.max_visible)

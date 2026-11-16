@@ -15,6 +15,7 @@
 #include "util/ui/panel_collection.h"
 #include "resource_manager/icon_manager.h"
 #include "util/io/file_dialog.h"
+#include "settings/editor_settings.h"
 
 
 
@@ -72,6 +73,12 @@ namespace GLT::editor {
     // Goes through the registry first so plugin-registered types resolve too;
     // falls back to the compile-time core-type table otherwise.
     GLT::asset::type resolve_entry_type(std::string_view ext);
+
+    // "glt_region, glt_world" -> { "glt_region", "glt_world" } (trimmed, empty parts dropped)
+    std::vector<std::string> split_type_list(std::string_view list);
+
+    // Key of a file in the type options: the extension without the dot for assets ("glt_region"), "other" for the rest
+    std::string type_filter_key(std::string_view extension);
 
     // Accent colour for one asset type, ready to hand to ImDrawList.
     ImU32 type_to_color(GLT::asset::type t);
@@ -167,6 +174,37 @@ namespace GLT::editor {
         }
 
         return GLT::asset::extension_to_type(ext);
+    }
+
+
+    std::vector<std::string> split_type_list(const std::string_view list) {
+
+        std::vector<std::string> out;
+        size_t start = 0;
+        while (start <= list.size()) {
+            size_t end = list.find(',', start);
+            if (end == std::string_view::npos)
+                end = list.size();
+            std::string_view part = list.substr(start, end - start);
+            while (!part.empty() && std::isspace(static_cast<unsigned char>(part.front())))
+                part.remove_prefix(1);
+            while (!part.empty() && std::isspace(static_cast<unsigned char>(part.back())))
+                part.remove_suffix(1);
+            if (!part.empty())
+                out.emplace_back(part);
+            start = end + 1;
+        }
+        return out;
+    }
+
+
+    std::string type_filter_key(std::string_view extension) {
+
+        if (!extension.empty() && extension.front() == '.')
+            extension.remove_prefix(1);
+        if (resolve_entry_type(extension) == GLT::asset::core_types::invalid)
+            return "other";
+        return std::string(extension);
     }
 
 
@@ -469,7 +507,11 @@ namespace GLT::editor {
         // Process any thumbnails that finished loading since the last frame.
         icon_manager::flush_thumbnail_uploads();
 
-        // Any state change marks the entry cache as stale
+        // Any state change marks the entry cache as stale (also a change of the type options, in any browser)
+        if (m_type_filter_generation != s_type_filter_generation) {
+            m_type_filter_generation = s_type_filter_generation;
+            m_entries_dirty = true;
+        }
         if (m_entries_dirty)
             refresh_directory_entries();
 
@@ -876,6 +918,19 @@ namespace GLT::editor {
         else
             ImGui::TextDisabled("%u item%s  \u00b7  %zu selected", shown_items, shown_items == 1 ? "" : "s", m_selected_paths.size());
 
+        if (m_hidden_by_type > 0) {
+            ImGui::SameLine(0.f, 4.f);
+            ImGui::TextDisabled("\u00b7  %u hidden", m_hidden_by_type);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("Files of asset types you chose not to show.\nRight-click the empty area > Options to change it");
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+                ImGui::OpenPopup("##cb_type_options");
+            if (ImGui::BeginPopup("##cb_type_options")) {
+                draw_options_menu();
+                ImGui::EndPopup();
+            }
+        }
+
         constexpr f32 SLIDER_W = 110.f;
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ImGui::GetContentRegionAvail().x - SLIDER_W));
@@ -1204,9 +1259,93 @@ namespace GLT::editor {
 
         ImGui::Separator();
 
+        if (ImGui::BeginMenu("Options")) {
+            draw_options_menu();
+            ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
+
         if (ImGui::MenuItem("Open in Explorer")) {
             // TODO: platform-specific (ShellExecuteW / xdg-open / open).
         }
+    }
+
+
+    void content_browser_window::draw_options_menu() {
+
+        struct type_option {
+            GLT::asset::type                    type;
+            const char*                         label;
+            const char*                         tooltip;
+        };
+        static constexpr type_option TYPES[] = {
+            { GLT::asset::core_types::world,                "Worlds",               nullptr },
+            { GLT::asset::core_types::region,               "Regions",              "Parts of a world, written by the engine. They cannot be edited directly" },
+            { GLT::asset::core_types::static_mesh,          "Static meshes",        nullptr },
+            { GLT::asset::core_types::skeletal_mesh,        "Skeletal meshes",      nullptr },
+            { GLT::asset::core_types::mesh_collection,      "Mesh collections",     nullptr },
+            { GLT::asset::core_types::material,             "Materials",            nullptr },
+            { GLT::asset::core_types::material_instance,    "Material instances",   nullptr },
+            { GLT::asset::core_types::texture2d,            "Textures",             nullptr },
+            { GLT::asset::core_types::texture3d,            "3D textures",          nullptr },
+            { GLT::asset::core_types::cube_map,             "Cube maps",            nullptr },
+            { GLT::asset::core_types::audio,                "Audio",                nullptr },
+        };
+
+        auto& settings = editor_settings::get().content_browser;
+        std::vector<std::string> hidden = split_type_list(settings.hidden_types);
+        bool changed = false;
+
+        auto toggle = [&](const std::string& key, const char* label, const char* tooltip, const ImU32 dot) {
+            const bool shown = !std::ranges::contains(hidden, key);
+            const ImVec2 row = ImGui::GetCursorScreenPos();
+            const std::string text = std::string("     ") + label;     // room for the colored dot
+            if (ImGui::MenuItem(text.c_str(), nullptr, shown)) {
+                if (shown)
+                    hidden.push_back(key);
+                else
+                    std::erase(hidden, key);
+                changed = true;
+            }
+            if (dot != 0)
+                ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(row.x + 8.f, row.y + ImGui::GetTextLineHeight() * 0.5f + 1.f), 3.5f, dot);
+            if (tooltip && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", tooltip);
+        };
+
+        ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);    // tick several without the menu closing
+
+        ImGui::TextDisabled("Show asset types");
+        for (const auto& option : TYPES)
+            toggle(std::string(GLT::asset::type_to_extension(option.type)), option.label, option.tooltip, type_to_color(option.type));
+        toggle("other", "Other files", "Files that are not engine assets (source files, notes, ...)", ImGui::GetColorU32(ImGuiCol_TextDisabled));
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Show all", nullptr, false, !hidden.empty())) {
+            hidden.clear();
+            changed = true;
+        }
+        const std::string& default_hidden = editor_settings::defaults().content_browser.hidden_types;
+        if (ImGui::MenuItem("Reset to default", nullptr, false, settings.hidden_types != default_hidden)) {
+            hidden = split_type_list(default_hidden);
+            changed = true;
+        }
+
+        ImGui::PopItemFlag();
+
+        if (!changed)
+            return;
+
+        std::string joined;
+        for (const auto& key : hidden) {
+            if (!joined.empty())
+                joined += ",";
+            joined += key;
+        }
+        settings.hidden_types = std::move(joined);
+        editor_settings::get().serialize(GLT::serializer::option::save);
+        ++s_type_filter_generation;                                  // every content browser lists its folder again
     }
 
 
@@ -1447,8 +1586,11 @@ namespace GLT::editor {
 
         m_entries.clear();
         m_entries_dirty = false;
+        m_hidden_by_type = 0;
         if (m_current_dir.empty())
             return;
+
+        const std::vector<std::string> hidden_types = split_type_list(editor_settings::get().content_browser.hidden_types);
 
         std::error_code error{};
         auto iterator = GLT::vfs::directory_iterator(m_current_dir, error);
@@ -1468,6 +1610,11 @@ namespace GLT::editor {
                 std::string ext = p.extension().string();
                 std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                 loc_dir_entry.extension = std::move(ext);
+
+                if (std::ranges::contains(hidden_types, type_filter_key(loc_dir_entry.extension))) {
+                    ++m_hidden_by_type;
+                    continue;
+                }
             }
             m_entries.push_back(std::move(loc_dir_entry));
         }

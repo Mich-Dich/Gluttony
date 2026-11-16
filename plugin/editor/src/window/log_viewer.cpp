@@ -13,6 +13,8 @@
 #include <util/io/logger.h>
 
 #include "util/ui/panel_collection.h"
+#include "config/imgui_config.h"
+#include "window/base/window_chrome.h"
 
 
 
@@ -40,6 +42,9 @@ namespace GLT::editor {
         IM_COL32(230,  80,  80, 255),   // error: red
         IM_COL32(255,  50,  50, 255),   // fatal: bright red
     };
+
+    // Minimum level choices (index 0 = everything, 1..6 = trace..fatal)
+    constexpr const char* MIN_LEVEL_LABELS[] = { "All levels", "Trace", "Debug", "Info", "Warning", "Error", "Fatal" };
 
     // MACROS ==========================================================================================================
 
@@ -84,7 +89,10 @@ namespace GLT::editor {
         ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f, 240.0f),
             ImVec2(std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max()));
 
-        if (ImGui::Begin(m_window_id.c_str(), &m_show_window)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+        const bool open = ImGui::Begin(m_window_id.c_str(), &m_show_window);
+        ImGui::PopStyleVar();
+        if (open) {
 
             // Ctrl+F jumps focus to the filter box; Ctrl+L clears the view.
             if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
@@ -97,11 +105,7 @@ namespace GLT::editor {
             }
 
             draw_toolbar();
-            ImGui::Separator();
-            draw_filter_bar();
-            ImGui::Separator();
             draw_content();
-            ImGui::Separator();
             draw_status_bar();
         }
 
@@ -340,77 +344,60 @@ namespace GLT::editor {
 
     void log_viewer_window::draw_toolbar() {
 
-        // ---- file selector -------------------------------------------------------------------------------------
-        ImGui::TextUnformatted("File");
-        ImGui::SameLine();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const f32 frame_h = ImGui::GetFrameHeight();
+        const f32 bar_h = frame_h + 12.f;
+        const ImVec2 bar_min = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        ImGui::GetWindowDrawList()->AddRectFilled(bar_min, ImVec2(bar_min.x + width, bar_min.y + bar_h), ImGui::GetColorU32(ImGuiCol_TitleBg));
 
-        std::vector<std::string> names;
-        names.reserve(m_available_log_files.size());
-        for (const auto& p : m_available_log_files)
-            names.push_back(p.filename().string());
+        ImGui::SetCursorScreenPos(ImVec2(bar_min.x + 8.f, bar_min.y + (bar_h - frame_h) * 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f);
 
-        std::vector<const char*> name_ptrs;
-        name_ptrs.reserve(names.size());
-        for (const auto& n : names)
-            name_ptrs.push_back(n.c_str());
-
-        ImGui::SetNextItemWidth(240.0f);
-        int selected = m_selected_log_file;
-        if (!name_ptrs.empty() && ImGui::Combo("##log_file", &selected, name_ptrs.data(),
-                static_cast<int>(name_ptrs.size()))) {
-
-            select_log_file(selected);
+        // ---- log file ----------------------------------------------------------------------------------------
+        const std::string current_name = m_log_file_path.empty() ? std::string("No log file") : m_log_file_path.filename().string();
+        ImGui::SetNextItemWidth(std::clamp(width * 0.22f, 120.f, 220.f));
+        if (ImGui::BeginCombo("##log_file", current_name.c_str())) {
+            for (int i = 0; i < static_cast<int>(m_available_log_files.size()); ++i) {
+                const std::string name = m_available_log_files[i].filename().string();
+                if (ImGui::Selectable(name.c_str(), i == m_selected_log_file))
+                    select_log_file(i);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                    ImGui::SetTooltip("%s", m_available_log_files[i].generic_string().c_str());
+            }
+            ImGui::EndCombo();
         }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !m_log_file_path.empty())
+            ImGui::SetTooltip("%s", m_log_file_path.generic_string().c_str());
 
-        ImGui::SameLine();
-        if (UI::gray_button("Refresh"))
-            refresh_log_file_list();
+        // ---- minimum level (colored dot of the level) --------------------------------------------------------
+        ImGui::SameLine(0.f, 6.f);
+        const char* level_label = MIN_LEVEL_LABELS[std::clamp(m_min_severity, 0, 6)];
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize("All levels").x + frame_h + style.FramePadding.x * 2.f + 14.f);
+        if (ImGui::BeginCombo("##log_min_sev", level_label)) {
+            for (int i = 0; i < IM_ARRAYSIZE(MIN_LEVEL_LABELS); ++i) {
+                ImGui::PushID(i);
+                const ImVec2 row = ImGui::GetCursorScreenPos();
+                if (ImGui::Selectable("##level", i == m_min_severity)) {
+                    m_min_severity = i;
+                    m_filter_dirty = true;
+                }
+                const f32 dot_y = row.y + ImGui::GetTextLineHeight() * 0.5f;
+                if (i > 0)
+                    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(row.x + 5.f, dot_y), 3.5f, severity_colors[i - 1]);
+                ImGui::SameLine(14.f);
+                ImGui::TextUnformatted(i == 0 ? MIN_LEVEL_LABELS[0] : (std::string(MIN_LEVEL_LABELS[i]) + (i < 6 ? " and up" : "")).c_str());
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Show lines of this level and above");
 
-        ImGui::SameLine();
-        if (UI::gray_button("Clear view"))
-            clear_view();
-
-        ImGui::SameLine();
-        if (UI::gray_button("Copy path"))
-            ImGui::SetClipboardText(m_log_file_path.generic_string().c_str());
-
-        // ---- right-aligned toggles ------------------------------------------------------------------------------
-        ImGui::SameLine();
-
-        // Leave some space for the status text at the right edge.
-        const f32 controls_w = 220.0f;
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 12.0f,
-            ImGui::GetWindowContentRegionMax().x - controls_w));
-
-        ImGui::Checkbox("Auto-scroll", &m_auto_scroll);
-
-        ImGui::SameLine();
-        ImGui::Checkbox("Line #", &m_show_line_numbers);
-    }
-
-
-    void log_viewer_window::draw_filter_bar() {
-
-        // ---- minimum severity ----------------------------------------------------------------------------------
-        ImGui::TextUnformatted("Min level");
-        ImGui::SameLine();
-
-        static const char* min_level_labels[] = {
-            "All", "Trace", "Debug", "Info", "Warn", "Error", "Fatal"
-        };
-
-        ImGui::SetNextItemWidth(110.0f);
-        if (ImGui::Combo("##log_min_sev", &m_min_severity, min_level_labels,
-                IM_ARRAYSIZE(min_level_labels)))
-            m_filter_dirty = true;
-
-        // ---- substring filter ----------------------------------------------------------------------------------
-        ImGui::SameLine();
-        ImGui::TextUnformatted("Filter");
-        ImGui::SameLine();
-
+        // ---- filter field ------------------------------------------------------------------------------------
+        const f32 right_w = ImGui::CalcTextSize("Follow").x + frame_h * 1.8f + 6.f + frame_h + 16.f;   // switch + label + menu
+        ImGui::SameLine(0.f, 6.f);
         if (m_request_focus_search) {
-
             ImGui::SetKeyboardFocusHere();
             m_request_focus_search = false;
         }
@@ -419,23 +406,47 @@ namespace GLT::editor {
         const size_t n = std::min(m_filter_text.size(), sizeof(buffer) - 1);
         std::memcpy(buffer, m_filter_text.data(), n);
         buffer[n] = '\0';
-
-        ImGui::SetNextItemWidth(240.0f);
-        if (ImGui::InputTextWithHint("##log_filter", "case-insensitive substring",
-                buffer, sizeof(buffer))) {
-
+        const f32 search_w = std::max(80.f, bar_min.x + width - right_w - 8.f - ImGui::GetCursorScreenPos().x);
+        if (UI::search_field("##log_filter", buffer, sizeof(buffer), "Filter   (Ctrl+F)", search_w)) {
             m_filter_text = buffer;
             m_filter_dirty = true;
         }
 
-        ImGui::SameLine();
-        ImGui::BeginDisabled(m_filter_text.empty());
-        if (ImGui::SmallButton("X##log_filter_clear")) {
+        // ---- right: follow switch + menu ---------------------------------------------------------------------
+        ImGui::SameLine(0.f, 10.f);
+        ImGui::SetCursorScreenPos(ImVec2(bar_min.x + width - right_w, ImGui::GetCursorScreenPos().y));
+        UI::toggle_switch("##follow", m_auto_scroll);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Follow new lines (scrolling up pauses it)");
+        ImGui::SameLine(0.f, 6.f);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Follow");
 
-            m_filter_text.clear();
-            m_filter_dirty = true;
+        ImGui::SameLine(0.f, 8.f);
+        if (UI::menu_button("##log_menu", frame_h, "More"))
+            ImGui::OpenPopup("##log_menu_popup");
+        if (ImGui::BeginPopup("##log_menu_popup")) {
+            if (ImGui::MenuItem("Refresh file list"))
+                refresh_log_file_list();
+            ImGui::MenuItem("Line numbers", nullptr, &m_show_line_numbers);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Copy file path", nullptr, false, !m_log_file_path.empty()))
+                ImGui::SetClipboardText(m_log_file_path.generic_string().c_str());
+            if (ImGui::MenuItem("Copy visible lines", nullptr, false, !m_filtered_indices.empty())) {
+                std::string text;
+                for (const size_t index : m_filtered_indices)
+                    text.append(m_lines[index].text).push_back('\n');
+                ImGui::SetClipboardText(text.c_str());
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Clear view", "Ctrl+L"))
+                clear_view();
+            ImGui::EndPopup();
         }
-        ImGui::EndDisabled();
+
+        ImGui::PopStyleVar();
+        ImGui::SetCursorScreenPos(ImVec2(bar_min.x, bar_min.y + bar_h));
+        ImGui::Dummy(ImVec2(0.f, 0.f));
     }
 
 
@@ -444,10 +455,19 @@ namespace GLT::editor {
         if (m_filter_dirty)
             rebuild_filter_cache();
 
-        // The child claims the remaining vertical space minus the status bar.
-        const f32 status_height = ImGui::GetFrameHeightWithSpacing();
-        ImGui::BeginChild("##log_content", ImVec2(0, -status_height), false,
-            ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
+        // Darker log area, claims the remaining height minus the status bar
+        ImVec4 background = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+        background.x = std::max(0.f, background.x - 0.025f);
+        background.y = std::max(0.f, background.y - 0.025f);
+        background.z = std::max(0.f, background.z - 0.025f);
+
+        const f32 status_height = ImGui::GetFrameHeight() + 6.f;
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, background);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.f, 6.f));
+        ImGui::BeginChild("##log_content", ImVec2(0, -status_height), ImGuiChildFlags_AlwaysUseWindowPadding,
+            ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
 
         // Check BEFORE we render - auto-scroll should only kick in when the
         // user hasn't scrolled up manually.
@@ -455,7 +475,10 @@ namespace GLT::editor {
 
         if (m_filtered_indices.empty()) {
 
-            ImGui::TextDisabled("No log lines match the current filter.");
+            if (m_lines.empty())
+                UI::empty_state("No log lines yet", "New lines show up here as they are written");
+            else
+                UI::empty_state("No lines match", "Change the filter or the minimum level");
 
         } else {
 
@@ -472,19 +495,23 @@ namespace GLT::editor {
                     const log_line& line = m_lines[line_index];
 
                     // ---- severity marker ----------------------------------------------------------------
-                    // Always reserve the column so plain lines and coloured
-                    // lines stay left-aligned with each other.
+                    // Always reserve the column so plain lines and coloured lines stay left-aligned with each other.
+                    // Warnings and errors also get a faint row tint so they stand out while scrolling
                     {
                         const ImVec2 cursor = ImGui::GetCursorScreenPos();
                         const f32    marker_w = 3.0f;
-                        const f32    marker_gap= 4.0f;
+                        const f32    marker_gap = 6.0f;
                         const f32    marker_h = ImGui::GetTextLineHeight();
 
+                        if (line.severity >= 3 && line.severity < 6) {
+                            const ImU32 tint = (severity_colors[line.severity] & ~IM_COL32_A_MASK) | (static_cast<ImU32>(18) << IM_COL32_A_SHIFT);
+                            ImGui::GetWindowDrawList()->AddRectFilled(cursor,
+                                ImVec2(cursor.x + ImGui::GetWindowWidth() + ImGui::GetScrollX(), cursor.y + marker_h), tint);
+                        }
                         if (line.severity < 6) {
-
                             ImGui::GetWindowDrawList()->AddRectFilled(
                                 cursor, ImVec2(cursor.x + marker_w, cursor.y + marker_h),
-                                severity_colors[line.severity]);
+                                severity_colors[line.severity], 1.f);
                         }
 
                         ImGui::Dummy(ImVec2(marker_w + marker_gap, marker_h));
@@ -511,8 +538,14 @@ namespace GLT::editor {
             clipper.End();
         }
 
-        if (m_auto_scroll && was_at_bottom)
+        if ((m_auto_scroll && was_at_bottom) || m_jump_to_latest) {
             ImGui::SetScrollHereY(1.0f);
+            m_jump_to_latest = false;
+        }
+
+        // Scrolled up (reading older lines): the status bar offers "Jump to latest"
+        m_scrolled_up = !m_filtered_indices.empty() && ImGui::GetScrollMaxY() > 0.f
+            && ImGui::GetScrollY() < ImGui::GetScrollMaxY() - ImGui::GetTextLineHeight() * 2.f;
 
         ImGui::EndChild();
     }
@@ -522,31 +555,65 @@ namespace GLT::editor {
 
         const size_t total = m_lines.size();
         const size_t filtered = m_filtered_indices.size();
+        const f32 bar_h = ImGui::GetFrameHeight() + 6.f;
+        const ImVec2 bar_min = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x;
+        ImGui::GetWindowDrawList()->AddRectFilled(bar_min, ImVec2(bar_min.x + width, bar_min.y + bar_h), ImGui::GetColorU32(ImGuiCol_TitleBg));
 
+        ImGui::SetCursorScreenPos(ImVec2(bar_min.x + 10.f, bar_min.y + 3.f));
+        ImGui::AlignTextToFramePadding();
         if (filtered == total)
-            ImGui::Text("%zu lines", total);
+            ImGui::TextDisabled("%zu lines", total);
         else
-            ImGui::Text("%zu / %zu lines", filtered, total);
+            ImGui::TextDisabled("%zu of %zu lines", filtered, total);
 
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
+        // ---- warning / error counts: click to show only that level and up -----------------------------------
+        auto count_pill = [&](const u32 count, const char* singular, const char* plural, const int severity) {
+            if (count == 0)
+                return;
+            ImGui::SameLine(0.f, 12.f);
+            const std::string text = std::to_string(count) + " " + (count == 1 ? singular : plural);
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const f32 pill_w = ImGui::CalcTextSize(text.c_str()).x + 22.f;
+            ImGui::PushID(severity);
+            if (ImGui::InvisibleButton("##count", ImVec2(pill_w, ImGui::GetFrameHeight()))) {
+                m_min_severity = (m_min_severity == severity + 1) ? 0 : severity + 1;
+                m_filter_dirty = true;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", m_min_severity == severity + 1 ? "Show all levels again" : "Show only this level and above");
+            ImGui::PopID();
+            chrome::status_pill(ImGui::GetWindowDrawList(), ImVec2(pos.x, pos.y + (ImGui::GetFrameHeight() - ImGui::GetTextLineHeight()) * 0.5f),
+                text.c_str(), severity_colors[severity]);
+        };
+        count_pill(m_severity_counts[3], "warning", "warnings", 3);
+        count_pill(m_severity_counts[4] + m_severity_counts[5], "error", "errors", 4);
 
-        ImGui::SameLine();
+        // ---- right: "Jump to latest" while scrolled up, file name (full path as tooltip) ---------------------------
+        const char* jump_label = "Jump to latest";
+        const f32 jump_w = m_scrolled_up ? chrome::button_width(jump_label) + 10.f : 0.f;
         if (!m_log_file_path.empty()) {
-
-            ImGui::TextDisabled("%s", m_log_file_path.filename().string().c_str());
-
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", m_log_file_path.generic_string().c_str());
+            const std::string name = m_log_file_path.filename().string();
+            const f32 name_w = ImGui::CalcTextSize(name.c_str()).x;
+            ImGui::SameLine();
+            const f32 x = bar_min.x + width - name_w - 12.f - jump_w;
+            if (x > ImGui::GetCursorScreenPos().x) {
+                ImGui::SetCursorScreenPos(ImVec2(x, ImGui::GetCursorScreenPos().y));
+                ImGui::TextDisabled("%s", name.c_str());
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                    ImGui::SetTooltip("%s\nread up to byte %lld", m_log_file_path.generic_string().c_str(), static_cast<long long>(m_last_read_pos));
+            }
         }
 
-        // Buffer cursor as a tiny "live tail" indicator.
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
+        if (m_scrolled_up) {
+            ImGui::SameLine();
+            ImGui::SetCursorScreenPos(ImVec2(bar_min.x + width - jump_w, bar_min.y + 3.f));
+            if (UI::accent_button(jump_label, ImVec2(jump_w - 10.f, 0.f)))
+                m_jump_to_latest = true;
+        }
 
-        ImGui::SameLine();
-        ImGui::TextDisabled("cursor %lld",
-            static_cast<long long>(m_last_read_pos));
+        ImGui::SetCursorScreenPos(ImVec2(bar_min.x, bar_min.y + bar_h));
+        ImGui::Dummy(ImVec2(0.f, 0.f));
     }
 
     // helpers ---------------------------------------------------------------------------------------------------------
@@ -555,6 +622,9 @@ namespace GLT::editor {
 
         m_filtered_indices.clear();
         m_filtered_indices.reserve(m_lines.size());
+        m_severity_counts.fill(0);
+        for (const log_line& line : m_lines)
+            ++m_severity_counts[std::min<u8>(line.severity, 6)];
 
         std::string needle;
         if (!m_filter_text.empty())

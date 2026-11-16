@@ -3,6 +3,8 @@
 #include <window/base/base_window.h>
 #include <asset/type.h>
 
+#include "resource_manager/icon_manager.h"
+
 
 
 // FORWARD DECLARATIONS ================================================================================================
@@ -58,6 +60,8 @@ namespace GLT::editor {
             GLT::asset::type                                            type;
             const char*                                                 label;
             const char*                                                 tooltip;
+            icon_manager::icon_type                                     icon;
+            const char*                                                 default_name;
         };
 
         // ---- static data ---------------------------------------------------------------------------------------------
@@ -65,12 +69,20 @@ namespace GLT::editor {
         [[nodiscard]] static std::span<const creatable_type>            creatable_types();
 
         // ---- drawing helpers ----------------------------------------------------------------------------------------
+
+        // Header strip: icon, title, target folder
+        void                                                            draw_header();
+
+        // One tile per creatable type (icon + name, description as tooltip); the selected one is accent framed
+        void                                                            draw_type_tiles();
+
+        // Card with name, location, auto-open switch and the resulting file path
         void                                                            draw_asset_section();
 
         void                                                            draw_settings_section();
 
-        // Footer bar pinned to the bottom of the window. `footer_height` is the reserved height so the content child can subtract it from its own
-        void                                                            draw_footer(f32 footer_height);
+        // Footer pinned to the bottom of the window: validation / error text, Cancel and Create (Enter creates, Escape cancels)
+        void                                                            draw_footer();
 
         // Attempts to build + register + save the asset. On success, closes the window (and optionally fires asset_open_event)
         // On failure, populates m_operation_error and returns false

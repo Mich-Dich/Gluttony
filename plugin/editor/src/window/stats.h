@@ -54,7 +54,15 @@ namespace GLT::editor {
 
     private:
 
-        // sections (left panel) ---------------------------------------------------------------------------------------
+        // header + summary --------------------------------------------------------------------------------------------
+
+        // Header strip: title, Live / Paused pill, Pause and Reset buttons
+        void draw_header();
+
+        // Row of tiles with the headline numbers (frame time, FPS, GPU, CPU work), each with min / max of the window
+        void draw_summary_tiles();
+
+        // sections (left panel, one card each) ------------------------------------------------------------------------
 
         void draw_core_section();
 
@@ -70,6 +78,7 @@ namespace GLT::editor {
 
         void draw_combined_ms_plot();
 
+        // One collapsible card with a line plot of [data]; the card summary shows the latest value
         void draw_stat_plot(const char* id, const char* label, const std::vector<f32>& data, const ImVec4& color, const char* y_unit);
 
         // history -----------------------------------------------------------------------------------------------------
@@ -82,8 +91,8 @@ namespace GLT::editor {
 
         // ---- layout -------------------------------------------------------------------------------------------------
 
-        static constexpr f32                                            DETAILS_PANEL_WIDTH = 500.0f;
-        static constexpr f32                                            GRAPH_HEIGHT = 240.0f;
+        static constexpr f32                                            DETAILS_PANEL_WIDTH = 360.0f;     // default
+        static constexpr f32                                            GRAPH_HEIGHT = 180.0f;
         static constexpr int                                            HISTORY_SIZE = 480;      // ~8 s at 60 fps
 
         // ---- sliding window -----------------------------------------------------------------------------------------
@@ -123,6 +132,7 @@ namespace GLT::editor {
         // ---- view state ---------------------------------------------------------------------------------------------
 
         bool                                                            m_paused = false;
+        f32                                                             m_details_width = DETAILS_PANEL_WIDTH;     // left panel, splitter edits it
         bool                                                            m_gpu_available = false;    // true once any gpu_time_ms > 0 was seen
 
     };

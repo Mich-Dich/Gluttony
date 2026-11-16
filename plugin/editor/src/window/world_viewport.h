@@ -122,6 +122,11 @@ namespace GLT::editor {
         void begin_rename_folder(folder_id id);
         void begin_entity_drag(GLT::world::entity_id id);       // call right after the row's item
         void accept_outliner_drop(folder_id target);            // call right after an item: entities / folders can be dropped on it
+        // While something is dragged (outliner entities / folders, or an asset) and the mouse is in a band at the top or bottom
+        // of the visible list, the list scrolls that way: slow at the inner border of the band, faster towards the edge and
+        // faster still past it. Outliner drags keep scrolling outside the panel (above / below, a little to the sides),
+        // other drags only inside it. Call inside the Outliner window, after the rows
+        void outliner_drag_autoscroll();
         [[nodiscard]] std::vector<GLT::world::entity_id> folder_entities(folder_id id) const;   // alive ones, sub-folders included
 
         // ---- details for several entities ----
@@ -173,6 +178,8 @@ namespace GLT::editor {
         static bool gizmo_toggle_button(const char* label, bool active, const ImVec2& size = ImVec2(0, 0), const bool use_icon = false,
             icon_manager::icon_type icon = icon_manager::icon::transfrom_rotation);
 
+        // World transform of [id]: its local transform under all of its parents' (identity for an invalid id)
+        [[nodiscard]] glm::mat4 entity_world_matrix(GLT::world::entity_id id) const;
         void collect_gizmo_targets(GLT::world::entity_id primary);              // fills m_gizmo_targets
         void frame_selection();                                                 // Ctrl+F: camera to where the selection is in view
 

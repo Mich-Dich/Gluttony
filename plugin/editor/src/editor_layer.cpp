@@ -651,7 +651,7 @@ namespace GLT::editor {
         ImGui::PopStyleVar();   // outer FramePadding
 
         // Settings popup (same rows as the "Play in Editor" settings page)
-        constexpr f32 POPUP_W = 460.f;
+        constexpr f32 POPUP_W = 530.f;          // the "Run in" segmented control gets ~0.42 of it: wide enough for both labels
         if (idle && settings_btn_drawn)
             ImGui::SetNextWindowPos(ImVec2(settings_btn_min.x, settings_btn_max.y + 4.f), ImGuiCond_Appearing);
         ImGui::SetNextWindowSizeConstraints(ImVec2(POPUP_W, 0.f), ImVec2(POPUP_W, FLT_MAX));
@@ -693,6 +693,9 @@ namespace GLT::editor {
                 m_sim_window_count = static_cast<u32>(count);
                 changed = true;
             }
+            changed |= UI::settings_toggle("Remember placement",
+                "When a game window closes, store where it was and how large it was, so the next session opens it there. "
+                "Off: the windows always open with the position and size below", m_sim_remember_placement, true);
         }
         UI::settings_end_section();
 
@@ -952,6 +955,9 @@ namespace GLT::editor {
 
         auto* game_layer = GLT::application::get().get_game_layer_ptr();
 
+        if (remember_sim_window_placement(*it))
+            save_simulation_settings();
+
         if (it->session && it->scene_renderer)
             it->session->remove_renderer(it->scene_renderer);
 
@@ -1168,6 +1174,9 @@ namespace GLT::editor {
         i32 count_int = static_cast<i32>(m_sim_window_count);
         cfg.entry("window_count", count_int);
 
+        bool remember = m_sim_remember_placement;
+        cfg.entry("remember_window_placement", remember);
+
         // Save every layout — index 0 = 1 window, index 3 = 4 windows
         // Only the meaningful entries are written; the file stays compact
         for (u32 layout_idx = 0; layout_idx < 4; ++layout_idx) {
@@ -1225,6 +1234,10 @@ namespace GLT::editor {
         i32 count_int = static_cast<i32>(m_sim_window_count);
         cfg.entry("window_count", count_int);
         m_sim_window_count = static_cast<u32>(std::clamp<i32>(count_int, 1, 4));
+
+        bool remember = m_sim_remember_placement;
+        cfg.entry("remember_window_placement", remember);
+        m_sim_remember_placement = remember;
 
         // ---- per-count layouts ----
         for (u32 layout_idx = 0; layout_idx < 4; ++layout_idx) {
@@ -1365,6 +1378,8 @@ namespace GLT::editor {
                 .scene_renderer = scene_renderer,
                 .session = session,
                 .cursor_captured = false,
+                .layout_index = count - 1,
+                .slot = index,
             });
         }
     }
@@ -1377,6 +1392,12 @@ namespace GLT::editor {
 
         auto* p_game_layer = GLT::application::get().get_game_layer_ptr();
         auto* p_window = GLT::platform::window::get_ptr();
+
+        bool placement_changed = false;
+        for (const auto& w : m_simulation_instances)
+            placement_changed |= remember_sim_window_placement(w);
+        if (placement_changed)
+            save_simulation_settings();
 
         for (auto& w : m_simulation_instances) {
 
@@ -1419,6 +1440,46 @@ namespace GLT::editor {
             capture_sim_window(*sim);
         else if (sim->cursor_captured)
             release_sim_cursor();
+    }
+
+
+    bool editor_layer::remember_sim_window_placement(const simulation_instance& instance) {
+
+        if (!m_sim_remember_placement || instance.layout_index >= m_sim_layouts.size() || instance.slot >= 4)
+            return false;
+
+        auto* window = GLT::platform::window::get_ptr();
+        if (!window || !window->is_valid(instance.handle))
+            return false;
+
+        auto& cfg = m_sim_layouts[instance.layout_index].windows[instance.slot];
+        const sim_window_config before = cfg;
+
+        switch (window->get_state(instance.handle)) {
+
+            case GLT::platform::window_size_state::windowed: {
+                const glm::ivec2 position = window->get_position(instance.handle);
+                const glm::ivec2 size = window->get_window_size(instance.handle);
+                if (size.x >= 100 && size.y >= 100) {               // ignore degenerate sizes some window managers report while closing
+                    cfg.position = ImVec2(static_cast<f32>(std::max(position.x, 0)), static_cast<f32>(std::max(position.y, 0)));
+                    cfg.size = ImVec2(static_cast<f32>(size.x), static_cast<f32>(size.y));
+                }
+                cfg.maximized = false;
+                break;
+            }
+
+            case GLT::platform::window_size_state::fullscreen:
+            case GLT::platform::window_size_state::fullscreen_windowed:
+                cfg.maximized = true;                               // keep the windowed position / size for when it is turned off
+                break;
+
+            case GLT::platform::window_size_state::minimized:
+            default:
+                break;                                              // nothing meaningful to remember
+        }
+
+        return cfg.position.x != before.position.x || cfg.position.y != before.position.y
+            || cfg.size.x != before.size.x || cfg.size.y != before.size.y || cfg.maximized != before.maximized;
     }
 
 

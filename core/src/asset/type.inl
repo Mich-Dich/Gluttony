@@ -35,7 +35,7 @@ namespace GLT::asset {
     }
 
 
-    FORCE_INLINE_R constexpr std::string_view type_to_extension(GLT::asset::type type) noexcept {
+    FORCE_INLINE_R constexpr std::string type_to_extension(GLT::asset::type type) {
 
         return std::string("glt_") + std::string(type_to_string(type));
     }

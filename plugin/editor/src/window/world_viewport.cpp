@@ -51,6 +51,13 @@ namespace GLT::editor {
         constexpr const char* OUTLINER_ENTITY_PAYLOAD = "GLT_OUTLINER_ENTITIES";    // the entities are in m_dragged_entities
         constexpr const char* OUTLINER_FOLDER_PAYLOAD = "GLT_OUTLINER_FOLDER";      // folder_id
 
+        // Auto scroll while dragging near the top / bottom edge of the outliner (or past it)
+        constexpr f32 DRAG_SCROLL_ZONE = 36.f;          // height of the edge band that starts scrolling
+        constexpr f32 DRAG_SCROLL_MIN_SPEED = 120.f;    // px / s at the inner border of the band
+        constexpr f32 DRAG_SCROLL_MAX_SPEED = 900.f;    // px / s at the edge of the list
+        constexpr f32 DRAG_SCROLL_BEYOND_MAX = 2.5f;    // past the edge it keeps speeding up, up to this x the max speed
+        constexpr f32 DRAG_SCROLL_SIDE_SLACK = 48.f;    // outliner drags still count this far left / right of the panel
+
         // <project>/metadata/<this>/<world asset id>.txt: folders and hidden entities of a world (window/outliner_layout.h)
         constexpr const char* OUTLINER_LAYOUT_DIR = "outliner";
 
@@ -1104,6 +1111,56 @@ namespace GLT::editor {
 
     // ---- outliner (main) ------------------------------------------------------------------------------------------
 
+    void world_viewport_window::outliner_drag_autoscroll() {
+
+        const ImGuiPayload* payload = ImGui::GetDragDropPayload();
+        if (payload == nullptr || !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            return;                                             // the payload outlives the drop by a frame: mouse must be held
+
+        const bool own_drag = payload->IsDataType(OUTLINER_ENTITY_PAYLOAD) || payload->IsDataType(OUTLINER_FOLDER_PAYLOAD);
+        if (ImGui::GetScrollMaxY() <= 0.f)
+            return;                                             // everything fits, nothing to scroll
+
+        // The visible list area of this window (without title / tab bar and scrollbar)
+        const ImRect inner = ImGui::GetCurrentWindow()->InnerRect;
+        const ImVec2 mouse = ImGui::GetMousePos();
+        if (inner.GetHeight() < 1.f)
+            return;
+
+        const f32 slack = own_drag ? DRAG_SCROLL_SIDE_SLACK : 0.f;
+        if (mouse.x < inner.Min.x - slack || mouse.x > inner.Max.x + slack)
+            return;
+        if (!own_drag && (mouse.y < inner.Min.y || mouse.y > inner.Max.y || !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)))
+            return;                                             // foreign drags: only while they are over this panel
+
+        const f32 zone = std::min(DRAG_SCROLL_ZONE, inner.GetHeight() * 0.25f);
+
+        // depth into the band: 0 at its inner border, 1 at the panel edge, > 1 past it
+        f32 depth = 0.f;
+        f32 direction = 0.f;
+        if (mouse.y < inner.Min.y + zone) {
+            depth = (inner.Min.y + zone - mouse.y) / zone;
+            direction = -1.f;
+        } else if (mouse.y > inner.Max.y - zone) {
+            depth = (mouse.y - (inner.Max.y - zone)) / zone;
+            direction = 1.f;
+        }
+        if (direction == 0.f)
+            return;
+
+        f32 speed;
+        if (depth <= 1.f)
+            speed = DRAG_SCROLL_MIN_SPEED + (DRAG_SCROLL_MAX_SPEED - DRAG_SCROLL_MIN_SPEED) * depth * depth;
+        else
+            speed = DRAG_SCROLL_MAX_SPEED * std::min(1.f + (depth - 1.f) * 0.5f, DRAG_SCROLL_BEYOND_MAX);
+
+        const f32 dt = std::min(ImGui::GetIO().DeltaTime, 0.1f);    // a hitch must not throw the list to the end
+        const f32 target = std::clamp(ImGui::GetScrollY() + direction * speed * dt, 0.f, ImGui::GetScrollMaxY());
+        if (target != ImGui::GetScrollY())
+            ImGui::SetScrollY(target);
+    }
+
+
     void world_viewport_window::render_outliner() {
 
         if (!m_show_outliner_panel)
@@ -1272,6 +1329,9 @@ namespace GLT::editor {
                     render_outliner_row(rows[row].entity, rows[row].depth, row, visible_order, /*flat=*/filter_mode);
             }
         clipper.End();
+
+        // ---- dragging near the top / bottom edge scrolls the list ----
+        outliner_drag_autoscroll();
 
         // ---- the empty space below the rows: drop here to take something out of its folder ----
         if (!filter_mode) {
@@ -2994,9 +3054,14 @@ namespace GLT::editor {
         const glm::quat rotation = m_world->get_local_rotation_q(id);
         const glm::vec3 scale = m_world->get_local_scale(id);
 
-        glm::mat4 model = glm::translate(glm::mat4(1.f), position)
+        // The gizmo works in world space: the entity's transform is relative to its parent, so put the parent's world
+        // transform in front of it (and take it out again after the edit)
+        const glm::mat4 parent_world = entity_world_matrix(m_world->parent_of(id));
+        const glm::mat4 local_model = glm::translate(glm::mat4(1.f), position)
             * glm::mat4_cast(rotation)
             * glm::scale(glm::mat4(1.f), scale);
+        glm::mat4 model = parent_world * local_model;
+        const glm::mat4 world_before = model;
 
         float* snap_ptr = nullptr;
         if (gizmo_cfg().snap) {
@@ -3021,31 +3086,52 @@ namespace GLT::editor {
         if (!ImGuizmo::IsUsing())
             return;
 
-        const glm::vec3 new_pos = glm::vec3(model[3]);
-        const glm::quat new_rot = glm::quat_cast(glm::mat3(model));
+        // Back into the parent's space
+        const glm::mat4 new_local = glm::inverse(parent_world) * model;
+        const glm::vec3 new_pos = glm::vec3(new_local[3]);
         const glm::vec3 new_scale = glm::vec3(
-            glm::length(glm::vec3(model[0])),
-            glm::length(glm::vec3(model[1])),
-            glm::length(glm::vec3(model[2])));
+            glm::length(glm::vec3(new_local[0])),
+            glm::length(glm::vec3(new_local[1])),
+            glm::length(glm::vec3(new_local[2])));
+        const glm::mat3 new_basis(
+            std::abs(new_scale.x) > 1e-8f ? glm::vec3(new_local[0]) / new_scale.x : glm::vec3(1.f, 0.f, 0.f),
+            std::abs(new_scale.y) > 1e-8f ? glm::vec3(new_local[1]) / new_scale.y : glm::vec3(0.f, 1.f, 0.f),
+            std::abs(new_scale.z) > 1e-8f ? glm::vec3(new_local[2]) / new_scale.z : glm::vec3(0.f, 0.f, 1.f));
+        const glm::quat new_rot = glm::normalize(glm::quat_cast(new_basis));
+
+        // The edit in world space, for the other selected entities (each has its own parent)
+        const glm::vec3 world_delta = glm::vec3(model[3]) - glm::vec3(world_before[3]);
+        const glm::quat world_rot_before = glm::normalize(glm::quat_cast(glm::mat3(
+            glm::normalize(glm::vec3(world_before[0])), glm::normalize(glm::vec3(world_before[1])), glm::normalize(glm::vec3(world_before[2])))));
+        const glm::quat world_rot_after = glm::normalize(glm::quat_cast(glm::mat3(
+            glm::normalize(glm::vec3(model[0])), glm::normalize(glm::vec3(model[1])), glm::normalize(glm::vec3(model[2])))));
+        const glm::quat world_turn = world_rot_after * glm::inverse(world_rot_before);
 
         // The other selected entities get the same change (m_gizmo_targets: the primary one first, then the others;
         // entities below a selected one are not in it, they follow their parent)
         const std::span<const GLT::world::entity_id> others = m_gizmo_targets.size() > 1
             ? std::span<const GLT::world::entity_id>(m_gizmo_targets).subspan(1) : std::span<const GLT::world::entity_id>{};
 
-        const glm::vec3 world_delta = new_pos - position;
-        if (glm::length(world_delta) > 1e-6f) {
-            const glm::vec3 local_delta = glm::inverse(rotation) * world_delta;
-            m_world->translate_local(id, local_delta);
-            for (const auto other : others)                     // the same distance in the same direction
-                m_world->translate_local(other, glm::inverse(m_world->get_local_rotation_q(other)) * world_delta);
+        // translate_local() moves along the entity's own axes, inside its parent's space
+        const glm::vec3 parent_delta = new_pos - position;
+        if (glm::length(parent_delta) > 1e-6f) {
+            m_world->translate_local(id, glm::inverse(rotation) * parent_delta);
+            for (const auto other : others) {                   // the same distance in the same world direction
+                const glm::mat3 other_parent(entity_world_matrix(m_world->parent_of(other)));
+                const glm::vec3 delta_in_parent = glm::inverse(other_parent) * world_delta;
+                m_world->translate_local(other, glm::inverse(m_world->get_local_rotation_q(other)) * delta_in_parent);
+            }
         }
 
         if (glm::abs(glm::dot(rotation, new_rot)) < 0.9999f) {
             m_world->set_local_rotation_q(id, new_rot);
-            const glm::quat turn = new_rot * glm::inverse(rotation);
-            for (const auto other : others)                     // each one turns in place by the same amount
-                m_world->set_local_rotation_q(other, glm::normalize(turn * m_world->get_local_rotation_q(other)));
+            for (const auto other : others) {                   // each one turns in place by the same world rotation
+                const glm::mat4 other_parent = entity_world_matrix(m_world->parent_of(other));
+                const glm::quat parent_rot = glm::normalize(glm::quat_cast(glm::mat3(glm::normalize(glm::vec3(other_parent[0])),
+                    glm::normalize(glm::vec3(other_parent[1])), glm::normalize(glm::vec3(other_parent[2])))));
+                const glm::quat turn_in_parent = glm::inverse(parent_rot) * world_turn * parent_rot;
+                m_world->set_local_rotation_q(other, glm::normalize(turn_in_parent * m_world->get_local_rotation_q(other)));
+            }
         }
 
         if (glm::distance(scale, new_scale) > 1e-6f) {
@@ -3057,6 +3143,14 @@ namespace GLT::editor {
             for (const auto other : others)                     // the same factor per axis
                 m_world->set_local_scale(other, m_world->get_local_scale(other) * factor);
         }
+    }
+
+
+    glm::mat4 world_viewport_window::entity_world_matrix(const GLT::world::entity_id id) const {
+
+        if (!m_world || !id.is_valid() || !m_world->alive(id))
+            return glm::mat4(1.f);
+        return m_world->get_world_transform(id);
     }
 
 
@@ -3160,15 +3254,7 @@ namespace GLT::editor {
 
             if (measured.contains(id))
                 continue;
-            glm::mat4 world(1.f);
-            GLT::world::entity_id walk = id;
-            for (u32 guard = 0; walk.is_valid() && guard < 256; ++guard) {
-                const glm::mat4 local = glm::translate(glm::mat4(1.f), m_world->get_local_position(walk))
-                    * glm::mat4_cast(m_world->get_local_rotation_q(walk)) * glm::scale(glm::mat4(1.f), m_world->get_local_scale(walk));
-                world = local * world;
-                walk = m_world->parent_of(walk);
-            }
-            const glm::vec3 position(world[3]);
+            const glm::vec3 position(entity_world_matrix(id)[3]);
             include(position - glm::vec3(0.5f));
             include(position + glm::vec3(0.5f));
         }

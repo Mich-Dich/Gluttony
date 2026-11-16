@@ -133,6 +133,21 @@ namespace GLT::world {
         [[nodiscard]] virtual glm::vec3 get_local_scale(entity_id id) const = 0;
         virtual void set_local_scale(entity_id id, const glm::vec3& scale) = 0;
 
+        // @brief World transform of [id]: its local transform under its parents' (identity for an invalid id). The default
+        //        walks parent_of() with the local getters; worlds that know more (e.g. entities that do not inherit their
+        //        parent's transform) override it
+        [[nodiscard]] virtual glm::mat4 get_world_transform(entity_id id) const {
+
+            glm::mat4 world(1.f);
+            entity_id walk = id;
+            for (u32 guard = 0; walk.is_valid() && alive(walk) && guard < 256; ++guard) {
+                world = glm::translate(glm::mat4(1.f), get_local_position(walk)) * glm::mat4_cast(get_local_rotation_q(walk))
+                    * glm::scale(glm::mat4(1.f), get_local_scale(walk)) * world;
+                walk = parent_of(walk);
+            }
+            return world;
+        }
+
         // region queries ----------------------------------------------------------------------------------------------
         [[nodiscard]] virtual std::span<const asset::region::region> regions() const noexcept = 0;
         [[nodiscard]] virtual const asset::region::region* region_at(const glm::vec3& point) const noexcept = 0;

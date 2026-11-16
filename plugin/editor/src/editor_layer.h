@@ -117,6 +117,8 @@ namespace GLT::editor {
             GLT::render::i_scene_renderer*              scene_renderer{};   // non-owning; app owns
             GLT::game::game_session*                    session{};
             bool                                        cursor_captured = false;
+            u32                                         layout_index = 0;   // m_sim_layouts[layout_index] (window count - 1)
+            u32                                         slot = 0;           // which window of that layout
         };
 
 
@@ -230,6 +232,12 @@ namespace GLT::editor {
         void capture_sim_window(simulation_instance& instance);
 
 
+        // With m_sim_remember_placement on: copies where the user left [instance]'s window (position + size, or that it
+        // was fullscreen) into its layout slot, so the next session opens it there. Call before the window is destroyed.
+        // @return true if the layout changed (the caller saves the settings)
+        bool remember_sim_window_placement(const simulation_instance& instance);
+
+
         void release_sim_cursor();
 
 
@@ -271,6 +279,7 @@ namespace GLT::editor {
         simulation_mode                                 m_simulation_mode{ simulation_mode::current_viewport };
         u32                                             m_sim_window_count{ 1 };
         std::array<sim_layout, 4>                       m_sim_layouts{}; // m_sim_layouts[N - 1] = layout for N windows. All 4 are always saved
+        bool                                            m_sim_remember_placement{ true };   // sim windows reopen where they were closed
         std::vector<simulation_instance>                m_simulation_instances{};
         handle                                          m_window_close_sub{};
 

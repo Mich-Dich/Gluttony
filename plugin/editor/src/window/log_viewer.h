@@ -95,12 +95,16 @@ namespace GLT::editor {
         void append_line(std::string line);
 
         // ---- drawing -------------------------------------------------------------------------------------------
+
+        // Strip in the title-bar color: log file picker, filter field, minimum level, follow switch and a "..." menu
+        // (refresh, line numbers, copy path, clear)
         void draw_toolbar();
 
-        void draw_filter_bar();
-
+        // The log lines (one row per line, severity bar on the left, warnings / errors faintly tinted)
         void draw_content();
 
+        // Line count, a pill per warning / error count (click = filter to that level), "Jump to latest" while scrolled
+        // up, and the file name
         void draw_status_bar();
 
         // ---- helpers -------------------------------------------------------------------------------------------
@@ -122,6 +126,7 @@ namespace GLT::editor {
         std::vector<log_line>                   m_lines{};
         std::vector<size_t>                     m_filtered_indices{};
         bool                                    m_filter_dirty = true;
+        std::array<u32, 7>                      m_severity_counts{};        // lines per severity (6 = unknown), all lines
 
         // ---- filter / display options --------------------------------------------------------------------------
         int                                     m_min_severity = 0;         // 0 = All, 1 = Trace .. 6 = Fatal
@@ -136,6 +141,8 @@ namespace GLT::editor {
 
         // ---- UI state ------------------------------------------------------------------------------------------
         bool                                    m_request_focus_search = false;
+        bool                                    m_jump_to_latest = false;   // scroll to the end next frame
+        bool                                    m_scrolled_up = false;      // the list is not at its end (last frame)
     };
 
 }

@@ -2,6 +2,8 @@
 #include "asset_import.h"
 
 #include "util/ui/panel_collection.h"
+#include "config/imgui_config.h"
+#include "window/base/window_chrome.h"
 
 #include <asset/i_asset_registry.h>
 
@@ -11,25 +13,18 @@ namespace GLT::editor {
 
     // CONSTANTS =======================================================================================================
 
-    constexpr f32                               IMPORT_WINDOW_WIDTH = 760.0f;
+    constexpr f32                               IMPORT_WINDOW_WIDTH = 720.0f;
 
-    constexpr f32                               IMPORT_WINDOW_HEIGHT_MIN = 360.0f;
+    constexpr f32                               IMPORT_WINDOW_HEIGHT = 640.0f;
 
-    constexpr f32                               OPTION_LABEL_WIDTH = 180.0f;
+    // Pill colors of a file's state
+    constexpr ImU32                             STATE_OK = IM_COL32(110, 200, 120, 255);       // imported
 
-    constexpr f32                               ITEM_BUTTON_WIDTH = 110.0f;
+    constexpr ImU32                             STATE_BUSY = IM_COL32(110, 170, 240, 255);     // queued / importing
 
-    // Light green tint used on the header of successfully-imported items.
-    constexpr ImVec4                            IMPORTED_BG = ImVec4(0.28f, 0.62f, 0.32f, 0.55f);
+    constexpr ImU32                             STATE_WARN = IM_COL32(230, 180, 60, 255);      // will overwrite
 
-    constexpr ImVec4                            IMPORTED_BG_HOVER = ImVec4(0.32f, 0.72f, 0.36f, 0.70f);
-
-    constexpr ImVec4                            IMPORTED_BG_ACTIVE = ImVec4(0.32f, 0.72f, 0.36f, 0.90f);
-
-    // Warning / error tints for the conflict hint.
-    constexpr ImVec4                            HINT_WARN = ImVec4(0.96f, 0.72f, 0.20f, 1.0f);
-
-    constexpr ImVec4                            HINT_ERROR = ImVec4(0.94f, 0.36f, 0.36f, 1.0f);
+    constexpr ImU32                             STATE_ERROR = IM_COL32(235, 100, 100, 255);    // conflict / failed
 
     // MACROS ==========================================================================================================
 
@@ -41,21 +36,64 @@ namespace GLT::editor {
 
     // INTERNAL FUNCTION DECLARATION ===================================================================================
 
-    std::string display_name_for(GLT::asset::type t);
+    static std::string display_name_for(GLT::asset::type t);
+
+    // Icon shown for an asset type (header of the file's card)
+    static icon_manager::icon_type icon_for_type(GLT::asset::type t);
+
+    // "import|calculate|ignore" -> { "import", "calculate", "ignore" }
+    static std::vector<std::string> split_enumeration(std::string_view values);
 
     // INTERNAL TEMPLATE IMPLEMENTATION ================================================================================
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
-    std::string display_name_for(GLT::asset::type t) {
+    static std::string display_name_for(GLT::asset::type t) {
 
         auto registry = GLT::asset::registry::get_ref();
         if (registry) {
             const auto n = registry->name_from_type(t);
             if (!n.empty())
-                return std::string(n);
+                return UI::pretty_name(n);
         }
         return std::to_string(t.value);
+    }
+
+
+    static icon_manager::icon_type icon_for_type(const GLT::asset::type t) {
+
+        switch (t.value) {
+            case GLT::asset::core_types::static_mesh.value:
+            case GLT::asset::core_types::procedural_mesh.value:
+            case GLT::asset::core_types::dynamic_mesh.value:
+            case GLT::asset::core_types::skeletal_mesh.value:
+            case GLT::asset::core_types::mesh_collection.value:     return icon_manager::icon::mesh_asset;
+            case GLT::asset::core_types::texture2d.value:
+            case GLT::asset::core_types::texture3d.value:
+            case GLT::asset::core_types::cube_map.value:            return icon_manager::icon::texture;
+            case GLT::asset::core_types::material.value:            return icon_manager::icon::material;
+            case GLT::asset::core_types::material_instance.value:   return icon_manager::icon::material_inst;
+            case GLT::asset::core_types::world.value:
+            case GLT::asset::core_types::region.value:              return icon_manager::icon::world;
+            case GLT::asset::core_types::audio.value:               return icon_manager::icon::audio;
+            default:                                                return icon_manager::icon::file;
+        }
+    }
+
+
+    static std::vector<std::string> split_enumeration(const std::string_view values) {
+
+        std::vector<std::string> out;
+        for (size_t start = 0; start <= values.size(); ) {
+            const auto pos = values.find('|', start);
+            if (pos == std::string_view::npos) {
+                out.emplace_back(values.substr(start));
+                break;
+            }
+            out.emplace_back(values.substr(start, pos - start));
+            start = pos + 1;
+        }
+        return out;
     }
 
     // TEMPLATE IMPLEMENTATION =========================================================================================
@@ -104,41 +142,39 @@ namespace GLT::editor {
 
             const ImGuiViewport* vp = ImGui::GetMainViewport();
             const ImVec2 center(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f);
-            ImGui::SetNextWindowPos (center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-            ImGui::SetNextWindowSize(ImVec2(IMPORT_WINDOW_WIDTH, 0.0f), ImGuiCond_Appearing);
-
+            ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(IMPORT_WINDOW_WIDTH, std::min(IMPORT_WINDOW_HEIGHT, vp->Size.y * 0.85f)), ImGuiCond_Appearing);
             m_center_next_frame = false;
         }
 
+        ImGui::SetNextWindowSizeConstraints(ImVec2(520.0f, 320.0f), ImVec2(FLT_MAX, FLT_MAX));
         constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse;
 
-        if (!ImGui::Begin(m_window_id.c_str(), &m_show_window, flags)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+        const bool open = ImGui::Begin(m_window_id.c_str(), &m_show_window, flags);
+        ImGui::PopStyleVar();
+        if (!open) {
             ImGui::End();
             return;
         }
 
-        // ---- header: target directory picker ---------------------------------------------------
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("Import into:");
-        ImGui::SameLine(120.0f);
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        GLT::UI::draw_directory_picker("##target_dir", m_target_dir, PROJECT_CONTENT_DIR);
+        draw_header();
 
-        // ---- override toggle -------------------------------------------------------------------
-        ImGui::Checkbox("Override existing files", &m_override_existing);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("If checked, imports that would overwrite an existing file will proceed.");
+        // ---- scrollable content: destination + one card per file ------------------------------
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.f, 10.f));
+        ImGui::BeginChild("##import_content", ImVec2(0.f, -chrome::footer_height()), ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
 
-        ImGui::Separator();
+        draw_destination_card();
 
-        // ---- per-file sections -----------------------------------------------------------------
-        if (ImGui::BeginChild("##items_scroll", ImVec2(0.f, 500.f), true)) {
-            for (int i = 0; i < static_cast<int>(m_items.size()); ++i)
-                draw_item_section(m_items[i], i);
-        }
+        chrome::section_label("FILES", std::to_string(m_items.size()).c_str());
+        if (m_items.empty())
+            UI::empty_state("Nothing to import", "Drop files on the content browser or use its Import button");
+        for (int i = 0; i < static_cast<int>(m_items.size()); ++i)
+            draw_item_section(m_items[i], i);
+
         ImGui::EndChild();
 
-        ImGui::Separator();
         draw_footer();
 
         ImGui::End();
@@ -208,7 +244,7 @@ namespace GLT::editor {
                     break;
 
                 case GLT::asset::factory::i_asset_factory_plugin::option_descriptor::kind::real:
-                    f.float_value = d.default_value.empty() ? 0.0f : std::atof(std::string(d.default_value).c_str());
+                    f.float_value = d.default_value.empty() ? 0.0f : static_cast<f32>(std::atof(std::string(d.default_value).c_str()));
                     break;
 
                 default:
@@ -216,8 +252,50 @@ namespace GLT::editor {
                     break;
             }
 
+            f.default_bool = f.bool_value;
+            f.default_int = f.int_value;
+            f.default_float = f.float_value;
+            f.default_string = f.string_value;
+
             item.options.push_back(std::move(f));
         }
+    }
+
+
+    void asset_import_window::draw_header() {
+
+        std::string count = std::to_string(m_items.size()) + (m_items.size() == 1 ? " file" : " files");
+        if (m_importing)
+            count += ", " + std::to_string(m_imports_pending) + " pending";
+
+        chrome::header_options options{};
+        options.subtitle = count.c_str();
+        options.pill = m_importing ? "Importing" : nullptr;
+        options.pill_color = STATE_BUSY;
+        const chrome::header_bar bar = chrome::begin_header_bar(icon_manager::icon::folder_add, "Import Assets", options);
+        chrome::end_header_bar(bar);
+    }
+
+
+    void asset_import_window::draw_destination_card() {
+
+        UI::card_options options{};
+        options.icon = icon_manager::get(icon_manager::icon::folder).tex_ref;
+        options.icon_uv0 = icon_manager::get(icon_manager::icon::folder).uv0;
+        options.icon_uv1 = icon_manager::get(icon_manager::icon::folder).uv1;
+        options.has_icon = true;
+
+        if (UI::begin_card("Destination", options)) {
+
+            UI::property_custom("Folder", [&](const f32 /*width*/) {
+                    return GLT::UI::draw_directory_picker("##target_dir", m_target_dir, PROJECT_CONTENT_DIR);
+                }, "Content folder the imported assets are written to");
+
+            constexpr bool default_override = false;
+            UI::property_toggle("Overwrite existing", m_override_existing,
+                "Allow imports that would replace a file that already exists in the folder", &default_override);
+        }
+        UI::end_card();
     }
 
 
@@ -225,206 +303,190 @@ namespace GLT::editor {
 
         ImGui::PushID(index);
 
-        // ---- green tint on the header if already imported ---------------------------------------
+        // ---- state of this file: drives the pill in the card header ----------------------------
+        const bool has_conflict = !item.imported && target_exists(item);
+        const char* state_text = nullptr;
+        ImU32 state_color = 0;
         if (item.imported) {
-            ImGui::PushStyleColor(ImGuiCol_Header,        IMPORTED_BG);
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IMPORTED_BG_HOVER);
-            ImGui::PushStyleColor(ImGuiCol_HeaderActive,  IMPORTED_BG_ACTIVE);
+            state_text = "Imported";
+            state_color = STATE_OK;
+        } else if (item.status.starts_with("Failed")) {
+            state_text = "Failed";
+            state_color = STATE_ERROR;
+        } else if (item.status == "Queued...") {
+            state_text = "Importing";
+            state_color = STATE_BUSY;
+        } else if (item.candidates.empty()) {
+            state_text = "Not supported";
+            state_color = STATE_ERROR;
+        } else if (has_conflict) {
+            state_text = m_override_existing ? "Will overwrite" : "Name conflict";
+            state_color = m_override_existing ? STATE_WARN : STATE_ERROR;
         }
 
-        const std::string header = item.source.filename().string()
-            + (item.status.empty() ? "" : "   —   " + item.status);
+        const bool item_can_import = !m_importing
+            && !item.candidates.empty()
+            && !item.target_name.empty()
+            && (!has_conflict || m_override_existing);
 
-        const bool open = ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        // ---- card: icon, file name, type as summary, pill + Import button in the header ---------
+        const std::string file_name = item.source.filename().string();
+        const std::string type_name = item.candidates.empty() ? std::string("no import factory") : display_name_for(item.target_type);
+        const char* button_label = item.imported ? "Re-import" : "Import";
+        const f32 button_w = chrome::button_width(button_label);
+        const f32 pill_w = state_text ? ImGui::CalcTextSize(state_text).x + 22.f + 8.f : 0.f;
+        const auto icon = icon_manager::get(icon_for_type(item.target_type));
 
-        if (item.imported) {
-            ImGui::PopStyleColor(3);
-        }
+        UI::card_options options{};
+        options.summary = type_name.c_str();
+        options.collapsible = true;
+        options.default_open = true;
+        options.icon = icon.tex_ref;
+        options.icon_uv0 = icon.uv0;
+        options.icon_uv1 = icon.uv1;
+        options.has_icon = true;
+        options.header_actions_width = pill_w + button_w;
+        options.header_actions = [&]() {
+            if (state_text) {
+                chrome::status_pill_item(state_text, state_color);
+                ImGui::SameLine(0.f, 8.f);
+            }
+            ImGui::BeginDisabled(!item_can_import);
+            if (UI::subtle_button(button_label, ImVec2(button_w, 0.f)))
+                start_imports(index);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", item_can_import ? "Import only this file" : "Fix the issues below first");
+            ImGui::EndDisabled();
+        };
 
-        if (open) {
+        if (UI::begin_card(file_name.c_str(), options)) {
 
-            // --- Name ------------------------------------------------------------------------
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Name");
-            ImGui::SameLine(OPTION_LABEL_WIDTH);
-            ImGui::SetNextItemWidth(-FLT_MIN);
-
-            char name_buf[256];
-            std::snprintf(name_buf, sizeof(name_buf), "%s", item.target_name.c_str());
-            if (ImGui::InputText("##name", name_buf, sizeof(name_buf))) {
-                item.target_name = name_buf;
-                item.imported = false;               // any edit invalidates the prior import
+            // --- name -------------------------------------------------------------------------------
+            if (UI::property_text("Name", item.target_name, "Name of the asset file, without extension", "asset name")) {
+                item.imported = false;                      // any edit invalidates the prior import
                 item.status.clear();
             }
 
-            // --- Type ------------------------------------------------------------------------
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Type");
-            ImGui::SameLine(OPTION_LABEL_WIDTH);
-            ImGui::SetNextItemWidth(-FLT_MIN);
+            // --- type -------------------------------------------------------------------------------
+            if (!item.candidates.empty()) {
 
-            const std::string preview = item.candidates.empty()
-                ? std::string("(no factory)")
-                : display_name_for(item.target_type);
-
-            if (ImGui::BeginCombo("##type", preview.c_str())) {
-
-                for (const auto& cand : item.candidates) {
-
-                    const bool selected = (cand.target_type == item.target_type);
-                    const auto label = display_name_for(cand.target_type);
-
-                    if (ImGui::Selectable(label.c_str(), selected)) {
-                        if (item.target_type != cand.target_type) {
-                            item.target_type = cand.target_type;
-                            item.imported = false;
-                            item.status.clear();
-                            rebuild_options_for(item);
-                        }
-                    }
-                    if (selected) ImGui::SetItemDefaultFocus();
+                std::vector<std::string> labels;
+                std::vector<const char*> label_ptrs;
+                labels.reserve(item.candidates.size());
+                i32 current = 0;
+                for (size_t i = 0; i < item.candidates.size(); ++i) {
+                    labels.push_back(display_name_for(item.candidates[i].target_type));
+                    if (item.candidates[i].target_type == item.target_type)
+                        current = static_cast<i32>(i);
                 }
-                ImGui::EndCombo();
-            }
+                for (const auto& label : labels)
+                    label_ptrs.push_back(label.c_str());
 
-            // --- Resolved path (read-only preview) -------------------------------------------
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Output");
-            ImGui::SameLine(OPTION_LABEL_WIDTH);
-            ImGui::TextDisabled("%s", resolved_target_path(item).generic_string().c_str());
+                if (UI::property_combo("Type", current, label_ptrs, "What the file is imported as") && current >= 0
+                    && item.candidates[current].target_type != item.target_type) {
 
-            // --- Conflict hint ---------------------------------------------------------------
-            const bool has_conflict = target_exists(item);
-
-            if (has_conflict && !item.imported) {
-
-                if (m_override_existing) {
-                    ImGui::TextColored(HINT_WARN, "Existing file will be overwritten.");
-                } else {
-                    ImGui::TextColored(HINT_ERROR, "Name conflict - rename or tick \"Override existing files\".");
+                    item.target_type = item.candidates[current].target_type;
+                    item.imported = false;
+                    item.status.clear();
+                    rebuild_options_for(item);
                 }
+            } else
+                UI::property_value("Type", "No import factory for this file type");
+
+            // --- output path + hints ----------------------------------------------------------------
+            UI::property_value("Output", resolved_target_path(item).generic_string(), "Where the asset file will be written");
+
+            if (has_conflict) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(m_override_existing ? STATE_WARN : STATE_ERROR));
+                ImGui::TextWrapped("%s", m_override_existing
+                    ? "A file with this name exists and will be overwritten."
+                    : "A file with this name exists. Rename it, or switch on \"Overwrite existing\".");
+                ImGui::PopStyleColor();
+            }
+            if (!item.status.empty() && !item.imported && item.status != "Queued...") {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(STATE_ERROR));
+                ImGui::TextWrapped("%s", item.status.c_str());
+                ImGui::PopStyleColor();
             }
 
-            ImGui::Spacing();
-
-            // --- Per-item Import button (right-aligned) --------------------------------------
-            const bool item_can_import = !m_importing
-                && !item.candidates.empty()
-                && !item.target_name.empty()
-                && (!has_conflict || m_override_existing);
-
-            {
-                const f32 avail = ImGui::GetContentRegionAvail().x;
-                if (avail > ITEM_BUTTON_WIDTH)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - ITEM_BUTTON_WIDTH));
-
-                ImGui::BeginDisabled(!item_can_import);
-                if (ImGui::Button(item.imported ? "Re-import" : "Import", ImVec2(ITEM_BUTTON_WIDTH, 0)))
-                    start_imports(index);
-                ImGui::EndDisabled();
-            }
-
-            ImGui::Spacing();
-
-            // --- Engine toggles --------------------------------------------------------------
-            if (ImGui::TreeNodeEx("Engine Options")) {
-
-                ImGui::Checkbox("Editor preview only", &item.editor_preview_only);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Keep the runtime asset transient; do not persist to the content tree.");
-
-                ImGui::Checkbox("Strip editor data", &item.strip_editor_data);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Drop authoring-only chunks (thumbnails, gizmos, debug bounds).");
-
-                ImGui::TreePop();
-            }
-
-            // --- Factory options -------------------------------------------------------------
+            // --- factory options --------------------------------------------------------------------
             if (!item.options.empty()) {
 
-                if (ImGui::TreeNodeEx("Factory Options", ImGuiTreeNodeFlags_DefaultOpen)) {
-
-                    for (int i = 0; i < static_cast<int>(item.options.size()); ++i)
-                        draw_option_field(item.options[i], i);
-
-                    ImGui::TreePop();
-                }
+                chrome::section_label("IMPORT OPTIONS");
+                for (int i = 0; i < static_cast<int>(item.options.size()); ++i)
+                    draw_option_field(item.options[i], i);
             }
 
-            ImGui::Spacing();
+            // --- engine options ---------------------------------------------------------------------
+            chrome::section_label("ENGINE");
+            constexpr bool default_off = false;
+            UI::property_toggle("Editor preview only", item.editor_preview_only,
+                "Keep the runtime asset transient; do not persist it to the content tree", &default_off);
+            UI::property_toggle("Strip editor data", item.strip_editor_data,
+                "Drop authoring-only chunks (thumbnails, gizmos, debug bounds)", &default_off);
         }
+        UI::end_card();
 
+        ImGui::Dummy(ImVec2(0.f, 2.f));
         ImGui::PopID();
-        ImGui::Separator();
     }
-
 
 
     void asset_import_window::draw_option_field(option_field& field, int index) {
 
+        using kind = GLT::asset::factory::i_asset_factory_plugin::option_descriptor::kind;
+
         ImGui::PushID(index);
 
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(std::string(field.desc.label).c_str());
-
-        if (!field.desc.tooltip.empty() && ImGui::IsItemHovered())
-            ImGui::SetTooltip("%.*s", (int)field.desc.tooltip.size(), field.desc.tooltip.data());
-
-        ImGui::SameLine(OPTION_LABEL_WIDTH);
-        ImGui::SetNextItemWidth(-FLT_MIN);
+        const std::string label = field.desc.label.empty() ? UI::pretty_name(field.desc.key) : std::string(field.desc.label);
+        const std::string tooltip(field.desc.tooltip);
+        const char* desc = tooltip.empty() ? nullptr : tooltip.c_str();
 
         switch (field.desc.type) {
 
-            case GLT::asset::factory::i_asset_factory_plugin::option_descriptor::kind::boolean:
-                ImGui::Checkbox("##v", &field.bool_value);
+            case kind::boolean:
+                UI::property_toggle(label.c_str(), field.bool_value, desc, &field.default_bool);
                 break;
 
-            case GLT::asset::factory::i_asset_factory_plugin::option_descriptor::kind::integer:
-                ImGui::InputInt("##v", &field.int_value);
+            case kind::integer:
+                UI::property_custom(label.c_str(), [&](const f32 /*width*/) {
+                        return ImGui::DragInt("##v", &field.int_value, 0.2f);
+                    }, desc, field.int_value == field.default_int, [&]() { field.int_value = field.default_int; });
                 break;
 
-            case GLT::asset::factory::i_asset_factory_plugin::option_descriptor::kind::real:
-                ImGui::InputFloat("##v", &field.float_value);
+            case kind::real:
+                UI::property_drag(label.c_str(), field.float_value, 0.01f, 0.f, 0.f, "%.3f", desc, &field.default_float);
                 break;
 
-            case GLT::asset::factory::i_asset_factory_plugin::option_descriptor::kind::enumeration: {
+            case kind::enumeration: {
 
-                std::vector<std::string> items;
-                std::string_view ev = field.desc.enumeration_values;
-                for (size_t start = 0; start <= ev.size(); ) {
-                    const auto pos = ev.find('|', start);
-                    if (pos == std::string_view::npos) {
-                        items.emplace_back(ev.substr(start));
-                        break;
-                    }
-                    items.emplace_back(ev.substr(start, pos - start));
-                    start = pos + 1;
+                const std::vector<std::string> values = split_enumeration(field.desc.enumeration_values);
+                std::vector<std::string> shown;
+                std::vector<const char*> shown_ptrs;
+                shown.reserve(values.size());
+                i32 current = 0;
+                i32 default_index = 0;
+                for (size_t i = 0; i < values.size(); ++i) {
+                    shown.push_back(UI::pretty_name(values[i]));
+                    if (values[i] == field.string_value)
+                        current = static_cast<i32>(i);
+                    if (values[i] == field.default_string)
+                        default_index = static_cast<i32>(i);
                 }
+                for (const auto& s : shown)
+                    shown_ptrs.push_back(s.c_str());
 
-                int current = 0;
-                for (int i = 0; i < (int)items.size(); ++i)
-                    if (items[i] == field.string_value) { current = i; break; }
-
-                std::vector<const char*> cstrs;
-                cstrs.reserve(items.size());
-                for (auto& s : items) cstrs.push_back(s.c_str());
-
-                if (ImGui::Combo("##v", &current, cstrs.data(), (int)cstrs.size()) && current >= 0)
-                    field.string_value = items[current];
-
+                const bool changed = values.size() <= 3
+                    ? UI::property_segmented(label.c_str(), current, shown_ptrs, desc, &default_index)
+                    : UI::property_combo(label.c_str(), current, shown_ptrs, desc, &default_index);
+                if (changed && current >= 0 && current < static_cast<i32>(values.size()))
+                    field.string_value = values[current];
                 break;
             }
 
-            case GLT::asset::factory::i_asset_factory_plugin::option_descriptor::kind::path: {
-
-                char buf[512];
-                std::snprintf(buf, sizeof(buf), "%s", field.string_value.c_str());
-                if (ImGui::InputText("##v", buf, sizeof(buf)))
-                    field.string_value = buf;
-
+            case kind::path:
+                UI::property_text(label.c_str(), field.string_value, desc, "path");
                 break;
-            }
         }
 
         ImGui::PopID();
@@ -436,46 +498,53 @@ namespace GLT::editor {
         auto registry = GLT::asset::registry::get_ref();
 
         bool can_import = registry && !m_items.empty() && !m_importing;
-        if (can_import) {
-            for (const auto& item : m_items) {
-                if (item.candidates.empty() || item.target_name.empty()) {
-                    can_import = false;
-                    break;
-                }
-            }
+        u32 conflicts = 0;
+        u32 imported = 0;
+        for (const auto& item : m_items) {
+            if (item.candidates.empty() || item.target_name.empty())
+                can_import = false;
+            if (item.imported)
+                ++imported;
+            else if (target_exists(item))
+                ++conflicts;
         }
 
-        // Left side: batch status text
+        chrome::begin_footer();
+
+        // ---- left: what is going on --------------------------------------------------------------
         ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("(%zu file%s)%s",
-            m_items.size(), m_items.size() == 1 ? "" : "s",
-            m_importing ? "  - importing..." : "");
+        if (m_importing)
+            ImGui::TextDisabled("Importing... %u left", m_imports_pending);
+        else if (conflicts > 0 && !m_override_existing)
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(STATE_ERROR), "%u name conflict%s", conflicts, conflicts == 1 ? "" : "s");
+        else if (imported > 0)
+            ImGui::TextDisabled("%u of %zu imported", imported, m_items.size());
+        else
+            ImGui::TextDisabled("Ready to import");
 
-        // Right side: buttons, right-aligned
-        ImGui::SameLine();
-
-        const auto& style = ImGui::GetStyle();
+        // ---- right: Cancel + Import All -----------------------------------------------------------
         const char* cancel_label = "Cancel";
         const char* import_label = "Import All";
+        const f32 cancel_w = chrome::button_width(cancel_label);
+        const f32 import_w = chrome::button_width(import_label);
 
-        const f32 cancel_w = ImGui::CalcTextSize(cancel_label).x + style.FramePadding.x * 2.0f;
-        const f32 import_w = ImGui::CalcTextSize(import_label).x + style.FramePadding.x * 2.0f;
-        const f32 total_w = cancel_w + import_w + style.ItemSpacing.x;
+        ImGui::SameLine();
+        chrome::align_right(cancel_w + import_w + 6.f);
 
-        const f32 avail = ImGui::GetContentRegionAvail().x;
-        if (avail > total_w)
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - total_w));
-
-        if (UI::gray_button(cancel_label)) {
+        if (UI::subtle_button(cancel_label, ImVec2(cancel_w, 0.f))) {
             m_show_window = false;
             m_items.clear();
         }
 
-        ImGui::SameLine();
+        ImGui::SameLine(0.f, 6.f);
         ImGui::BeginDisabled(!can_import);
-        if (ImGui::Button(import_label))
+        if (UI::accent_button(import_label, ImVec2(import_w, 0.f)))
             start_imports();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Import every file and close this window when all are done");
         ImGui::EndDisabled();
+
+        chrome::end_footer();
     }
 
 

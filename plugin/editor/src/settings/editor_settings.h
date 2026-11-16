@@ -72,6 +72,15 @@ namespace GLT::editor {
         history_settings                        history{};
         notification_settings                   notifications{};
 
+        struct content_browser_settings {
+
+            // Asset types the content browser does not list, as file extensions without the dot, comma separated
+            // ("glt_region"). "other" = files that are not assets. Region files are written by the engine and cannot be
+            // edited, so they are hidden by default
+            std::string                         hidden_types = "glt_region";
+        };
+        content_browser_settings                content_browser{};
+
 
         // The live settings
         [[nodiscard]] static editor_settings& get();

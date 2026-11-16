@@ -11,6 +11,7 @@
 #include "util/event/asset_event.h"
 #include "util/ui/panel_collection.h"
 #include "config/imgui_config.h"
+#include "window/base/window_chrome.h"
 
 
 
@@ -22,25 +23,17 @@ namespace GLT::editor {
 
     constexpr f32                                   CREATE_WINDOW_WIDTH = 560.0f;
 
-    constexpr f32                                   CREATE_WINDOW_HEIGHT = 380.0f;
+    constexpr f32                                   CREATE_WINDOW_HEIGHT = 420.0f;
 
-    // Width reserved for the left-hand field labels
-    constexpr f32                                   FIELD_LABEL_WIDTH = 110.0f;
+    // Type tiles
+    constexpr f32                                   TYPE_TILE_WIDTH = 124.0f;
 
-    // Content area padding (window padding is zeroed; each zone applies its own)
-    constexpr f32                                   CONTENT_PADDING_X = 20.0f;
+    constexpr f32                                   TYPE_TILE_HEIGHT = 86.0f;
 
-    constexpr f32                                   CONTENT_PADDING_Y = 16.0f;
+    constexpr f32                                   TYPE_TILE_ICON = 36.0f;
 
-    // Footer bar padding
-    constexpr f32                                   FOOTER_PADDING_X = 20.0f;
-
-    constexpr f32                                   FOOTER_PADDING_Y = 10.0f;
-
-    // Status hint colors
-    constexpr ImVec4                                HINT_ERROR = ImVec4(0.94f, 0.36f, 0.36f, 1.0f);
-
-    constexpr ImVec4                                HINT_OK = ImVec4(0.50f, 0.78f, 0.50f, 1.0f);
+    // Footer hint colors
+    constexpr ImU32                                 HINT_ERROR = IM_COL32(235, 100, 100, 255);
 
     // MACROS ==========================================================================================================
 
@@ -95,27 +88,33 @@ namespace GLT::editor {
             m_center_next_frame = false;
         }
 
+        ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 300.0f), ImVec2(FLT_MAX, FLT_MAX));
         constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse;
-        const f32 footer_h = ImGui::GetFrameHeight() + FOOTER_PADDING_Y * 2.0f;
-        if (!ImGui::Begin(m_window_id.c_str(), &m_show_window, flags)) {
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+        const bool open = ImGui::Begin(m_window_id.c_str(), &m_show_window, flags);
+        ImGui::PopStyleVar();
+        if (!open) {
             ImGui::End();
             return;
         }
 
-        const ImVec2 saved_spacing = ImGui::GetStyle().ItemSpacing;
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(saved_spacing.x, 0.0f));
+        draw_header();
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(CONTENT_PADDING_X, CONTENT_PADDING_Y));
-        ImGui::BeginChild("##asset_content", ImVec2(0, -footer_h), false, ImGuiWindowFlags_NoScrollbar);
-        draw_asset_section();
-        ImGui::EndChild();
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.f, 10.f));
+        ImGui::BeginChild("##asset_content", ImVec2(0.f, -chrome::footer_height()), ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PopStyleVar();
 
-        draw_footer(footer_h);              // Footer, pinned to the bottom edge
+        draw_type_tiles();
+        draw_asset_section();
 
-        ImGui::PopStyleVar();               // ItemSpacing
+        ImGui::EndChild();
+
+        draw_footer();
+
         ImGui::End();
     }
+
 
     void asset_create_window::update(const f32 /*delta_time*/) {}
 
@@ -135,109 +134,136 @@ namespace GLT::editor {
             {
                 GLT::asset::core_types::material,
                 "Material",
-                "PBR material with base color, roughness, metallic, and six texture slots."
+                "PBR material with base color, roughness, metallic, and six texture slots.",
+                icon_manager::icon::material_big,
+                "New Material",
             },
         };
         return kTypes;
     }
 
 
+    void asset_create_window::draw_header() {
+
+        const std::filesystem::path relative = GLT::project::extract_path_from_project_content_dir(m_target_dir);
+        const std::string location = "Content/" + relative.generic_string();
+
+        chrome::header_options options{};
+        options.subtitle = location.c_str();
+        const chrome::header_bar bar = chrome::begin_header_bar(icon_manager::icon::file, "Create Asset", options);
+        chrome::end_header_bar(bar);
+    }
+
+
+    void asset_create_window::draw_type_tiles() {
+
+        chrome::section_label("ASSET TYPE");
+        ImGui::Dummy(ImVec2(0.f, 2.f));
+
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        const f32 avail = ImGui::GetContentRegionAvail().x;
+        f32 line_x = 0.f;
+
+        for (const auto& t : creatable_types()) {
+
+            if (line_x > 0.f && line_x + TYPE_TILE_WIDTH > avail) {
+                line_x = 0.f;                                       // wrap
+            } else if (line_x > 0.f)
+                ImGui::SameLine(0.f, 8.f);
+
+            ImGui::PushID(static_cast<int>(t.type.value));
+            const ImVec2 min = ImGui::GetCursorScreenPos();
+            const ImVec2 max(min.x + TYPE_TILE_WIDTH, min.y + TYPE_TILE_HEIGHT);
+            const bool selected = (t.type == m_target_type);
+
+            if (ImGui::InvisibleButton("##tile", ImVec2(TYPE_TILE_WIDTH, TYPE_TILE_HEIGHT)) && !selected) {
+                // keep a name the user typed; only swap the default name of the previous type
+                for (const auto& previous : creatable_types())
+                    if (previous.type == m_target_type && std::strcmp(m_name_buffer, previous.default_name) == 0)
+                        std::snprintf(m_name_buffer, sizeof(m_name_buffer), "%s", t.default_name);
+                m_target_type = t.type;
+                m_operation_error.clear();
+            }
+            const bool hovered = ImGui::IsItemHovered();
+            if (hovered && t.tooltip && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", t.tooltip);
+
+            // background + frame
+            const ImU32 fill = selected ? ImGui::GetColorU32(GLT::imgui_config::get_action_color00_faded_ref())
+                : hovered ? ImGui::GetColorU32(GLT::imgui_config::get_action_color_gray_hover_ref())
+                : ImGui::GetColorU32(ImGuiCol_FrameBg);
+            draw_list->AddRectFilled(min, max, fill, 6.f);
+            if (selected)
+                draw_list->AddRect(min, max, ImGui::GetColorU32(GLT::imgui_config::get_action_color00_hover_ref()), 6.f, 0, 1.5f);
+
+            // icon + label, centered
+            const auto icon = icon_manager::get(t.icon);
+            const ImVec2 icon_min(min.x + (TYPE_TILE_WIDTH - TYPE_TILE_ICON) * 0.5f, min.y + 12.f);
+            draw_list->AddImage(icon.tex_ref, icon_min, ImVec2(icon_min.x + TYPE_TILE_ICON, icon_min.y + TYPE_TILE_ICON), icon.uv0, icon.uv1);
+
+            const ImVec2 label_size = ImGui::CalcTextSize(t.label);
+            draw_list->AddText(ImVec2(min.x + (TYPE_TILE_WIDTH - label_size.x) * 0.5f, max.y - label_size.y - 10.f),
+                ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_TextDisabled), t.label);
+
+            ImGui::PopID();
+            line_x += TYPE_TILE_WIDTH + 8.f;
+        }
+
+        ImGui::Dummy(ImVec2(0.f, 6.f));
+    }
+
+
     void asset_create_window::draw_asset_section() {
 
-        const ImGuiStyle& style = ImGui::GetStyle();
+        std::string ext_hint = ".";
+        ext_hint += GLT::asset::type_to_extension(m_target_type);
 
-        // ---- heading -------------------------------------------------------------------
-        ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold_big));
-        ImGui::TextUnformatted("New Asset");
-        ImGui::PopFont();
+        if (UI::begin_card("Asset")) {
 
-        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
-        ImGui::Separator();
-        ImGui::PopStyleColor();
-
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-        // ---- fields --------------------------------------------------------------------
-        const f32 table_w = ImGui::GetContentRegionAvail().x;
-
-        if (GLT::UI::begin_table("##create_asset_fields", false, ImVec2(table_w, 0.0f), 0.0f, true, 0.30f)) {
-
-            // ---- asset type ------------------------------------------------------------
-            GLT::UI::table_row(
-                []() { ImGui::TextUnformatted("Asset Type"); },
-                [&]() {
-
-                    const auto types = creatable_types();
-                    const char* current_label = types.front().label;
-                    for (const auto& t : types)
-                        if (t.type == m_target_type)
-                            current_label = t.label;
-
-                    ImGui::SetNextItemWidth(-FLT_MIN);
-                    if (ImGui::BeginCombo("##type", current_label)) {
-
-                        for (const auto& t : types) {
-
-                            const bool selected = (t.type == m_target_type);
-                            if (ImGui::Selectable(t.label, selected)) {
-                                m_target_type = t.type;
-                                m_operation_error.clear();
-                            }
-                            if (ImGui::IsItemHovered() && t.tooltip)
-                                ImGui::SetTooltip("%s", t.tooltip);
-                            if (selected)
-                                ImGui::SetItemDefaultFocus();
-                        }
-                        ImGui::EndCombo();
-                    }
-                });
-
-            // ---- location --------------------------------------------------------------
-            // Uses the new table_row() directory-picker overload. Displays content-relative.
-            GLT::UI::table_row("Location", m_target_dir, PROJECT_CONTENT_DIR);
-
-            // ---- name ------------------------------------------------------------------
-            GLT::UI::table_row([]() { ImGui::TextUnformatted("Name"); },
-                [&]() {
-
-                    std::string ext_hint = ".";
-                    ext_hint += GLT::asset::type_to_extension(m_target_type);
+            // ---- name, with the extension shown behind the field ------------------------------------
+            UI::property_custom("Name", [&](const f32 width) {
                     const f32 ext_w = ImGui::CalcTextSize(ext_hint.c_str()).x + 8.0f;
-
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ext_w - style.ItemSpacing.x);
-                    if (ImGui::InputText("##name", m_name_buffer, sizeof(m_name_buffer)))
+                    ImGui::SetNextItemWidth(std::max(40.f, width - ext_w - ImGui::GetStyle().ItemSpacing.x));
+                    if (ImGui::IsWindowAppearing())
+                        ImGui::SetKeyboardFocusHere();
+                    const bool changed = ImGui::InputText("##name", m_name_buffer, sizeof(m_name_buffer));
+                    if (changed)
                         m_operation_error.clear();
-
                     ImGui::SameLine();
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextDisabled("%s", ext_hint.c_str());
-                });
+                    return changed;
+                }, "File name of the new asset");
 
-            // ---- options ---------------------------------------------------------------
-            GLT::UI::table_row("Auto open editor", m_auto_open);
+            // ---- location ---------------------------------------------------------------------------
+            UI::property_custom("Location", [&](const f32 /*width*/) {
+                    const bool changed = GLT::UI::draw_directory_picker("##location", m_target_dir, PROJECT_CONTENT_DIR);
+                    if (changed)
+                        m_operation_error.clear();
+                    return changed;
+                }, "Content folder the asset is created in");
 
-            // ---- result preview --------------------------------------------------------
-            // Monospace "what will land on disk" line - lives in the table so it aligns with the other rows and uses the same two-column rhythm
-            GLT::UI::table_row([]() { ImGui::TextUnformatted("Result"); },
-                [&]() {
+            // ---- options ----------------------------------------------------------------------------
+            constexpr bool default_auto_open = true;
+            UI::property_toggle("Open in editor", m_auto_open, "Open the new asset in its editor right away", &default_auto_open);
 
-                    std::filesystem::path name_only = m_name_buffer;
-                    name_only.replace_extension("");
-                    if (!name_only.empty()) {
-                        name_only += ".";
-                        name_only += GLT::asset::type_to_extension(m_target_type);
-                    }
-                    const std::filesystem::path preview = m_target_dir / name_only;
-
+            // ---- what will land on disk -------------------------------------------------------------
+            std::filesystem::path name_only = m_name_buffer;
+            name_only.replace_extension("");
+            if (!name_only.empty())
+                name_only += ext_hint;
+            const std::filesystem::path relative = GLT::project::extract_path_from_project_content_dir(m_target_dir / name_only);
+            UI::property_custom("File", [&](const f32) {
+                    ImGui::AlignTextToFramePadding();
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
                     ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::monospace_regular));
-                    ImGui::TextWrapped("%s", preview.generic_string().c_str());
+                    ImGui::TextWrapped("%s", relative.empty() ? "(outside the content folder)" : relative.generic_string().c_str());
                     ImGui::PopFont();
                     ImGui::PopStyleColor();
-                });
-
-            GLT::UI::end_table();
+                    return false;
+                }, "Path of the new file inside the content folder");
         }
+        UI::end_card();
     }
 
 
@@ -246,9 +272,7 @@ namespace GLT::editor {
     }
 
 
-    void asset_create_window::draw_footer(const f32 footer_height) {
-
-        const ImGuiStyle& style = ImGui::GetStyle();
+    void asset_create_window::draw_footer() {
 
         // ---- validation, recomputed every frame ---------------------------------------
         // Kept separate from m_operation_error so that failures inside try_create()
@@ -280,69 +304,49 @@ namespace GLT::editor {
             }
         }
 
-        // ---- footer chrome -------------------------------------------------------------
-        // We draw the separator + tinted background ourselves because the footer is
-        // not a real ImGui window - it is the space left at the bottom of the parent.
-        const ImVec2 footer_p0 = ImGui::GetCursorScreenPos();
-        const f32    footer_w = ImGui::GetContentRegionAvail().x;
-        ImDrawList*  dl = ImGui::GetWindowDrawList();
-
-        dl->AddLine(
-            ImVec2(footer_p0.x,             footer_p0.y + 0.5f),
-            ImVec2(footer_p0.x + footer_w,  footer_p0.y + 0.5f),
-            ImGui::GetColorU32(ImGuiCol_Separator, 0.6f), 1.0f);
-
-        dl->AddRectFilled(
-            ImVec2(footer_p0.x,            footer_p0.y + 1.0f),
-            ImVec2(footer_p0.x + footer_w, footer_p0.y + footer_height),
-            ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.15f)));
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(FOOTER_PADDING_X, FOOTER_PADDING_Y));
-        ImGui::BeginChild("##asset_footer", ImVec2(0, footer_height), false, ImGuiWindowFlags_NoScrollbar);
-
-        // ---- left: status hint ---------------------------------------------------------
         const bool has_validation_error = !m_validation_error.empty();
-        const bool has_operation_error = !m_operation_error.empty();
-        const bool has_error = has_validation_error || has_operation_error;
+        const bool has_error = has_validation_error || !m_operation_error.empty();
         const std::string& msg = has_validation_error ? m_validation_error : m_operation_error;
 
+        // ---- keyboard: Enter creates, Escape cancels (while this window is focused) -----------
+        const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        bool create = focused && !has_validation_error
+            && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
+        if (focused && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            m_show_window = false;
+
+        chrome::begin_footer();
+
+        // ---- left: status hint ---------------------------------------------------------
         ImGui::AlignTextToFramePadding();
         if (has_error)
-            ImGui::TextColored(HINT_ERROR, "%s", msg.c_str());
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(HINT_ERROR), "%s", msg.c_str());
         else
-            ImGui::TextDisabled("Ready to create");
+            ImGui::TextDisabled("Enter to create");
 
         // ---- right: buttons ------------------------------------------------------------
         const char* cancel_label = "Cancel";
         const char* create_label = "Create";
-
-        // Extra horizontal padding so the labels breathe.
-        const f32 pad_x = style.FramePadding.x * 2.0f + 14.0f;
-        const f32 cancel_w = ImGui::CalcTextSize(cancel_label).x + pad_x;
-        const f32 create_w = ImGui::CalcTextSize(create_label).x + pad_x;
-        const f32 buttons_w = cancel_w + create_w + style.ItemSpacing.x;
+        const f32 cancel_w = chrome::button_width(cancel_label);
+        const f32 create_w = chrome::button_width(create_label);
 
         ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttons_w);
+        chrome::align_right(cancel_w + create_w + 6.f);
 
-        if (UI::gray_button(cancel_label, ImVec2(cancel_w, 0.0f)))
+        if (UI::subtle_button(cancel_label, ImVec2(cancel_w, 0.0f)))
             m_show_window = false;
 
-        ImGui::SameLine();
-
-        // Primary action uses the theme's main accent color. Only blocked by *validation* errors - an operation error is
-        // informational, and the user is allowed to retry (e.g. after fixing something externally)
+        // Only blocked by *validation* errors - an operation error is informational, and the user may retry (e.g. after
+        // fixing something externally)
+        ImGui::SameLine(0.f, 6.f);
         ImGui::BeginDisabled(has_validation_error);
-        ImGui::PushStyleColor(ImGuiCol_Button,        GLT::imgui_config::get_action_color00_default_ref());
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, GLT::imgui_config::get_action_color00_hover_ref());
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  GLT::imgui_config::get_action_color00_active_ref());
-        if (ImGui::Button(create_label, ImVec2(create_w, 0.0f)))
-            try_create();
-        ImGui::PopStyleColor(3);
+        create |= UI::accent_button(create_label, ImVec2(create_w, 0.0f));
         ImGui::EndDisabled();
 
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
+        chrome::end_footer();
+
+        if (create)
+            try_create();
     }
 
 

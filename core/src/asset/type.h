@@ -223,7 +223,7 @@ namespace GLT::asset {
     // @brief Returns the on-disk extension for an asset type, including the leading "glt_"
     // @param type The asset type
     // @return The extension string (e.g. "glt_material")
-    FORCE_INLINE_R constexpr std::string_view type_to_extension(GLT::asset::type type) noexcept;
+    FORCE_INLINE_R constexpr std::string type_to_extension(GLT::asset::type type);
 
 
     // @brief Maps a file extension back to an asset type

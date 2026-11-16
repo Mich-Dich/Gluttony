@@ -94,13 +94,17 @@ namespace GLT::editor {
 
         // ---- drawing helpers -----------------------------------------------
         void draw_toolbar();
-        void draw_status_bar(const u32 shown_items);
+        void draw_status_bar(const u32 shown_items);        // also says how many files the type options hide
         void draw_breadcrumbs();
         void draw_directory_tree();
         void draw_directory_tree_recursive(const std::filesystem::path& dir, const bool collapse_tree);
         u32 draw_file_view();                                           // returns the number of items shown
         void draw_file_item(const dir_entry& entry);
         void draw_background_context_menu();
+
+        // "Options" submenu: which asset types are listed (editor_settings::content_browser::hidden_types, shared by all
+        // content browsers), Show all, Reset to default
+        void draw_options_menu();
         void draw_item_context_menu(const dir_entry& entry);
         void draw_popups();
 
@@ -146,6 +150,11 @@ namespace GLT::editor {
         std::filesystem::path                                       m_selection_anchor{};
 
         char                                                        m_search_buffer[256]{};
+        u32                                                         m_hidden_by_type = 0;   // files of hidden types in m_current_dir
+
+        // Bumped when the type options change; every browser refreshes its listing when it sees a new value
+        inline static u64                                           s_type_filter_generation = 1;
+        u64                                                         m_type_filter_generation = 0;
         f32                                                         m_icon_size = 56.f;     // grid zoom (Ctrl + wheel, slider in the status bar)
         u32                                                         m_shown_items = 0;      // items drawn last frame (status bar)
 

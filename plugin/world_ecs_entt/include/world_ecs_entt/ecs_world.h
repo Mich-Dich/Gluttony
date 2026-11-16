@@ -77,6 +77,7 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] glm::quat get_local_rotation_q(entity_id id) const override;
         void set_local_rotation_q(entity_id id, const glm::quat& rotation) override;
         [[nodiscard]] glm::vec3 get_local_scale(entity_id id) const override;
+        [[nodiscard]] glm::mat4 get_world_transform(entity_id id) const override { return world_transform_of(id); }
         void set_local_scale(entity_id id, const glm::vec3& scale) override;
 
         [[nodiscard]] std::span<const asset::region::region> regions() const noexcept override;
