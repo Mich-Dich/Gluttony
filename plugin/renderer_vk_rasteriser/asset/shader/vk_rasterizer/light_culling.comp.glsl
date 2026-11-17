@@ -222,7 +222,7 @@ void main() {
             atomicMax(s_max_bits, max_bits);
         }
         if (background)
-            s_has_background = 1u;                              // benign race: every writer stores 1
+            atomicOr(s_has_background, 1u);                     // atomic: plain stores from many threads are a data race (GPU-AV)
     }
     barrier();
 

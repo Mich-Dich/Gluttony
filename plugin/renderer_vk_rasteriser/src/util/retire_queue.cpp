@@ -45,12 +45,15 @@ namespace GLT::renderer::vk_rasterizer::util {
         if (!fn)
             return;
 
-        // Nothing submitted yet -> nothing can reference the object
-        if (!m_timeline || m_last_submitted == 0) {
+        if (!m_timeline) {
             fn();
             return;
         }
-        m_pending.push_back({ m_last_submitted, std::move(fn) });
+
+        // Tag with the NEXT value, not the last one handed out: a command buffer that references the object may already be
+        // recorded but not submitted yet (scene renderers take their value at submit time, after recording). Waiting for
+        // one more submission covers it. Also covers the first frame (nothing submitted yet, but maybe recorded)
+        m_pending.push_back({ m_last_submitted + 1, std::move(fn) });
     }
 
 

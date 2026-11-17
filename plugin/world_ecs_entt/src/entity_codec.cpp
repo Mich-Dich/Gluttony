@@ -62,25 +62,36 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    void entity_codec::save(const entt::registry& reg, std::span<const entt::entity> entities, const resolve_fn& resolve, 
-        std::vector<std::byte>& out) const {
+    void entity_codec::save(const entt::registry& reg, std::span<const entt::entity> entities, const resolve_fn& resolve,
+        std::vector<std::byte>& out, const extension* ext) const {
 
         out.clear();
         write_pod<u32>(out, CODEC_ENTT_V1);
         write_pod<u32>(out, static_cast<u32>(entities.size()));
 
+        std::vector<std::pair<u64, std::vector<std::byte>>> extra;
         for (auto entity : entities) {
 
             const GLT::world::entity_id id = resolve(entity);
             write_pod<u32>(out, id.index);
             write_pod<u32>(out, id.generation);
 
+            extra.clear();
+            if (ext && ext->collect)
+                ext->collect(entity, extra);
+
             // Count components first so the reader can skip cleanly.
-            u32 count = 0;
+            u32 count = static_cast<u32>(extra.size());
             for (const auto& entry : m_components)
                 if (entry.has(reg, entity))
                     count++;
             write_pod<u32>(out, count);
+
+            for (const auto& [hash, payload] : extra) {
+                write_pod<u64>(out, hash);
+                write_pod<u32>(out, static_cast<u32>(payload.size()));
+                out.insert(out.end(), payload.begin(), payload.end());
+            }
 
             for (const auto& entry : m_components) {
                 if (!entry.has(reg, entity))
@@ -100,7 +111,8 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
-    std::vector<GLT::world::entity_id> entity_codec::load(entt::registry& reg, std::span<const std::byte> data, const allocate_fn& allocate) const {
+    std::vector<GLT::world::entity_id> entity_codec::load(entt::registry& reg, std::span<const std::byte> data, const allocate_fn& allocate,
+        const extension* ext) const {
 
         std::vector<GLT::world::entity_id> created;
         if (data.size() < 8)
@@ -133,7 +145,9 @@ namespace GLT::world::world_ecs_entt {
 
                 if (const entry* e = find(hash))
                     e->load(reg, ent, sub);
-                // else: unknown component - skip silently (forward compat)
+                else if (ext && ext->unknown)
+                    ext->unknown(ent, hash, sub);       // plugin component, or kept for a plugin that is not loaded
+                // else: unknown component - skipped (forward compat)
             }
         }
 

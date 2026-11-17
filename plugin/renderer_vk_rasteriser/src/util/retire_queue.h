@@ -26,8 +26,9 @@ namespace GLT::renderer::vk_rasterizer::util {
     // @brief Deferred destruction of GPU objects that may still be referenced by in-flight command buffers
     //
     // Built on a single timeline semaphore that every frame submission on the graphics queue signals with a strictly
-    // increasing value (see `next_signal_value()`). `retire()` tags the destroy callback with the last value handed out:
-    // all work that could reference the object was submitted at or before that value. `collect()` runs every callback
+    // increasing value (see `next_signal_value()`). `retire()` tags the destroy callback with the value of the NEXT
+    // submission: all work that could reference the object is submitted at or before it (including a command buffer that
+    // is recorded but not yet submitted). `collect()` runs every callback
     // whose value the GPU has reached. No waitIdle, no frame-count guessing, works with any number of scene renderers
     //
     // Threading: main/update thread only (same as the rest of the renderer)

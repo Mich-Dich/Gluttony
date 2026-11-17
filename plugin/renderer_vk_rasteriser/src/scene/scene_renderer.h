@@ -575,6 +575,10 @@ namespace GLT::renderer::vk_rasterizer {
         };
         std::unordered_map<const void*, imgui_texture>                      m_imgui_textures{};
 
+        // Textures ImGui gave up: already released to ImGui (status Destroyed), the Vulkan objects die once no frame in
+        // flight can sample them any more (frames left, counted down by upload_imgui_textures)
+        std::vector<std::pair<imgui_texture, u32>>                          m_imgui_textures_dying{};
+
     };
 
 }

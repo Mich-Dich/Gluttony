@@ -298,8 +298,8 @@ namespace GLT::plugin_manager {
 
         // @brief Optional per-frame hook
         //
-        // Called by the plugin manager once per frame for every loaded plugin Default implementation is a no-op; most
-        // plugins only need [on_load()] / [on_unload()]
+        // NOTE: not dispatched yet - nothing calls it. Plugins that need per-frame work use a layer, an editor window
+        // (GLT::editor::i_editor_window::update) or the game session. Default implementation is a no-op
         //
         // @param delta_time  Seconds elapsed since the previous frame
         virtual void update(const f32 /*delta_time*/) {}

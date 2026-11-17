@@ -1,8 +1,97 @@
 # Terrain Generation Plugin
 
-> **Status: design proposal.** Nothing here is implemented. It builds on [procedural_geometry.md](procedural_geometry.md)
-> (the procedural mesh store, `i_world::set_procedural_mesh`, baking) and needs one engine addition first: an editor
-> extension API (see "Prerequisite").
+> **Status: T0 + T1 done (verified, self test passes), T2 implemented (not yet built), T3–T7 proposal.** It builds on
+> [procedural_geometry.md](procedural_geometry.md) (the procedural mesh store, `i_world::set_procedural_mesh`, baking). The
+> editor extension API lives in `core/src/editor/i_editor.h`; plugins register through `GLT::editor::add_editor_hook()`
+> (load-order independent; plugin `update()` is not dispatched by the engine).
+>
+> **T1 as built** (`plugin/terrain`):
+> - Node SDK in `include/terrain/` (`types.h` lattice regions + fields, `node.h` node base / context / `node_builder` /
+>   registry interface, `noise.h`). Parameters are declared with `node_builder` and bound to member variables (the member
+>   initializer is the default). This replaces the `std::meta` annotation sketch below for now: same single source of truth,
+>   no reflection needed per node. `register_nodes<^^namespace>` for node packs remains a T5 convenience on top.
+> - Regions are integer lattice rectangles (`x0, y0, width, height, spacing`); every field is indexed by global lattice
+>   coordinates, so a sample is bit-identical in any region that contains it.
+> - Evaluator (`src/graph/evaluator.*`): upstream sort, regions grown by aprons, per-node signature cache (a cached region
+>   that contains the request is reused), `evaluate_async` on `GLT::thread_pool`, cancellation.
+> - Expression compiler (`src/expression/`), 61 built-in node types (`src/nodes/`). Not in T1 yet: heightmap from texture,
+>   curve node (needs the details panel, T2), white / blue noise, points.
+> - Asset type `terrain_graph` (`.glt_terrain_graph`, chunks GRPH / GEDT / GPRV), handler, "Create Asset" entry, a T1
+>   summary window as its asset editor (lists the graph, test-evaluates the surface).
+> - Acceptance test: Tools > Terrain > Run self test (every node: four quadrants equal the whole region bit for bit; graph
+>   round trip; expressions). Results go to the log.
+>
+> **T2 as built** (`src/editor/`): `terrain_editor_window` is the asset editor: node canvas | sidebar (2D map on top,
+> details below), both splits draggable. Toolbar, details and palette use core's `util/ui/panel_collection` (cards,
+> property rows with reset-to-default markers, segmented controls, search field). The canvas colours are patched in
+> VisualNodeSystem comes from our fork (github.com/Mich-Dich/visual_node_system) with: `Node::DrawFrame` (custom node
+> frame), `Node::GetSocketLocalPosition` (custom socket layout), socket hit area = circle + label (highlighted on
+> hover), pressing a connected input picks its link up, socket / wire colour from the first socket type,
+> `NodeArea::GetSettings()` (style, font, context menu) and `SetZoomLimits()`, octilinear ("subway") connections
+> (`ConnectionShape::Octilinear`: horizontal / vertical / 45 degree segments only, also for hit testing), middle-mouse
+> panning, canvas / node dragging not blocked by in-node widgets. No source patches any more; the sync
+> skips a checkout with uncommitted changes.
+> - Nodes (`vns_terrain_node`): own frame (category-coloured header, accent border when selected), one row per pin
+>   with the sockets on the node edge, then one row per parameter edited right in the node (Blender-style drag fields
+>   with a fill bar for bounded values, double-click / Ctrl+click to type; switches; segmented controls or combos;
+>   vector fields; the expression node gets a code field with its compile state). Right-click a node: reset
+>   parameters. Parameters travel with copy / paste (JSON).
+> - Canvas (`graph_canvas`): one VisualNodeSystem adapter class (`vns_terrain_node`) for every node type; the canvas is
+>   compiled back into the terrain graph every frame (add via right-click palette with search, delete, connect, copy /
+>   paste), grid snap, zoom 8 % .. 115 %. VisualNodeSystem's own context menu is disabled by a CMake patch (its
+>   rename-socket / sub-area entries would break the pin mapping); sub-areas, reroutes and comments are not compiled yet.
+>   Node positions are stored in CHUNK_EDITOR as "id x y" lines, not as VisualNodeSystem JSON.
+> - Map (`terrain_map`): the selected node's output (pin chooser for several outputs, sinks show their inputs), else the
+>   Surface; fills its rectangle (256 samples along the longer side) on the thread pool, hill-shaded height tint or
+>   heat map for masks, pan / zoom, value readout; overlays for value range, scale bar, timing and errors. One
+>   evaluation at a time; out-of-date ones finish unless they run long.
+> - Details: node title, description, a read-only parameter summary, pins; with nothing selected: graph info, preview
+>   domain and preview overrides of exposed parameters.
+> - Not yet: undo, the map's chunk grid / point views, graph-level exposed parameter list (the Exposed Parameter nodes
+>   are the list for now).
+> - Preview relation: the canvas marks the node the map shows (ring in its header) and every node upstream of it; a
+>   node that does not feed it shows an amber warning + tooltip on hover. Clicking a widget inside a node edits it
+>   without selecting it, so the preview can stay on a downstream node while upstream values change.
+>
+> **T4 as built** (`src/world/`):
+> - Engine: plugin-defined components are first-class (`core/src/world/owned_storage.h`): `component_registry::
+>   add_owned<T>(name, category, draw, summary, save, load, required, scope)` / `remove_owned<T>()`. The values live in
+>   an `owned_storage<T>` (created in the plugin, never in the world's entt registry), flagged by
+>   `i_storage::owns_data()`. `world_ecs_entt` saves / loads them inside each entity's codec record (codec
+>   `extension`), removes them with their entity (`release_slot`), and keeps the payloads of components no loaded
+>   plugin provides (`preserved_components`): written back unchanged on save, handed to the type when its plugin
+>   registers, and filled from the live values when a plugin unloads. A world opened without the terrain plugin keeps
+>   its terrain settings.
+> - Engine: `i_world::spawn_transient / set_transient / is_transient` (runtime-only entities: no region, never saved,
+>   not listed as roots), `i_world::set_mesh` (static mesh asset on an entity), `i_world::set_entity_name`.
+> - `terrain_component` (`terrain.world_terrain`, world scope): graph (saved as its content path), seed, exposed
+>   parameter overrides, mode (live / baked), enabled, chunk size / resolution / detail levels / view distance / detail,
+>   bake extent / level / folder. Versioned, append-only payload. Inspector with asset picker, overrides from the
+>   graph's Exposed Parameter nodes, Regenerate / Bake / Clear bake, status line. The terrain editor's "Apply to
+>   world" adds / updates it on the edited world (graph, preview seed, preview overrides, live).
+> - Live (`terrain_streamer`, one per live world, driven by the update event through `terrain_world_system`): quadtree
+>   over the ground around the world's streaming anchor (the session's primary camera); a chunk splits while the
+>   anchor is closer than detail x its size. Same quads per chunk at every level, lattice per level, skirts hide the
+>   cracks between levels. Evaluated on the thread pool (holes first, then nearest, 4 at a time), procedural meshes on
+>   transient entities. Chunks leaving the selection stay until their area is covered. Any change of graph revision,
+>   seed, overrides, chunk size / resolution or Regenerate re-evaluates every chunk (old meshes stay until replaced).
+> - Bake (`terrain_world_system::bake`): the bake extent at the bake level, evaluated synchronously, one static mesh
+>   asset per chunk (`procedural_mesh_store::bake`, folder `<bake folder>/<world>_<timestamp>/chunk_L<l>_<x>_<y>`),
+>   ordinary entities at the chunk corners (so they land in their regions) under a "Terrain (baked)" entity. Clear
+>   bake removes those entities (the files stay). Baked mode stops the streamer.
+> - Not yet: collision for the chunks (T7), hybrid mode (baked inside the extent, live beyond), progress / async bake,
+>   materials.
+>
+> **T3 as built** (`src/editor/terrain_preview_3d`): the preview panel switches between 2D (map) and 3D. 3D: its own
+> offscreen scene renderer (sky + sun). Like the map it follows the camera: a window of 10 x 10 chunks (64 x 64 quads)
+> under the orbit point, sample spacing = a power of two from the camera distance (window ~3x the distance wide), so
+> zooming out covers more ground. Chunks sit on the lattice of their spacing (shared edge vertices, one extra ring of
+> samples for the normals), are evaluated on the thread pool (nearest first, at most 6 at a time) and published as
+> `occasional` procedural meshes (no detail builds). Chunks that left the window stay until the window chunks over
+> their area have meshes (no holes while zooming / panning); a chunk keeps its old mesh until the new state arrives.
+> Shows the map's target when it is a heightfield, else the Surface. Camera: LMB orbit, MMB / RMB pan, wheel zoom, WASD
+> + QE move, F frame the preview domain. The renderer is inactive while the 2D map is shown. Not yet: finer chunks near
+> the camera (rings, the streamer of T4), click on the map to move the 3D camera, colouring by height.
 >
 > **Decided:** graph + C++ nodes; node canvas = VisualNodeSystem; one plugin with a conditional editor part; new terrains
 > default to **live**; custom nodes live in node-pack plugins in the project directory (no dependency on scripting).
@@ -309,7 +398,7 @@ custom context menus.
 
 Integration:
 
-- **Build:** vendored as a submodule under `plugin/terrain/vendor/VisualNodeSystem`, built as its static library with
+- **Build:** our fork, cloned to `vendor/visual_node_system` as a live checkout (`git_clone_or_update(... LIVE)`: only fast-forwarded, local work is never overwritten), built as its static library with
   `DEAR_IMGUI_INCLUDE_DIR` pointing at the engine's ImGui, linked only into the plugin's editor part. It carries jsoncpp and
   stduuid; on Linux it links X11.
 - **One adapter type.** A single `vns_terrain_node` subclass of the library's node class represents *every* terrain node:

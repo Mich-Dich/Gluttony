@@ -35,8 +35,97 @@ find_package(Git REQUIRED)
 #     FORCE                        bypass the throttle and always sync
 #     INTERVAL_SECONDS <seconds>   override the 24h default (e.g. 0 to always sync, 604800 for a week)
 #
+#
+# LIVE: a dependency that is developed in place (e.g. our own fork). Cloned with full history (so commits can be
+# pushed), and later only fast-forwarded on its current branch: never checked out with --force, never cleaned, and not
+# touched at all while it has uncommitted changes, a detached HEAD, or local commits that are not on the remote yet.
+function(_git_live_sync REPO_URL TARGET_DIR BRANCH STAMP_FILE)
+    string(TIMESTAMP now_epoch "%s" UTC)
+
+    # ---- Clone: full history, on a branch (not detached), so it can be worked on and pushed ----------------------
+    if(NOT EXISTS "${TARGET_DIR}/.git")
+        set(clone_args clone)
+        if(BRANCH)
+            list(APPEND clone_args --branch "${BRANCH}")
+        endif()
+        message(STATUS "Cloning ${REPO_URL} into ${TARGET_DIR} (live checkout) ...")
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} ${clone_args} "${REPO_URL}" "${TARGET_DIR}"
+            RESULT_VARIABLE clone_result
+            ERROR_VARIABLE  clone_error
+        )
+        if(NOT clone_result EQUAL 0)
+            message(WARNING "Could not clone ${REPO_URL} into ${TARGET_DIR}:\n  ${clone_error}")
+            return()
+        endif()
+        file(WRITE "${STAMP_FILE}" "live clone @ ${now_epoch}\n")
+        return()
+    endif()
+
+    # ---- Local work wins ---------------------------------------------------------------------------------------------
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" status --porcelain --untracked-files=no
+        RESULT_VARIABLE status_result
+        OUTPUT_VARIABLE local_changes
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT status_result EQUAL 0)
+        message(WARNING "${TARGET_DIR}: git status failed, not updating it")
+        return()
+    endif()
+    if(NOT "${local_changes}" STREQUAL "")
+        message(STATUS "${TARGET_DIR}: uncommitted changes, not updating (live checkout)")
+        return()
+    endif()
+
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" symbolic-ref --quiet --short HEAD
+        RESULT_VARIABLE branch_result
+        OUTPUT_VARIABLE current_branch
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT branch_result EQUAL 0)
+        message(STATUS "${TARGET_DIR}: detached HEAD, not updating (check out a branch to follow the remote)")
+        return()
+    endif()
+
+    # ---- Fetch + fast-forward only -------------------------------------------------------------------------------------
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" fetch --prune origin
+        RESULT_VARIABLE fetch_result
+        ERROR_VARIABLE  fetch_error
+    )
+    if(NOT fetch_result EQUAL 0)
+        message(WARNING "${TARGET_DIR}: fetch failed, using the checkout as it is:\n  ${fetch_error}")
+        return()
+    endif()
+
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" merge --ff-only "@{u}"
+        RESULT_VARIABLE merge_result
+        OUTPUT_QUIET
+        ERROR_VARIABLE  merge_error
+    )
+    if(NOT merge_result EQUAL 0)
+        # Local commits not pushed yet, diverged history or no upstream branch: leave it to the developer
+        message(STATUS "${TARGET_DIR}: '${current_branch}' not fast-forwarded (local commits / no upstream), left as it is")
+    else()
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" rev-parse --short HEAD
+            OUTPUT_VARIABLE current_sha
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        message(STATUS "${TARGET_DIR}: '${current_branch}' up to date (${current_sha}, live checkout)")
+    endif()
+    file(WRITE "${STAMP_FILE}" "live sync @ ${now_epoch}\n")
+endfunction()
+
+
 function(git_clone_or_update REPO_URL TARGET_DIR)
-    set(options FORCE)
+    set(options FORCE LIVE)
     set(oneValueArgs DEPTH BRANCH TAG INTERVAL_SECONDS)
     set(multiValueArgs)
     cmake_parse_arguments(GCOU "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -69,6 +158,11 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
             message(STATUS "Skipping ${TARGET_DIR} (last synced ${hours_ago}h ago; interval is ${interval_hours}h)")
             return()
         endif()
+    endif()
+
+    if(GCOU_LIVE)
+        _git_live_sync("${REPO_URL}" "${TARGET_DIR}" "${GCOU_BRANCH}" "${stamp_file}")
+        return()
     endif()
 
     # Resolve the requested ref to an explicit refspec.
@@ -107,6 +201,31 @@ function(git_clone_or_update REPO_URL TARGET_DIR)
         message(STATUS "Repository cloned successfully into ${TARGET_DIR}")
     else()
         message(STATUS "Repository already present in ${TARGET_DIR}")
+
+        # ---- Local work: never overwrite uncommitted changes (e.g. while developing a fork in place) -------------
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" status --porcelain --untracked-files=no
+            RESULT_VARIABLE status_result
+            OUTPUT_VARIABLE local_changes
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(status_result EQUAL 0 AND NOT "${local_changes}" STREQUAL "")
+            message(STATUS "Skipping ${TARGET_DIR}: it has uncommitted changes (commit / push or stash them to resume syncing)")
+            return()
+        endif()
+
+        # ---- Remote: follow REPO_URL (a dependency switched to a fork keeps its checkout) -----------------------
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" remote get-url origin
+            OUTPUT_VARIABLE current_url
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(NOT "${current_url}" STREQUAL "${REPO_URL}")
+            message(STATUS "Switching ${TARGET_DIR} origin: ${current_url} -> ${REPO_URL}")
+            execute_process(COMMAND ${GIT_EXECUTABLE} -C "${TARGET_DIR}" remote set-url origin "${REPO_URL}")
+        endif()
     endif()
 
     # ---- Fetch ---------------------------------------------------------------

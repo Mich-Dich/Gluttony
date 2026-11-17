@@ -68,6 +68,11 @@ namespace GLT::world::component {
 
         virtual void load(entity_id id, std::span<const std::byte> in) = 0;
 
+        // true: the storage keeps the component values itself (a plugin component, see world/owned_storage.h) instead of
+        // in the world's own ECS. The world then saves / loads it through save() / load(), removes it with its entity and
+        // keeps its payload when the type is unregistered (plugin unload)
+        [[nodiscard]] virtual bool owns_data() const noexcept { return false; }
+
         // ---- editing several entities at once ----
         // An editor draws the component of ONE entity and wants the edit to reach the others that are selected:
         //

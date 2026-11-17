@@ -686,13 +686,27 @@ namespace GLT::renderer::vk_rasterizer {
     void scene_renderer::upload_imgui_textures(vk::CommandBuffer cmd) {
         GLT_PROFILE_SCOPE("scene_renderer::upload_imgui_textures");
 
+        auto* dev = m_plugin.get_dev();
+        const vk::Device device = m_plugin.get_vk_device();
+
+        // Released textures whose last possible use (a frame in flight) is over
+        for (auto it = m_imgui_textures_dying.begin(); it != m_imgui_textures_dying.end(); ) {
+            if (it->second > 0) {
+                --it->second;
+                ++it;
+                continue;
+            }
+            ImGui_ImplVulkan_RemoveTexture(it->first.set);
+            device.destroyImageView(it->first.view);
+            dev->destroy_image(it->first.image);
+            it = m_imgui_textures_dying.erase(it);
+        }
+
         auto& textures = ImGui::GetPlatformIO().Textures;
         if (textures.empty())
             return;
 
         GLT_PROFILE_SCOPE("ImGui texture uploads");
-        auto* dev = m_plugin.get_dev();
-        const vk::Device device = m_plugin.get_vk_device();
 
         auto barrier = [&](vk::Image image, vk::ImageLayout from, vk::ImageLayout to,
             vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access, vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access) {
@@ -817,17 +831,15 @@ namespace GLT::renderer::vk_rasterizer {
 
                 case ImTextureStatus_WantDestroy: {
 
-                    // ImGui keeps asking every frame until we comply. Once the texture has not been referenced by any draw list
-                    // for longer than the frames in flight (+ margin for detached-window swapchains), no pending GPU work can
-                    // sample it and it is destroyed right away (not via the retire queue: that may run after the backend is gone)
-                    if (tex->UnusedFrames < static_cast<int>(MAX_CONCURRENT_FRAMES) + 2)
-                        break;
+                    // Comply right away: a request left pending reaches ImGui_ImplVulkan_RenderDrawData, which marks the texture
+                    // Destroyed without clearing our TexID (it is not the backend's) -> assert in the next NewFrame (seen when
+                    // the font atlas is rebuilt while zooming a node canvas). The Vulkan objects are kept until no frame in
+                    // flight can sample them (+ margin for detached-window swapchains); not via the retire queue, which may run
+                    // after the backend is gone
                     const auto it = m_imgui_textures.find(tex);
                     if (it == m_imgui_textures.end())
                         break;                                  // not ours
-                    ImGui_ImplVulkan_RemoveTexture(it->second.set);
-                    device.destroyImageView(it->second.view);
-                    dev->destroy_image(it->second.image);
+                    m_imgui_textures_dying.emplace_back(it->second, static_cast<u32>(MAX_CONCURRENT_FRAMES) + 2);
                     m_imgui_textures.erase(it);
                     tex->SetTexID(ImTextureID_Invalid);
                     tex->SetStatus(ImTextureStatus_Destroyed);
@@ -855,6 +867,13 @@ namespace GLT::renderer::vk_rasterizer {
             tex->SetStatus(ImTextureStatus_Destroyed);
         }
         m_imgui_textures.clear();
+
+        for (auto& [t, frames] : m_imgui_textures_dying) {
+            ImGui_ImplVulkan_RemoveTexture(t.set);
+            device.destroyImageView(t.view);
+            m_plugin.get_dev()->destroy_image(t.image);
+        }
+        m_imgui_textures_dying.clear();
     }
 
 

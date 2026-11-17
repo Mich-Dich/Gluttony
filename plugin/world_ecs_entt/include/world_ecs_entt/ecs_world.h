@@ -63,6 +63,13 @@ namespace GLT::world::world_ecs_entt {
         void set_visible(entity_id id, bool visible) override;
         void set_procedural_mesh(entity_id id, u32 procedural_mesh_id) override;
         [[nodiscard]] u32 get_procedural_mesh(entity_id id) const override;
+
+        void set_mesh(entity_id id, const asset::asset_ref& mesh) override;
+        void set_entity_name(entity_id id, std::string_view name) override;
+
+        void set_transient(entity_id id, bool transient) override;
+        [[nodiscard]] entity_id spawn_transient() override;
+        [[nodiscard]] bool is_transient(entity_id id) const override;
         [[nodiscard]] bool is_hidden(entity_id id) const override;
         void set_hidden(entity_id id, bool hidden) override;
 
@@ -119,6 +126,10 @@ namespace GLT::world::world_ecs_entt {
 
         // component type installation (called by ecs_world_plugin) ----------------------------------------------------
 
+        // Plugin components (storages with i_storage::owns_data(), GLT::world::component::owned_storage): saved and loaded
+        // through i_storage::save / load as part of each entity, removed with their entity. Installing a type hands it
+        // the payloads kept for it (preserved_components); uninstalling (plugin unload) keeps its payloads in memory, so
+        // they are saved with the world and come back when the plugin is loaded again
         void install_component_type(const GLT::world::component::type_descriptor& td);
         void uninstall_component_type(u64 hash);
 
@@ -253,6 +264,11 @@ namespace GLT::world::world_ecs_entt {
 
         ecs_world_plugin&                                                               m_plugin;
         const entity_codec&                                                             m_codec;            // borrowed from plugin (stateless)
+        entity_codec::extension                                                         m_codec_extension;  // plugin components + preserved payloads
+
+        void collect_plugin_components(entt::entity e, std::vector<std::pair<u64, std::vector<std::byte>>>& out) const;
+        void load_plugin_component(entt::entity e, u64 hash, std::span<const std::byte> payload);
+        void release_plugin_components(entity_id id);
         component_registry                                                              m_components;       // per-instance, descriptors capture this
         asset::asset_ref                                                                m_asset;            // owns one ref to the .glt_world
         mutable render_cache                                                            m_render;           // BEFORE m_registry: its destruction fires on_destroy handlers that touch this

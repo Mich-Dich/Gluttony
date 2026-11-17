@@ -445,9 +445,13 @@ namespace GLT::renderer::vk_rasterizer {
             return;
 
         auto* dev = m_plugin.get_dev();
-        vmaInvalidateAllocation(dev->get_allocator(), stats->allocation, 0, VK_WHOLE_SIZE);    // no-op on coherent memory
+        const void* mapped = dev->map_buffer(*stats);
+        if (!mapped)
+            return;
+        // vkInvalidateMappedMemoryRanges needs the memory mapped: invalidate after map_buffer (no-op on coherent memory)
+        vmaInvalidateAllocation(dev->get_allocator(), stats->allocation, 0, VK_WHOLE_SIZE);
         gpu_draw_stats values{};
-        std::memcpy(&values, dev->map_buffer(*stats), sizeof(values));
+        std::memcpy(&values, mapped, sizeof(values));
         dev->unmap_buffer(*stats);
 
         report.draw_calls = values.visible_draws;

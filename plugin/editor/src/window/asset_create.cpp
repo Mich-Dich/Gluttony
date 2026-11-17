@@ -9,6 +9,7 @@
 #include <event/event_bus.h>
 
 #include "util/event/asset_event.h"
+#include "util/extension_host.h"
 #include "util/ui/panel_collection.h"
 #include "config/imgui_config.h"
 #include "window/base/window_chrome.h"
@@ -125,12 +126,12 @@ namespace GLT::editor {
 
     // CLASS PRIVATE ===================================================================================================
 
-    std::span<const asset_create_window::creatable_type> asset_create_window::creatable_types() {
+    std::vector<asset_create_window::creatable_type> asset_create_window::creatable_types() {
 
         // Only entries that support a meaningful create-in-place flow belong
         // here. Meshes and images come from files, so they live in the import
         // wizard instead.
-        static constexpr creatable_type kTypes[] = {
+        std::vector<creatable_type> types{
             {
                 GLT::asset::core_types::material,
                 "Material",
@@ -139,7 +140,11 @@ namespace GLT::editor {
                 "New Material",
             },
         };
-        return kTypes;
+
+        for (const auto& entry : extension_host::asset_creators())
+            types.push_back({ entry.creator.type, entry.creator.label, entry.creator.tooltip, icon_manager::icon::file_big,
+                entry.creator.default_name.empty() ? std::string("New Asset") : entry.creator.default_name });
+        return types;
     }
 
 
@@ -164,7 +169,11 @@ namespace GLT::editor {
         const f32 avail = ImGui::GetContentRegionAvail().x;
         f32 line_x = 0.f;
 
-        for (const auto& t : creatable_types()) {
+        const std::vector<creatable_type> types = creatable_types();
+        // the plugin owning the selected type may have been unloaded while this dialog was open
+        if (std::ranges::none_of(types, [this](const creatable_type& t) { return t.type == m_target_type; }))
+            m_target_type = types.front().type;
+        for (const auto& t : types) {
 
             if (line_x > 0.f && line_x + TYPE_TILE_WIDTH > avail) {
                 line_x = 0.f;                                       // wrap
@@ -178,15 +187,15 @@ namespace GLT::editor {
 
             if (ImGui::InvisibleButton("##tile", ImVec2(TYPE_TILE_WIDTH, TYPE_TILE_HEIGHT)) && !selected) {
                 // keep a name the user typed; only swap the default name of the previous type
-                for (const auto& previous : creatable_types())
-                    if (previous.type == m_target_type && std::strcmp(m_name_buffer, previous.default_name) == 0)
-                        std::snprintf(m_name_buffer, sizeof(m_name_buffer), "%s", t.default_name);
+                for (const auto& previous : types)
+                    if (previous.type == m_target_type && previous.default_name == m_name_buffer)
+                        std::snprintf(m_name_buffer, sizeof(m_name_buffer), "%s", t.default_name.c_str());
                 m_target_type = t.type;
                 m_operation_error.clear();
             }
             const bool hovered = ImGui::IsItemHovered();
-            if (hovered && t.tooltip && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-                ImGui::SetTooltip("%s", t.tooltip);
+            if (hovered && !t.tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("%s", t.tooltip.c_str());
 
             // background + frame
             const ImU32 fill = selected ? ImGui::GetColorU32(GLT::imgui_config::get_action_color00_faded_ref())
@@ -201,9 +210,9 @@ namespace GLT::editor {
             const ImVec2 icon_min(min.x + (TYPE_TILE_WIDTH - TYPE_TILE_ICON) * 0.5f, min.y + 12.f);
             draw_list->AddImage(icon.tex_ref, icon_min, ImVec2(icon_min.x + TYPE_TILE_ICON, icon_min.y + TYPE_TILE_ICON), icon.uv0, icon.uv1);
 
-            const ImVec2 label_size = ImGui::CalcTextSize(t.label);
+            const ImVec2 label_size = ImGui::CalcTextSize(t.label.c_str());
             draw_list->AddText(ImVec2(min.x + (TYPE_TILE_WIDTH - label_size.x) * 0.5f, max.y - label_size.y - 10.f),
-                ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_TextDisabled), t.label);
+                ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_TextDisabled), t.label.c_str());
 
             ImGui::PopID();
             line_x += TYPE_TILE_WIDTH + 8.f;
@@ -216,7 +225,7 @@ namespace GLT::editor {
     void asset_create_window::draw_asset_section() {
 
         std::string ext_hint = ".";
-        ext_hint += GLT::asset::type_to_extension(m_target_type);
+        ext_hint += extension_host::extension_of(m_target_type);
 
         if (UI::begin_card("Asset")) {
 
@@ -289,7 +298,7 @@ namespace GLT::editor {
 
             std::string full = filename.generic_string();
             full += ".";
-            full += GLT::asset::type_to_extension(m_target_type);
+            full += extension_host::extension_of(m_target_type);
             filename = full;
 
             const std::filesystem::path abs_target = m_target_dir / filename;
@@ -362,13 +371,29 @@ namespace GLT::editor {
         std::filesystem::path filename = m_name_buffer;
         filename.replace_extension("");
         filename += ".";
-        filename += GLT::asset::type_to_extension(m_target_type);
+        filename += extension_host::extension_of(m_target_type);
 
         const std::filesystem::path abs_target = m_target_dir / filename;
         const std::filesystem::path rel_target = GLT::project::extract_path_from_project_content_dir(abs_target);
         if (rel_target.empty()) {
             m_operation_error = "Location must be inside the project content directory.";
             return false;
+        }
+
+        // ---- plugin asset types: the plugin builds, registers and saves the asset -----------
+        if (const GLT::editor::asset_creator* creator = extension_host::find_creator(m_target_type)) {
+
+            const auto create = creator->create;            // copy: the plugin may (un)register creators inside create()
+            if (auto created = create(rel_target); !created) {
+                m_operation_error = created.error().empty() ? std::string("The plugin could not create the asset.") : created.error();
+                return false;
+            }
+
+            LOG(info, "asset_create: created [{}]", rel_target.generic_string());
+            if (m_auto_open)
+                GLT::event_bus::post(asset_open_event{ m_target_type, rel_target });
+            m_show_window = false;
+            return true;
         }
 
         // ---- build the runtime asset --------------------------------------------------

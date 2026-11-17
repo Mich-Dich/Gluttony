@@ -54,19 +54,21 @@ namespace GLT::editor {
 
     private:
 
-        // A type the user can create from scratch. Types that only make sense to import (meshes, images) are not listed here
+        // A type the user can create from scratch. Types that only make sense to import (meshes, images) are not listed here.
+        // Plugins add theirs through GLT::editor::i_editor::register_asset_creator()
         struct creatable_type {
 
             GLT::asset::type                                            type;
-            const char*                                                 label;
-            const char*                                                 tooltip;
+            std::string                                                 label;
+            std::string                                                 tooltip;
             icon_manager::icon_type                                     icon;
-            const char*                                                 default_name;
+            std::string                                                 default_name;
         };
 
-        // ---- static data ---------------------------------------------------------------------------------------------
+        // ---- data ----------------------------------------------------------------------------------------------------
 
-        [[nodiscard]] static std::span<const creatable_type>            creatable_types();
+        // The engine's own creatable types, then those of plugins
+        [[nodiscard]] static std::vector<creatable_type>                creatable_types();
 
         // ---- drawing helpers ----------------------------------------------------------------------------------------
 

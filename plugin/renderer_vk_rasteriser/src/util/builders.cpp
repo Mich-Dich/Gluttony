@@ -115,6 +115,20 @@ namespace GLT::renderer::vk_rasterizer::util {
 
         auto inst_builder = vkb::InstanceBuilder().require_api_version(1, 3, 0);
 
+        // Debugging GPU hangs / races: opt-in, the checks are slow
+        //   GLT_VK_GPU_AV=1    GPU-assisted validation: out-of-bounds buffer access in shaders, bad indirect draw parameters
+        //   GLT_VK_SYNC_VAL=1  synchronization validation: missing barriers, read/write hazards between passes / submissions
+        auto env_on = [](const char* name) { const char* v = std::getenv(name); return v && v[0] != '\0' && v[0] != '0'; };
+        if (enable_debug && env_on("GLT_VK_GPU_AV")) {
+            validation_features.push_back(vk::ValidationFeatureEnableEXT::eGpuAssisted);
+            validation_features.push_back(vk::ValidationFeatureEnableEXT::eGpuAssistedReserveBindingSlot);
+            LOG(info, "Vulkan GPU-assisted validation enabled (GLT_VK_GPU_AV)")
+        }
+        if (enable_debug && env_on("GLT_VK_SYNC_VAL")) {
+            validation_features.push_back(vk::ValidationFeatureEnableEXT::eSynchronizationValidation);
+            LOG(info, "Vulkan synchronization validation enabled (GLT_VK_SYNC_VAL)")
+        }
+
         for (auto v : validation_features)
             inst_builder.add_validation_feature_enable(static_cast<VkValidationFeatureEnableEXT>(v));
 

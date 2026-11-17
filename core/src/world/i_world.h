@@ -122,6 +122,25 @@ namespace GLT::world {
         virtual void set_procedural_mesh(entity_id /*entity*/, u32 /*procedural_mesh_id*/) {}
         [[nodiscard]] virtual u32 get_procedural_mesh(entity_id /*entity*/) const { return 0; }
 
+        // mesh assets / names (for systems that create ordinary, saved entities: baked terrain chunks, ...) -----------
+        // Draws the static mesh asset [mesh] on [entity] (the mesh renderer; INVALID removes the mesh). Saved with the world
+        virtual void set_mesh(entity_id /*entity*/, const asset::asset_ref& /*mesh*/) {}
+        virtual void set_entity_name(entity_id /*entity*/, std::string_view /*name*/) {}
+
+        // transient entities ------------------------------------------------------------------------------------------
+        // Runtime-only entities a system creates and owns (terrain chunks, ...): never saved, part of no region (so never
+        // streamed out by the world), not listed among the root entities (the outliner does not show them). Set it right
+        // after spawn(); the owner despawns them. Children of a transient entity should be transient too
+        virtual void set_transient(entity_id /*entity*/, bool /*transient*/) {}
+        [[nodiscard]] virtual bool is_transient(entity_id /*entity*/) const { return false; }
+
+        // spawn() + set_transient(), without ever touching the region system (no region is created for its cell)
+        [[nodiscard]] virtual entity_id spawn_transient() {
+            const entity_id id = spawn();
+            set_transient(id, true);
+            return id;
+        }
+
         // mobility ----------------------------------------------------------------------------------------------------
         // Performance hint for render data caching, see world/mobility.h. Worlds without caching treat everything as movable
         [[nodiscard]] virtual mobility get_mobility(entity_id /*id*/) const { return mobility::movable; }

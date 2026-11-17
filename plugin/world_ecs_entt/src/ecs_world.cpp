@@ -356,6 +356,9 @@ namespace GLT::world::world_ecs_entt {
         , m_components(*this)
         , m_asset(std::move(asset)) {
 
+        m_codec_extension.collect = [this](entt::entity e, std::vector<std::pair<u64, std::vector<std::byte>>>& out) { collect_plugin_components(e, out); };
+        m_codec_extension.unknown = [this](entt::entity e, u64 hash, std::span<const std::byte> payload) { load_plugin_component(e, hash, payload); };
+
         m_registry.on_construct<component::mesh>().template connect<&ecs_world::on_mesh_construct>(this);
         m_registry.on_destroy<component::physics_body>().template connect<&ecs_world::on_physics_body_destroyed>(this);
 
@@ -555,6 +558,16 @@ namespace GLT::world::world_ecs_entt {
     }
 
 
+    entity_id ecs_world::spawn_transient() {
+
+        const entity_id id = alloc_slot();
+        const entt::entity entity = entt_of(id);
+        m_registry.emplace_or_replace<component::transient>(entity);     // first: assign_entity_to_cell skips it from now on
+        m_registry.emplace_or_replace<component::transform>(entity);
+        return id;
+    }
+
+
     void ecs_world::despawn(entity_id id) noexcept {
 
         if (id.is_valid() && id == m_world_entity)
@@ -639,6 +652,65 @@ namespace GLT::world::world_ecs_entt {
             mesh_comp.procedural_mesh = procedural_mesh_id;
             m_registry.emplace<component::mesh>(entity, std::move(mesh_comp));
         }
+    }
+
+
+    void ecs_world::set_mesh(entity_id id, const asset::asset_ref& mesh) {
+
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null)
+            return;
+
+        if (mesh.get() == INVALID_HANDLE) {
+            if (auto* mesh_comp = m_registry.try_get<component::mesh>(entity); mesh_comp && mesh_comp->procedural_mesh == 0)
+                m_registry.remove<component::mesh>(entity);
+            else if (mesh_comp)
+                m_registry.patch<component::mesh>(entity, [](component::mesh& m) { m.mesh = {}; });
+            return;
+        }
+
+        // patch / emplace fire the signals: render cache, physics bodies (colliders of the mesh asset)
+        if (m_registry.all_of<component::mesh>(entity))
+            m_registry.patch<component::mesh>(entity, [&mesh](component::mesh& m) { m.mesh = mesh; });
+        else {
+            component::mesh mesh_comp{};
+            mesh_comp.mesh = mesh;
+            m_registry.emplace<component::mesh>(entity, std::move(mesh_comp));
+        }
+    }
+
+
+    void ecs_world::set_entity_name(entity_id id, std::string_view name) {
+
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null)
+            return;
+        m_registry.emplace_or_replace<component::name>(entity).name = std::string(name);
+    }
+
+
+    void ecs_world::set_transient(entity_id id, bool transient) {
+
+        const entt::entity entity = entt_of(id);
+        if (entity == entt::null || id == m_world_entity)
+            return;
+
+        if (!transient) {
+            m_registry.remove<component::transient>(entity);
+            assign_entity_to_cell(id);
+            return;
+        }
+
+        m_registry.emplace_or_replace<component::transient>(entity);
+        for (auto& [rid, state] : m_region_states)                  // no region owns it (not saved, not streamed out)
+            std::erase(state.entities, id);
+    }
+
+
+    bool ecs_world::is_transient(entity_id id) const {
+
+        const entt::entity entity = entt_of(id);
+        return entity != entt::null && m_registry.all_of<component::transient>(entity);
     }
 
 
@@ -914,6 +986,8 @@ namespace GLT::world::world_ecs_entt {
             const entity_id id{ index, slot.generation };
             if (id == m_world_entity)
                 continue;                       // not part of any region: saved with the world asset
+            if (m_registry.all_of<component::transient>(slot.handle))
+                continue;                       // runtime-only: no region
 
             const glm::vec3 world_pos = glm::vec3(world_transform_of(id)[3]);
             const glm::ivec3 cell = cell_coord_of(world_pos);
@@ -939,6 +1013,8 @@ namespace GLT::world::world_ecs_entt {
             const entity_id id{ i, m_slots[i].generation };
             if (id == m_world_entity)
                 continue;                       // shown separately (i_world::world_entity)
+            if (m_registry.all_of<component::transient>(m_slots[i].handle))
+                continue;                       // runtime-only, owned by a system (i_world::set_transient)
 
             // Orphans count as roots so a corrupted parent link doesn't make an entity unreachable in the outliner
             const component::hierarchy* h = hierarchy_of(id);
@@ -1069,7 +1145,7 @@ namespace GLT::world::world_ecs_entt {
                     if (handles[i] == e)
                         return alive_ids[i];
                 return INVALID_ENTITY;
-            }, blob);
+            }, blob, &m_codec_extension);
 
         // Runtime-only trailer: procedural mesh references (not part of the codec payload, never saved with the world).
         // Layout: { u32 index, u32 generation, u32 procedural_mesh } x count, u32 count, u32 PROCEDURAL_TRAILER_MAGIC.
@@ -1146,7 +1222,7 @@ namespace GLT::world::world_ecs_entt {
                 LOG(warn, "restore_entities: slot {} is used by another entity, restored as {}:{}",
                     saved.index, result.first.index, result.first.generation);
             return result;
-        });
+        }, &m_codec_extension);
 
         // The codec stores only the parent link; children lists are derived. Collect the current children of every
         // restored entity (they may be restored too, or may have stayed alive the whole time)
@@ -1284,13 +1360,96 @@ namespace GLT::world::world_ecs_entt {
             desc.summary = [this, fn = td.summary](entity_id id) { return fn(*this, id); };
 
         m_components.register_component(std::move(desc));
+
+        // A plugin component: take over the payloads kept for it (world loaded before the plugin, plugin reloaded)
+        if (!storage_ptr->owns_data())
+            return;
+        std::vector<entt::entity> emptied;
+        for (auto [entity, kept] : m_registry.view<component::preserved_components>().each()) {
+            const entity_id id = id_of(entity);
+            for (auto it = kept.blobs.begin(); it != kept.blobs.end(); ) {
+                if (it->first != td.meta.hash) {
+                    ++it;
+                    continue;
+                }
+                if (id.is_valid())
+                    storage_ptr->load(id, std::span<const std::byte>(it->second));
+                it = kept.blobs.erase(it);
+            }
+            if (kept.blobs.empty())
+                emptied.push_back(entity);
+        }
+        for (const entt::entity entity : emptied)
+            m_registry.remove<component::preserved_components>(entity);
     }
 
 
     void ecs_world::uninstall_component_type(u64 hash) {
 
+        // A plugin component whose plugin goes away: keep the values as payloads (saved with the world, handed back when
+        // the plugin registers again). The storage itself must go now: its code lives in the plugin
+        if (auto it = m_component_storages.find(hash); it != m_component_storages.end() && it->second->owns_data()) {
+            GLT::world::component::i_storage* storage = it->second.get();
+            for (const entity_id id : storage->entities()) {
+                const entt::entity entity = entt_of(id);
+                if (entity == entt::null)
+                    continue;
+                std::vector<std::byte> payload;
+                storage->save(id, payload);
+                auto& kept = m_registry.get_or_emplace<component::preserved_components>(entity);
+                std::erase_if(kept.blobs, [hash](const auto& blob) { return blob.first == hash; });
+                kept.blobs.emplace_back(hash, std::move(payload));
+            }
+        }
+
         m_component_storages.erase(hash);
         m_components.unregister_component(hash);
+    }
+
+
+    void ecs_world::collect_plugin_components(entt::entity e, std::vector<std::pair<u64, std::vector<std::byte>>>& out) const {
+
+        const entity_id id = id_of(e);
+        if (!id.is_valid())
+            return;
+
+        for (const auto& [hash, storage] : m_component_storages) {
+            if (!storage->owns_data() || !storage->has(id))
+                continue;
+            std::vector<std::byte> payload;
+            storage->save(id, payload);
+            out.emplace_back(hash, std::move(payload));
+        }
+
+        // Payloads of plugins that are not loaded go back out unchanged
+        if (const auto* kept = m_registry.try_get<component::preserved_components>(e))
+            for (const auto& [hash, payload] : kept->blobs)
+                if (!m_component_storages.contains(hash))
+                    out.emplace_back(hash, payload);
+    }
+
+
+    void ecs_world::load_plugin_component(entt::entity e, u64 hash, std::span<const std::byte> payload) {
+
+        const entity_id id = id_of(e);
+        if (auto it = m_component_storages.find(hash); it != m_component_storages.end() && it->second->owns_data() && id.is_valid()) {
+            it->second->load(id, payload);
+            return;
+        }
+
+        // No plugin provides it (yet): keep the bytes
+        auto& kept = m_registry.get_or_emplace<component::preserved_components>(e);
+        std::erase_if(kept.blobs, [hash](const auto& blob) { return blob.first == hash; });
+        kept.blobs.emplace_back(hash, std::vector<std::byte>(payload.begin(), payload.end()));
+    }
+
+
+    void ecs_world::release_plugin_components(entity_id id) {
+
+        // Plugin components live in their storages, not in the entt registry: they don't go with the entt entity
+        for (auto& [hash, storage] : m_component_storages)
+            if (storage->owns_data() && storage->has(id))
+                storage->remove(id);
     }
 
 
@@ -1972,7 +2131,7 @@ namespace GLT::world::world_ecs_entt {
         if (world_asset.world_entity_codec == CODEC_ENTT_V1 && !world_asset.world_entity_data.empty()) {
 
             const auto ids = m_codec.load(m_registry, std::span<const std::byte>(world_asset.world_entity_data),
-                [this](entity_id saved) { return allocate_for_load(saved); });
+                [this](entity_id saved) { return allocate_for_load(saved); }, &m_codec_extension);
 
             if (!ids.empty())
                 m_world_entity = ids.front();
@@ -2009,7 +2168,7 @@ namespace GLT::world::world_ecs_entt {
 
         const entt::entity entities[] = { e };
         m_codec.save(m_registry, std::span<const entt::entity>(entities),
-            [this](entt::entity entity) { return entity_id_for(entity); }, world_asset.world_entity_data);
+            [this](entt::entity entity) { return entity_id_for(entity); }, world_asset.world_entity_data, &m_codec_extension);
         world_asset.world_entity_codec = CODEC_ENTT_V1;
     }
 
@@ -2133,6 +2292,7 @@ namespace GLT::world::world_ecs_entt {
             return;   // stale handle
 
         if (slot.handle != entt::null) {
+            release_plugin_components(id);
             const auto entt_index = static_cast<size_t>(entt::to_entity(slot.handle));
             if (entt_index < m_slot_of_entt.size())
                 m_slot_of_entt[entt_index] = render_cache::NONE;
@@ -2216,7 +2376,7 @@ namespace GLT::world::world_ecs_entt {
         if (region_asset->entity_codec == CODEC_ENTT_V1 && !region_asset->entity_data.empty()) {
 
             state.entities = m_codec.load(m_registry, std::span<const std::byte>(region_asset->entity_data),
-                [this](entity_id saved) { return allocate_for_load(saved); });
+                [this](entity_id saved) { return allocate_for_load(saved); }, &m_codec_extension);
 
             if (m_physics) {
                 for (const entity_id id : state.entities)
@@ -2320,7 +2480,8 @@ namespace GLT::world::world_ecs_entt {
             }
 
             region_asset->entity_codec = CODEC_ENTT_V1;
-            m_codec.save(m_registry, entities, [this](entt::entity entity) { return entity_id_for(entity); }, region_asset->entity_data);
+            m_codec.save(m_registry, entities, [this](entt::entity entity) { return entity_id_for(entity); }, region_asset->entity_data,
+                &m_codec_extension);
 
             if (auto result = registry->save(region.asset); !result)
                 return result;
@@ -2604,7 +2765,7 @@ namespace GLT::world::world_ecs_entt {
 
     void ecs_world::assign_entity_to_cell(entity_id id) {
 
-        if (!alive(id))
+        if (!alive(id) || is_transient(id))
             return;
 
         const glm::vec3 wp = glm::vec3(world_transform_of(id)[3]);

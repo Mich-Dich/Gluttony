@@ -40,7 +40,9 @@
 #include "settings/engine_settings_pages.h"
 #include "settings/editor_settings.h"
 #include "util/asset_editor_registry.h"
+#include "util/extension_host.h"
 #include "util/file_watcher.h"
+#include "window/extension_window.h"
 #include "input/editor_controller.h"
 
 
@@ -137,6 +139,54 @@ namespace GLT::editor {
 
     // INTERNAL FUNCTION IMPLEMENTATION ================================================================================
 
+    // Entries plugins added through i_editor::register_menu_item(), grouped by their first path segment. Flat on purpose:
+    // the toolbar popups close when the mouse leaves them, which a nested sub menu would do
+    static void render_extension_menu_items() {
+
+        const auto& items = extension_host::menu_items();
+        if (items.empty()) {
+            ImGui::TextDisabled("No tools yet. Plugins add them here");
+            ImGui::TextDisabled("(enable plugins in Window > Plugin Manager)");
+            return;
+        }
+
+        // Run the chosen action after the loop: it may register / remove menu items (the list must not change while iterated)
+        std::function<void()> chosen{};
+        std::string_view current_group{};
+        bool first_group = true;
+        for (const auto& item : items) {
+
+            const std::string_view path = item.path;
+            const size_t slash = path.find('/');
+            const std::string_view group = slash == std::string_view::npos ? std::string_view{} : path.substr(0, slash);
+            const std::string_view rest = slash == std::string_view::npos ? path : path.substr(slash + 1);
+
+            if (first_group || group != current_group) {
+                if (!group.empty())
+                    ImGui::SeparatorText(std::string(group).c_str());
+                else if (!first_group)
+                    ImGui::Separator();
+                current_group = group;
+                first_group = false;
+            }
+
+            // deeper levels as "a > b"
+            std::string label(rest);
+            for (size_t at = label.find('/'); at != std::string::npos; at = label.find('/', at + 3))
+                label.replace(at, 1, " > ");
+
+            ImGui::PushID(item.path.c_str());
+            if (ImGui::MenuItem(label.c_str())) {
+                ImGui::CloseCurrentPopup();
+                chosen = item.action;
+            }
+            ImGui::PopID();
+        }
+
+        if (chosen)
+            chosen();
+    }
+
     // TEMPLATE IMPLEMENTATION =========================================================================================
 
     // FUNCTION IMPLEMENTATION =========================================================================================
@@ -154,6 +204,15 @@ namespace GLT::editor {
         add_window<world_viewport_window>();
 
         register_core_editors();
+
+        // A plugin that unregisters (unload) takes its windows with it, right away: they run its code
+        extension_host::set_close_windows_callback([this](std::string_view owner) {
+            std::erase_if(m_windows, [owner](const unique_ref<base_window>& window) {
+                const auto* extension = dynamic_cast<const extension_window*>(window.get());
+                return extension && extension->owner() == owner;
+            });
+        });
+
         file_watcher::init();
         file_watcher::watch(PROJECT_CONTENT_DIR, true);
         GLT::UI::set_asset_root(PROJECT_CONTENT_DIR);
@@ -217,6 +276,7 @@ namespace GLT::editor {
         GLT::event_bus::unsubscribe(m_asset_open_event_sub_handle);
         file_watcher::unwatch_all();
         file_watcher::shutdown();
+        extension_host::set_close_windows_callback({});
         m_windows.clear();
         m_logo.reset();
 
@@ -257,6 +317,13 @@ namespace GLT::editor {
 
         for (auto& event : m_asset_create_request_event_buffer)
             add_window<asset_create_window>(event.get_target_dir());
+
+        // Windows plugins opened through GLT::editor::i_editor::open_window()
+        for (auto& window : extension_host::take_pending_windows()) {
+            if (m_dockspace_id != 0)
+                window->dock_to(m_dockspace_id);
+            m_windows.push_back(std::move(window));
+        }
 
         m_asset_create_request_event_buffer.clear();
         m_notification_event_buffer.clear();
@@ -500,6 +567,12 @@ namespace GLT::editor {
                     ImGui::MenuItem("Show Demo", "", &m_show_demo);
                     ImGui::MenuItem("Show Style", "", &m_show_style);
                 #endif
+            });
+
+            ImGui::SameLine();
+            ImGui::SetCursorPosY(win_pad + (logo_side - menu_h) * 0.5f);
+            toolbar_menu("Tools", MAIN_MENU_BAR_POPUP, []{
+                render_extension_menu_items();
             });
 
             ImGui::SameLine();
@@ -920,6 +993,14 @@ namespace GLT::editor {
 
                 if (asset_editor->get_asset_path().lexically_normal() == wanted) {
                     asset_editor->focus_window();
+                    return;
+                }
+            }
+
+            if (auto* extension = dynamic_cast<extension_window*>(w.get())) {           // plugin asset editors
+
+                if (extension->asset_path().lexically_normal() == wanted) {
+                    extension->focus_window();
                     return;
                 }
             }

@@ -42,6 +42,15 @@ namespace GLT::world::world_ecs_entt {
         // (GLT::world::entity_id, entt::entity) it allocated - often identical.
         using allocate_fn = std::function<std::pair<GLT::world::entity_id, entt::entity>(GLT::world::entity_id)>;
 
+        // Components the codec itself does not know (plugin components kept outside the entt registry, payloads of
+        // components whose plugin is not loaded). Supplied by the world per save / load:
+        //   collect: extra (hash, payload) pairs of an entity, written after the codec's own components
+        //   unknown: a stored component with no codec entry (the world loads it into a plugin storage or keeps the bytes)
+        struct extension {
+            std::function<void(entt::entity, std::vector<std::pair<u64, std::vector<std::byte>>>&)> collect;
+            std::function<void(entt::entity, u64, std::span<const std::byte>)>                     unknown;
+        };
+
         // Register a component type. Call once per type at plugin init. T must be trivially copyable - use a helper struct for richer types.
         template<typename T>
         void register_component(std::string_view name);
@@ -54,14 +63,17 @@ namespace GLT::world::world_ecs_entt {
             std::function<void(entt::registry&, entt::entity, std::span<const std::byte>)> load_fn);
 
         // Serialize a subset of entities.
-        void save(const entt::registry& reg, std::span<const entt::entity> entities, const resolve_fn& resolve, 
-            std::vector<std::byte>& out) const;
+        void save(const entt::registry& reg, std::span<const entt::entity> entities, const resolve_fn& resolve,
+            std::vector<std::byte>& out, const extension* ext = nullptr) const;
 
         // Deserialize into `reg`. Returns the newly-created entity_ids in the order they appeared in the blob.
-        [[nodiscard]] std::vector<GLT::world::entity_id> load(entt::registry& reg, std::span<const std::byte> data, 
-            const allocate_fn& allocate) const;
+        [[nodiscard]] std::vector<GLT::world::entity_id> load(entt::registry& reg, std::span<const std::byte> data,
+            const allocate_fn& allocate, const extension* ext = nullptr) const;
 
         [[nodiscard]] bool empty() const noexcept { return m_components.empty(); }
+
+        // The codec has an entry for this component (it lives in the entt registry and is saved by the codec)
+        [[nodiscard]] bool knows(u64 hash) const noexcept { return find(hash) != nullptr; }
 
     private:
 

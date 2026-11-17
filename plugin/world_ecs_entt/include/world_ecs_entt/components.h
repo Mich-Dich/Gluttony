@@ -190,6 +190,18 @@ namespace GLT::world::world_ecs_entt::component {
     struct no_inherit_transform {};
     static_assert(std::is_trivially_copyable_v<no_inherit_transform>);
 
+
+    // Saved payloads of components that no loaded plugin provides (its plugin is disabled / not loaded yet, or it was
+    // unloaded while the world was open). Written back unchanged when the world is saved; handed to the plugin's
+    // storage as soon as it registers the type. Not a component of its own in files: the payloads keep their own hashes
+    // Marker: runtime-only entity (i_world::set_transient). Not saved, in no region, not a root in the outliner
+    struct transient {};
+
+
+    struct preserved_components {
+        std::vector<std::pair<u64, std::vector<std::byte>>>     blobs{};
+    };
+
     // STATIC VARIABLES ================================================================================================
 
     // FUNCTION DECLARATION ============================================================================================

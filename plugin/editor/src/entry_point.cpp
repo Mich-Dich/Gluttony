@@ -1,5 +1,7 @@
 
+#include "util/pch.h"
 #include <plugin_system/i_plugin.h>
+#include <editor/i_editor.h>
 
 
 
@@ -68,7 +70,8 @@ namespace GLT::editor {
 
     // CLASS PRIVATE ===================================================================================================
 
-    class plugin : public GLT::plugin_manager::i_plugin {
+    // The editor plugin also is the editor extension point for other plugins (GLT::editor::get(), core/src/editor/i_editor.h)
+    class plugin : public GLT::plugin_manager::i_plugin, public GLT::editor::i_editor {
     public:
 
         plugin();
@@ -79,6 +82,16 @@ namespace GLT::editor {
 
 
         void on_unload() override;
+
+        // i_editor ----------------------------------------------------------------------------------------------------
+
+        void register_asset_editor(std::string_view owner, GLT::asset::type type, GLT::editor::window_factory factory) override;
+        void register_asset_creator(std::string_view owner, GLT::editor::asset_creator creator) override;
+        void register_menu_item(std::string_view owner, std::string_view menu_path, std::function<void()> action) override;
+        void open_window(std::string_view owner, GLT::unique_ref<GLT::editor::i_editor_window> window) override;
+        void open_asset(GLT::asset::type type, const std::filesystem::path& asset_path) override;
+        [[nodiscard]] GLT::world::i_world* edited_world() override;
+        void unregister_all(std::string_view owner) override;
 
     private:
 
