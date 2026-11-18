@@ -213,6 +213,16 @@ namespace GLT::editor {
 
         void start_simulation();
 
+        // "Current viewport" mode: the edited world itself runs (scripts, physics) and is put back on Stop
+        void begin_viewport_play();
+        void end_viewport_play();
+
+        // Ends any simulation (viewport play and simulation windows)
+        void stop_simulation();
+
+        // Pause / resume every simulating session (scripts and physics hold, the worlds keep rendering)
+        void set_simulation_paused(bool paused);
+
 
         // Creates every simulation window described by m_simulation_mode / m_sim_window_count / m_sim_layouts.
         // No-op for simulation_mode::current_viewport (the existing viewport is reused).
@@ -281,6 +291,9 @@ namespace GLT::editor {
         std::array<sim_layout, 4>                       m_sim_layouts{}; // m_sim_layouts[N - 1] = layout for N windows. All 4 are always saved
         bool                                            m_sim_remember_placement{ true };   // sim windows reopen where they were closed
         std::vector<simulation_instance>                m_simulation_instances{};
+        bool                                            m_viewport_playing = false;
+        std::vector<std::byte>                          m_viewport_play_snapshot{};     // the edited world before Play
+        std::vector<GLT::world::entity_id>              m_viewport_play_entities{};
         handle                                          m_window_close_sub{};
 
     };

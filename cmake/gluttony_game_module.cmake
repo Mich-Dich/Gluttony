@@ -144,6 +144,10 @@ function(gluttony_add_game_module TARGET)
         $<$<COMPILE_LANGUAGE:CXX>:-ftemplate-depth=512>
         $<$<COMPILE_LANGUAGE:CXX>:-fdiagnostics-color=always>
         $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g3>
+        # Inline variables and statics of inline functions (reflection descriptors, field tables, ...) are otherwise
+        # STB_GNU_UNIQUE: the loader binds a reloaded module's copies to the FIRST loaded build's (old layouts, old
+        # code) and never unmaps that build. Hot reload needs every build to own its copies
+        $<$<CXX_COMPILER_ID:GNU>:-fno-gnu-unique>
         -Wall -Wextra -Wpedantic
     )
     target_precompile_headers(${TARGET}                                 PRIVATE "${_GLT_ENGINE_DIR}/core/src/util/pch.h")

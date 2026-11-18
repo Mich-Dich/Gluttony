@@ -227,8 +227,10 @@ namespace GLT::editor {
         if (auto* game_layer = GLT::application::get().get_game_layer_ptr()) {
             if (auto* session = game_layer->get_primary_session()) {
 
-                // primary session is editor's working world, physics must not step on it
+                // primary session is editor's working world: physics must not step on it, scripts must not run in it
+                // (both run there only while playing in the viewport, begin_viewport_play)
                 session->remove_physics();
+                session->set_simulating(false);
                 session->set_controller(GLT::create_ref<GLT::editor::input::editor_controller>(session));
             }
         }
@@ -289,7 +291,11 @@ namespace GLT::editor {
     void editor_layer::on_attach() { }
 
 
-    void editor_layer::on_detach() { GLT::event_bus::post(GLT::save_event()); }
+    void editor_layer::on_detach() {
+
+        stop_simulation();                              // the edited world goes back to its state before Play: that is what is saved
+        GLT::event_bus::post(GLT::save_event());
+    }
 
 
     void editor_layer::update(const f32 delta_time) {
@@ -692,6 +698,8 @@ namespace GLT::editor {
             if (tinted_icon_button(icon::play, idle ? "Play" : "Resume")) {
                 if (idle)
                     start_simulation();
+                else
+                    set_simulation_paused(false);
                 m_simulation_state = GLT::system_state::running;
             }
 
@@ -707,8 +715,10 @@ namespace GLT::editor {
 
         // Pause
         if (running)
-            if (tinted_icon_button(icon::pause, "Pause"))
+            if (tinted_icon_button(icon::pause, "Pause")) {
+                set_simulation_paused(true);
                 m_simulation_state = GLT::system_state::paused;
+            }
 
         if (paused)
             if (tinted_icon_button(icon::step, "Step")) {
@@ -716,10 +726,8 @@ namespace GLT::editor {
             }
 
         if (running || paused)
-            if (tinted_icon_button(icon::stop, "Stop")) {
-                m_simulation_state = GLT::system_state::idle;
-                destroy_simulation_windows();       // tearing the sim down also tears the windows down
-            }
+            if (tinted_icon_button(icon::stop, "Stop"))
+                stop_simulation();                  // tearing the sim down also tears the windows down
 
         ImGui::PopStyleVar();   // outer FramePadding
 
@@ -1370,8 +1378,106 @@ namespace GLT::editor {
     void editor_layer::start_simulation() {
         
         GLT::event_bus::post(GLT::save_event());
-        spawn_simulation_windows(); 
+        if (m_simulation_mode == simulation_mode::current_viewport)
+            begin_viewport_play();
+        else
+            spawn_simulation_windows();
         m_simulation_state = GLT::system_state::running;
+    }
+
+
+    void editor_layer::stop_simulation() {
+
+        end_viewport_play();
+        destroy_simulation_windows();
+        m_simulation_state = GLT::system_state::idle;
+    }
+
+
+    void editor_layer::set_simulation_paused(const bool paused) {
+
+        if (m_viewport_playing)
+            if (auto* game_layer = GLT::application::get().get_game_layer_ptr())
+                if (auto* primary = game_layer->get_primary_session())
+                    primary->set_simulation_paused(paused);
+        for (auto& instance : m_simulation_instances)
+            if (instance.session)
+                instance.session->set_simulation_paused(paused);
+    }
+
+
+    void editor_layer::begin_viewport_play() {
+
+        if (m_viewport_playing)
+            return;
+
+        auto* game_layer = GLT::application::get().get_game_layer_ptr();
+        auto* primary = game_layer ? game_layer->get_primary_session() : nullptr;
+        auto* world = primary ? primary->get_world() : nullptr;
+        if (!world) {
+            GLT::event_bus::post(GLT::notification_event("Play", "No world is open", GLT::logger::severity::warn));
+            return;
+        }
+
+        // Every entity of the world (hierarchy walk + the world entity): Stop puts exactly this back
+        m_viewport_play_entities.clear();
+        std::vector<GLT::world::entity_id> stack = world->root_entities();
+        while (!stack.empty()) {
+            const auto id = stack.back();
+            stack.pop_back();
+            m_viewport_play_entities.push_back(id);
+            for (const auto child : world->children_of(id))
+                stack.push_back(child);
+        }
+        if (const auto world_entity = world->world_entity(); world_entity.is_valid())
+            m_viewport_play_entities.push_back(world_entity);
+        m_viewport_play_snapshot = world->snapshot_entities(m_viewport_play_entities);
+
+        primary->create_physics();
+        primary->set_simulating(true);
+        m_viewport_playing = true;
+        LOG(info, "Playing in the viewport ({} entities kept for Stop)", m_viewport_play_entities.size())
+    }
+
+
+    void editor_layer::end_viewport_play() {
+
+        if (!m_viewport_playing)
+            return;
+        m_viewport_playing = false;
+
+        auto* game_layer = GLT::application::get().get_game_layer_ptr();
+        auto* primary = game_layer ? game_layer->get_primary_session() : nullptr;
+        if (!primary)
+            return;
+
+        primary->set_simulating(false);                 // on_stop of every script while the played world is still there
+        primary->remove_physics();
+
+        if (auto* world = primary->get_world()) {
+
+            // Entities spawned while playing go, the others get their state from before Play back (same ids)
+            std::vector<GLT::world::entity_id> now{};
+            std::vector<GLT::world::entity_id> stack = world->root_entities();
+            while (!stack.empty()) {
+                const auto id = stack.back();
+                stack.pop_back();
+                now.push_back(id);
+                for (const auto child : world->children_of(id))
+                    stack.push_back(child);
+            }
+            std::sort(m_viewport_play_entities.begin(), m_viewport_play_entities.end());
+            for (const auto id : now)
+                if (!std::binary_search(m_viewport_play_entities.begin(), m_viewport_play_entities.end(), id) && world->alive(id)
+                    && !world->is_transient(id))
+                    world->despawn(id);
+            if (!m_viewport_play_snapshot.empty())
+                (void)world->restore_entities(m_viewport_play_snapshot);
+        }
+
+        m_viewport_play_snapshot.clear();
+        m_viewport_play_entities.clear();
+        LOG(info, "Stopped playing: the world is back to its state before Play")
     }
 
 

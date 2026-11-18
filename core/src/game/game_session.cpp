@@ -109,6 +109,7 @@ namespace GLT::game {
         if (!result)
             return std::unexpected(result.error());
 
+        detach_scripts_from_world();                    // on_stop of the old world's scripts while it is still alive
         m_world = std::move(*result);
         m_world->set_physics(m_physics.get());
         reset_per_frame_state();
@@ -117,8 +118,7 @@ namespace GLT::game {
         if (m_scripting) {
             update_script_host_context();
             m_scripting->refresh_all();
-            m_scripting->run_world_generators();
-            attach_default_globals();
+            m_scripting->run_world_generators();      // only while the host runs (default globals attach when it starts)
         }
 
         return {};
@@ -135,6 +135,7 @@ namespace GLT::game {
         if (!result)
             return std::unexpected(result.error());
 
+        detach_scripts_from_world();
         m_world = std::move(*result);
         m_world->set_physics(m_physics.get());
         reset_per_frame_state();
@@ -145,8 +146,7 @@ namespace GLT::game {
     void game_session::unload_world() {
 
         // Tear down host's view of the world while m_world is still live, so on_stop can safely read the world. Then reset world
-        if (m_scripting)
-            m_scripting->refresh_all();         // no bindings -> on_stop every entity slot
+        detach_scripts_from_world();
 
         m_world.reset();
         
@@ -249,14 +249,14 @@ namespace GLT::game {
             m_controller->update(dt);
         }
 
-        if (m_physics) {
+        if (m_physics && !m_simulation_paused) {
             GLT_PROFILE_SCOPE_C("Physics step", GLT::debug::trace::COLOR_WORLD);
             m_physics->step(dt);
         }
 
         // scripting: globals tick even with no world; entity slots tick only when the host has a live world context
         ensure_script_host();
-        if (m_scripting) {
+        if (m_scripting && m_simulating && !m_simulation_paused) {
             GLT_PROFILE_SCOPE("Scripting");
             m_scripting->update(dt);
         }
@@ -352,6 +352,7 @@ namespace GLT::game {
             return false;
 
         update_script_host_context();
+        m_scripting->set_running(m_simulating);
         return true;
     }
 
@@ -370,22 +371,31 @@ namespace GLT::game {
     }
 
 
-    void game_session::attach_default_globals() {
+    void game_session::set_simulating(const bool simulating) {
 
-        if (!m_scripting)
+        if (simulating == m_simulating)
             return;
+        m_simulating = simulating;
+        m_simulation_paused = false;
+        if (simulating)
+            ensure_script_host();
+        if (m_scripting)
+            m_scripting->set_running(simulating);
+    }
 
-        auto* sp = GLT::script::manager::get_ptr();
-        if (!sp)
+
+
+    void game_session::detach_scripts_from_world() {
+
+        // The host stops its entity scripts when its world changes; it still reads the old world during their on_stop
+        if (!m_scripting || !m_world)
             return;
-
-        for (const auto& g : sp->default_globals()) {
-            if (auto r = m_scripting->attach_global(g.script_name, g.instance_name); !r) {
-                LOG(warn, "Failed to attach default global '{}' ({}): {}",
-                    g.script_name, g.instance_name,
-                    static_cast<int>(r.error().kind))
-            }
-        }
+        script::script_host_context ctx{};
+        ctx.world = nullptr;
+        ctx.physics = m_physics.get();
+        ctx.events = &m_event_bus;
+        ctx.assets = GLT::asset::registry::get_ptr();
+        m_scripting->set_context(ctx);
     }
 
 }

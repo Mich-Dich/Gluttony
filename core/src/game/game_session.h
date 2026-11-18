@@ -88,6 +88,17 @@ namespace GLT::game {
         // script_binding_components; bindings live in the world, the host is created lazily
         [[nodiscard]] script::i_script_host* get_script_host() const noexcept { return m_scripting.get(); }
 
+        // simulation --------------------------------------------------------------------------------------------------
+
+        // Scripts run only while the session simulates (on by default; the editor turns it off for the world it edits
+        // and on while playing in the viewport). Off: every script instance is stopped (on_stop) and destroyed
+        void set_simulating(bool simulating);
+        [[nodiscard]] bool is_simulating() const noexcept { return m_simulating; }
+
+        // Paused simulation: scripts and physics hold, the world keeps rendering (set_paused stops everything)
+        void set_simulation_paused(bool paused) noexcept { m_simulation_paused = paused; }
+        [[nodiscard]] bool is_simulation_paused() const noexcept { return m_simulation_paused; }
+
         // world -------------------------------------------------------------------------------------------------------
 
         [[nodiscard]] world::i_world* get_world() const noexcept { return m_world.get(); }
@@ -179,7 +190,7 @@ namespace GLT::game {
 
         void update_script_host_context();
 
-        void attach_default_globals();
+        void detach_scripts_from_world();
 
 
         session_id                                              m_id{};
@@ -196,6 +207,8 @@ namespace GLT::game {
         f32                                                     m_sim_time = 0.f;
         f32                                                     m_sim_delta = 0.f;
         bool                                                    m_paused = false;
+        bool                                                    m_simulating = true;
+        bool                                                    m_simulation_paused = false;
         std::vector<asset::mesh::instance>                      m_scene_buffer{};
         std::vector<world::light_snapshot>                      m_light_buffer{};
         world::environment_snapshot                             m_environment{};

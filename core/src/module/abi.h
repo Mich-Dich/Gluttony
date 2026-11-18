@@ -4,6 +4,8 @@
 #include "plugin_system/plugin_manager.h"
 #include "editor/i_editor.h"
 #include "scripting/i_script_plugin.h"
+#include "scripting/script_context.h"
+#include "scripting/script_binding_component.h"
 #include "procedural/construct/registry.h"
 
 // The ABI stamp of this translation unit. Compiled into the engine (module_manager.cpp) and into every module
@@ -83,6 +85,12 @@ namespace GLT::modules {
                      ^^GLT::script::script_field_info,
                      ^^GLT::script::script_method_info,
                      ^^GLT::script::default_global,
+                     ^^GLT::script::i_script_host,
+                     ^^GLT::script::script_host_context,
+                     ^^GLT::script::script_context,
+                     ^^GLT::script::script_context_access::fields,
+                     ^^GLT::script::script_binding,
+                     ^^GLT::script::script_binding_component,
                      ^^GLT::construct::i_registry,
                      ^^GLT::construct::pack_desc,
                      ^^GLT::construct::generator_desc,

@@ -125,9 +125,10 @@ started, global state, files.
 
 ## Not done yet
 
-- **Hot reload** (step 2 in scripting.md): Build and load unloads and loads, but nothing is captured and restored, and
-  objects of module types that the engine holds (script instances once the host exists, `std::function`s stored
-  elsewhere) are not yet released by a participant. Use it while no game session runs scripts.
+- **Hot reload** beyond scripts: Build and load unloads and loads the modules. Script instances survive it (their
+  persist fields are restored, scripting.md §0.7) and construct packs come back (open Construct editors re-evaluate).
+  Other objects of module types that the engine holds must be released in the module's `on_module_unload` or by a
+  participant.
 - Static linkage (`LINKAGE_STYLE_STATIC`, shipped games): the module would be linked into the executable; not wired.
 - Windows: loading is implemented for Linux only.
 - A file watcher that rebuilds on save.

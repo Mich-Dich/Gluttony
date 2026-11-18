@@ -50,6 +50,9 @@ namespace GLT::script {
         const reflect::member_descriptor*           member; // offset + write_fn / read_fn
         script_field_role                           role;
         const char*                                 editor_category; // empty unless role == editor
+        // The exact C++ type (hash of its full name, e.g. glm::vec<3, float, ...>): member->type_hash only knows the
+        // template name ("vec"), which does not tell vec2 from vec3
+        u32                                         type_id;
     };
 
 
@@ -66,6 +69,8 @@ namespace GLT::script {
 
     struct script_class_info {
 
+        // Stored in worlds (bindings) and used in code (attach_global, run_action, call). The namespace path below the
+        // registering module's root namespace, '.' separated ("scripts.spinner"), or [[=name{"..."}]]
         std::string_view                            name;
         script_kind                                 kind;
         std::string_view                            editor_label; // for editor_action
@@ -76,6 +81,11 @@ namespace GLT::script {
         // construction / destruction pointers live in the registering .so
         i_script* (*create)();
         void (*destroy)(i_script*);
+
+        // The C++ type ("test_project::scripts::spinner"): identifies the class for script_context::sibling<S>()
+        std::string_view                            type_key;
+        // The object the field offsets are relative to (static_cast to the script class)
+        void* (*object_of)(i_script*);
     };
 
 
@@ -100,14 +110,8 @@ namespace GLT::script {
             return plugin_manager::get_plugin_ref_unsafe<i_script_plugin>(plugin_manager::interface::scripting);
         }
 
-        // Full hot-reload sequence for one game plugin
-        //   for each session: prepare_hot_reload -> snapshot_and_release
-        //   plugin_manager::unload_plugin(name)
-        //   plugin_manager::load_plugin(name)
-        //   for each session: restore_state
-        //
-        // Implemented by the scripting plugin (declared here so core callers can invoke it without linking to the plugin)
-        [[nodiscard]] std::expected<void, script_error> reload_game_plugin(std::string_view plugin_name, std::string_view registrant = {});
+        // Hot reload of script code: game modules (module/module_manager.h). Unloading a module releases its instances
+        // in every host (i_script_host::release_registrant, persist state kept), loading it again brings them back
 
     }
 
@@ -148,11 +152,13 @@ namespace GLT::script {
 
         // templates (instantiated in the game plugin .so) -------------------------------------------------------------
 
-        template <typename T>
+        // [Root]: the name is T's namespace path below Root ('.' separated); the global namespace by default
+        template <typename T, std::meta::info Root = ^^::>
         requires std::derived_from<T, i_script>
         void register_script_class(std::string_view registrant = {});
 
 
+        // Every script class below [Namespace] (nested namespaces too), named relative to [Namespace]
         template <auto Namespace> void register_scripts_in_namespace(std::string_view registrant = {});
 
     };

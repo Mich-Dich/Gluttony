@@ -129,7 +129,18 @@ namespace GLT::script {
         u32                                         index;
         script_field_role                           role;
         const char*                                 editor_category;
+        u32                                         type_id;
     };
+
+
+    // Exact type identity of a member type (script_field_info::type_id)
+    consteval u32 script_type_id(std::meta::info type) {
+        return reflect::fnv1a_32(std::meta::display_string_of(std::meta::dealias(type)));
+    }
+
+
+    template <typename T>
+    consteval u32 script_type_id_of() { return script_type_id(^^T); }
 
 
     // Compile time: roles from the annotations. Members are referred to by index: a pointer into the type descriptor is
@@ -157,7 +168,8 @@ namespace GLT::script {
             constexpr bool is_persist = has_ann<GLT::reflect::annotations::persist>(member);
             constexpr bool is_transient = has_ann<GLT::reflect::annotations::transient>(member);
 
-            script_field_entry e{ .index = index, .role = script_field_role::runtime, .editor_category = std::define_static_string("") };
+            script_field_entry e{ .index = index, .role = script_field_role::runtime, .editor_category = std::define_static_string(""),
+                .type_id = script_type_id(std::meta::type_of(member)) };
             if constexpr (is_transient)
                 e.role = script_field_role::transient;
             else if constexpr (is_editor && is_persist)
@@ -182,7 +194,7 @@ namespace GLT::script {
         static const std::vector<script_field_info> table = [] {
             std::vector<script_field_info> out;
             for (const script_field_entry& e : build_field_entries<T>())
-                out.push_back({ &reflect::type_descriptor_of<T>.members[e.index], e.role, e.editor_category });
+                out.push_back({ &reflect::type_descriptor_of<T>.members[e.index], e.role, e.editor_category, e.type_id });
             return out;
         }();
         return table;
@@ -231,7 +243,23 @@ namespace GLT::script {
 
     // TEMPLATE CLASS PUBLIC ===========================================================================================
 
-    template <typename T> requires std::derived_from<T, i_script>
+    // The name of a script class: [[=name{"..."}]], else its namespace path below [root] and its identifier, '.' separated
+    template <typename T>
+    consteval const char* script_name_of(std::meta::info root) {
+
+        if (const auto n = find_ann<GLT::reflect::annotations::name>(^^T); n && !n->value.empty())
+            return std::define_static_string(std::string_view(n->value));
+
+        std::string name(std::meta::identifier_of(^^T));
+        for (std::meta::info p = std::meta::parent_of(^^T); p != root && std::meta::is_namespace(p) && p != ^^::;
+             p = std::meta::parent_of(p))
+            if (std::meta::has_identifier(p))
+                name = std::string(std::meta::identifier_of(p)) + "." + name;
+        return std::define_static_string(name);
+    }
+
+
+    template <typename T, std::meta::info Root> requires std::derived_from<T, i_script>
     void i_script_plugin::register_script_class(std::string_view registrant) {
 
         static_assert(!std::is_abstract_v<T>, "Script classes must be concrete");
@@ -241,34 +269,47 @@ namespace GLT::script {
             "Script class needs exactly one kind annotation");
 
         script_class_info info{
-            .name = reflect::type_name(^^T),
+            .name = script_name_of<T>(Root),
             .kind = kind,
             .editor_label = editor_label_of<T>(),
             .registrant = registrant,
             .fields = build_fields<T>(),
             .callable_methods = build_methods<T>(),
             .create = []() -> i_script* { return new T(); },
-            .destroy = [](i_script* p)    { delete p; },
+            .destroy = [](i_script* p)    { delete static_cast<T*>(p); },
+            .type_key = std::define_static_string(std::meta::display_string_of(^^T)),
+            .object_of = [](i_script* p) -> void* { return static_cast<T*>(p); },
         };
         register_script_class_impl(info);
+    }
+
+
+    namespace detail {
+
+        template <std::meta::info Root, std::meta::info Namespace>
+        void register_scripts_below(i_script_plugin& plugin, std::string_view registrant) {
+
+            template for (constexpr auto member : std::define_static_array(
+                std::meta::members_of(Namespace, std::meta::access_context::unchecked()))) {
+
+                if constexpr (std::meta::is_namespace(member) && !std::meta::is_namespace_alias(member))
+                    register_scripts_below<Root, member>(plugin, registrant);
+
+                else if constexpr (std::meta::is_type(member) && std::meta::is_class_type(member) && std::meta::is_complete_type(member)) {
+                    using M = [:member:];                  // [member] reflects the class itself (type_of() is for variables / members)
+                    if constexpr (std::derived_from<M, i_script> && !std::is_abstract_v<M>)
+                        plugin.template register_script_class<M, Root>(registrant);
+                }
+            }
+        }
+
     }
 
 
     template <auto Namespace>
     void i_script_plugin::register_scripts_in_namespace(std::string_view registrant) {
 
-        template for (constexpr auto member : std::define_static_array(
-            std::meta::members_of(Namespace, std::meta::access_context::unchecked()))) {
-
-            if constexpr (std::meta::is_namespace(member))
-                register_scripts_in_namespace<member>(registrant);
-
-            else if constexpr (std::meta::is_type(member) && std::meta::is_class_type(member) && std::meta::is_complete_type(member)) {
-                using M = [:member:];                      // [member] reflects the class itself (type_of() is for variables / members)
-                if constexpr (std::derived_from<M, i_script> && !std::is_abstract_v<M>)
-                    register_script_class<M>(registrant);
-            }
-        }
+        detail::register_scripts_below<Namespace, Namespace>(*this, registrant);
     }
 
     // TEMPLATE CLASS PROTECTED ========================================================================================

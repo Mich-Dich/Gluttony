@@ -127,14 +127,61 @@ descriptors are removed with their owner.
    by the module id (D); participants exist with `after_load` / `release` (the start of B).
 2. **Module reload coordinator** with participants (B, F, G). First participant: procedural construction (needed for
    generator assets with stage code in the project).
-3. **Host basics**: binding component, reconciliation, entity and global scripts, editor settings, `on_start` /
-   `on_update` / `on_stop`, exceptions (§8.6).
-4. **Hot reload of scripts**: persist snapshot / restore as participant of 2.
+3. **Host basics** (done 2026-11-18, §0.7): binding component, reconciliation, entity and global scripts, editor
+   settings, `on_start` / `on_update` / `on_stop`, exceptions (§8.6).
+4. **Hot reload of scripts** (done 2026-11-18, §0.7): unloading a module snapshots the persist fields of its instances,
+   loading it again restores them (`on_start` with `was_reloaded`).
 5. Contacts, sleep / wake, events accessor, blackboards, `editor_callable` parameters, save files.
 
 Steps 1 and 2 serve the generator system and scripting alike; the generator system ("B": generator assets + stage
 code in libraries) can then be built on 1 + 2 without waiting for 3 - 5.
 
+
+### 0.7 As built (2026-11-18): host, component, editor
+
+**Where scripts run.** A session simulates by default; scripts exist only while it does
+(`game_session::set_simulating`, `i_script_host::set_running`). The editor turns it off for the world it edits.
+**Play** (toolbar):
+
+- *Current viewport*: the edited world itself runs (scripts + physics). Every entity is snapshotted first, and **Stop**
+  despawns what was spawned while playing and restores the rest (same entity ids). Saving is refused while playing.
+- *Separate windows*: new sessions load the saved world and simulate (as before, now with scripts).
+- **Pause** holds scripts and physics of every simulating session (`set_simulation_paused`); the worlds keep rendering.
+
+**Binding component** (`scripting/script_binding_component.h`, world name `script_bindings`, category Scripting):
+bindings `{ script_name, instance_name, enabled, editor_settings }`. It is a plugin component (owned storage): saved with
+the world, and kept as payload when the scripting plugin is not loaded. `find_bindings` / `ensure_bindings` look it up
+by name, so module code can use it. Inspector: add a script (entity scripts of the loaded modules), class, instance
+name (duplicates are flagged), enabled, the `[[=editor]]` fields (bool, integers with range / options, f32 / f64,
+string, path, `glm::vec2/3/4`, color hint), reset per field; while the world runs: live state (updates, average time),
+Enable / Wake, and one button per `[[=editor_callable]]` method.
+
+**Script names** are the namespace path below the module's root namespace: `test_project::scripts::spinner` registers
+as `scripts.spinner` (gap E). `[[=name{"..."}]]` overrides. Namespace aliases are not walked.
+
+**Field blobs** (`scripting/script_fields.h`): editor settings and persist snapshots store each field as
+`name, type id, value`. A field is applied only when the class still has a field of that name and exact type
+(`script_field_info::type_id`, the hash of the full type name: `member_descriptor::type_hash` only knows the template
+name, "vec" for every `glm::vec`). Renamed / retyped fields keep their source default.
+
+**Host** (`plugin/scripting_cpp/src/host/script_host.*`): reconciliation at the start of every update; entity slots in
+binding order; globals (default globals attach when the host starts); `run_action` (editor actions and world generators,
+also when the host does not run); `call`; `disable_self` / `destroy_self` / `sleep` / `sleep_for` / `wake`;
+`sibling<S>()` (same module only); session resources (destroyed when the run ends or their module unloads);
+exceptions per §8.6 (a failed `on_start` is not retried until the binding changes); per-instance update timing.
+`script_context` is entirely inline: a module needs no symbol of the scripting plugin.
+
+**Hot reload**: the scripting participant of the module manager calls `unregister_by_registrant(module)`; every host
+first runs `on_stop` (`was_reloaded`) on the module's instances, snapshots their persist fields, enabled / sleeping
+state, destroys them and the module's session resources. When the module registers again, reconciliation recreates the
+instances and the snapshot is applied before `on_start` (`was_reloaded`). Globals come back the same way.
+`snapshot_state` / `restore_state` use the same records (`restore_state` marks them `from_save`) for a future save system.
+
+**Editor menu**: Tools > Scripts lists the editor actions (and Scripts > World generators), run in the edited world.
+
+**Not yet**: contacts (`on_contact`, `sleep_until_contact` sleeps until woken), event wake-ups (`sleep_until_event`
+sleeps until woken), entity blackboards, `editor_callable` parameters, `[[=priority]]` ordering, editor-action
+parameters UI, undo for changes made while playing (Stop restores the world, the undo history is not touched).
 
 ---
 

@@ -41,7 +41,8 @@ namespace GLT::script {
         using F = std::remove_reference_t<Factory>;
         F f = std::forward<Factory>(factory);
         void* p = m_host->session_resource_erased(key, reflect::fnv1a_32(reflect::type_name(^^T)), sizeof(T), alignof(T),
-            [](void* out, void* fp) { new (out) T((*static_cast<F*>(fp))()); }, &f, m_registrant);
+            [](void* out, void* fp) { new (out) T((*static_cast<F*>(fp))()); }, &f,
+            [](void* p) { static_cast<T*>(p)->~T(); }, m_registrant);
         return *static_cast<T*>(p);
     }
 
@@ -53,7 +54,7 @@ namespace GLT::script {
         if (!m_host)
             return nullptr;
         return static_cast<S*>(m_host->find_sibling_erased(
-            reflect::type_name(^^S), m_entity, instance_name, m_registrant));
+            std::define_static_string(std::meta::display_string_of(^^S)), m_entity, instance_name, m_registrant));
     }
 
     // sleep_until_event -----------------------------------------------------------------------------------------------
@@ -71,7 +72,7 @@ namespace GLT::script {
     void script_context::wake_sibling(std::string_view instance_name) noexcept {
 
         if (m_host)
-            m_host->wake_sibling_erased(reflect::type_name(^^S), m_entity, instance_name);
+            m_host->wake_sibling_erased(std::define_static_string(std::meta::display_string_of(^^S)), m_entity, instance_name);
     }
     // TEMPLATE CLASS PROTECTED ========================================================================================
 

@@ -2681,6 +2681,12 @@ namespace GLT::editor {
         auto* world = session->get_world();
         VALIDATE(world, return, "", "Failed to get world");
 
+        if (session->is_simulating()) {                 // playing in the viewport: the world is not the edited one right now
+            GLT::event_bus::post(GLT::notification_event("Save", "Stop playing to save the world (Stop restores it)",
+                GLT::logger::severity::warn));
+            return;
+        }
+
         if (auto result = world->save(); result) {
             if (world == m_world)
                 m_undo_stack.mark_clean();

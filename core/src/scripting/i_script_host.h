@@ -111,6 +111,19 @@ namespace GLT::script {
 
         virtual void detach_global(script_instance_id id) = 0;
 
+        // running -----------------------------------------------------------------------------------------------------
+
+        // Scripts only live while the host runs. false (the default): every slot is stopped (on_stop) and destroyed,
+        // reconciliation and update do nothing; one-shot actions (run_action) still work. true: default globals attach,
+        // world generators run, the next update reconciles the bindings. The editor keeps the host of the world it
+        // edits stopped, and runs it while playing in the viewport
+        virtual void set_running(bool running) = 0;
+        [[nodiscard]] virtual bool is_running() const noexcept = 0;
+
+        // Stops and destroys every instance whose class was registered by [registrant] (a module about to unload), and
+        // the session resources it created. Bindings stay: the instances come back when the classes are registered again
+        virtual void release_registrant(std::string_view registrant) = 0;
+
         // runtime controls --------------------------------------------------------------------------------------------
 
         virtual void set_enabled(script_instance_id id, bool enabled) = 0;
@@ -118,12 +131,16 @@ namespace GLT::script {
 
         virtual void wake(script_instance_id id) = 0;
 
-        // Session-resource access (Phase 4 fully wires this up; declared here so
-        // script_context.h's template can compile). Type-erased keyed store:
-        // the scripting plugin rejects keys whose registrant does not match the
-        // caller's registrant, per the D6 lifetime rule.
+        // What script_context's self-control functions ask for. Applied after the current callback returns
+        enum class control_op : u8 { sleep, sleep_for, sleep_until_contact, wake, disable, destroy };
+        virtual void control(script_instance_id id, control_op op, f32 seconds = 0.0f) = 0;
+        [[nodiscard]] virtual bool is_sleeping(script_instance_id id) const = 0;
+
+        // Session resources (script_context::session_resource): created on first request, destroyed with the host, or
+        // when the module of [registrant] unloads (release_registrant). [destroy] runs the destructor of T; it lives in
+        // the module that requested the resource, so the host calls it before that module is closed
         virtual void* session_resource_erased(std::string_view key, u32 type_hash, u32 size, u32 alignment,
-            void (*construct)(void* out, void* factory), void* factory, std::string_view registrant) = 0;
+            void (*construct)(void* out, void* factory), void* factory, void (*destroy)(void*), std::string_view registrant) = 0;
 
         // one-shot / live calls ---------------------------------------------------------------------------------------
 
