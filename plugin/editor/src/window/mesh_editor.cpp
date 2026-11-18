@@ -2435,7 +2435,7 @@ namespace GLT::editor {
 
                     // LOD (click: preview this level)
                     ImGui::TableNextColumn();
-                    char label[8];
+                    char label[16];
                     std::snprintf(label, sizeof(label), "%u", level);
                     if (ImGui::Selectable(label, m_preview_lod == static_cast<i32>(level), ImGuiSelectableFlags_None) && exists)
                         set_preview_lod(m_preview_lod == static_cast<i32>(level) ? -1 : static_cast<i32>(level));

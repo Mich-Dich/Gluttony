@@ -1,8 +1,140 @@
 # GLT Scripting System — Design Document
 
-**Status:** Proposed
+**Status:** Proposed; reviewed 2026-11-18 (see §0: sanity check, fixes made, gaps, revised order of work)
 **Scope:** Interface design, script model, bindings component, lifecycle, communication, hot reload, build model
 **Out of scope:** Implementation details, editor UI specifics, save-file system, graphics backend
+
+---
+
+## 0. Review (2026-11-18): sanity check
+
+Done before building the procedural generator system on top of scripting (generator assets whose stage code lives in
+the project's C++ module). Method: compare the document with `core/src/scripting/`, `core/src/reflection/`,
+`plugin/scripting_cpp/` and `core/src/game/game_session.*`, and compile a test script (entity script with
+`editor` / `persist` / `transient` fields, an `editor_callable` method, an `editor_action` in a sub-namespace) against
+the registration templates.
+
+### 0.1 Where it stands
+
+| Part | State |
+|---|---|
+| Interfaces (`i_script`, `i_script_host`, `i_script_plugin`, `script_context`) | declared |
+| Registration templates (`register_script_class`, `register_scripts_in_namespace`) | had never been instantiated; did not compile (fixed, §0.2) |
+| `scripting_cpp` plugin | Phase 0: class registry and default globals work, `create_host()` returns null |
+| Host, `script_binding_component`, reconciliation, contacts, sleep, blackboards, events accessor | not started |
+| `game_session` integration | done (creates the host if the plugin gives one, calls `refresh_all`, `run_world_generators`, `update`) |
+| `manager::reload_game_plugin` | declared, not defined (a call would not link) |
+| The game module itself (building, finding, loading the project's C++) | done: [game_module.md](game_module.md) (§0.4 A) |
+
+The concept holds up: scripts as plain C++ classes, reflection-driven registration, names as identities, one module,
+state classified by annotation, snapshot / restore for reload and saves. Nothing needs to be thrown away.
+
+### 0.2 Fixed now (code)
+
+1. **Reflection ignored every member and class annotation, engine wide.** `type_of(annotation)` is a const type; the
+   readers in `reflection/build.inl` and `render/render_mode.inl` compared it with `^^Ann` without removing cv, so
+   `display_name`, `tooltip`, `category`, `range`, `options`, `skip`, `transient`, ... never matched. Settings pages
+   showed member names, ranges and choices were missing, render modes had no display names. Fixed (`remove_cvref`).
+2. **Text annotations could not be read back.** With 1 fixed, `[[=display_name{"Lit"}]]` fails in GCC 16
+   (`reflect_constant failed`: a pointer to a string literal is not a valid constant). Text members are now
+   `reflect::annotation_text<N>` (a char array built from the literal by a consteval constructor): the source is
+   unchanged, `std::string_view(ann.value)` works. Limits: `short_text` 127 characters, `long_text` (tooltip,
+   options) 1023.
+3. `register_scripts_in_namespace` took `type_of()` of a class reflection (classes have no type, they are one).
+4. `has_ann` / `get_ann` expanded `template for` over a function parameter (not a constant expression).
+5. `build_fields` put pointers into the type descriptor into `define_static_array` (not a valid constant). Now the
+   members are found by index at compile time and the pointer table is built at registration (static storage of the
+   registering module, like `create` / `destroy`).
+6. `editor_callable` invokers called `inst->[:f:]` on `i_script*`; `f` is a member of the script class.
+7. `script_context.h` used `event_bus_accessor` and `entity_blackboard` without declaring them.
+
+### 0.3 Document vs code (the document now follows the code)
+
+- Annotations live in `GLT::reflect::annotations`, one set for reflection and scripting (the document said
+  `GLT::script::annotations`), and are values (`[[=persist{}]]`).
+- `unregister_by_registrant` replaces `unregister_scripts_in_namespace` (no second walk; also removes classes the new
+  build no longer has).
+- A class deriving from `i_script` without exactly one kind annotation is a compile error (`static_assert`), not
+  log-and-skip. Earlier is better; kept.
+- In code but not in the document: default globals (`set_default_globals`, attached by `game_session`) and the session
+  resource rule "the resource type must be defined engine-side" (its destructor must not live in a reloadable module).
+- In the document but not in code: `editor_callable` with a parameter (only `(script_context&)` is accepted).
+
+### 0.4 Gaps
+
+**A. The game module is missing.** Everything assumes "one game plugin", but nothing builds it: there is no project
+CMake template (a target that links `Gluttony::API`), no output location, no discovery by `plugin_manager` (it scans
+the engine's plugin folders), no ABI stamp (engine version, compiler, build type) to refuse a stale build, and no
+file watcher / rebuild trigger. This is the largest piece of work and the first one: without it there is nothing to
+register or reload.
+
+**B. Reload is scripts-only, but a module registers more.** The generator system (stage types, roles, presets),
+components, asset handlers and editor hooks will come from the same module. Proposed: the coordinator reloads a
+*module* and drives *participants*:
+
+```cpp
+class i_module_participant {                       // scripting, procedural construction, world components, ...
+public:
+    virtual void prepare_reload(std::string_view module) = 0;      // stop: on_stop, drain background work
+    virtual void capture(std::string_view module, snapshot_writer&) = 0;
+    virtual void release(std::string_view module) = 0;             // drop everything that points into the module
+    virtual void restore(std::string_view module, snapshot_reader&) = 0;   // after the new build registered itself
+};
+```
+
+The scripting host is one participant (its §9 sequence fits as is). Procedural construction is another: wait for the
+evaluations running module code, `packs().remove_owner(module)` before the unload (descriptors hold `std::function`s
+into the module), re-evaluate the open editors after the load (the registry generation already triggers that).
+
+**C. One registration entry per module.** Today a module calls `register_scripts_in_namespace` and would call
+`construct::register_pack` and component registration separately. Proposed: `register_module<^^game>("game")` walks
+the module's root namespace once and hands each annotated item to its system (`i_script` classes to scripting, namespaces
+annotated `[[=construct::pack{...}]]` to the construct registry, components to the world). The generated entry point
+of a game module is then one line.
+
+**D. One identity for "who registered this".** Scripting says `registrant` (a `string_view` the caller must keep
+alive), procedural construction says `owner` (copied). Use one module id, owned by the core's module table.
+
+**E. Script names collide.** The name is the unqualified class name; two modules (or two namespaces) with a `patrol`
+class collide and the second is rejected. Default to the namespace path below the module root (`ai.combat.patrol`),
+like the construct system's dotted names; `[[=name{...}]]` still overrides.
+
+**F. Background work.** §7.5 covers threads a script owns. Module code also runs on `GLT::thread_pool` (construct
+evaluations; later any async generator). The coordinator needs to wait for work of *that* module, not for the whole
+pool: per-module task counters (the construct service can count its own evaluations per owner).
+
+**G. Objects of module types outliving the module.** Generalize the session-resource rule: anything created by module
+code and destroyed by engine code (a `shared_ptr` whose control block was made in the module, a `std::function`, a
+polymorphic object) must be released in `release()`. The construct system complies: results hold only core types,
+descriptors are removed with their owner.
+
+### 0.5 Could be cut or deferred
+
+- **`context_flag::is_start / is_update / is_contact / is_stop`**: the callback already says which one it is. Keep
+  `was_reloaded`, `from_save`, `woke_from_sleep`.
+- **`world_generator` kind**: overlaps with procedural construction and terrain generation (which run outside
+  sessions, with seeds, editors and caching). Keep the kind for ad-hoc world setup scripts, but generators that make
+  geometry belong in construct stage types.
+- **Entity blackboards, `sleep_until_event`, sibling access**: sound, but not needed for a first usable host. Build
+  after hot reload works.
+
+### 0.6 Revised order of work
+
+1. **Game module** (done 2026-11-18, [game_module.md](game_module.md)): project CMake template
+   (`cmake/gluttony_game_module.cmake`, generated entry point), output `<project>/build/<config>/bin`, build from the
+   editor, load / unload by `modules::` (core `module/`; not `plugin_manager`: modules load after every plugin and
+   need participants), ABI stamp with a reflection layout hash. Registers through `register_module` (C), identified
+   by the module id (D); participants exist with `after_load` / `release` (the start of B).
+2. **Module reload coordinator** with participants (B, F, G). First participant: procedural construction (needed for
+   generator assets with stage code in the project).
+3. **Host basics**: binding component, reconciliation, entity and global scripts, editor settings, `on_start` /
+   `on_update` / `on_stop`, exceptions (§8.6).
+4. **Hot reload of scripts**: persist snapshot / restore as participant of 2.
+5. Contacts, sleep / wake, events accessor, blackboards, `editor_callable` parameters, save files.
+
+Steps 1 and 2 serve the generator system and scripting alike; the generator system ("B": generator assets + stage
+code in libraries) can then be built on 1 + 2 without waiting for 3 - 5.
+
 
 ---
 
@@ -106,14 +238,14 @@ public:
     f32                                         target_speed = 45.0f;
     glm::vec3                                   rotation_axis = { 0, 1, 0 };
 
-    [[=GLT::script::annotations::editor{"Rotation|Speed"}]]
+    [[=GLT::reflect::annotations::editor{"Rotation|Speed"}]]
     [[=GLT::reflect::annotations::range{0.1, 360.0}]]
     f32                                         speed_deg_per_sec = 45.0f;
 
-    [[=GLT::script::annotations::persist]]
+    [[=GLT::reflect::annotations::persist{}]]
     f32                                         accumulated_angle = 0.0f;
 
-    [[=GLT::script::annotations::transient]]
+    [[=GLT::reflect::annotations::transient{}]]
     GLT::event_bus::subscription_guard          guard;
 
     void on_start(GLT::script::script_context& ctx) override {
@@ -389,8 +521,7 @@ namespace GLT::script {
 
         template <auto Namespace>
         void register_scripts_in_namespace(std::string_view registrant = {});
-        template <auto Namespace>
-        void unregister_scripts_in_namespace();
+        virtual void unregister_by_registrant(std::string_view registrant) = 0;   // replaces unregister_scripts_in_namespace (§0.3)
 
         [[nodiscard]] virtual unique_ref<i_script_host> create_host() = 0;
 
@@ -417,7 +548,7 @@ A script that fails validation is **logged and skipped**, not aborted.
 
 ## 6. Annotations
 
-All in `GLT::script::annotations`.
+All in `GLT::reflect::annotations` (`reflection/annotations.h`), shared with the reflection system. Annotations are values: `[[=persist{}]]`, not `[[=persist]]`. Text members are `annotation_text` (a char array; see §0.2) so they can be read back.
 
 ### 6.1 Kind annotations (exactly one per class)
 
@@ -425,14 +556,14 @@ All in `GLT::script::annotations`.
 struct entity_script {};                        // per-entity, runs during play
 struct global_script {};                        // one per session, no entity
 struct world_generator {};                      // runs once on world load / editor button
-struct editor_action { const char* label; };    // editor toolbar button
+struct editor_action { short_text label; };     // editor toolbar button
 ```
 
 ### 6.2 Field annotations
 
 ```cpp
 struct persist {};                              // hot reload + save-file snapshot
-struct editor { const char* category = ""; };   // per-instance component setting
+struct editor { short_text category{}; };       // per-instance component setting
 struct transient {};                            // never serialized
 ```
 
@@ -455,7 +586,7 @@ The `editor` category string is pipe-separated (`"Weather|Ski|Coloring"`); empty
 ### 6.3 Class annotations
 
 ```cpp
-struct name { const char* value; };             // stable identifier override
+struct name { short_text value; };              // stable identifier override
 struct priority { i32 value; };                 // ordering within an entity (higher first)
 ```
 
@@ -466,7 +597,7 @@ struct priority { i32 value; };                 // ordering within an entity (hi
 ```cpp
 // Callable via `i_script_host::call()`. Must return void, take
 // (script_context&) or (script_context&, const P&) with P serializable.
-struct editor_callable { const char* label = ""; };
+struct editor_callable { short_text label{}; };
 ```
 
 ### 6.5 Category rendering
@@ -648,7 +779,7 @@ per session: snapshot = host->snapshot_state(registrant)
     │
     ▼
 Plugin manager unloads the game plugin
-    on_unload() → unregister_scripts_in_namespace<...>()
+    on_unload() → unregister_by_registrant(registrant)
     (plugin .so unmapped; every instance destroyed without a second on_stop)
     │
     ▼
@@ -899,14 +1030,14 @@ Live instances of `entity_script` / `global_script` can expose `[[=editor_callab
 An editor action is a one-shot script:
 
 ```cpp
-[[=GLT::script::annotations::editor_action{"Rebuild NavMesh"}]]
+[[=GLT::reflect::annotations::editor_action{"Rebuild NavMesh"}]]
 class rebuild_navmesh : public i_script {
 public:
     struct config {
         f32 merge_distance = 0.5f;
         u32 max_iterations = 1000;
     };
-    [[=GLT::script::annotations::editor{"Settings"}]]
+    [[=GLT::reflect::annotations::editor{"Settings"}]]
     config cfg;
     void on_start(script_context& ctx) override { /* ... */ }
 };
@@ -1025,8 +1156,7 @@ If two scripts on the same entity both write the same field, both apply in compo
 template <auto Namespace>
 void register_scripts_in_namespace(std::string_view registrant = {});
 
-template <auto Namespace>
-void unregister_scripts_in_namespace();
+void unregister_by_registrant(std::string_view registrant);   // no second namespace walk
 ```
 
 ### 15.2 Usage in the game plugin
@@ -1039,7 +1169,7 @@ void game_plugin::on_load() {
 
 void game_plugin::on_unload() {
     if (auto* s = GLT::script::manager::get_ptr())
-        s->unregister_scripts_in_namespace<^^game::scripts>();
+        s->unregister_by_registrant("game");
 }
 ```
 
@@ -1057,7 +1187,8 @@ The descent uses C++26 `template for` (or `std::meta` recursion) and is entirely
 
 ### 15.4 Unregistration
 
-Walks the same namespace, re-derives the names, removes each. O(scripts) per reload.
+`unregister_by_registrant(registrant)` removes every class the module registered. No second namespace walk, and it
+also catches classes that were renamed or removed in the new build.
 
 ### 15.5 Namespace convention
 

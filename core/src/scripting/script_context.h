@@ -12,6 +12,10 @@
 
 namespace GLT::script {
 
+    // Defined with the communication phase (scripting.md 11.1 / 11.4). Declared here so this header compiles on its own
+    class event_bus_accessor;
+    class entity_blackboard;
+
     // CONSTANTS =======================================================================================================
 
     // MACROS ==========================================================================================================

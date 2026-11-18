@@ -54,10 +54,12 @@ endif()
 set(VENDOR_DIR                                                          "${CMAKE_SOURCE_DIR}/vendor")
 set(IMGUI_DIR                                                           "${VENDOR_DIR}/imgui")
 set(GLM_DIR                                                             "${VENDOR_DIR}/glm")
+set(IMGUIZMO_DIR                                                        "${VENDOR_DIR}/ImGuizmo")
 
 # clone libs for core (or ones that are shared across multiple plugins)
 git_clone_or_update("git@github.com:icaven/glm.git"                     "${GLM_DIR}" DEPTH 1)
 git_clone_or_update("https://github.com/ocornut/imgui.git"              "${IMGUI_DIR}" DEPTH 1 BRANCH docking)
+git_clone_or_update("https://github.com/CedricGuillemet/ImGuizmo.git"   "${IMGUIZMO_DIR}")
 
 # ------------- GLM -------------------------------------------------------------------------------
 add_library(glm                                                         INTERFACE)
@@ -83,10 +85,12 @@ file(GLOB                                                               IMGUI_BA
 )
 target_sources(imgui                                                    PRIVATE
     ${IMGUI_BACKEND_SOURCES}
+    ${IMGUIZMO_DIR}/src/ImGuizmo.cpp                                    # one gizmo context for the whole process (editor, core tools)
 )
 target_include_directories(imgui                                        PUBLIC
     $<BUILD_INTERFACE:${IMGUI_DIR}>
     $<BUILD_INTERFACE:${IMGUI_DIR}/backends>
+    $<BUILD_INTERFACE:${IMGUIZMO_DIR}/src>
 )
 find_package(Vulkan                                                     REQUIRED)
 target_link_libraries(imgui

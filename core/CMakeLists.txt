@@ -24,6 +24,7 @@ set_target_properties(${CORE_NAME} PROPERTIES
 
 target_compile_definitions(${CORE_NAME}                                 PRIVATE
     GLT_MODULE_NAME="${CORE_NAME}"
+    GLT_ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"                         # game module builds (module/module_manager.cpp)
     $<$<CONFIG:Debug>:DEBUG>
     $<$<CONFIG:Release>:RELEASE>
     $<$<CONFIG:RelWithDebInfo>:RELEASE_WITH_DEBUG_INFO>
@@ -94,6 +95,7 @@ target_include_directories(${CORE_NAME}API
         # imgui headers (flat layout: <imgui.h>, <backends/imgui_impl_vulkan.h>)
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/vendor/imgui>
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/vendor/imgui/backends>
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/vendor/ImGuizmo/src>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/backends>
         # glm headers (so public headers using glm::vec3, glm::mat4 etc. work)
@@ -161,6 +163,34 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/asset)
 else()
     message(WARNING "Assets directory not found at ${CMAKE_SOURCE_DIR}/asset")
 endif()
+
+
+
+# ------------- Procedural construction tests (no engine needed) ---------------------------------
+# The construction system's engine-independent part (core/src/procedural/construct without engine/ and editor/) with
+# its self test, as a small executable:   cmake --build --preset debug --target procedural_construct_tests
+file(GLOB                                                               PROCEDURAL_CONSTRUCT_TEST_SOURCES
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/procedural/construct/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/procedural/construct/geometry/*.cpp"
+)
+add_executable(procedural_construct_tests                               EXCLUDE_FROM_ALL
+    ${PROCEDURAL_CONSTRUCT_TEST_SOURCES}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/procedural_construct_tests.cpp"
+)
+target_include_directories(procedural_construct_tests                   PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/
+    ${CMAKE_SOURCE_DIR}/vendor/glm
+)
+target_compile_options(procedural_construct_tests                       PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-std=c++26>
+    $<$<COMPILE_LANGUAGE:CXX>:-freflection>
+    $<$<COMPILE_LANGUAGE:CXX>:-ftemplate-depth=512>
+    -Wall -Wextra -Wpedantic
+)
+set_target_properties(procedural_construct_tests                        PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY                                            "${COMPILE_OUTPUT_DIR}"
+)
 
 
 

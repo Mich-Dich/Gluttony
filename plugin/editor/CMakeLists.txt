@@ -40,10 +40,9 @@ git_clone_or_update("git@github.com:Mich-Dich/ImGuiColorTextEdit.git"   "${IMGUI
 git_clone_or_update("https://github.com/CedricGuillemet/ImGuizmo.git"   "${IMGUIZMO_DIR}")
 
 # ImGuizmo ---------------------------------------------------------------------------------------
+# Compiled into the imgui library (root CMakeLists.txt): the editor and the core's construct tools share one gizmo context
 target_include_directories(${PLUGIN_NAME}                               PRIVATE "${IMGUIZMO_DIR}/src")
 target_include_directories(${PLUGIN_NAME}_static                        PRIVATE "${IMGUIZMO_DIR}/src")
-target_sources(${PLUGIN_NAME}                                           PRIVATE "${IMGUIZMO_DIR}/src/ImGuizmo.cpp")
-target_sources(${PLUGIN_NAME}_static                                    PRIVATE "${IMGUIZMO_DIR}/src/ImGuizmo.cpp")
 
 # ImPlot ------------------------------------------------------------------------------------------
 set(IMPLOT_SOURCES

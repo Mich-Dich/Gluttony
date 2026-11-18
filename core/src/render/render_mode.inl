@@ -47,7 +47,7 @@ namespace GLT::render {
 
             for (auto a : std::meta::annotations_of(member)) {
 
-                const auto at = std::meta::type_of(a);
+                const auto at = std::meta::remove_cvref(std::meta::type_of(a));     // annotations are const objects
                 if (at == ^^reflect::annotations::display_name) {
 
                     const auto v = std::meta::extract<reflect::annotations::display_name>(a);

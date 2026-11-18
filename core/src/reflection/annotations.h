@@ -1,11 +1,38 @@
 
 #pragma once
 
-#include "reflection/annotations.h"
-
 
 
 // FORWARD DECLARATIONS ================================================================================================
+
+namespace GLT::reflect {
+
+    // @brief Text inside an annotation: [[=display_name{"Lit"}]]
+    //
+    // Annotation values are read back with std::meta::extract. A `const char*` member pointing to a string literal cannot
+    // be (GCC 16: "reflect_constant failed", a pointer to a string literal is not a valid constant); a char array can.
+    // Longer text is cut at N - 1 characters
+    template <std::size_t N>
+    struct annotation_text {
+
+        char                    data[N]{};
+
+        consteval annotation_text() = default;
+        consteval annotation_text(const char* text) {
+            std::size_t i = 0;
+            for (; text && text[i] && i + 1 < N; ++i)
+                data[i] = text[i];
+        }
+
+        [[nodiscard]] constexpr const char* c_str() const noexcept { return data; }
+        [[nodiscard]] constexpr bool empty() const noexcept { return data[0] == 0; }
+        constexpr operator std::string_view() const noexcept { return std::string_view(data); }
+    };
+
+    using short_text = annotation_text<128>;
+    using long_text = annotation_text<1024>;
+
+}
 
 namespace GLT::reflect::annotations {
 
@@ -33,19 +60,19 @@ namespace GLT::reflect::annotations {
 
     struct display_name {
 
-        const char*             value;
+        short_text              value;
     };
 
 
     struct tooltip {
 
-        const char*             value;
+        long_text               value;
     };
 
 
     struct category {
 
-        const char*             value;
+        short_text              value;
     };
 
 
@@ -59,7 +86,7 @@ namespace GLT::reflect::annotations {
     // An integer member that is a choice: one entry per value, '|' separated, optionally "value=label" for values that
     // are not 0, 1, 2, ... in order. Examples: options{"ACES|AgX|Reinhard|None"}, options{"1024=Low|2048=Medium|4096=High"}
     struct options {
-        const char*             value;
+        long_text               value;
     };
     struct color {};
 
@@ -82,7 +109,7 @@ namespace GLT::reflect::annotations {
 
     struct editor_action {
 
-        const char*             label;
+        short_text              label;
     };
 
     // field annotations -----------------------------------------------------------------------------------------------
@@ -95,14 +122,14 @@ namespace GLT::reflect::annotations {
 
     struct editor {
 
-        const char*             category = "";
+        short_text              category{};
     };
 
     // class annotations -----------------------------------------------------------------------------------------------
 
     struct name {
 
-        const char*             value;
+        short_text              value;
     };
 
 
@@ -115,7 +142,7 @@ namespace GLT::reflect::annotations {
 
     struct editor_callable {
 
-        const char*             label = "";
+        short_text              label{};
     };
 
     // STATIC VARIABLES ================================================================================================

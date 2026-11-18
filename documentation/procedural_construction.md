@@ -1,10 +1,15 @@
-# Procedural Construction (`construct` plugin)
+# Procedural Construction (core system + construct tool plugins)
 
 > **Status: proposal.** Nothing is implemented. It builds on [procedural_geometry.md](procedural_geometry.md) (the
 > procedural mesh store, provided LODs, baking), follows the plugin / node-pack pattern of
 > [terrain_generation.md](terrain_generation.md) (custom plugin, editor extension API, packs registered by reflection) and
 > uses the reflection conventions of [scripting.md](scripting.md). Rigged / skinned meshes are out of scope.
 >
+>
+> **Implementation:** the system is part of the **core** (`core/src/procedural/construct/`), because the engine is
+> built around procedural generation. Mesh types are **tool plugins** on top of it: `plugin/construct_plant` (Plant
+> editor) and `plugin/construct_spaceship` (Spaceship editor). Phases C0–C1 done, C2–C3 in part; see
+> "Implementation phases" and the as-built note in the interface document.
 >
 > **Interface:** [procedural_construction_interface.md](procedural_construction_interface.md) fixes the C++ API for packs.
 > Where the two documents differ, the interface document wins.
@@ -18,7 +23,7 @@
 > - Packs can **insert, wrap and replace pipeline stages** (core stages included), and add passes.
 > - Final topology: **chosen by packs, several outputs at once**, each with its own topology and purpose.
 
-The construct plugin turns a rough, tagged description of an object into finished static geometry. The user places
+The construction system turns a rough, tagged description of an object into finished static geometry. The user places
 **guides** (volumes, splines, surfaces, points), tags them, and picks a **construct pack** (Spaceship, Plant, Building,
 Catwalk, Cutlery, ...). Productions defined by the pack expand the guides into an abstract structure (frames,
 branches, floors, posts). Relations settle how parts touch. Realizers then build meshes, instances, colliders and
@@ -194,6 +199,13 @@ Rules that keep this deterministic and incremental:
 
 ## Plants from splines and planes
 
+> **As built:** a plant is a stack of stages: Trunk (stems from the ground: height, lean, root flare, radius profile,
+> wobble), Branches (on any branch stage: count or density, range, spiral / alternate / opposite / whorled / random,
+> angles at base and tip, length profile, radius ratio and profile, gravity, light seeking, wobble; stacked for twigs),
+> Leaves (cards along and at the tips), and for hand drawn plants Drawn branches (branch splines, snapping forks,
+> optional seeded wobble) and Leaf planes. Every random choice follows the construct seed and the stage's seed. Fork
+> junctions are plain overlapping tubes for now (no SDF blend).
+
 The user draws the plant's character and the pack fills in the rest. Drawn parts are never overwritten. They are the
 skeleton that productions grow from.
 
@@ -297,7 +309,7 @@ These are not supported by this design, on purpose or for now:
 A policy is a strategy object the core calls at a **hook**: a moment where a decision is needed and no domain-neutral
 answer exists. The core never decides these itself.
 
-**Lookup:** element override → region → tag binding → kind → pack default → construct → core default. How the matches
+**Lookup:** element override → region → tag binding → kind → construct → pack default → core default. How the matches
 combine is chosen **per hook**: first match, chain (a policy may **wrap** the next one: "blend like the pack default, but
 clamp `vigor` to ≥ 0.1"), merge across all scopes, or call all of them. Each hook has a default; packs can override it
 for their scopes.
@@ -376,7 +388,7 @@ flowchart TB
         S["Spaceship"] ~~~ PL["Plant"] ~~~ B["Building"] ~~~ M["Catwalk, Cutlery, ..."]
     end
     PK -->|register| REG
-    subgraph CORE["construct plugin (domain-free)"]
+    subgraph CORE["core: procedural/construct (domain-free)"]
         REG["Registry<br/>element kinds, roles, productions, resolvers, realizers, policies"]
         RT["Evaluator<br/>phases, passes, paths, seeds, cache, invalidation, jobs"]
         AT["Attribute system<br/>typed layers, lineage events"]
@@ -387,15 +399,36 @@ flowchart TB
     TER["terrain plugin"] -.->|external field| CORE
 ```
 
-**Plugin shape** (same as terrain): one plugin `plugin/construct`, target `interface::custom`, load phase
-`application_ready`, dependencies `asset_registry` and `world`, editor part registered only if `editor::get()` is
-non-null. Public SDK header `plugin/construct/include/construct/pack.h` for packs.
+**Core and plugins.** Everything domain-free lives in the core, `core/src/procedural/construct/`:
 
-**Packs** are custom plugins in `<project>/plugins/construct_pack_<name>/`, created from a "Construct pack" template.
-They depend on `construct` by name and register everything in `on_load()` with
-`construct::register_pack<^^my_pack>("my_pack")`, which walks the namespace. Packs are stateless code, so reloading
+| Folder | Content |
+|---|---|
+| `procedural/construct/` | the system itself: ids, attributes, elements, guides, registry, policies, pipeline, evaluator, geometry kernel (`geometry/`), serialization, the built-in `core` and `demo` packs, the self test. Engine-independent (standard library, glm, `data_types.h`): it also builds as the `procedural_construct_tests` executable |
+| `procedural/construct/engine/` | `service.h`: the process-wide registry `construct::packs()`, `evaluate` / `evaluate_async` (thread pool), `publish` to the procedural mesh store; `construct_asset.h`: the asset class and handler; `static_mesh_export.h`: bake a result into a `.glt_static_mesh` |
+| `procedural/construct/editor/` | `construct_editor_window`: the one Construct editor for every kind of construct; `integration.h`: what the application installs after the `application_ready` phase (asset type `.glt_construct` plus the packs' legacy types, Tools menu entry, asset editor, Create Asset entry) and removes before plugins unload |
+
+**Packs in a game module.** A project's game module ([game_module.md](game_module.md)) declares packs as namespaces
+annotated `[[=construct::pack{ .name = construct::text("my_game.trees"), ... }]]`; `construct::register_packs_in<^^root>`
+(called by the module's generated entry point) registers each one with the module id as owner, plus the namespace's
+optional `customize_pack(pack_desc&)` and `register_extras(i_registry&, owner, pack)`. The engine removes them when the
+module unloads.
+
+**Pack plugins** add content for one domain each. A pack plugin is a custom plugin (`interface::custom`) whose
+`on_load()` registers its pack into `construct::packs()` and whose `on_unload()` waits for running evaluations and
+removes it. It has no editor code: the Construct editor reads everything from the registry:
+
+| The pack registers | The editor shows |
+|---|---|
+| stage types (`generator_info` + `generator_of<Settings>`, optional `on_add`) | the "+" stage menu, one settings card per group, defaults of an added stage |
+| tag schemas (`attr` display, tooltip, min / max) | typed rows for guide attributes and per control point columns |
+| `role_desc` (attributes, point attributes) | the role combo, the role's settings card, the point table columns, "no stage uses these guides" hints |
+| `guide_template_desc` (make, after_add) | the "+" guide menu |
+| `preset_desc` | File > New and the start card of an empty construct |
+| `pack_desc::upgrade` / `self_test` / `legacy_asset_types` | upgrade on open, Tools > Run self test, opening older per-tool assets |
+
+`plugin/construct_plant` and `plugin/construct_spaceship` are the first two. Packs are stateless code, so reloading
 one is unload, load, re-evaluate (as for terrain node packs). A construct referencing a pack that is not loaded keeps
-its guides and overrides and shows the elements as placeholders.
+its guides, stages and overrides and reports the missing stage types.
 
 **Extension points a pack registers:**
 
@@ -465,16 +498,62 @@ construct asset (.glt_construct)                       world entity: component c
 
 ## Editor
 
-Through the editor extension API (`core/src/editor/i_editor.h`), like the terrain editor:
+> **As built.** One core window, `editor/construct_editor_window`, for every kind of construct; packs only register
+> content (see "Core and plugins"). The plan below is what it grew from.
 
-- **Construct editor window** (asset editor of `.glt_construct`): 3D viewport with guide tools (place primitive, draw
-  spline, place plane / patch, place point), edit stack per guide, region tag painting, element outliner (tree of paths),
-  details panel (role, tags, params, policy overrides, which scope a policy came from).
-- **Phase view toggle**: guides / elements / relations / realized / final. Selecting a realized part selects the element
-  that made it, and its guide.
-- **Pack selector and reload** button (unload, load, re-evaluate).
-- **Viewport tool** in the world editor to edit guides of a placed construct in place (cables between two buildings,
-  a catwalk along a hull).
+**Workflow: the window first, the asset when you want it.** Tools > Construct > *Construct editor* opens an empty,
+unsaved session with a start card listing the presets of the loaded packs (File > New lists them too). Everything stays in the window, with undo / redo
+(Ctrl+Z / Ctrl+Y), until you save:
+
+| File menu                         | Result                                                                                         |
+|-----------------------------------|------------------------------------------------------------------------------------------------|
+| Save (Ctrl+S)                     | the construct asset the window is bound to (the first time it asks where)                      |
+| Save as procedural asset ...      | `.glt_construct`: stages, guides, settings; generated wherever it is used, any seed             |
+| Export static mesh ...            | `.glt_static_mesh` of the current result (this seed), one submesh per material; LODs, colliders and materials are set up in the mesh editor. Exporting onto an existing mesh replaces its geometry and keeps its id |
+| Export again to ...               | repeats the last export (the path is stored with the construct)                                |
+
+Double clicking a saved construct opens the same window bound to it.
+
+```
+ File Edit View Tools                                                  content/plants/oak.glt_construct_plant *
+ Seed [  1 ] New seed │ Show [All|Up to stage|Only stage] │ Click selects [All|Guides|Stage] │ Gizmo [Move|Rotate|Scale] [World|Local] │ Frame
+┌─ Stages ────────── + ┐┌──────────────────── 3D view ────────────────────┐┌─ Stage ───────────────────────┐
+│ ● Trunk              ││                                                  ││ Name      Branches            │
+│   1 el 2k tri 0.4 ms ││          (procedural meshes per stage,           ││ Grows on  [Trunk]             │
+│ ● Branches       ... ││           skeleton of the selected stage,        ││ Stage seed [ 0 ] Re-roll      │
+│   on Trunk  9 el ... ││           gizmo on the selected guide,           ││ Made      9 el, 4k tri, 1 ms  │
+│ ● Twigs              ││           floor grid: 10 cm / 1 m / 10 m ...)    │├─ Distribution ─────────────────┤
+│ ● Leaves             ││                                                  ││ Count, range, arrangement ... │
+├─ Guides ────────── + ┤│                                                  │├─ Angle / Length / Thickness ──┤
+│ trunk  Branch spline ││ 120 elements  24k triangles  180 ms   grid 1 m   ││ Growth / Mesh   (profiles are │
+└──────────────────────┘└──────────────────────────────────────────────────┘│  small curve editors)         │
+                                                                            └───────────────────────────────┘
+```
+
+- **Pipeline** (toolbar): which step's result the view shows: *Guides* (Interpret), *Generate* / *Expand* (the elements:
+  centre lines and points coloured by stage, relations such as forks as lines, clicks pick the nearest centre line),
+  *Realize* / *Finish* (the meshes each element made, one mesh per stage, before / after finishers), *Output* (the final,
+  merged meshes; stage filters do not apply). The evaluation stops after the chosen step (`evaluation_request::stop_after`),
+  so debugging an early step never runs the expensive later ones.
+- **Stages** (`generator.h`) are the steps of a construct: a list in run order, each a stage type of a pack with its
+  own settings, the stages it grows on, and its own seed. The list shows what each stage made (elements, triangles,
+  time); the dot hides a stage in the view; the menu enables / disables, re-seeds, moves, duplicates, deletes. The
+  selected stage is the *current* one: View can show all stages, the stages up to it, or only it, and its skeleton
+  (centre lines, points) is drawn over the view in its colour. Its settings are built from the type's descriptors, one
+  card per group, with a reset arrow on every changed row; profile settings are curve editors (drag points, double
+  click adds, right click removes).
+- **Picking** works on everything generated: a click selects the element under the mouse (wireframe highlight, its
+  path, stage, kind, attributes; jump to its stage or parent; *Hide element* adds an override). "Click selects" limits
+  picking to guides or to the current stage, so a click does not land on an earlier stage by accident.
+- **Guides** (splines, planes, volumes) get handles (drag in the view plane) and an ImGuizmo gizmo (move / rotate /
+  scale, world or local); with a control point selected the gizmo moves that point. ImGuizmo is compiled into the
+  imgui library so the editor and the core tools share one context.
+- **Floor grid**: lines at y = 0 whose spacing follows the zoom (1 cm ... 100 m and beyond), minor lines fading out
+  between levels, X and Z axes tinted; the scale is shown in the corner ("grid 1 m / 10 cm").
+- **Place in world** shows the result in the edited world (transient entities) while the window is open.
+
+The tool plugin adds: presets, "add guide" templates, guide roles, per point columns (radius), per guide override
+rows, `prepare()` (upgrades older data), `make_stage()` (defaults of a new stage).
 
 ## Worked examples (short)
 
@@ -514,12 +593,12 @@ No interior, no joints: the same core, using only guides, one production and a r
 
 Each phase builds and runs on its own and is testable without the next.
 
-| # | Phase | Done when |
-|---|---|---|
-| C0 | Kernel basics: half-edge mesh with attribute layers, splines with frames, lineage events, `copy` / `interpolate` propagation | Unit test: loop cut on a tagged face under two policies gives the two results above |
-| C1 | Element model, guides of all four dimensions, edit stacks, registry, policy lookup with scopes | A dummy pack registers kinds and a policy; lookup order is tested |
-| C2 | Evaluator: phases, passes, fixpoint with limits, paths, seeds, cache, Context (`inside`, `distance`, `slice`, `sample_curve`, `elements`) | Same input twice = identical bytes; moving one guide re-runs only affected elements |
-| C3 | Output: merge, partitioning, publish to `procedural_mesh_store`, instances, bake. Asset type and world component | A construct appears in a world and bakes to static meshes |
+| # | Phase | Done when | Status |
+|---|---|---|---|
+| C0 | Kernel basics: half-edge mesh with attribute layers, splines with frames, lineage events, `copy` / `interpolate` propagation | Unit test: loop cut on a tagged face under two policies gives the two results above | **done** (self test "two policies") |
+| C1 | Element model, guides of all four dimensions, edit stacks, registry, policy lookup with scopes | A dummy pack registers kinds and a policy; lookup order is tested | **done** |
+| C2 | Evaluator: phases, passes, fixpoint with limits, paths, seeds, cache, Context (`inside`, `distance`, `slice`, `sample_curve`, `elements`) | Same input twice = identical bytes; moving one guide re-runs only affected elements | **mostly**: deterministic (tested), no cache / incremental re-run yet, no `slice` |
+| C3 | Output: merge, partitioning, publish to `procedural_mesh_store`, instances, bake. Asset type and world component | A construct appears in a world and bakes to static meshes | **partly**: outputs + publish + editor demo (Construct > Spawn demo in world); no partitioning, instances, asset, component, bake |
 | C4 | Editor window: guide tools, phase view, outliner, details, pack reload | Guides can be drawn and edited; elements update live |
 | C5 | Spaceship pack (first vertical slice): stations, ribs, stringers, skin, clearance / weld / notch joints, cutters | The frame-station example renders |
 | C6 | Plant pack: spline and plane guides, twigs, leaves, roots, forks with SDF blend, hierarchy propagation | A tree drawn from five splines and three planes renders. **Any core change needed here is a design smell to record** |

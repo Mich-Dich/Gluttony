@@ -77,7 +77,7 @@ namespace GLT::reflect {
 
         const std::vector<std::meta::info> anns = std::meta::annotations_of(owner);
         for (auto a : anns) {
-            if (std::meta::type_of(a) == ^^Ann)
+            if (std::meta::remove_cvref(std::meta::type_of(a)) == ^^Ann)      // annotations are const objects: compare without cv
                 return std::meta::extract<Ann>(a);
         }
         return std::nullopt;
@@ -167,7 +167,7 @@ namespace GLT::reflect {
 
         const std::vector<std::meta::info> anns = std::meta::annotations_of(owner);
         for (auto a : anns)
-            if (std::meta::type_of(a) == tag_type)
+            if (std::meta::remove_cvref(std::meta::type_of(a)) == tag_type)
                 return true;
         return false;
     }

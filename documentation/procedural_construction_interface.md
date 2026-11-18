@@ -9,6 +9,62 @@
 >
 > Signatures are sketches: names, ownership and call contracts are the decision; exact parameter lists may still move
 > during implementation.
+>
+> **As built (C0 + C1, most of C2, part of C3)** on branch `procedural_mesh_generation`:
+> - **Layout.** The system is part of the core: `core/src/procedural/construct/` (includes `<procedural/construct/...>`,
+>   namespace `GLT::construct`). Its engine-independent part (everything outside `engine/` and `editor/`) also builds as
+>   the `procedural_construct_tests` executable. `engine/service.h` replaces the `i_construct` interface of §22 with
+>   free functions: `construct::packs()` (the registry; core and demo packs registered on first use),
+>   `evaluate`, `evaluate_async`, `publish`, `unpublish`. `engine/construct_asset.h` is the asset class and handler,
+>   `editor/` holds the one Construct editor and `integration.h` (§21 is realized as registry declarations read by
+>   that editor: `role_desc`, `guide_template_desc`, `preset_desc`, `pack_desc::upgrade / self_test /
+>   legacy_asset_types`, `generator_desc::on_add`; no `editor_extension_desc`, no editor code in packs).
+> - **Stages (generators, `generator.h`)** are an addition to this text: the user-facing steps of a construct. A pack
+>   registers stage *types* (`generator_info` + `generator_of<Settings>`: the settings struct is reflected into
+>   `setting_desc` rows: f32, i32, bool, enums as choices, `glm::vec2` ranges, `glm::vec3`, `profile_curve`, strings);
+>   `construct_data::generators` holds the ordered stage *instances* (type, label, inputs, per stage seed, the settings
+>   that differ from the defaults). The core stage `core.generate` runs them in order between Interpret and Expand;
+>   every element carries `element::stage` (productions pass it on to what they derive), products copy it, and
+>   `evaluation_result::stages` reports per stage elements / products / triangles / time. `evaluation_request::editor_data`
+>   keeps every product and per element skeletons and attributes for editors. Serialized as construct data version 2.
+> - **Pack plugins:** `plugin/construct_plant` (stage types Trunk, Drawn branches, Branches (stacked for twigs), Leaves,
+>   Leaf planes; presets Broadleaf tree, Conifer, Bush, Hand drawn) and `plugin/construct_spaceship` (ribs at frame
+>   stations sliced from the hull and cut around components, stringers, skin and block-out on demand; still
+>   productions, no stages yet). Neither has editor code.
+> - **The Construct editor** (Tools > Construct > Construct editor; `.glt_construct`, older `.glt_construct_plant` /
+>   `_spaceship` files open too): unsaved sessions with undo / redo, pipeline step viewer
+>   (`evaluation_request::stop_after`), save as a procedural asset or export a static mesh (`engine/static_mesh_export.h`).
+> - **Self tests:** core 132 checks, plant 34, spaceship 11; Tools > Run self test runs core + every loaded pack.
+> - **Built:** ids / paths / attributes (§1), tag schemas and kinds by reflection (§2, `reflect.h`), elements, guides of
+>   all four dimensions with edit stacks (transform, loop cut, assign group, set attribute) and mirror modifiers (§3),
+>   registry with owners, generations, snapshots and extends-based override rules (§4), stages with insert / wrap /
+>   replace and passes with a bounded fixpoint (§5), productions (§6), realizers and products (§8), finishers and
+>   outputs with several outputs per construct (§9), policies with scopes and the four compositions (§10), lineage
+>   events and the built-in propagation modes (§11), the Context subset listed in `pipeline.h` (§12), the geometry
+>   kernel's primitives, loop cut, mirror, append, sweep, plane slicing and triangulation (§13), versioned serialization of construct data (`serialize.h`). The core pack and a demo pack
+>   (railing with posts along a spline) are registered through the same API as any pack.
+> - **Not yet:** resolvers / joints / cuts (§7), boolean and SDF backends (§13: `watertight` falls back to merged shells
+>   with a warning), skins and surface detail (§14), space / routing (§15), field providers (§16), partitioning (§17),
+>   constraints (§18), solvers (§19), kits (§20), the world component ("Place in world" is live and transient; a static mesh
+  export exists), result
+>   caching and incremental re-evaluation (one evaluation runs single-threaded on its thread; `evaluate_async` puts
+>   whole evaluations on `GLT::thread_pool`).
+>
+> **Deviations from the text below:**
+> - **Strings in annotations** must be written `construct::text("...")`. GCC 16 accepts a plain literal but cannot read it
+>   back (`reflect_constant failed`: a pointer to a string literal is not a valid annotation constant). `text()` wraps
+>   `std::define_static_string`. Engine annotations such as `display_name{"Lit"}` have the same problem as soon as
+>   someone extracts them. Annotation names: `production_info{ text("name"), text("pass") }`, attributes by
+>   `attribute_of<^^schema::member>()` instead of `attribute_ref<&schema::member>`.
+> - **`name_id`** is a 64-bit FNV-1a hash plus a pointer to its text: ids are equal across modules without a shared table.
+> - **Scope order:** construct-level bindings rank *above* pack defaults (element, region, attribute, kind, construct,
+>   pack, global). With the order of §10 a choice the user made for the whole construct was ignored whenever a pack had a
+>   default. Policies of the `core` pack at pack level act as the global default.
+> - **`core.outputs`** (composition `all`): the core default only answers when no pack adds outputs, so a pack's
+>   outputs replace the default `render` output instead of adding to it.
+> - **Passes** are registered with `registry.add(owner, pack, pass_desc{...})`; there is no `pass_info` annotation yet.
+> - **Policies** are looked up per element; region scopes are matched, but mesh-level propagation does not pass a region
+>   yet (a face-group-scoped propagation policy does not apply inside one mesh).
 
 ## Decisions
 
@@ -795,8 +851,8 @@ namespace GLT::construct {
         region,         // a guide region (face group, curve span)
         attribute,      // elements / regions carrying a tag value
         kind,           // an element kind
+        construct,      // the construct asset's setting (beats pack defaults; see the deviations above)
         pack,           // the pack's default
-        construct,      // the construct asset's setting
         global,         // the core default
     };
 

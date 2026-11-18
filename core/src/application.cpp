@@ -15,6 +15,8 @@
 #include "world/i_world.h"
 #include "game/game_layer.h"
 #include "game/game_session.h"
+#include "procedural/construct/editor/integration.h"
+#include "module/module_manager.h"
 
 
 
@@ -80,6 +82,9 @@ namespace GLT {
         VALIDATE(GLT::physics::get_ptr(), , "", "No physics plugin bound")
 
         plugin_manager::enter_phase(plugin_manager::phase::application_ready);
+        construct::install_engine_integration();            // construct asset type + Construct editor (packs are loaded now)
+        modules::install();                                  // game modules: after every plugin they may register with
+        modules::load_project_modules(m_project.project_path);
 
         LOG_INIT
     }
@@ -92,6 +97,8 @@ namespace GLT {
         // automatic). Plugins unload afterwards and find no live sessions
         m_layer_stack.clear();
 
+        construct::remove_engine_integration();             // Construct editors close while the packs' code is still loaded
+        modules::remove();                                   // game modules go before the plugins they registered with
         plugin_manager::enter_phase(plugin_manager::phase::pre_application_shutdown);
 
         for (auto it = m_scene_renderers.rbegin(); it != m_scene_renderers.rend(); it++)

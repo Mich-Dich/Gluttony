@@ -22,6 +22,9 @@ namespace GLT::script {
     // annotation helpers ----------------------------------------------------------------------------------------------
 
     template <typename Ann>
+    consteval std::optional<Ann> find_ann(std::meta::info owner);
+
+    template <typename Ann>
     consteval bool has_ann(std::meta::info owner);
 
 
@@ -43,7 +46,7 @@ namespace GLT::script {
     // fields ----------------------------------------------------------------------------------------------------------
 
     template <typename T>
-    consteval std::span<const script_field_info> build_fields();
+    std::span<const script_field_info> build_fields();
 
     // callable methods ------------------------------------------------------------------------------------------------
 
@@ -57,25 +60,30 @@ namespace GLT::script {
     // annotation helpers ----------------------------------------------------------------------------------------------
 
     template <typename Ann>
+    consteval std::optional<Ann> find_ann(std::meta::info owner) {
+
+        // A plain loop (not template for): [owner] is a function parameter, which template for cannot expand over
+        for (const std::meta::info a : std::meta::annotations_of(owner))
+            if (std::meta::remove_cvref(std::meta::type_of(a)) == ^^Ann)
+                return std::meta::extract<Ann>(a);
+        return std::nullopt;
+    }
+
+
+    template <typename Ann>
     consteval bool has_ann(std::meta::info owner) {
 
-        template for (constexpr auto a : std::define_static_array(std::meta::annotations_of(owner))) {
-            if (std::meta::type_of(a) == ^^Ann)
+        // Type comparison only: extracting the value is not needed (and fails in GCC 16 when the annotation holds a
+        // pointer to a string literal and the result initializes a constexpr variable)
+        for (const std::meta::info a : std::meta::annotations_of(owner))
+            if (std::meta::remove_cvref(std::meta::type_of(a)) == ^^Ann)
                 return true;
-        }
         return false;
     }
 
 
     template <typename Ann, std::meta::info Owner>
-    consteval Ann get_ann() {
-
-        template for (constexpr auto a : std::define_static_array(std::meta::annotations_of(Owner))) {
-            if (std::meta::type_of(a) == ^^Ann)
-                return std::meta::extract<Ann>(a);
-        }
-        return Ann{};
-    }
+    consteval Ann get_ann() { return find_ann<Ann>(Owner).value_or(Ann{}); }
 
     // kind / label ----------------------------------------------------------------------------------------------------
 
@@ -116,47 +124,68 @@ namespace GLT::script {
 
     // fields ----------------------------------------------------------------------------------------------------------
 
-    template <typename T>
-    consteval std::span<const script_field_info> build_fields() {
+    // One reflected member of a script class: its index in the type descriptor, its role, its editor category
+    struct script_field_entry {
+        u32                                         index;
+        script_field_role                           role;
+        const char*                                 editor_category;
+    };
 
-        auto td = reflect::type_descriptor_of<T>;
-        std::vector<script_field_info> out;
+
+    // Compile time: roles from the annotations. Members are referred to by index: a pointer into the type descriptor is
+    // not a valid constant for define_static_array (GCC 16), so fields_of() resolves the pointers at registration
+    template <typename T>
+    consteval std::span<const script_field_entry> build_field_entries() {
+
+        const auto& td = reflect::type_descriptor_of<T>;
+        std::vector<script_field_entry> out;
 
         template for (constexpr auto member : std::define_static_array(
             std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked()))) {
 
-            // locate matching member_descriptor by offset
-            const reflect::member_descriptor* md = nullptr;
-            for (const auto& m : td.members) {
-                if (m.offset == static_cast<u32>(std::meta::offset_of(member).bytes)) {
-                    md = &m;
+            // locate the matching member_descriptor by offset
+            u32 index = ~0u;
+            for (u32 i = 0; i < td.members.size(); ++i)
+                if (td.members[i].offset == static_cast<u32>(std::meta::offset_of(member).bytes)) {
+                    index = i;
                     break;
                 }
-            }
-            if (!md)
+            if (index == ~0u)
                 continue;
 
             constexpr bool is_editor = has_ann<GLT::reflect::annotations::editor>(member);
             constexpr bool is_persist = has_ann<GLT::reflect::annotations::persist>(member);
             constexpr bool is_transient = has_ann<GLT::reflect::annotations::transient>(member);
 
-            script_field_info fi{ .member = md, .role = script_field_role::runtime, .editor_category = "" };
-
+            script_field_entry e{ .index = index, .role = script_field_role::runtime, .editor_category = std::define_static_string("") };
             if constexpr (is_transient)
-                fi.role = script_field_role::transient;
+                e.role = script_field_role::transient;
             else if constexpr (is_editor && is_persist)
-                fi.role = script_field_role::editor_persist;
-            else if constexpr (is_editor) {
-                fi.role = script_field_role::editor;
-                if constexpr (auto c = get_ann<GLT::reflect::annotations::editor, member>(); true)
-                    fi.editor_category = std::define_static_string(std::string_view{ c.category });
-            }
+                e.role = script_field_role::editor_persist;
+            else if constexpr (is_editor)
+                e.role = script_field_role::editor;
             else if constexpr (is_persist)
-                fi.role = script_field_role::persist;
-
-            out.push_back(fi);
+                e.role = script_field_role::persist;
+            if constexpr (is_editor)
+                if (const auto c = find_ann<GLT::reflect::annotations::editor>(member); c && !c->category.empty())
+                    e.editor_category = std::define_static_string(std::string_view(c->category));
+            out.push_back(e);
         }
         return std::define_static_array(out);
+    }
+
+
+    // Registration time: the field table of T with member pointers (static storage of the registering module)
+    template <typename T>
+    std::span<const script_field_info> build_fields() {
+
+        static const std::vector<script_field_info> table = [] {
+            std::vector<script_field_info> out;
+            for (const script_field_entry& e : build_field_entries<T>())
+                out.push_back({ &reflect::type_descriptor_of<T>.members[e.index], e.role, e.editor_category });
+            return out;
+        }();
+        return table;
     }
 
     // callable methods ------------------------------------------------------------------------------------------------
@@ -184,7 +213,7 @@ namespace GLT::script {
                     .name = name,
                     .label = label,
                     .invoke = [](i_script* inst, script_context& ctx, std::span<const std::byte>) {
-                        (inst->[:f:])(ctx);
+                        (static_cast<T*>(inst)->[:f:])(ctx);      // [f] is a member of T, not of i_script
                     },
                 });
             }
@@ -234,9 +263,9 @@ namespace GLT::script {
             if constexpr (std::meta::is_namespace(member))
                 register_scripts_in_namespace<member>(registrant);
 
-            else if constexpr (std::meta::is_type(member)) {
-                using M = [:std::meta::type_of(member):];
-                if constexpr (std::is_class_v<M> && std::derived_from<M, i_script> && !std::is_abstract_v<M>)
+            else if constexpr (std::meta::is_type(member) && std::meta::is_class_type(member) && std::meta::is_complete_type(member)) {
+                using M = [:member:];                      // [member] reflects the class itself (type_of() is for variables / members)
+                if constexpr (std::derived_from<M, i_script> && !std::is_abstract_v<M>)
                     register_script_class<M>(registrant);
             }
         }
