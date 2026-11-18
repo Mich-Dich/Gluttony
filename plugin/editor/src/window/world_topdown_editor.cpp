@@ -251,85 +251,102 @@ namespace GLT::editor {
             m_sync_sliders_pending = false;
         }
 
-        GLT::UI::big_text("Region scale (m)");
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-
-        if (GLT::UI::begin_table("##region_scale_table", false)) {
-            GLT::UI::table_row_slider_int("cell X", m_cell_x, CELL_SIZE_MIN, CELL_SIZE_MAX);
-            GLT::UI::table_row_slider_int("cell Y", m_cell_y, CELL_SIZE_MIN, CELL_SIZE_MAX);
-            GLT::UI::table_row_slider_int("cell Z", m_cell_z, CELL_SIZE_MIN, CELL_SIZE_MAX);
-            GLT::UI::end_table();
-        }
-
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        if (ImGui::Button("Presets: 64##x")) { m_cell_x = m_cell_y = m_cell_z = 64; } ImGui::SameLine();
-        if (ImGui::Button("256")) { m_cell_x = m_cell_y = m_cell_z = 256;  } ImGui::SameLine();
-        if (ImGui::Button("1024")) { m_cell_x = m_cell_y = m_cell_z = 1024; } ImGui::SameLine();
-        if (ImGui::Button("4096")) { m_cell_x = m_cell_y = m_cell_z = 4096; }
-
-        const bool dirty =
-            m_cell_x != static_cast<int>(std::round(m_cell_size_from_world.x)) ||
-            m_cell_y != static_cast<int>(std::round(m_cell_size_from_world.y)) ||
-            m_cell_z != static_cast<int>(std::round(m_cell_size_from_world.z));
-
-        ImGui::Dummy(ImVec2(0.0f, 6.0f));
-
-        ImGui::BeginDisabled(!is_our_world);
-
-        if (ImGui::Button("Apply to world", ImVec2(-1.0f, 0.0f)) && dirty) {
-            world->set_region_cell_size(glm::vec3{
-                static_cast<f32>(m_cell_x),
-                static_cast<f32>(m_cell_y),
-                static_cast<f32>(m_cell_z) });
-            m_cell_size_from_world = glm::vec3{ m_cell_x, m_cell_y, m_cell_z };
-            m_last_action = "applied cell size";
-        }
-
-        if (ImGui::Button("Reassign entities", ImVec2(-1.0f, 0.0f))) {
-            world->reassign_all_entities();
-            m_last_action = "reassigned entities";
-        }
-
-        if (ImGui::Button("Save world", ImVec2(-1.0f, 0.0f))) {
-            if (auto r = world->save(); !r)      // was: world->save_world()
-                m_last_action = "save failed";
-            else
-                m_last_action = "saved";
-        }
-
-        ImGui::EndDisabled();
-
-        if (!m_last_action.empty()) {
-            ImGui::Dummy(ImVec2(0.0f, 4.0f));
-            ImGui::TextDisabled("%s", m_last_action.c_str());
-        }
-
-        ImGui::Dummy(ImVec2(0.0f, 8.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 8.0f));
-
-        ImGui::Checkbox("Show grid", &m_show_grid);
-        ImGui::Checkbox("Show axes", &m_show_axes);
-        ImGui::Checkbox("Show entity dots", &m_show_entity_dots);
-        ImGui::Checkbox("Highlight occupied cells", &m_show_occupied_cells);
-        ImGui::Checkbox("Show streaming radius", &m_show_streaming_radius);
-
-        // NOTE: "Fit to entities" moved out of the sidebar. See draw_floating_buttons().
-
-        ImGui::Dummy(ImVec2(0.0f, 12.0f));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0.0f, 8.0f));
-
         if (m_load_failed) {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 90, 90, 255));
-            ImGui::TextUnformatted("Failed to load world.");
-            ImGui::PopStyleColor();
+            GLT::UI::empty_state("Failed to load world", "The world file could not be read (see the log)");
             return;
         }
 
-        ImGui::TextDisabled("Entities: %zu", m_entities.size());
-        ImGui::TextDisabled("World grid: %.0f x %.0f x %.0f",
-            m_cell_size_from_world.x, m_cell_size_from_world.y, m_cell_size_from_world.z);
+        GLT::UI::big_text(m_asset_path.stem().string().c_str());
+        ImGui::TextDisabled(is_our_world ? "Open in the editor: changes apply live" : "Not the open world: open it to edit its settings");
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+
+        ImGui::BeginDisabled(!is_our_world);
+
+        // ---- streaming: how far around the camera regions are loaded -----------------------------------------------
+        if (GLT::UI::begin_card("Streaming", { .description = "Regions within this distance of the camera are loaded, the rest is unloaded" })) {
+            f32 radius = is_our_world ? world->get_streaming_radius() : 0.0f;
+            static constexpr f32 DEFAULT_RADIUS = 1024.0f;
+            if (GLT::UI::property_drag("Radius", radius, std::max(radius * 0.01f, 1.0f), 0.0f, 1.0e6f, "%.0f m",
+                "Streaming radius around the streaming anchor (the active camera). Saved with the world", &DEFAULT_RADIUS) && is_our_world) {
+                world->set_streaming_radius(radius);
+                m_last_action = "streaming radius changed (save the world to keep it)";
+            }
+            static constexpr const char* RADIUS_PRESETS[] = { "512", "1 km", "4 km", "16 km" };
+            static constexpr f32 RADIUS_VALUES[] = { 512.0f, 1024.0f, 4096.0f, 16384.0f };
+            i32 preset = -1;
+            for (i32 i = 0; i < 4; ++i)
+                if (std::abs(radius - RADIUS_VALUES[i]) < 0.5f)
+                    preset = i;
+            i32 picked = preset;
+            if (GLT::UI::property_custom("Presets", [&](f32 width) { return GLT::UI::segmented_control("##radius_presets", picked, RADIUS_PRESETS, width); })
+                && picked >= 0 && is_our_world) {
+                world->set_streaming_radius(RADIUS_VALUES[picked]);
+                m_last_action = "streaming radius changed (save the world to keep it)";
+            }
+            GLT::UI::property_toggle("Show in view", m_show_streaming_radius, "Draw the streaming ring around the anchor");
+        }
+        GLT::UI::end_card();
+
+        // ---- regions: the grid entities are stored in ----------------------------------------------------------------
+        const bool cell_dirty =
+            m_cell_x != static_cast<int>(std::round(m_cell_size_from_world.x)) ||
+            m_cell_y != static_cast<int>(std::round(m_cell_size_from_world.y)) ||
+            m_cell_z != static_cast<int>(std::round(m_cell_size_from_world.z));
+        const std::string cell_summary = std::format("{:.0f} x {:.0f} x {:.0f} m", m_cell_size_from_world.x, m_cell_size_from_world.y, m_cell_size_from_world.z);
+        if (GLT::UI::begin_card("Regions", { .description = "Entities are saved and streamed per region cell", .summary = cell_summary.c_str() })) {
+            GLT::UI::property_slider("Cell X", m_cell_x, CELL_SIZE_MIN, CELL_SIZE_MAX, "%d m");
+            GLT::UI::property_slider("Cell Y", m_cell_y, CELL_SIZE_MIN, CELL_SIZE_MAX, "%d m");
+            GLT::UI::property_slider("Cell Z", m_cell_z, CELL_SIZE_MIN, CELL_SIZE_MAX, "%d m");
+
+            static constexpr const char* CELL_PRESETS[] = { "64", "256", "1024", "4096" };
+            static constexpr int CELL_VALUES[] = { 64, 256, 1024, 4096 };
+            i32 cell_preset = -1;
+            for (i32 i = 0; i < 4; ++i)
+                if (m_cell_x == CELL_VALUES[i] && m_cell_y == CELL_VALUES[i] && m_cell_z == CELL_VALUES[i])
+                    cell_preset = i;
+            if (GLT::UI::property_custom("Presets", [&](f32 width) { return GLT::UI::segmented_control("##cell_presets", cell_preset, CELL_PRESETS, width); })
+                && cell_preset >= 0)
+                m_cell_x = m_cell_y = m_cell_z = CELL_VALUES[cell_preset];
+
+            ImGui::Dummy(ImVec2(0.0f, 2.0f));
+            const f32 half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            ImGui::BeginDisabled(!cell_dirty);
+            if (GLT::UI::accent_button("Apply cell size", ImVec2(half, 0.0f)) && is_our_world) {
+                world->set_region_cell_size(glm::vec3{ static_cast<f32>(m_cell_x), static_cast<f32>(m_cell_y), static_cast<f32>(m_cell_z) });
+                m_cell_size_from_world = glm::vec3{ m_cell_x, m_cell_y, m_cell_z };
+                m_last_action = "applied cell size";
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (GLT::UI::subtle_button("Reassign entities", ImVec2(half, 0.0f)) && is_our_world) {
+                world->reassign_all_entities();
+                m_last_action = "reassigned entities";
+            }
+        }
+        GLT::UI::end_card();
+
+        ImGui::EndDisabled();
+
+        // ---- view ----------------------------------------------------------------------------------------------------
+        if (GLT::UI::begin_card("View", { .collapsible = true })) {
+            GLT::UI::property_toggle("Grid", m_show_grid);
+            GLT::UI::property_toggle("Axes", m_show_axes);
+            GLT::UI::property_toggle("Entities", m_show_entity_dots, "A dot per entity");
+            GLT::UI::property_toggle("Occupied cells", m_show_occupied_cells, "Highlight cells that hold entities");
+        }
+        GLT::UI::end_card();
+
+        // ---- world ---------------------------------------------------------------------------------------------------
+        const std::string entity_summary = std::format("{} entities", m_entities.size());
+        if (GLT::UI::begin_card("World", { .summary = entity_summary.c_str() })) {
+            ImGui::BeginDisabled(!is_our_world);
+            if (GLT::UI::accent_button("Save world", ImVec2(-1.0f, 0.0f)) && is_our_world)
+                m_last_action = world->save() ? "saved" : "save failed";
+            ImGui::EndDisabled();
+            if (!m_last_action.empty())
+                ImGui::TextDisabled("%s", m_last_action.c_str());
+        }
+        GLT::UI::end_card();
     }
 
 

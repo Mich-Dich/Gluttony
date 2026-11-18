@@ -21,7 +21,7 @@ namespace GLT::terrain {
         const u32 border = 2 * (w - 1) + 2 * (h - 1);
 
         mesh.vertices.resize(static_cast<size_t>(w) * h + (skirt ? border : 0));
-        mesh.indices.reserve(static_cast<size_t>(w - 1) * (h - 1) * 6 + (skirt ? static_cast<size_t>(border) * 12 : 0));
+        mesh.indices.reserve(static_cast<size_t>(w - 1) * (h - 1) * 6 + (skirt ? static_cast<size_t>(border) * 6 : 0));
 
         f32 lo = std::numeric_limits<f32>::max();
         f32 hi = std::numeric_limits<f32>::lowest();
@@ -65,11 +65,12 @@ namespace GLT::terrain {
                 v.position.y -= options.skirt_depth;
                 mesh.vertices[first_skirt + k] = v;
             }
+            // The loop runs clockwise seen from above, so (a, b, sa) / (b, sb, sa) face outwards. Only that side: a second,
+            // inward-facing copy z-fights with it and is shaded with the surface normal from behind (dark seams)
             for (u32 k = 0; k < border; ++k) {
                 const u32 a = loop[k], b = loop[(k + 1) % border];
                 const u32 sa = first_skirt + k, sb = first_skirt + (k + 1) % border;
-                // both sides: the skirt is seen from the outside and, on slopes, from the inside
-                mesh.indices.insert(mesh.indices.end(), { a, sa, b, b, sa, sb, a, b, sa, b, sb, sa });
+                mesh.indices.insert(mesh.indices.end(), { a, b, sa, b, sb, sa });
             }
             lo -= options.skirt_depth;
         }

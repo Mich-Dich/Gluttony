@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <asset/i_asset_registry.h>
 #include <world/i_world.h>
+#include <world/i_world_scene.h>
 #include <world/owned_storage.h>
 
 #include "util/ui/panel_collection.h"
@@ -148,8 +149,8 @@ namespace GLT::terrain {
             c.chunk_quads = std::clamp(c.chunk_quads, 4u, 256u);
             c.lod_levels = std::clamp(c.lod_levels, 1u, 16u);
             c.view_distance = std::clamp(c.view_distance, 10.0f, 1.0e7f);
-            c.detail = std::clamp(c.detail, 0.5f, 8.0f);
-            c.bake_level = std::min(c.bake_level, c.lod_levels - 1);
+            c.detail = std::clamp(c.detail, 1.0f, 8.0f);
+            c.bake_level = std::min(c.bake_level, 8u);
         }
 
 
@@ -234,12 +235,23 @@ namespace GLT::terrain {
             ImGui::TextDisabled("  %.2f m between samples at the finest level", c->chunk_size / static_cast<f32>(std::max(c->chunk_quads, 1u)));
 
             if (c->mode == terrain_mode::live) {
-                i32 levels = static_cast<i32>(c->lod_levels);
-                const i32 default_levels = static_cast<i32>(defaults.lod_levels);
-                if (GLT::UI::property_slider("Detail levels", levels, 1, 12, "%d", "Each level doubles chunk size and sample spacing", &default_levels))
-                    c->lod_levels = static_cast<u32>(levels);
-                GLT::UI::property_drag("View distance", c->view_distance, 10.0f, 100.0f, 1.0e6f, "%.0f m", "Terrain is generated this far around the streaming anchor", &defaults.view_distance);
-                GLT::UI::property_slider("Detail", c->detail, 0.75f, 6.0f, "%.2f", "Higher: fine chunks reach further (more triangles)", &defaults.detail);
+                GLT::UI::property_drag("View distance", c->view_distance, std::max(c->view_distance * 0.01f, 10.0f), 100.0f, 1.0e6f, "%.0f m",
+                    "Terrain is generated this far around the streaming anchor. Far away chunks are big and coarse, so the horizon is cheap. "
+                    "The camera's view distance (viewport Settings > Camera) has to reach as far", &defaults.view_distance);
+                GLT::UI::property_slider("Detail", c->detail, 1.0f, 8.0f, "%.2f",
+                    "How far fine chunks reach: a chunk is split while the camera is closer than Detail x its size. "
+                    "Higher: detail falls off later and level changes are further away (more triangles)", &defaults.detail);
+                const u32 levels = detail_levels(*c);
+                ImGui::TextDisabled("  %u detail levels, coarsest chunks %.1f km (%.0f m between samples)", levels,
+                    c->chunk_size * static_cast<f32>(1u << (levels - 1)) / 1000.0f,
+                    c->chunk_size / static_cast<f32>(std::max(c->chunk_quads, 1u)) * static_cast<f32>(1u << (levels - 1)));
+
+                // The terrain can only be seen as far as the camera does
+                if (auto* scene = world.as<GLT::world::i_world_scene>()) {
+                    GLT::world::camera_snapshot view{};
+                    if (scene->get_camera_view(scene->get_active_camera(), view) && view.far_plane < c->view_distance * 0.9f)
+                        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.3f, 1.0f), "  the camera only sees %.0f m (viewport Settings > Camera)", view.far_plane);
+                }
                 if (GLT::UI::subtle_button("Regenerate"))
                     ++c->regenerate;
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -257,7 +269,7 @@ namespace GLT::terrain {
                 }
                 i32 level = static_cast<i32>(c->bake_level);
                 const i32 default_level = 0;
-                if (GLT::UI::property_slider("Bake level", level, 0, static_cast<i32>(c->lod_levels) - 1, "%d", "0 = finest chunks", &default_level))
+                if (GLT::UI::property_slider("Bake level", level, 0, 8, "%d", "0 = finest chunks, each level doubles chunk size and sample spacing", &default_level))
                     c->bake_level = static_cast<u32>(level);
                 GLT::UI::property_text("Folder", c->bake_folder, "Content folder the chunk meshes are written to", "terrain");
 
@@ -332,6 +344,15 @@ namespace GLT::terrain {
         if (GLT::world::component::i_storage* storage = world.storage_for(hash))
             storage->add(id);
         return terrain_of(world);
+    }
+
+
+    u32 detail_levels(const terrain_component& c) {
+
+        // Top level: chunks of at least view_distance / (detail + 1), so the top-level window is a few chunks wide
+        const f64 needed = static_cast<f64>(c.view_distance) / (static_cast<f64>(c.chunk_size) * (static_cast<f64>(c.detail) + 1.0));
+        const i32 levels = needed <= 1.0 ? 1 : static_cast<i32>(std::ceil(std::log2(needed))) + 1;
+        return static_cast<u32>(std::clamp(levels, 1, 20));
     }
 
 

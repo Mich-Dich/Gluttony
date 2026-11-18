@@ -12,6 +12,7 @@
 #include "components.h"
 #include "entity_builder.h"
 #include "component_registry.h"
+#include "entity_codec.h"           // entity_codec::extension member
 
 namespace GLT::asset::world {
     class world_asset;
@@ -159,6 +160,7 @@ namespace GLT::world::world_ecs_entt {
         [[nodiscard]] bool get_camera_view(camera_snapshot& out) const override;
         [[nodiscard]] bool get_camera_view(world::entity_id camera, world::camera_snapshot& out) override;
         void set_active_camera(entity_id id) override;
+        void set_camera_clip(entity_id camera, f32 near_plane, f32 far_plane) override;
         [[nodiscard]] entity_id get_active_camera() const noexcept override { return m_active_camera; }
 
     private:

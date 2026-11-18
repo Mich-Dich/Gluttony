@@ -93,6 +93,11 @@ namespace GLT::world {
 
         [[nodiscard]] virtual entity_id get_active_camera() const noexcept = 0;
 
+
+        // Clip planes of [camera] (its camera component): the view distance of whatever looks through it. Values are
+        // clamped to something the depth buffer can still resolve (near > 0, far > near). Worlds without cameras ignore it
+        virtual void set_camera_clip(entity_id /*camera*/, f32 /*near_plane*/, f32 /*far_plane*/) {}
+
     };
 
 }

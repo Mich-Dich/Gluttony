@@ -49,6 +49,10 @@ namespace GLT::world {
 
         // identity ----------------------------------------------------------------------------------------------------
 
+        // Unique per world instance for the life of the process (never reused, unlike the address). Systems that keep
+        // per-world state use it to notice that a world was replaced by another one at the same address
+        [[nodiscard]] u64 instance_id() const noexcept { return m_instance_id; }
+
         // Underlying .glt_world asset. Invalid for a world created via create_empty()
         // until save_as() mints an asset for it
         [[nodiscard]] virtual const asset::asset_ref& asset() const noexcept = 0;
@@ -223,6 +227,11 @@ namespace GLT::world {
         // inheriting them. Callers reach them via `world.as<...>()`
         template<typename T> [[nodiscard]] T* as() noexcept { return dynamic_cast<T*>(this); }
         template<typename T> [[nodiscard]] const T* as() const noexcept { return dynamic_cast<const T*>(this); }
+
+    private:
+
+        inline static std::atomic<u64>                  s_next_instance_id{ 0 };
+        const u64                                       m_instance_id = ++s_next_instance_id;
 
     };
 

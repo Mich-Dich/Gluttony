@@ -1130,6 +1130,8 @@ namespace GLT::world::world_ecs_entt {
         for (const entity_id id : ids) {
             if (!alive(id) || std::find(alive_ids.begin(), alive_ids.end(), id) != alive_ids.end())
                 continue;
+            if (is_transient(id))
+                continue;                       // owned by a system (terrain chunks, ...): never part of an undo step
             handles.push_back(entt_of(id));
             alive_ids.push_back(id);
         }
@@ -1368,12 +1370,11 @@ namespace GLT::world::world_ecs_entt {
         for (auto [entity, kept] : m_registry.view<component::preserved_components>().each()) {
             const entity_id id = id_of(entity);
             for (auto it = kept.blobs.begin(); it != kept.blobs.end(); ) {
-                if (it->first != td.meta.hash) {
-                    ++it;
+                if (it->first != td.meta.hash || !id.is_valid()) {
+                    ++it;                       // not this type, or no entity to give it to (kept, not lost)
                     continue;
                 }
-                if (id.is_valid())
-                    storage_ptr->load(id, std::span<const std::byte>(it->second));
+                storage_ptr->load(id, std::span<const std::byte>(it->second));
                 it = kept.blobs.erase(it);
             }
             if (kept.blobs.empty())
@@ -2236,6 +2237,18 @@ namespace GLT::world::world_ecs_entt {
 
 
     void ecs_world::set_active_camera(entity_id id) { m_active_camera = id; }
+
+
+    void ecs_world::set_camera_clip(entity_id camera, f32 near_plane, f32 far_plane) {
+
+        const entt::entity entity = entt_of(camera);
+        if (entity == entt::null)
+            return;
+        if (auto* c = m_registry.try_get<GLT::world::world_ecs_entt::component::camera>(entity)) {
+            c->near_plane = std::clamp(near_plane, 0.001f, 1000.0f);
+            c->far_plane = std::clamp(far_plane, c->near_plane * 2.0f, 1.0e6f);
+        }
+    }
 
 
     void ecs_world::gather_entity_positions(std::vector<GLT::world::entity_position>& out) const {

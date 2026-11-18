@@ -146,7 +146,7 @@ namespace GLT::editor::input {
         if (scroll != 0.0f && camera.scroll_changes_speed) {
 
             camera.fly_speed += (scroll * (camera.fly_speed * 0.2f));
-            camera.fly_speed = GLT::math::clamp(camera.fly_speed, 0.01f, 5.f);
+            camera.fly_speed = GLT::math::clamp(camera.fly_speed, 0.01f, 50.f);
         }
 
         const f32 speed = camera.fly_speed;

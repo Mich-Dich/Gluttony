@@ -98,12 +98,7 @@ namespace GLT::world::component {
 
         [[nodiscard]] bool owns_data() const noexcept override { return true; }
 
-        [[nodiscard]] std::shared_ptr<void> capture(entity_id id) const override {
-            if constexpr (std::is_copy_constructible_v<T>)
-                if (auto it = m_values.find(id); it != m_values.end())
-                    return std::make_shared<T>(it->second);
-            return {};
-        }
+        // Multi-entity editing (capture / apply_changes) is not supported: an edit stays on the entity that was drawn
 
     private:
 

@@ -2890,6 +2890,34 @@ namespace GLT::editor {
 
             open = true;
 
+            // ---- camera: view distance of the camera this viewport looks through ---------------------------------------
+            if (auto* scene = m_world ? m_world->as<GLT::world::i_world_scene>() : nullptr) {
+                const GLT::world::entity_id camera = scene->get_active_camera();
+                GLT::world::camera_snapshot view{};
+                if (camera.is_valid() && scene->get_camera_view(camera, view)) {
+
+                    ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
+                    ImGui::TextUnformatted("Camera");
+                    ImGui::PopFont();
+                    ImGui::TextDisabled("The camera this viewport looks through (saved with it)");
+                    ImGui::Dummy(ImVec2(0.f, 2.f));
+
+                    f32 far_plane = view.far_plane;
+                    f32 near_plane = view.near_plane;
+                    UI::begin_properties(UI::property_layout::compact);
+                    bool clip = UI::property_drag("View distance", far_plane, std::max(far_plane * 0.01f, 1.f), 10.f, 1.0e6f, "%.0f m",
+                        "Farther things are not drawn (the camera's far plane)");
+                    clip |= UI::property_drag("Near plane", near_plane, 0.001f, 0.001f, 100.f, "%.3f m",
+                        "Closer things are cut off. Raise it a little for long view distances: depth precision depends on far / near");
+                    UI::end_properties();
+                    if (clip)
+                        scene->set_camera_clip(camera, near_plane, far_plane);
+                    if (far_plane / std::max(near_plane, 0.001f) > 2.0e5f)
+                        ImGui::TextColored(ImVec4(1.f, 0.72f, 0.3f, 1.f), "far / near > 200000: distant surfaces may flicker (raise the near plane)");
+                    ImGui::Dummy(ImVec2(0.f, 6.f));
+                }
+            }
+
             ImGui::PushFont(GLT::imgui_config::get_font(GLT::imgui_config::font_type::bold));
             ImGui::TextUnformatted("Renderer");
             ImGui::PopFont();

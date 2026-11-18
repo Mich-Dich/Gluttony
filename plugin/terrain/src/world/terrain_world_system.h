@@ -42,7 +42,7 @@ namespace GLT::terrain {
 
         struct world_entry {
             std::unique_ptr<terrain_streamer>           streamer{};
-            GLT::world::entity_id                       world_entity{};         // identity check: a new world at the same address
+            u64                                         instance_id = 0;        // identity check: a new world at the same address
         };
 
         [[nodiscard]] std::vector<GLT::world::i_world*> live_worlds() const;

@@ -12,10 +12,15 @@ namespace GLT::terrain {
 
     namespace {
 
-        constexpr u32                                   MAX_JOBS = 4;           // chunk evaluations in flight per world
+        constexpr u32                                   MAX_JOBS = 8;           // chunk evaluations in flight per world
         constexpr size_t                                MAX_CHUNKS = 3000;      // selection cap (absurd settings)
         constexpr f32                                   UV_SCALE = 1.0f / 32.0f;
         constexpr const char*                           SURFACE_TYPE = "terrain.surface";
+
+        // A new chunk mesh is uploaded and drawn by the renderers a frame or two after it is published (the store hands
+        // it to every renderer on its next frame, the entity joins the render cache on the next gather). The chunks it
+        // replaces stay until it has existed this long, so nothing is ever missing for a frame
+        constexpr u32                                   SETTLE_FRAMES = 4;
 
         [[nodiscard]] u64 chunk_key(u64 geometry, u32 level, i64 ix, i64 iy) {
             return hash_combine(hash_combine(hash_combine(geometry, level), static_cast<u64>(ix)), static_cast<u64>(iy));
@@ -55,7 +60,8 @@ namespace GLT::terrain {
 
         if (c.cancel)
             c.cancel->store(true);                      // the job references only the evaluator: cancel, don't wait
-        if (despawn && c.entity.is_valid() && m_world.alive(c.entity))
+        // Only our own chunk entity: an id that is alive but not transient belongs to someone else now
+        if (despawn && c.entity.is_valid() && m_world.alive(c.entity) && m_world.is_transient(c.entity))
             m_world.despawn(c.entity);
         c.entity = {};
         if (c.mesh != GLT::render::INVALID_PROCEDURAL_MESH) {
@@ -68,7 +74,7 @@ namespace GLT::terrain {
     void terrain_streamer::select(const terrain_component& s, glm::dvec2 anchor, std::vector<chunk*>& out) {
 
         const u32 quads = s.chunk_quads;
-        const u32 top = s.lod_levels - 1;
+        const u32 top = detail_levels(s) - 1;
         const f64 base = static_cast<f64>(s.chunk_size);
         const f64 base_spacing = base / static_cast<f64>(quads);
         const f64 view = static_cast<f64>(s.view_distance);
@@ -95,24 +101,32 @@ namespace GLT::terrain {
                 c.level = level;
                 c.ix = ix;
                 c.iy = iy;
+                c.quads = quads;
                 c.spacing = std::ldexp(base_spacing, static_cast<i32>(level));
             }
             c.desired = true;
             out.push_back(&c);
         };
 
+        // Top-level cells around the anchor; at most a 64 x 64 block of them (settings with a tiny top level and a huge
+        // view distance would otherwise loop over billions of cells)
+        constexpr i64 MAX_TOP_CELLS = 32;
         const f64 top_size = std::ldexp(base, static_cast<i32>(top));
-        const i64 x0 = static_cast<i64>(std::floor((anchor.x - view) / top_size));
-        const i64 x1 = static_cast<i64>(std::floor((anchor.x + view) / top_size));
-        const i64 y0 = static_cast<i64>(std::floor((anchor.y - view) / top_size));
-        const i64 y1 = static_cast<i64>(std::floor((anchor.y + view) / top_size));
-        for (i64 y = y0; y <= y1; ++y)
-            for (i64 x = x0; x <= x1; ++x)
+        const i64 cx = static_cast<i64>(std::floor(anchor.x / top_size));
+        const i64 cy = static_cast<i64>(std::floor(anchor.y / top_size));
+        const i64 x0 = std::max(static_cast<i64>(std::floor((anchor.x - view) / top_size)), cx - MAX_TOP_CELLS);
+        const i64 x1 = std::min(static_cast<i64>(std::floor((anchor.x + view) / top_size)), cx + MAX_TOP_CELLS);
+        const i64 y0 = std::max(static_cast<i64>(std::floor((anchor.y - view) / top_size)), cy - MAX_TOP_CELLS);
+        const i64 y1 = std::min(static_cast<i64>(std::floor((anchor.y + view) / top_size)), cy + MAX_TOP_CELLS);
+        for (i64 y = y0; y <= y1 && out.size() < MAX_CHUNKS; ++y)
+            for (i64 x = x0; x <= x1 && out.size() < MAX_CHUNKS; ++x)
                 visit(visit, top, x, y);
     }
 
 
-    void terrain_streamer::collect(chunk& c, u32 quads, f32 skirt) {
+    void terrain_streamer::collect(chunk& c, f32 skirt) {
+
+        const u32 quads = c.quads;
 
         if (!c.job.valid() || c.job.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
             return;
@@ -139,13 +153,15 @@ namespace GLT::terrain {
                 { .skirt_depth = skirt * static_cast<f32>(c.spacing), .uv_scale = UV_SCALE });
 
             auto& store = GLT::render::procedural_meshes();
-            if (c.mesh == GLT::render::INVALID_PROCEDURAL_MESH)
+            if (c.mesh == GLT::render::INVALID_PROCEDURAL_MESH) {
                 c.mesh = store.create({ .update_class = GLT::render::mesh_update_class::occasional,
                     .detail = GLT::render::procedural_detail::none, .debug_name = "terrain chunk" });
+                c.frames_with_mesh = 0;
+            }
             if (auto updated = store.update(c.mesh, std::move(built.data)); !updated)
                 LOG(warn, "terrain: chunk mesh update failed: {}", updated.error().message)
 
-            if (!c.entity.is_valid() || !m_world.alive(c.entity)) {
+            if (!c.entity.is_valid() || !m_world.alive(c.entity) || !m_world.is_transient(c.entity)) {
                 c.entity = m_world.spawn_transient();
                 m_world.set_procedural_mesh(c.entity, c.mesh);
             }
@@ -170,8 +186,8 @@ namespace GLT::terrain {
                     break;
                 }
         if (surface == INVALID_NODE_ID) {
+            clear(true);                                // resets the stats: the error goes in after it
             m_stats.error = graph ? "the terrain graph has no Surface output" : "no terrain graph";
-            clear(true);
             return;
         }
 
@@ -188,8 +204,8 @@ namespace GLT::terrain {
         select(s, anchor, window);
 
         // Holes first, then nearest
-        auto area_of = [quads](const chunk& c) {
-            const f64 size = c.size(quads);
+        auto area_of = [](const chunk& c) {
+            const f64 size = c.size();
             return rect{ static_cast<f64>(c.ix) * size, static_cast<f64>(c.iy) * size, static_cast<f64>(c.ix + 1) * size, static_cast<f64>(c.iy + 1) * size };
         };
         std::sort(window.begin(), window.end(), [&](const chunk* a, const chunk* b) {
@@ -203,7 +219,9 @@ namespace GLT::terrain {
         // ---- finished / obsolete jobs ------------------------------------------------------------------------------------
         u32 running = 0;
         for (auto& [key, c] : m_chunks) {
-            collect(c, quads, skirt);
+            if (c.mesh != GLT::render::INVALID_PROCEDURAL_MESH)
+                ++c.frames_with_mesh;                   // counted before collect: a mesh made this frame starts at 0
+            collect(c, skirt);
             if (c.job.valid() && !c.desired && c.cancel)
                 c.cancel->store(true);
             running += c.job.valid() ? 1u : 0u;
@@ -249,7 +267,7 @@ namespace GLT::terrain {
             if (old.mesh != GLT::render::INVALID_PROCEDURAL_MESH) {
                 const rect area = area_of(old);
                 for (const chunk* c : window)
-                    if (c->mesh == GLT::render::INVALID_PROCEDURAL_MESH && area.overlaps(area_of(*c))) {
+                    if ((c->mesh == GLT::render::INVALID_PROCEDURAL_MESH || c->frames_with_mesh < SETTLE_FRAMES) && area.overlaps(area_of(*c))) {
                         still_needed = true;
                         break;
                     }

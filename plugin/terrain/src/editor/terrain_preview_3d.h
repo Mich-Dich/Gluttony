@@ -70,6 +70,7 @@ namespace GLT::terrain {
             bool                                        desired = false;        // inside the current window
 
             GLT::render::procedural_mesh_id             mesh = GLT::render::INVALID_PROCEDURAL_MESH;
+            u32                                         frames_with_mesh = 0;   // tiles it replaces stay until it is surely drawn
             u64                                         shown_key = 0;
             u64                                         pending_key = 0;
             u64                                         failed_key = 0;

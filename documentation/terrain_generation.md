@@ -79,8 +79,23 @@
 >   asset per chunk (`procedural_mesh_store::bake`, folder `<bake folder>/<world>_<timestamp>/chunk_L<l>_<x>_<y>`),
 >   ordinary entities at the chunk corners (so they land in their regions) under a "Terrain (baked)" entity. Clear
 >   bake removes those entities (the files stay). Baked mode stops the streamer.
+> - No popping: a chunk that replaces others (zoom level / panning) only counts as covering them once its mesh has
+>   existed for 4 frames (renderers upload a new procedural mesh and the render cache picks up a new entity a frame or
+>   two later); until then both are drawn. Same in the 3D preview.
+> - Detail levels are automatic: as many as the view distance needs (coarsest chunks >= view distance / (detail + 1)),
+>   so a 30 km horizon (new default, detail 3) costs a few big coarse chunks. `lod_levels` stays in the payload but is
+>   unused. Skirts face outwards only (the old double-sided skirts z-fought and showed as dark seams).
+> - World editor (`world_topdown_editor`) sidebar redone with cards: Streaming (radius, presets, ring toggle; applied
+>   live, saved with the world), Regions (cell size, presets, apply / reassign), View, World (save, status).
+> - View distance: the viewport's Settings popup has a Camera section (view distance = far plane, near plane) for the
+>   camera it looks through (`i_world_scene::set_camera_clip`); the camera component's default far plane is now
+>   10 km. The renderer uses standard (not reversed) depth: very large far / near ratios flicker (a warning says so).
+> - `i_world::instance_id()`: per-instance identity (a world replaced by another at the same address is noticed). The
+>   streamer only ever despawns / reuses entities that are still transient; transient entities are never in undo
+>   snapshots.
 > - Not yet: collision for the chunks (T7), hybrid mode (baked inside the extent, live beyond), progress / async bake,
->   materials.
+>   materials. Clear bake only reaches chunks in loaded regions (plus orphans named `chunk_L*`); transient chunk
+>   entities can still be picked in the viewport.
 >
 > **T3 as built** (`src/editor/terrain_preview_3d`): the preview panel switches between 2D (map) and 3D. 3D: its own
 > offscreen scene renderer (sky + sun). Like the map it follows the camera: a window of 10 x 10 chunks (64 x 64 quads)

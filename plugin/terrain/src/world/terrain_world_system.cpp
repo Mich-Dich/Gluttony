@@ -78,7 +78,7 @@ namespace GLT::terrain {
         // Worlds that are gone (or replaced by another world at the same address): their entities went with them
         for (auto it = m_worlds.begin(); it != m_worlds.end(); ) {
             const bool alive = std::find(worlds.begin(), worlds.end(), it->first) != worlds.end()
-                && it->first->world_entity() == it->second.world_entity;
+                && it->first->instance_id() == it->second.instance_id;
             if (alive) {
                 ++it;
                 continue;
@@ -106,7 +106,7 @@ namespace GLT::terrain {
             if (found == m_worlds.end()) {
                 world_entry entry{};
                 entry.streamer = std::make_unique<terrain_streamer>(m_eval, *world);
-                entry.world_entity = world->world_entity();
+                entry.instance_id = world->instance_id();
                 found = m_worlds.emplace(world, std::move(entry)).first;
             }
             found->second.streamer->update(*c, asset->graph(), asset->revision());
@@ -118,7 +118,7 @@ namespace GLT::terrain {
 
         const std::vector<GLT::world::i_world*> worlds = live_worlds();
         for (auto& [world, entry] : m_worlds) {
-            const bool alive = std::find(worlds.begin(), worlds.end(), world) != worlds.end() && world->world_entity() == entry.world_entity;
+            const bool alive = std::find(worlds.begin(), worlds.end(), world) != worlds.end() && world->instance_id() == entry.instance_id;
             entry.streamer->clear(alive);
         }
         m_worlds.clear();
@@ -149,15 +149,24 @@ namespace GLT::terrain {
 
     void terrain_world_system::clear_bake(GLT::world::i_world& world) {
 
-        const GLT::world::entity_id root = find_baked_root(world);
-        if (!root.is_valid())
-            return;
+        // The root's children (chunks in loaded regions), plus chunks that came back as orphans (their region was streamed
+        // out while the root went). Chunks in regions that are not loaded right now are not reached
         u32 removed = 0;
-        for (const GLT::world::entity_id child : world.children_of(root)) {
-            world.despawn(child);
-            ++removed;
+        const GLT::world::entity_id root = find_baked_root(world);
+        if (root.is_valid()) {
+            for (const GLT::world::entity_id child : world.children_of(root)) {
+                world.despawn(child);
+                ++removed;
+            }
+            world.despawn(root);
         }
-        world.despawn(root);
+        for (const GLT::world::entity_id id : world.root_entities())
+            if (world.entity_name(id).starts_with("chunk_L") && !world.has_children(id)) {
+                world.despawn(id);
+                ++removed;
+            }
+        if (removed == 0 && !root.is_valid())
+            return;
         m_bake_status[&world] = std::format("bake cleared ({} chunk entities removed; the mesh files stay in the bake folder)", removed);
     }
 
@@ -179,7 +188,7 @@ namespace GLT::terrain {
 
         // The chunks of the bake level covering the extent
         const u32 quads = c->chunk_quads;
-        const u32 level = std::min(c->bake_level, c->lod_levels - 1);
+        const u32 level = std::min(c->bake_level, 8u);
         const f64 spacing = std::ldexp(static_cast<f64>(c->chunk_size) / quads, static_cast<i32>(level));
         const f64 size = spacing * quads;
         const i64 x0 = static_cast<i64>(std::floor(c->bake_min.x / size));

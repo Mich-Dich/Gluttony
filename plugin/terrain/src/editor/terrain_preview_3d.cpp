@@ -157,6 +157,7 @@ namespace GLT::terrain {
         if (t.mesh == GLT::render::INVALID_PROCEDURAL_MESH) {
             t.mesh = store.create({ .update_class = GLT::render::mesh_update_class::occasional,
                 .detail = GLT::render::procedural_detail::none, .debug_name = "terrain preview chunk" });
+            t.frames_with_mesh = 0;
             m_instances_dirty = true;
         }
         if (auto updated = store.update(t.mesh, std::move(mesh)); !updated)
@@ -222,6 +223,8 @@ namespace GLT::terrain {
         // ---- finished jobs, jobs no longer needed ----------------------------------------------------------------------
         m_running = 0;
         for (auto& [key, t] : m_tiles) {
+            if (t.mesh != GLT::render::INVALID_PROCEDURAL_MESH)
+                ++t.frames_with_mesh;
             collect(t);
             if (t.job.valid() && !t.desired && t.cancel)
                 t.cancel->store(true);                  // left the window: stop at its next node
@@ -275,7 +278,7 @@ namespace GLT::terrain {
             bool still_needed = false;
             if (has_target && old.mesh != GLT::render::INVALID_PROCEDURAL_MESH)
                 for (const tile* t : window)
-                    if (t->mesh == GLT::render::INVALID_PROCEDURAL_MESH && area.overlaps(area_of(*t))) {
+                    if ((t->mesh == GLT::render::INVALID_PROCEDURAL_MESH || t->frames_with_mesh < 4) && area.overlaps(area_of(*t))) {
                         still_needed = true;
                         break;
                     }

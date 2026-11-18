@@ -439,7 +439,7 @@ namespace GLT::world::world_ecs_entt::component {
                     ImGui::PushID("camera_component");
                     GLT::UI::property_slider("Field of view", cam->fov, 1.f, 179.f, "%.0f deg", "Vertical opening angle", &defaults.fov);
                     GLT::UI::property_drag("Near plane", cam->near_plane, 0.01f, 0.001f, 100.f, "%.3f", "Closer things are cut off", &defaults.near_plane);
-                    GLT::UI::property_drag("Far plane", cam->far_plane, 1.f, 0.01f, 100000.f, "%.0f", "Farther things are cut off", &defaults.far_plane);
+                    GLT::UI::property_drag("Far plane", cam->far_plane, 10.f, 0.01f, 1000000.f, "%.0f", "Farther things are cut off (the view distance)", &defaults.far_plane);
 
                     auto* primary_session = GLT::application::get().get_game_layer_ptr()->get_primary_session();
                     bool is_active = (primary_session->get_editor_camera() == id);

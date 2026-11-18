@@ -133,7 +133,7 @@ namespace GLT::world::world_ecs_entt::component {
 
         f32                                         fov{ 45.f };
         f32                                         near_plane{ 0.1f };
-        f32                                         far_plane{ 1000.f };
+        f32                                         far_plane{ 10000.f };       // view distance (terrain needs km)
     };
     static_assert(std::is_trivially_copyable_v<camera>);
 

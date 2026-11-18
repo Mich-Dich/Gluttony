@@ -57,10 +57,12 @@ namespace GLT::terrain {
             u32                                         level = 0;
             i64                                         ix = 0;
             i64                                         iy = 0;
+            u32                                         quads = 32;             // per side (the settings when it was made)
             f64                                         spacing = 1.0;          // sample spacing of this chunk
             bool                                        desired = false;
 
             GLT::render::procedural_mesh_id             mesh = GLT::render::INVALID_PROCEDURAL_MESH;
+            u32                                         frames_with_mesh = 0;   // the renderer draws a new mesh a few frames after it is created
             GLT::world::entity_id                       entity{};
             u64                                         shown_key = 0;
             u64                                         pending_key = 0;
@@ -68,11 +70,11 @@ namespace GLT::terrain {
             std::future<eval_outcome>                   job{};
             std::shared_ptr<std::atomic<bool>>          cancel{};
 
-            [[nodiscard]] f64 size(u32 quads) const noexcept { return spacing * quads; }
+            [[nodiscard]] f64 size() const noexcept { return spacing * quads; }
         };
 
         void select(const terrain_component& settings, glm::dvec2 anchor, std::vector<chunk*>& out);
-        void collect(chunk& c, u32 quads, f32 skirt);
+        void collect(chunk& c, f32 skirt);
         void release(chunk& c, bool despawn);
 
         evaluator&                                      m_eval;

@@ -34,9 +34,9 @@ namespace GLT::terrain {
         // chunks (live and bake)
         f32                                             chunk_size = 128.0f;    // world units of the finest chunks
         u32                                             chunk_quads = 32;       // quads per chunk side (every level)
-        u32                                             lod_levels = 6;         // each level doubles chunk size and sample spacing
-        f32                                             view_distance = 4000.0f;
-        f32                                             detail = 2.0f;          // a chunk splits while the anchor is closer than detail x its size
+        u32                                             lod_levels = 6;         // unused since 0.3 (levels follow the view distance, see detail_levels()); kept in files
+        f32                                             view_distance = 30000.0f;   // to the horizon: far chunks are huge and coarse, so this is cheap
+        f32                                             detail = 3.0f;          // a chunk splits while the anchor is closer than detail x its size
 
         // bake
         glm::vec2                                       bake_min{ -1024.0f };   // world x / z
@@ -66,6 +66,10 @@ namespace GLT::terrain {
 
     // ... adding it first if the world has none (null if the world has no world entity / the type is not registered)
     [[nodiscard]] terrain_component* ensure_terrain(GLT::world::i_world& world);
+
+    // Detail levels the view distance needs: the coarsest chunks are big enough that a handful cover the view distance
+    // (each level doubles chunk size and sample spacing, so a far horizon costs a few levels, not many chunks)
+    [[nodiscard]] u32 detail_levels(const terrain_component& component);
 
     // Everything that changes the terrain's shape (graph identity excluded: the caller adds the graph revision)
     [[nodiscard]] u64 shape_hash(const terrain_component& component);
